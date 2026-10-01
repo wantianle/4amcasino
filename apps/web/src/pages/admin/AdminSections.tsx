@@ -3,6 +3,7 @@ import { commissionRateLabel } from '@4am/shared';
 import { api } from '../../shared/api.ts';
 import { deriveAuthKey, deriveIdentity } from '../../shared/crypto.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Badge, Button, Dialog, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 
 /** Lets the spinner paint before scrypt blocks the main thread deriving keys. */
@@ -47,7 +48,7 @@ export function LifecycleSection() {
         setRequests(r.requests ?? []);
         setErr(null);
       })
-      .catch(() => setErr('Could not load requests. Try again.'));
+      .catch(() => setErr(t('Could not load requests. Try again.')));
   }
   useEffect(load, []);
 
@@ -58,7 +59,7 @@ export function LifecycleSection() {
       await api.adminDecideLifecycle(id, approve);
       load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'could not decide that request');
+      setErr(e instanceof Error ? e.message : t('could not decide that request'));
     } finally {
       setBusyId(null);
     }
@@ -67,24 +68,22 @@ export function LifecycleSection() {
   return (
     <Panel>
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
-        Room requests
+        {t('Room requests')}
       </h2>
-      <p className="mt-1 text-sm text-slate-500">
-        Hosts asking to archive, restore, or delete a table.
-      </p>
+      <p className="mt-1 text-sm text-slate-500">{t('Hosts asking to archive, restore, or delete a table.')}</p>
 
       {requests === null ? (
         <div className="mt-4">
           {err ? (
             <Button variant="secondary" onClick={load}>
-              Retry requests
+              {t('Retry requests')}
             </Button>
           ) : (
-            <Spinner label="Loading requests…" />
+            <Spinner label={t('Loading requests…')} />
           )}
         </div>
       ) : requests.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-400">Nothing waiting on you.</p>
+        <p className="mt-4 text-sm text-slate-400">{t('Nothing waiting on you.')}</p>
       ) : (
         <ul className="mt-4 space-y-2">
           {requests.map((r) => (
@@ -95,8 +94,11 @@ export function LifecycleSection() {
               <div className="min-w-0">
                 <div className="font-medium text-slate-900 dark:text-slate-100">{r.roomName}</div>
                 <div className="text-xs text-slate-400">
-                  {r.requesterName} asked to {r.action} this table
-                  {r.note ? `, note: ${r.note}` : ''}
+                  {t('{name} asked to {action} this table', {
+                    name: r.requesterName,
+                    action: t(r.action),
+                  })}
+                  {r.note ? t(', note: {note}', { note: r.note }) : ''}
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -105,14 +107,14 @@ export function LifecycleSection() {
                   disabled={busyId === r.id}
                   onClick={() => void decide(r.id, true)}
                 >
-                  {busyId === r.id ? <Spinner label="Working…" /> : 'Approve'}
+                  {busyId === r.id ? <Spinner label={t('Working…')} /> : t('Approve')}
                 </Button>
                 <Button
                   variant="danger"
                   disabled={busyId === r.id}
                   onClick={() => void decide(r.id, false)}
                 >
-                  Reject
+                  {t('Reject')}
                 </Button>
               </div>
             </li>
@@ -158,7 +160,7 @@ export function MergeSection() {
         setRequests(r.requests ?? []);
         setErr(null);
       })
-      .catch(() => setErr('Could not load requests. Try again.'));
+      .catch(() => setErr(t('Could not load requests. Try again.')));
   }
   useEffect(load, []);
 
@@ -170,7 +172,7 @@ export function MergeSection() {
       setConfirmTarget(null);
       load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'could not decide that request');
+      setErr(e instanceof Error ? e.message : t('could not decide that request'));
     } finally {
       setBusyId(null);
     }
@@ -180,7 +182,7 @@ export function MergeSection() {
     e.preventDefault();
     setDirectMsg(null);
     if (!directFrom.trim() || !directInto.trim()) {
-      setDirectMsg({ kind: 'bad', text: 'enter both usernames' });
+      setDirectMsg({ kind: 'bad', text: t('enter both usernames') });
       return;
     }
     setDirectConfirm(true);
@@ -193,7 +195,7 @@ export function MergeSection() {
       const from = directFrom.trim();
       const into = directInto.trim();
       await api.adminMergeNow(from, into, directNote.trim() || undefined);
-      setDirectMsg({ kind: 'ok', text: `Merged @${from} into @${into}.` });
+      setDirectMsg({ kind: 'ok', text: t('Merged @{from} into @{into}.', { from, into }) });
       setDirectFrom('');
       setDirectInto('');
       setDirectNote('');
@@ -202,7 +204,7 @@ export function MergeSection() {
     } catch (e) {
       setDirectMsg({
         kind: 'bad',
-        text: e instanceof Error ? e.message : 'could not merge those accounts',
+        text: e instanceof Error ? e.message : t('could not merge those accounts'),
       });
     } finally {
       setDirectBusy(false);
@@ -212,24 +214,24 @@ export function MergeSection() {
   return (
     <Panel>
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
-        Merge requests
+        {t('Merge requests')}
       </h2>
       <p className="mt-1 text-sm text-slate-500">
-        Folding one account into another. Approving cannot be undone.
+        {t('Folding one account into another. Approving cannot be undone.')}
       </p>
 
       {requests === null ? (
         <div className="mt-4">
           {err ? (
             <Button variant="secondary" onClick={load}>
-              Retry requests
+              {t('Retry requests')}
             </Button>
           ) : (
-            <Spinner label="Loading requests…" />
+            <Spinner label={t('Loading requests…')} />
           )}
         </div>
       ) : requests.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-400">Nothing waiting on you.</p>
+        <p className="mt-4 text-sm text-slate-400">{t('Nothing waiting on you.')}</p>
       ) : (
         <ul className="mt-4 space-y-2">
           {requests.map((r) => (
@@ -240,17 +242,25 @@ export function MergeSection() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-slate-900 dark:text-slate-100">
-                    @{r.fromUsername} <span className="text-slate-400">into</span> @{r.intoUsername}
+                    @{r.fromUsername} <span className="text-slate-400">{t('into')}</span> @{r.intoUsername}
                   </div>
-                  {r.note && <div className="text-xs text-slate-400">note: {r.note}</div>}
+                  {r.note && (
+                    <div className="text-xs text-slate-400">{t('note: {note}', { note: r.note })}</div>
+                  )}
                   <div className="mt-1.5 grid grid-cols-1 gap-1 text-xs text-slate-500 sm:grid-cols-2">
                     <div>
-                      @{r.fromUsername}: {netStr(r.fromBalance)} net, {r.fromRooms} room
-                      {r.fromRooms === 1 ? '' : 's'}
+                      {t(r.fromRooms === 1 ? '{user}: {net} net, {n} room' : '{user}: {net} net, {n} rooms', {
+                        user: `@${r.fromUsername}`,
+                        net: netStr(r.fromBalance),
+                        n: r.fromRooms,
+                      })}
                     </div>
                     <div>
-                      @{r.intoUsername}: {netStr(r.intoBalance)} net, {r.intoRooms} room
-                      {r.intoRooms === 1 ? '' : 's'}
+                      {t(r.intoRooms === 1 ? '{user}: {net} net, {n} room' : '{user}: {net} net, {n} rooms', {
+                        user: `@${r.intoUsername}`,
+                        net: netStr(r.intoBalance),
+                        n: r.intoRooms,
+                      })}
                     </div>
                   </div>
                 </div>
@@ -260,14 +270,14 @@ export function MergeSection() {
                     disabled={busyId === r.id}
                     onClick={() => setConfirmTarget(r)}
                   >
-                    Approve
+                    {t('Approve')}
                   </Button>
                   <Button
                     variant="danger"
                     disabled={busyId === r.id}
                     onClick={() => void decide(r.id, false)}
                   >
-                    Reject
+                    {t('Reject')}
                   </Button>
                 </div>
               </div>
@@ -282,23 +292,22 @@ export function MergeSection() {
         className="mt-5 border-t border-slate-200/70 pt-4 dark:border-slate-700/70"
       >
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Merge accounts directly
+          {t('Merge accounts directly')}
         </h3>
         <p className="mt-0.5 text-xs text-slate-500">
-          Skips the request queue and folds one account into another immediately. Approving cannot
-          be undone.
+          {t('Skips the request queue and folds one account into another immediately. Approving cannot be undone.')}
         </p>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <Input
-            aria-label="From username"
-            placeholder="From username"
+            aria-label={t('From username')}
+            placeholder={t('From username')}
             value={directFrom}
             onChange={(e) => setDirectFrom(e.target.value)}
             disabled={directBusy}
           />
           <Input
-            aria-label="Into username"
-            placeholder="Into username"
+            aria-label={t('Into username')}
+            placeholder={t('Into username')}
             value={directInto}
             onChange={(e) => setDirectInto(e.target.value)}
             disabled={directBusy}
@@ -306,8 +315,8 @@ export function MergeSection() {
         </div>
         <div className="mt-2">
           <Input
-            aria-label="Note (optional)"
-            placeholder="Note (optional)"
+            aria-label={t('Note (optional)')}
+            placeholder={t('Note (optional)')}
             value={directNote}
             onChange={(e) => setDirectNote(e.target.value)}
             disabled={directBusy}
@@ -315,7 +324,7 @@ export function MergeSection() {
         </div>
         <div className="mt-2">
           <Button type="submit" variant="secondary" disabled={directBusy}>
-            {directBusy ? <Spinner label="Merging…" /> : 'Merge now'}
+            {directBusy ? <Spinner label={t('Merging…')} /> : t('Merge now')}
           </Button>
         </div>
         {directMsg && <Note kind={directMsg.kind}>{directMsg.text}</Note>}
@@ -324,13 +333,15 @@ export function MergeSection() {
       <Dialog
         open={confirmTarget !== null}
         onClose={() => setConfirmTarget(null)}
-        title="Approve this merge?"
+        title={t('Approve this merge?')}
       >
         {confirmTarget && (
           <div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Everything @{confirmTarget.fromUsername} owns moves to @{confirmTarget.intoUsername},
-              and @{confirmTarget.fromUsername} is retired. This cannot be undone.
+              {t(
+                'Everything @{a} owns moves to @{b}, and @{a} is retired. This cannot be undone.',
+                { a: confirmTarget.fromUsername, b: confirmTarget.intoUsername },
+              )}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button
@@ -338,14 +349,18 @@ export function MergeSection() {
                 onClick={() => setConfirmTarget(null)}
                 disabled={busyId === confirmTarget.id}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button
                 variant="danger"
                 onClick={() => void decide(confirmTarget.id, true)}
                 disabled={busyId === confirmTarget.id}
               >
-                {busyId === confirmTarget.id ? <Spinner label="Merging…" /> : 'Merge accounts'}
+                {busyId === confirmTarget.id ? (
+                  <Spinner label={t('Merging…')} />
+                ) : (
+                  t('Merge accounts')
+                )}
               </Button>
             </div>
           </div>
@@ -355,18 +370,20 @@ export function MergeSection() {
       <Dialog
         open={directConfirm}
         onClose={() => setDirectConfirm(false)}
-        title="Merge these accounts now?"
+        title={t('Merge these accounts now?')}
       >
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          Everything @{directFrom} owns moves to @{directInto}, and @{directFrom} is retired. This
-          takes effect immediately and cannot be undone.
+          {t(
+            'Everything @{a} owns moves to @{b}, and @{a} is retired. This takes effect immediately and cannot be undone.',
+            { a: directFrom, b: directInto },
+          )}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setDirectConfirm(false)} disabled={directBusy}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button variant="danger" onClick={() => void mergeNow()} disabled={directBusy}>
-            {directBusy ? <Spinner label="Merging…" /> : 'Merge accounts'}
+            {directBusy ? <Spinner label={t('Merging…')} /> : t('Merge accounts')}
           </Button>
         </div>
       </Dialog>
@@ -403,7 +420,7 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
     setPwMsg(null);
     const id = Number(idInput);
     if (!Number.isInteger(id) || id <= 0) {
-      setLookupErr('enter a valid user ID');
+      setLookupErr(t('enter a valid user ID'));
       return;
     }
     setLookupBusy(true);
@@ -416,7 +433,7 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
         isPlatform: p.isPlatform,
       });
     } catch (e2) {
-      setLookupErr(e2 instanceof Error ? e2.message : 'could not find that user');
+      setLookupErr(e2 instanceof Error ? e2.message : t('could not find that user'));
     } finally {
       setLookupBusy(false);
     }
@@ -430,13 +447,13 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
       await api.adminDisableUser(target.userId);
       setDisableMsg({
         kind: 'ok',
-        text: `@${target.username} is disabled and signed out everywhere.`,
+        text: t('@{user} is disabled and signed out everywhere.', { user: target.username }),
       });
       setDisableConfirm(false);
     } catch (e) {
       setDisableMsg({
         kind: 'bad',
-        text: e instanceof Error ? e.message : 'could not disable that account',
+        text: e instanceof Error ? e.message : t('could not disable that account'),
       });
     } finally {
       setDisableBusy(false);
@@ -448,7 +465,7 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
     setPwMsg(null);
     if (!target) return;
     if (newPassword.length < 6) {
-      setPwMsg({ kind: 'bad', text: 'use at least 6 characters' });
+      setPwMsg({ kind: 'bad', text: t('use at least 6 characters') });
       return;
     }
     setPwBusy(true);
@@ -460,12 +477,15 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
       setNewPassword('');
       setPwMsg({
         kind: 'ok',
-        text: `Password reset for @${target.username}. Tell them the new password directly, they were signed out everywhere.`,
+        text: t(
+          'Password reset for @{user}. Tell them the new password directly, they were signed out everywhere.',
+          { user: target.username },
+        ),
       });
     } catch (e2) {
       setPwMsg({
         kind: 'bad',
-        text: e2 instanceof Error ? e2.message : 'could not reset that password',
+        text: e2 instanceof Error ? e2.message : t('could not reset that password'),
       });
     } finally {
       setPwBusy(false);
@@ -475,25 +495,24 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
   return (
     <Panel>
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
-        User admin
+        {t('User admin')}
       </h2>
       <p className="mt-1 text-sm text-slate-500">
-        Look a player up by their user ID. It's visible in the URL of their profile page,
-        /players/ID.
+        {t("Look a player up by their user ID. It's visible in the URL of their profile page, /players/ID.")}
       </p>
 
       <form onSubmit={(e) => void lookup(e)} className="mt-4 flex max-w-sm gap-2">
         <Input
           type="number"
           min={1}
-          aria-label="User ID"
-          placeholder="User ID"
+          aria-label={t('User ID')}
+          placeholder={t('User ID')}
           value={idInput}
           onChange={(e) => setIdInput(e.target.value)}
           disabled={lookupBusy}
         />
         <Button type="submit" variant="secondary" disabled={lookupBusy}>
-          {lookupBusy ? <Spinner label="Looking up…" /> : 'Look up'}
+          {lookupBusy ? <Spinner label={t('Looking up…')} /> : t('Look up')}
         </Button>
       </form>
       {lookupErr && <Note kind="bad">{lookupErr}</Note>}
@@ -503,21 +522,21 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
           <div className="flex items-center gap-2 font-medium text-slate-900 dark:text-slate-100">
             {target.displayName}
             <span className="font-normal text-slate-400">@{target.username}</span>
-            {target.isPlatform && <Badge tone="indigo">House account</Badge>}
+            {target.isPlatform && <Badge tone="indigo">{t('House account')}</Badge>}
           </div>
 
           {target.isPlatform ? (
             <p className="mt-2 text-xs text-slate-400">
-              The house account can't be disabled or reset from here.
+              {t("The house account can't be disabled or reset from here.")}
             </p>
           ) : (
             <>
               <div className="mt-3 border-t border-slate-200/70 pt-3 dark:border-slate-700/70">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Disable account
+                  {t('Disable account')}
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Signs them out everywhere and blocks further logins. Nothing is deleted.
+                  {t('Signs them out everywhere and blocks further logins. Nothing is deleted.')}
                 </p>
                 <div className="mt-2">
                   <Button
@@ -525,7 +544,7 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
                     onClick={() => setDisableConfirm(true)}
                     disabled={disableBusy}
                   >
-                    Disable @{target.username}
+                    {t('Disable @{user}', { user: target.username })}
                   </Button>
                 </div>
                 {disableMsg && <Note kind={disableMsg.kind}>{disableMsg.text}</Note>}
@@ -536,24 +555,26 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
                 className="mt-3 border-t border-slate-200/70 pt-3 dark:border-slate-700/70"
               >
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Reset password
+                  {t('Reset password')}
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Sets a new password and signing key for @{target.username}. They must not be
-                  seated at a table when you do this.
+                  {t(
+                    'Sets a new password and signing key for @{user}. They must not be seated at a table when you do this.',
+                    { user: target.username },
+                  )}
                 </p>
                 <div className="mt-2 flex max-w-sm gap-2">
                   <Input
                     type="password"
-                    aria-label="New password"
-                    placeholder="New password"
+                    aria-label={t('New password')}
+                    placeholder={t('New password')}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     minLength={6}
                     disabled={pwBusy}
                   />
                   <Button type="submit" disabled={pwBusy}>
-                    {pwBusy ? <Spinner label="Re-keying…" /> : 'Reset password'}
+                    {pwBusy ? <Spinner label={t('Re-keying…')} /> : t('Reset password')}
                   </Button>
                 </div>
                 {pwMsg && <Note kind={pwMsg.kind}>{pwMsg.text}</Note>}
@@ -566,18 +587,19 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
       <Dialog
         open={disableConfirm}
         onClose={() => setDisableConfirm(false)}
-        title={`Disable @${target?.username ?? ''}?`}
+        title={t('Disable @{user}?', { user: target?.username ?? '' })}
       >
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          They're signed out everywhere and can't log back in until re-enabled. Nothing they own is
-          deleted.
+          {t(
+            "They're signed out everywhere and can't log back in until re-enabled. Nothing they own is deleted.",
+          )}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setDisableConfirm(false)} disabled={disableBusy}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button variant="danger" onClick={() => void disable()} disabled={disableBusy}>
-            {disableBusy ? <Spinner label="Working…" /> : 'Disable account'}
+            {disableBusy ? <Spinner label={t('Working…')} /> : t('Disable account')}
           </Button>
         </div>
       </Dialog>
@@ -608,7 +630,7 @@ export const RoomsSection = memo(function RoomsSection() {
         setRooms(r.rooms ?? []);
         setErr(null);
       })
-      .catch(() => setErr('Could not load rooms. Search again to retry.'));
+      .catch(() => setErr(t('Could not load rooms. Search again to retry.')));
   }
   useEffect(() => load(), []);
 
@@ -624,7 +646,7 @@ export const RoomsSection = memo(function RoomsSection() {
       await api.adminArchiveRoom(room.id, !room.archived);
       load(query.trim() || undefined);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'could not update that room');
+      setErr(e instanceof Error ? e.message : t('could not update that room'));
     } finally {
       setBusyId(null);
     }
@@ -639,7 +661,7 @@ export const RoomsSection = memo(function RoomsSection() {
       setDeleteTarget(null);
       load(query.trim() || undefined);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'could not delete that room');
+      setErr(e instanceof Error ? e.message : t('could not delete that room'));
     } finally {
       setBusyId(null);
     }
@@ -648,30 +670,30 @@ export const RoomsSection = memo(function RoomsSection() {
   return (
     <Panel>
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
-        Rooms
+        {t('Rooms')}
       </h2>
       <p className="mt-1 text-sm text-slate-500">
-        Archive or delete any table directly. Delete cannot be undone.
+        {t('Archive or delete any table directly. Delete cannot be undone.')}
       </p>
 
       <form onSubmit={onSearch} className="mt-4 flex max-w-sm gap-2">
         <Input
-          aria-label="Search by name"
-          placeholder="Search by name"
+          aria-label={t('Search by name')}
+          placeholder={t('Search by name')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
         <Button type="submit" variant="secondary">
-          Search
+          {t('Search')}
         </Button>
       </form>
 
       {rooms === null ? (
         <div className="mt-4">
-          <Spinner label="Loading rooms…" />
+          <Spinner label={t('Loading rooms…')} />
         </div>
       ) : rooms.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-400">No rooms found.</p>
+        <p className="mt-4 text-sm text-slate-400">{t('No rooms found.')}</p>
       ) : (
         <ul className="mt-4 space-y-2">
           {rooms.map((r) => (
@@ -682,12 +704,19 @@ export const RoomsSection = memo(function RoomsSection() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 font-medium text-slate-900 dark:text-slate-100">
                   {r.name}
-                  {!!r.archived && <Badge tone="amber">Archived</Badge>}
+                  {!!r.archived && <Badge tone="amber">{t('Archived')}</Badge>}
                 </div>
                 <div className="text-xs text-slate-400">
-                  Hosted by {r.hostName} &middot; {r.playerCount} player
-                  {r.playerCount === 1 ? '' : 's'} · {commissionRateLabel(r.commissionBps)} house
-                  cut
+                  {t(
+                    r.playerCount === 1
+                      ? 'Hosted by {host} · {n} player · {rate} house cut'
+                      : 'Hosted by {host} · {n} players · {rate} house cut',
+                    {
+                      host: r.hostName,
+                      n: r.playerCount,
+                      rate: commissionRateLabel(r.commissionBps),
+                    },
+                  )}
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -697,11 +726,11 @@ export const RoomsSection = memo(function RoomsSection() {
                   onClick={() => void toggleArchive(r)}
                 >
                   {busyId === r.id ? (
-                    <Spinner label="Working…" />
+                    <Spinner label={t('Working…')} />
                   ) : r.archived ? (
-                    'Unarchive'
+                    t('Unarchive')
                   ) : (
-                    'Archive'
+                    t('Archive')
                   )}
                 </Button>
                 <Button
@@ -709,7 +738,7 @@ export const RoomsSection = memo(function RoomsSection() {
                   disabled={busyId === r.id}
                   onClick={() => setDeleteTarget(r)}
                 >
-                  Delete
+                  {t('Delete')}
                 </Button>
               </div>
             </li>
@@ -721,12 +750,14 @@ export const RoomsSection = memo(function RoomsSection() {
       <Dialog
         open={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
-        title="Delete this room?"
+        title={t('Delete this room?')}
       >
         {deleteTarget && (
           <div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              "{deleteTarget.name}" will be removed from every list. This cannot be undone.
+              {t('"{name}" will be removed from every list. This cannot be undone.', {
+                name: deleteTarget.name,
+              })}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button
@@ -734,14 +765,18 @@ export const RoomsSection = memo(function RoomsSection() {
                 onClick={() => setDeleteTarget(null)}
                 disabled={busyId === deleteTarget.id}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button
                 variant="danger"
                 onClick={() => void doDelete()}
                 disabled={busyId === deleteTarget.id}
               >
-                {busyId === deleteTarget.id ? <Spinner label="Deleting…" /> : 'Delete room'}
+                {busyId === deleteTarget.id ? (
+                  <Spinner label={t('Deleting…')} />
+                ) : (
+                  t('Delete room')
+                )}
               </Button>
             </div>
           </div>

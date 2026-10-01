@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { TournamentEarning } from '@4am/shared';
 import { api } from '../../shared/api.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
 import { chips, signedChips, tournamentError } from './TournamentTerms.tsx';
 import './arena.css';
 import './tournament-operations.css';
@@ -40,13 +41,15 @@ export function TournamentEarnings() {
     >
       <div className="tournament-section-head">
         <div>
-          <h2 id="tournament-earnings-heading">Tournament earnings</h2>
+          <h2 id="tournament-earnings-heading">{t('Tournament earnings')}</h2>
           <p className="arena-muted">
-            Your entry fees, joining rewards, prizes and recorded settlements in competition chips.
+            {t(
+              'Your entry fees, joining rewards, prizes and recorded settlements in competition chips.',
+            )}
           </p>
         </div>
         <Button type="button" variant="secondary" disabled={loading} onClick={() => void load()}>
-          {loading && rows ? 'Refreshing…' : 'Refresh'}
+          {loading && rows ? t('Refreshing…') : t('Refresh')}
         </Button>
       </div>
       {error && (
@@ -55,38 +58,40 @@ export function TournamentEarnings() {
         </p>
       )}
       {rows === null && loading ? (
-        <Spinner label="Loading tournament earnings…" />
+        <Spinner label={t('Loading tournament earnings…')} />
       ) : rows?.length ? (
         <>
           <dl className="tournament-totals">
             <div>
-              <dt>Settlement net</dt>
+              <dt>{t('Settlement net')}</dt>
               <dd>{signedChips(total!.net)}</dd>
             </div>
             <div>
-              <dt>Recorded paid</dt>
+              <dt>{t('Recorded paid')}</dt>
               <dd>{signedChips(total!.recorded)}</dd>
             </div>
             <div>
-              <dt>Outstanding</dt>
+              <dt>{t('Outstanding')}</dt>
               <dd>{signedChips(total!.outstanding)}</dd>
             </div>
           </dl>
           <div className="arena-table-wrap">
             <table className="arena-table">
               <caption className="tournament-table-caption">
-                Competition chips · positive outstanding is due to you; negative is due from you
+                {t(
+                  'Competition chips · positive outstanding is due to you; negative is due from you',
+                )}
               </caption>
               <thead>
                 <tr>
-                  <th>Tournament</th>
-                  <th>Entry fee</th>
-                  <th>Joining reward</th>
-                  <th>Prize</th>
-                  <th>Play net</th>
-                  <th>Settlement net</th>
-                  <th>Recorded paid</th>
-                  <th>Outstanding</th>
+                  <th>{t('Tournament')}</th>
+                  <th>{t('Entry fee')}</th>
+                  <th>{t('Joining reward')}</th>
+                  <th>{t('Prize')}</th>
+                  <th>{t('Play net')}</th>
+                  <th>{t('Settlement net')}</th>
+                  <th>{t('Recorded paid')}</th>
+                  <th>{t('Outstanding')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,7 +101,7 @@ export function TournamentEarnings() {
                       <Link className="arena-link" to={`/tournaments/${row.tournamentId}`}>
                         {row.tournamentName}
                       </Link>
-                      <div className="arena-muted">{row.status}</div>
+                      <div className="arena-muted">{tr(row.status)}</div>
                     </td>
                     <td>{chips(row.entryFee)}</td>
                     <td>{chips(row.joiningReward)}</td>
@@ -111,18 +116,18 @@ export function TournamentEarnings() {
             </table>
           </div>
           <p className="arena-muted mt-4">
-            Settlement net is joining reward + prize − entry fee. Play net measures performance
-            separately. Prizes are final when the tournament ends; recorded payments are platform
-            attestations of manual settlement.
+            {t(
+              'Settlement net is joining reward + prize − entry fee. Play net measures performance separately. Prizes are final when the tournament ends; recorded payments are platform attestations of manual settlement.',
+            )}
           </p>
         </>
       ) : (
         rows && (
           <div className="arena-empty">
-            <h3>No tournament earnings yet.</h3>
-            <p className="arena-muted">Your entry accounting appears here after you enroll.</p>
+            <h3>{t('No tournament earnings yet.')}</h3>
+            <p className="arena-muted">{t('Your entry accounting appears here after you enroll.')}</p>
             <Link className="arena-link inline-block mt-4" to="/tournaments">
-              Browse tournaments
+              {t('Browse tournaments')}
             </Link>
           </div>
         )

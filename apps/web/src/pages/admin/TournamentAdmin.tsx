@@ -3,20 +3,25 @@ import type { SponsorCampaign, TournamentEarning, TournamentSummary } from '@4am
 import { api } from '../../shared/api.ts';
 import { isAdminSite } from '../../shared/adminSite.ts';
 import { useStore } from '../../shared/store.ts';
+import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Button, Input, Spinner } from '../../shared/ui/index.tsx';
 import {
   ApprovalStatus,
   TournamentTerms,
-  chips,
-  eventDate,
   formatName,
   localDateInput,
   safeExternalUrl,
-  signedChips,
   tournamentError,
 } from '../tournaments/TournamentTerms.tsx';
 import '../tournaments/arena.css';
 import '../tournaments/tournament-operations.css';
+
+/** zh-CN signed amount, mirroring the operations-column convention. */
+const net = (n: number) => `${n > 0 ? '+' : ''}${fmt(n)}`;
+/** zh-CN event stamp; null means "starts when the organizer is ready". */
+const when = (v: number | null) => (v === null ? t('Organizer starts when ready') : `${fmtDate(v)} ${fmtTime(v)}`);
 
 type Overview = Awaited<ReturnType<typeof api.adminTournaments>>;
 type Sponsors = Awaited<ReturnType<typeof api.adminSponsors>>;
@@ -71,29 +76,32 @@ export function TournamentAdmin() {
     await load();
   };
   const pending =
-    data?.tournaments.filter((t) => t.approvalStatus === 'pending' && t.status === 'pending') ?? [];
+    data?.tournaments.filter((ev) => ev.approvalStatus === 'pending' && ev.status === 'pending') ??
+    [];
   return (
     <div className="tournament-admin">
       <div className="tournament-section-head">
         <p className="arena-muted">
-          Approve proposals, inspect chip accounting and record manual settlements. All amounts are
-          competition chips.
+          {t('Approve proposals, inspect chip accounting and record manual settlements. All amounts are competition chips.')}
         </p>
         <Button type="button" variant="secondary" disabled={loading} onClick={() => void load()}>
-          {loading ? 'Refreshing…' : 'Refresh'}
+          {loading ? t('Refreshing…') : t('Refresh')}
         </Button>
       </div>
-      <div className="arena-tabs tournament-filter" aria-label="Tournament administration sections">
+      <div
+        className="arena-tabs tournament-filter"
+        aria-label={t('Tournament administration sections')}
+      >
         {['Approvals', 'Tournaments', 'Earnings', 'Sponsors'].map((name) => (
           <button type="button" key={name} aria-pressed={tab === name} onClick={() => setTab(name)}>
-            {name}
+            {t(name)}
             {name === 'Approvals' && pending.length > 0 ? ` (${pending.length})` : ''}
           </button>
         ))}
       </div>
       {error && (
         <p className="arena-error" role="alert">
-          {error} Use Refresh to retry.
+          {error} {t('Use Refresh to retry.')}
         </p>
       )}
       {notice && (
@@ -101,24 +109,23 @@ export function TournamentAdmin() {
           {notice}
         </p>
       )}
-      {!data && loading && <Spinner label="Loading tournament operations…" />}
+      {!data && loading && <Spinner label={t('Loading tournament operations…')} />}
       {tab === 'Approvals' && data && (
         <section className="arena-panel">
-          <h2>Proposals to review</h2>
+          <h2>{t('Proposals to review')}</h2>
           <p className="arena-muted mb-5">
-            Approval publishes this revision and opens enrollment. The first enrollment permanently
-            locks the terms.
+            {t('Approval publishes this revision and opens enrollment. The first enrollment permanently locks the terms.')}
           </p>
           {pending.length ? (
             <div className="tournament-admin-list">
-              {pending.map((t) => (
-                <ReviewProposal key={`${t.id}:${t.revision}`} tournament={t} onUpdated={updated} />
+              {pending.map((ev) => (
+                <ReviewProposal key={`${ev.id}:${ev.revision}`} tournament={ev} onUpdated={updated} />
               ))}
             </div>
           ) : (
             <div className="arena-empty">
-              <h3>No proposals awaiting review.</h3>
-              <p className="arena-muted">Member proposals appear here before they become public.</p>
+              <h3>{t('No proposals awaiting review.')}</h3>
+              <p className="arena-muted">{t('Member proposals appear here before they become public.')}</p>
             </div>
           )}
         </section>
@@ -133,7 +140,7 @@ export function TournamentAdmin() {
 }
 
 function ReviewProposal({
-  tournament: t,
+  tournament: ev,
   onUpdated,
 }: {
   tournament: TournamentSummary;
@@ -146,20 +153,20 @@ function ReviewProposal({
     <article className="tournament-review">
       <div className="tournament-section-head">
         <div>
-          <h3>{t.name}</h3>
+          <h3>{ev.name}</h3>
           <p className="arena-muted">
-            Organizer #{t.ownerId} · revision {t.revision}
+            {t('Organizer #{n} · revision {r}', { n: ev.ownerId, r: ev.revision })}
           </p>
         </div>
-        <a href={tournamentHref(t.id)} className="arena-link">
-          Open tournament
+        <a href={tournamentHref(ev.id)} className="arena-link">
+          {t('Open tournament')}
         </a>
       </div>
-      {t.description && <p className="arena-note mb-5">{t.description}</p>}
-      <TournamentTerms tournament={t} />
-      {t.reviewNote && (
+      {ev.description && <p className="arena-note mb-5">{ev.description}</p>}
+      <TournamentTerms tournament={ev} />
+      {ev.reviewNote && (
         <p className="arena-note mt-3">
-          <strong>Previous review:</strong> {t.reviewNote}
+          <strong>{t('Previous review:')}</strong> {ev.reviewNote}
         </p>
       )}
       <form
@@ -172,16 +179,18 @@ function ReviewProposal({
             (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'approve';
           const note = String(f.get('note')).trim();
           if (!approve && !note) {
-            setError('Add a review note explaining what needs to change.');
+            setError(t('Add a review note explaining what needs to change.'));
             return;
           }
           pending.current = true;
           setBusy(true);
           setError('');
           try {
-            await api.reviewTournament(t.id, t.revision, approve, note);
+            await api.reviewTournament(ev.id, ev.revision, approve, note);
             await onUpdated(
-              approve ? `${t.name} published.` : `${t.name} returned with a review note.`,
+              approve
+                ? t('{name} published.', { name: ev.name })
+                : t('{name} returned with a review note.', { name: ev.name }),
             );
           } catch (e) {
             setError(tournamentError(e));
@@ -192,13 +201,13 @@ function ReviewProposal({
         }}
       >
         <label className="arena-field">
-          Review note
+          {t('Review note')}
           <textarea
             className="arena-input"
             name="note"
             maxLength={1000}
             rows={2}
-            placeholder="Required when requesting changes"
+            placeholder={t('Required when requesting changes')}
             disabled={busy}
           />
         </label>
@@ -209,10 +218,10 @@ function ReviewProposal({
         )}
         <div className="arena-controls">
           <Button name="decision" value="approve" disabled={busy}>
-            {busy ? 'Saving review…' : `Approve revision ${t.revision}`}
+            {busy ? t('Saving review…') : t('Approve revision {n}', { n: ev.revision })}
           </Button>
           <Button name="decision" value="reject" variant="secondary" disabled={busy}>
-            Request changes
+            {t('Request changes')}
           </Button>
         </div>
       </form>
@@ -222,8 +231,8 @@ function ReviewProposal({
 
 function TournamentDirectory({ rows }: { rows: TournamentSummary[] }) {
   const [query, setQuery] = useState('');
-  const filtered = rows.filter((t) =>
-    `${t.name} ${t.id} ${t.ownerId} ${t.approvalStatus} ${t.status}`
+  const filtered = rows.filter((ev) =>
+    `${ev.name} ${ev.id} ${ev.ownerId} ${ev.approvalStatus} ${ev.status}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -231,16 +240,16 @@ function TournamentDirectory({ rows }: { rows: TournamentSummary[] }) {
     <section className="arena-panel">
       <div className="tournament-admin-toolbar">
         <div>
-          <h2>All tournaments</h2>
-          <p className="arena-muted">Open an event to edit unlocked terms or control play.</p>
+          <h2>{t('All tournaments')}</h2>
+          <p className="arena-muted">{t('Open an event to edit unlocked terms or control play.')}</p>
         </div>
         <label className="arena-field">
-          Search tournaments
+          {t('Search tournaments')}
           <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Name, organizer ID or status"
+            placeholder={t('Name, organizer ID or status')}
           />
         </label>
       </div>
@@ -249,38 +258,38 @@ function TournamentDirectory({ rows }: { rows: TournamentSummary[] }) {
           <table className="arena-table">
             <thead>
               <tr>
-                <th>Tournament</th>
-                <th>Format</th>
-                <th>Review</th>
-                <th>Status</th>
-                <th>Entrants</th>
-                <th>Entry</th>
-                <th>Schedule</th>
-                <th>Terms</th>
+                <th>{t('Tournament')}</th>
+                <th>{t('Format')}</th>
+                <th>{t('Review')}</th>
+                <th>{t('Status')}</th>
+                <th>{t('Entrants')}</th>
+                <th>{t('Entry')}</th>
+                <th>{t('Schedule')}</th>
+                <th>{t('Terms')}</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t) => (
-                <tr key={t.id}>
+              {filtered.map((ev) => (
+                <tr key={ev.id}>
                   <td className="name">
-                    <a href={tournamentHref(t.id)} className="arena-link">
-                      {t.name}
+                    <a href={tournamentHref(ev.id)} className="arena-link">
+                      {ev.name}
                     </a>
-                    <div className="arena-muted">Organizer #{t.ownerId}</div>
+                    <div className="arena-muted">{t('Organizer #{n}', { n: ev.ownerId })}</div>
                   </td>
-                  <td>{formatName(t.format)}</td>
+                  <td>{t(formatName(ev.format))}</td>
                   <td>
-                    <ApprovalStatus tournament={t} />
+                    <ApprovalStatus tournament={ev} />
                   </td>
-                  <td>{t.status}</td>
+                  <td>{t(ev.status)}</td>
                   <td>
-                    {t.entrantCount ?? 0}/{t.capacity}
+                    {ev.entrantCount ?? 0}/{ev.capacity}
                   </td>
-                  <td>{t.entryFee ? `${chips(t.entryFee)} chips` : 'Free'}</td>
-                  <td>{eventDate(t.policy.startsAt)}</td>
+                  <td>{ev.entryFee ? t('{n} chips', { n: fmt(ev.entryFee) }) : t('Free')}</td>
+                  <td>{when(ev.policy.startsAt)}</td>
                   <td>
-                    Revision {t.revision}
-                    <div className="arena-muted">{t.termsLocked ? 'Locked' : 'Editable'}</div>
+                    {t('Revision {n}', { n: ev.revision })}
+                    <div className="arena-muted">{ev.termsLocked ? t('Locked') : t('Editable')}</div>
                   </td>
                 </tr>
               ))}
@@ -289,7 +298,7 @@ function TournamentDirectory({ rows }: { rows: TournamentSummary[] }) {
         </div>
       ) : (
         <p className="arena-muted">
-          {rows.length ? 'No tournaments match this search.' : 'No tournaments have been created.'}
+          {rows.length ? t('No tournaments match this search.') : t('No tournaments have been created.')}
         </p>
       )}
     </section>
@@ -351,52 +360,51 @@ function EarningsAdmin({
     : selected;
   return (
     <section className="arena-panel">
-      <h2>Tournament earnings</h2>
+      <h2>{t('Tournament earnings')}</h2>
       <dl className="tournament-totals">
         {(
           [
-            ['House accrued', data.totals.house],
-            ['Available pools', data.totals.pool],
-            ['Prizes allocated', data.totals.prizes],
-            ['Recorded paid', data.totals.recordedPaid],
+            [t('House accrued'), data.totals.house],
+            [t('Available pools'), data.totals.pool],
+            [t('Prizes allocated'), data.totals.prizes],
+            [t('Recorded paid'), data.totals.recordedPaid],
           ] as const
         ).map(([label, value]) => (
           <div key={label}>
             <dt>{label}</dt>
-            <dd>{chips(value)}</dd>
+            <dd>{fmt(value)}</dd>
           </div>
         ))}
       </dl>
       <div className="tournament-admin-toolbar">
         <p className="arena-muted">
-          Positive outstanding is due to the entrant. Negative is due from the entrant. Play net is
-          separate from settlement.
+          {t('Positive outstanding is due to the entrant. Negative is due from the entrant. Play net is separate from settlement.')}
         </p>
         <label className="arena-field">
-          Search earnings
+          {t('Search earnings')}
           <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Player, user ID or tournament"
+            placeholder={t('Player, user ID or tournament')}
           />
         </label>
       </div>
       {filtered.length ? (
         <div className="arena-table-wrap">
           <table className="arena-table">
-            <caption className="tournament-table-caption">All amounts in competition chips</caption>
+            <caption className="tournament-table-caption">{t('All amounts in competition chips')}</caption>
             <thead>
               <tr>
-                <th>Entrant / tournament</th>
-                <th>Entry</th>
-                <th>Reward</th>
-                <th>Prize</th>
-                <th>Play net</th>
-                <th>Settlement net</th>
-                <th>Recorded paid</th>
-                <th>Outstanding</th>
-                <th>Record</th>
+                <th>{t('Entrant / tournament')}</th>
+                <th>{t('Entry')}</th>
+                <th>{t('Reward')}</th>
+                <th>{t('Prize')}</th>
+                <th>{t('Play net')}</th>
+                <th>{t('Settlement net')}</th>
+                <th>{t('Recorded paid')}</th>
+                <th>{t('Outstanding')}</th>
+                <th>{t('Record ')}</th>
               </tr>
             </thead>
             <tbody>
@@ -410,13 +418,13 @@ function EarningsAdmin({
                       </a>
                     </div>
                   </td>
-                  <td>{chips(r.entryFee)}</td>
-                  <td>{chips(r.joiningReward)}</td>
-                  <td>{chips(r.prize)}</td>
-                  <td>{signedChips(r.playNet)}</td>
-                  <td>{signedChips(r.settlementNet)}</td>
-                  <td>{signedChips(r.recordedPaid)}</td>
-                  <td>{signedChips(r.outstanding)}</td>
+                  <td>{fmt(r.entryFee)}</td>
+                  <td>{fmt(r.joiningReward)}</td>
+                  <td>{fmt(r.prize)}</td>
+                  <td>{net(r.playNet)}</td>
+                  <td>{net(r.settlementNet)}</td>
+                  <td>{net(r.recordedPaid)}</td>
+                  <td>{net(r.outstanding)}</td>
                   <td>
                     <Button
                       type="button"
@@ -427,7 +435,7 @@ function EarningsAdmin({
                         setError('');
                       }}
                     >
-                      Record settlement
+                      {t('Record settlement')}
                     </Button>
                   </td>
                 </tr>
@@ -438,8 +446,8 @@ function EarningsAdmin({
       ) : (
         <p className="arena-muted">
           {data.earnings.length
-            ? 'No earnings match this search.'
-            : 'Earnings appear when entrants enroll.'}
+            ? t('No earnings match this search.')
+            : t('Earnings appear when entrants enroll.')}
         </p>
       )}
       {(current || attempt) && (
@@ -458,7 +466,7 @@ function EarningsAdmin({
               requestId: crypto.randomUUID(),
             };
             if (!Number.isSafeInteger(payload.amount) || payload.amount === 0) {
-              setError('Enter a non-zero whole number of chips.');
+              setError(t('Enter a non-zero whole number of chips.'));
               return;
             }
             hold(payload);
@@ -474,7 +482,7 @@ function EarningsAdmin({
               });
               hold(null);
               setSelected(null);
-              await onUpdated('Tournament settlement recorded. No automated payment was sent.');
+              await onUpdated(t('Tournament settlement recorded. No automated payment was sent.'));
             } catch (e) {
               if (definiteWriteFailure(e)) {
                 hold(null);
@@ -482,7 +490,7 @@ function EarningsAdmin({
                 setError(tournamentError(e));
               } else
                 setError(
-                  `${tournamentError(e)} The result is unconfirmed. Retry the same record below; its request ID is retained.`,
+                  `${tournamentError(e)} ${t('The result is unconfirmed. Retry the same record below; its request ID is retained.')}`,
                 );
             } finally {
               sending.current = false;
@@ -490,14 +498,20 @@ function EarningsAdmin({
             }
           }}
         >
-          <h3>Record settlement · {current?.playerName ?? `User #${attempt!.userId}`}</h3>
+          <h3>
+            {t('Record settlement · {name}', {
+              name: current?.playerName ?? t('User #{n}', { n: attempt!.userId }),
+            })}
+          </h3>
           <p className="arena-muted mb-4">
-            {current?.tournamentName ?? attempt!.tournamentId}. Record positive chips paid to this
-            entrant, or negative chips received from them.
+            {t(
+              '{name}. Record positive chips paid to this entrant, or negative chips received from them.',
+              { name: current?.tournamentName ?? attempt!.tournamentId },
+            )}
           </p>
           <fieldset disabled={busy || !!attempt} className="tournament-fieldset arena-form">
             <label className="arena-field">
-              Signed amount · chips
+              {t('Signed amount · chips')}
               <Input
                 name="amount"
                 type="number"
@@ -507,13 +521,13 @@ function EarningsAdmin({
               />
             </label>
             <label className="arena-field">
-              Settlement note
+              {t('Settlement note')}
               <Input
                 name="note"
                 maxLength={500}
                 required
                 defaultValue={attempt?.note ?? ''}
-                placeholder="Reference for this manual settlement"
+                placeholder={t('Reference for this manual settlement')}
               />
             </label>
           </fieldset>
@@ -524,20 +538,20 @@ function EarningsAdmin({
           )}
           {attempt && !error && (
             <p className="arena-muted mt-4">
-              A previous record is awaiting confirmation. Retry with its retained request ID.
+              {t('A previous record is awaiting confirmation. Retry with its retained request ID.')}
             </p>
           )}
           <div className="arena-controls mt-4">
             <Button disabled={busy}>
               {busy
-                ? 'Recording…'
+                ? t('Recording…')
                 : attempt
-                  ? 'Retry same settlement record'
-                  : 'Record manual settlement'}
+                  ? t('Retry same settlement record')
+                  : t('Record manual settlement')}
             </Button>
             {!attempt && (
               <Button type="button" variant="secondary" onClick={() => setSelected(null)}>
-                Cancel
+                {t('Cancel')}
               </Button>
             )}
           </div>
@@ -577,10 +591,9 @@ function SponsorsAdmin({
     <section className="arena-panel">
       <div className="tournament-section-head">
         <div>
-          <h2>Sponsors & placements</h2>
+          <h2>{t('Sponsors & placements')}</h2>
           <p className="arena-muted">
-            Publish plain-text sponsor creative and track booked chips separately from recorded
-            receipts.
+            {t('Publish plain-text sponsor creative and track booked chips separately from recorded receipts.')}
           </p>
         </div>
         <Button
@@ -591,21 +604,21 @@ function SponsorsAdmin({
             setError('');
           }}
         >
-          Create campaign
+          {t('Create campaign')}
         </Button>
       </div>
       <dl className="tournament-totals">
         <div>
-          <dt>Booked</dt>
-          <dd>{chips(data.totals.booked)}</dd>
+          <dt>{t('Booked')}</dt>
+          <dd>{fmt(data.totals.booked)}</dd>
         </div>
         <div>
-          <dt>Received · recorded</dt>
-          <dd>{chips(data.totals.received)}</dd>
+          <dt>{t('Received · recorded')}</dt>
+          <dd>{fmt(data.totals.received)}</dd>
         </div>
         <div>
-          <dt>Prize contributions</dt>
-          <dd>{chips(data.totals.prizeContributions)}</dd>
+          <dt>{t('Prize contributions')}</dt>
+          <dd>{fmt(data.totals.prizeContributions)}</dd>
         </div>
       </dl>
       {error && (
@@ -618,13 +631,13 @@ function SponsorsAdmin({
           <table className="arena-table">
             <thead>
               <tr>
-                <th>Campaign</th>
-                <th>Placement</th>
-                <th>Window</th>
-                <th>Booked</th>
-                <th>Received</th>
-                <th>To prizes</th>
-                <th>Actions</th>
+                <th>{t('Campaign')}</th>
+                <th>{t('Placement')}</th>
+                <th>{t('Window')}</th>
+                <th>{t('Booked')}</th>
+                <th>{t('Received')}</th>
+                <th>{t('To prizes')}</th>
+                <th>{t('Actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -633,24 +646,27 @@ function SponsorsAdmin({
                   <td className="name">
                     {c.name}
                     <div className="arena-muted">
-                      {c.active ? 'Active' : 'Inactive'} · revision {c.revision}
+                      {t('{s} · revision {n}', {
+                        s: c.active ? t('Active') : t('Inactive'),
+                        n: c.revision,
+                      })}
                     </div>
                   </td>
                   <td>
-                    {c.placement}
+                    {t(c.placement)}
                     <div className="arena-muted">
                       {c.tournamentId
-                        ? (tournaments.find((t) => t.id === c.tournamentId)?.name ?? c.tournamentId)
-                        : 'All tournaments'}
+                        ? (tournaments.find((ev) => ev.id === c.tournamentId)?.name ?? c.tournamentId)
+                        : t('All tournaments')}
                     </div>
                   </td>
                   <td>
-                    {eventDate(c.startsAt)}
-                    <div className="arena-muted">to {eventDate(c.endsAt)}</div>
+                    {when(c.startsAt)}
+                    <div className="arena-muted">{t('to {date}', { date: when(c.endsAt) })}</div>
                   </td>
-                  <td>{chips(c.bookedAmount)}</td>
-                  <td>{chips(c.receivedAmount)}</td>
-                  <td>{chips(c.prizeContribution)}</td>
+                  <td>{fmt(c.bookedAmount)}</td>
+                  <td>{fmt(c.receivedAmount)}</td>
+                  <td>{fmt(c.prizeContribution)}</td>
                   <td>
                     <div className="arena-controls">
                       <Button
@@ -662,7 +678,7 @@ function SponsorsAdmin({
                           setError('');
                         }}
                       >
-                        Edit
+                        {t('Edit')}
                       </Button>
                       <Button
                         type="button"
@@ -673,7 +689,7 @@ function SponsorsAdmin({
                           setError('');
                         }}
                       >
-                        Record receipt
+                        {t('Record receipt')}
                       </Button>
                       <Button
                         type="button"
@@ -686,7 +702,11 @@ function SponsorsAdmin({
                           setError('');
                           try {
                             await api.saveSponsor({ ...sponsorBody(c), active: !c.active }, c.id);
-                            await onUpdated(`${c.name} ${c.active ? 'deactivated' : 'activated'}.`);
+                            await onUpdated(
+                              c.active
+                                ? t('{name} deactivated.', { name: c.name })
+                                : t('{name} activated.', { name: c.name }),
+                            );
                           } catch (e) {
                             setError(tournamentError(e));
                           } finally {
@@ -695,7 +715,7 @@ function SponsorsAdmin({
                           }
                         }}
                       >
-                        {c.active ? 'Deactivate' : 'Activate'}
+                        {c.active ? t('Deactivate') : t('Activate')}
                       </Button>
                     </div>
                   </td>
@@ -706,8 +726,7 @@ function SponsorsAdmin({
         </div>
       ) : (
         <p className="arena-muted">
-          No sponsor campaigns yet. Create a campaign with a destination, placement and publication
-          window.
+          {t('No sponsor campaigns yet. Create a campaign with a destination, placement and publication window.')}
         </p>
       )}
       {editing && (
@@ -719,7 +738,7 @@ function SponsorsAdmin({
           onSave={async (body) => {
             await api.saveSponsor(body, editing === 'new' ? undefined : editing.id);
             setEditing(null);
-            await onUpdated('Sponsor campaign saved.');
+            await onUpdated(t('Sponsor campaign saved.'));
           }}
         />
       )}
@@ -747,12 +766,12 @@ function SponsorsAdmin({
               payload.prizeContribution > payload.amount
             ) {
               setError(
-                'Receipt amount must be positive whole chips. Prize contribution must be between zero and the receipt amount.',
+                t('Receipt amount must be positive whole chips. Prize contribution must be between zero and the receipt amount.'),
               );
               return;
             }
             if (payload.prizeContribution > 0 && !payload.tournamentId) {
-              setError('Choose a tournament for this prize contribution.');
+              setError(t('Choose a tournament for this prize contribution.'));
               return;
             }
             hold(payload);
@@ -769,7 +788,7 @@ function SponsorsAdmin({
               });
               hold(null);
               setReceipt(null);
-              await onUpdated('Sponsor receipt and prize contribution recorded.');
+              await onUpdated(t('Sponsor receipt and prize contribution recorded.'));
             } catch (e) {
               if (definiteWriteFailure(e)) {
                 hold(null);
@@ -777,7 +796,7 @@ function SponsorsAdmin({
                 setError(tournamentError(e));
               } else
                 setError(
-                  `${tournamentError(e)} The result is unconfirmed. Retry this receipt with the same retained request ID.`,
+                  `${tournamentError(e)} ${t('The result is unconfirmed. Retry this receipt with the same retained request ID.')}`,
                 );
             } finally {
               pending.current = false;
@@ -785,14 +804,13 @@ function SponsorsAdmin({
             }
           }}
         >
-          <h3>Record receipt · {selected?.name ?? attempt!.sponsorId}</h3>
+          <h3>{t('Record receipt · {name}', { name: selected?.name ?? attempt!.sponsorId })}</h3>
           <p className="arena-muted mb-4">
-            An immutable platform record of received competition chips. A contribution transfers
-            part of this receipt to the selected tournament pool.
+            {t('An immutable platform record of received competition chips. A contribution transfers part of this receipt to the selected tournament pool.')}
           </p>
           <fieldset disabled={busy || !!attempt} className="tournament-fieldset arena-form">
             <label className="arena-field">
-              Received amount · chips
+              {t('Received amount · chips')}
               <Input
                 name="amount"
                 type="number"
@@ -804,7 +822,7 @@ function SponsorsAdmin({
               />
             </label>
             <label className="arena-field">
-              Prize contribution · chips
+              {t('Prize contribution · chips')}
               <Input
                 name="prizeContribution"
                 type="number"
@@ -816,45 +834,44 @@ function SponsorsAdmin({
               />
             </label>
             <label className="arena-field">
-              Tournament receiving contribution
+              {t('Tournament receiving contribution')}
               <select
                 name="tournamentId"
                 className="arena-input"
                 defaultValue={attempt?.tournamentId ?? selected?.tournamentId ?? ''}
               >
-                <option value="">No tournament contribution</option>
+                <option value="">{t('No tournament contribution')}</option>
                 {tournaments
                   .filter(
-                    (t) =>
-                      (t.approvalStatus === 'approved' &&
-                        !['completed', 'cancelled'].includes(t.status)) ||
-                      t.id === attempt?.tournamentId,
+                    (ev) =>
+                      (ev.approvalStatus === 'approved' &&
+                        !['completed', 'cancelled'].includes(ev.status)) ||
+                      ev.id === attempt?.tournamentId,
                   )
-                  .map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
+                  .map((ev) => (
+                    <option key={ev.id} value={ev.id}>
+                      {ev.name}
                     </option>
                   ))}
               </select>
             </label>
             <label className="arena-field">
-              Receipt reference or note
+              {t('Receipt reference or note')}
               <Input name="note" maxLength={1000} defaultValue={attempt?.note ?? ''} />
             </label>
           </fieldset>
           {attempt && (
             <p className="arena-muted mt-4">
-              The pending receipt is preserved until its result is confirmed. Retrying reuses the
-              same request ID.
+              {t('The pending receipt is preserved until its result is confirmed. Retrying reuses the same request ID.')}
             </p>
           )}
           <div className="arena-controls mt-4">
             <Button disabled={busy}>
               {busy
-                ? 'Recording…'
+                ? t('Recording…')
                 : attempt
-                  ? 'Retry same receipt record'
-                  : 'Record received chips'}
+                  ? t('Retry same receipt record')
+                  : t('Record received chips')}
             </Button>
             {!attempt && (
               <Button
@@ -863,7 +880,7 @@ function SponsorsAdmin({
                 disabled={busy}
                 onClick={() => setReceipt(null)}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
             )}
           </div>
@@ -898,11 +915,11 @@ function SponsorForm({
           endsAt = new Date(String(f.get('endsAt'))).getTime();
         const destinationUrl = String(f.get('destinationUrl')).trim();
         if (!safeExternalUrl(destinationUrl)) {
-          setError('Use an HTTPS destination without embedded credentials.');
+          setError(t('Use an HTTPS destination without embedded credentials.'));
           return;
         }
         if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt) {
-          setError('The end of the publication window must be after its start.');
+          setError(t('The end of the publication window must be after its start.'));
           return;
         }
         const body = {
@@ -932,19 +949,19 @@ function SponsorForm({
         }
       }}
     >
-      <h3>{c ? `Edit ${c.name}` : 'New sponsor campaign'}</h3>
+      <h3>{c ? t('Edit {name}', { name: c.name }) : t('New sponsor campaign')}</h3>
       <fieldset disabled={busy} className="tournament-fieldset arena-form">
-        <legend>Public creative</legend>
+        <legend>{t('Public creative')}</legend>
         <label className="arena-field">
-          Sponsor name
+          {t('Sponsor name')}
           <Input name="name" required minLength={2} maxLength={100} defaultValue={c?.name ?? ''} />
         </label>
         <label className="arena-field">
-          Headline
+          {t('Headline')}
           <Input name="headline" required maxLength={160} defaultValue={c?.headline ?? ''} />
         </label>
         <label className="arena-field wide">
-          Description
+          {t('Description')}
           <textarea
             className="arena-input"
             name="description"
@@ -954,7 +971,7 @@ function SponsorForm({
           />
         </label>
         <label className="arena-field wide">
-          Destination URL · HTTPS
+          {t('Destination URL · HTTPS')}
           <Input
             name="destinationUrl"
             type="url"
@@ -964,30 +981,30 @@ function SponsorForm({
           />
         </label>
         <label className="arena-field">
-          Placement
+          {t('Placement')}
           <select
             className="arena-input"
             name="placement"
             defaultValue={c?.placement ?? 'directory'}
           >
-            <option value="directory">Tournament directory</option>
-            <option value="tournament">Tournament page</option>
-            <option value="watch">Public watch page</option>
+            <option value="directory">{t('Tournament directory')}</option>
+            <option value="tournament">{t('Tournament page')}</option>
+            <option value="watch">{t('Public watch page')}</option>
           </select>
         </label>
         <label className="arena-field">
-          Tournament scope
+          {t('Tournament scope')}
           <select className="arena-input" name="tournamentId" defaultValue={c?.tournamentId ?? ''}>
-            <option value="">All tournaments</option>
-            {tournaments.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
+            <option value="">{t('All tournaments')}</option>
+            {tournaments.map((ev) => (
+              <option key={ev.id} value={ev.id}>
+                {ev.name}
               </option>
             ))}
           </select>
         </label>
         <label className="arena-field">
-          Publish from · local time
+          {t('Publish from · local time')}
           <Input
             name="startsAt"
             type="datetime-local"
@@ -996,7 +1013,7 @@ function SponsorForm({
           />
         </label>
         <label className="arena-field">
-          Publish until · local time
+          {t('Publish until · local time')}
           <Input
             name="endsAt"
             type="datetime-local"
@@ -1006,13 +1023,13 @@ function SponsorForm({
         </label>
         <label className="tournament-checkbox tournament-wide">
           <input type="checkbox" name="active" defaultChecked={c?.active ?? true} />
-          Active during the publication window
+          {t('Active during the publication window')}
         </label>
       </fieldset>
       <fieldset disabled={busy} className="tournament-fieldset arena-form">
-        <legend>Private accounting</legend>
+        <legend>{t('Private accounting')}</legend>
         <label className="arena-field">
-          Booked amount · chips
+          {t('Booked amount · chips')}
           <Input
             name="bookedAmount"
             type="number"
@@ -1024,7 +1041,7 @@ function SponsorForm({
           />
         </label>
         <label className="arena-field wide">
-          Internal note
+          {t('Internal note')}
           <textarea
             className="arena-input"
             name="note"
@@ -1034,8 +1051,7 @@ function SponsorForm({
           />
         </label>
         <p className="arena-muted tournament-wide">
-          Booked amounts and internal notes stay in administration. Received amounts and prize
-          contributions are added through immutable receipt records.
+          {t('Booked amounts and internal notes stay in administration. Received amounts and prize contributions are added through immutable receipt records.')}
         </p>
       </fieldset>
       {error && (
@@ -1045,10 +1061,10 @@ function SponsorForm({
       )}
       <div className="arena-controls">
         <Button disabled={busy}>
-          {busy ? 'Saving…' : c ? 'Save campaign' : 'Create campaign'}
+          {busy ? t('Saving…') : c ? t('Save campaign') : t('Create campaign')}
         </Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
-          Cancel editing
+          {t('Cancel editing')}
         </Button>
       </div>
     </form>

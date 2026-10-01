@@ -8,6 +8,8 @@ import {
 import { api } from '../../shared/api.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 export function CommissionControl({ onChanged }: { onChanged: () => void }) {
   const [settings, setSettings] = useState<CommissionSettings | null>(null);
@@ -28,7 +30,7 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
       setRate(String(data.commissionBps / 100));
       setStale(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load the house cut.');
+      setError(e instanceof Error ? e.message : t('Could not load the house cut.'));
     } finally {
       setLoading(false);
     }
@@ -43,7 +45,7 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
     e.preventDefault();
     if (!settings || busy || stale) return;
     if (!valid) {
-      setError('Enter 0 to 100, using at most two decimal places.');
+      setError(t('Enter 0 to 100, using at most two decimal places.'));
       return;
     }
     setBusy(true);
@@ -55,15 +57,22 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
       setRate(String(result.commissionBps / 100));
       setSuccess(
         scope === 'all_rooms'
-          ? `${commissionRateLabel(result.commissionBps)} saved. ${result.affectedRooms} existing room${result.affectedRooms === 1 ? '' : 's'} updated for their next hand.`
-          : `${commissionRateLabel(result.commissionBps)} saved for newly created rooms.`,
+          ? t(
+              result.affectedRooms === 1
+                ? '{rate} saved. {n} existing room updated for their next hand.'
+                : '{rate} saved. {n} existing rooms updated for their next hand.',
+              { rate: commissionRateLabel(result.commissionBps), n: result.affectedRooms },
+            )
+          : t('{rate} saved for newly created rooms.', {
+              rate: commissionRateLabel(result.commissionBps),
+            }),
       );
       onChanged();
     } catch (e) {
       const message =
         e instanceof Error
           ? e.message
-          : 'Could not save the house cut. Reload to check the current value.';
+          : t('Could not save the house cut. Reload to check the current value.');
       setError(message);
       // A failed write can be ambiguous (the connection can drop after commit).
       // Reload before another save so the operator sees the authoritative state.
@@ -82,26 +91,26 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
       >
         <div className="admin-section-heading">
           <div>
-            <h2 id="house-cut-heading">House cut</h2>
-            <p>Change the platform commission directly from your account.</p>
+            <h2 id="house-cut-heading">{t('House cut')}</h2>
+            <p>{t('Change the platform commission directly from your account.')}</p>
           </div>
           <Button variant="secondary" onClick={() => void load()} disabled={busy || loading}>
-            Reload settings
+            {t('Reload settings')}
           </Button>
         </div>
         {loading && !settings ? (
           <div className="admin-loading" role="status">
-            Loading settings…
+            {t('Loading settings…')}
           </div>
         ) : (
           settings && (
             <form onSubmit={(e) => void save(e)}>
               <div className="admin-rate-row">
                 <label className="admin-rate-input">
-                  Commission per pot
+                  {t('Commission per pot')}
                   <div>
                     <Input
-                      aria-label="House cut percentage"
+                      aria-label={t('House cut percentage')}
                       inputMode="decimal"
                       value={rate}
                       disabled={busy || loading}
@@ -114,12 +123,12 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
                   </div>
                 </label>
                 <div className="admin-rate-current">
-                  <span>Current default</span>
+                  <span>{t('Current default')}</span>
                   <strong>{commissionRateLabel(settings.commissionBps)}</strong>
                 </div>
               </div>
               <fieldset disabled={busy || loading} className="admin-scope">
-                <legend>Apply this change to</legend>
+                <legend>{t('Apply this change to')}</legend>
                 <label>
                   <input
                     type="radio"
@@ -129,10 +138,8 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
                     onChange={() => setScope('all_rooms')}
                   />
                   <span>
-                    <strong>All rooms</strong>
-                    <span>
-                      Existing rooms use this rate from their next hand. New rooms use it too.
-                    </span>
+                    <strong>{t('All rooms')}</strong>
+                    <span>{t('Existing rooms use this rate from their next hand. New rooms use it too.')}</span>
                   </span>
                 </label>
                 <label>
@@ -144,22 +151,21 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
                     onChange={() => setScope('new_rooms')}
                   />
                   <span>
-                    <strong>New rooms only</strong>
-                    <span>Existing rooms keep their currently assigned rate.</span>
+                    <strong>{t('New rooms only')}</strong>
+                    <span>{t('Existing rooms keep their currently assigned rate.')}</span>
                   </span>
                 </label>
               </fieldset>
               <div className="admin-rate-example">
-                <span>On a 2,000-chip pot</span>
+                <span>{t('On a 2,000-chip pot')}</span>
                 <strong>
                   {valid
-                    ? `${fmt(commissionForPot(2000, parsed))} chips to the house`
-                    : 'Enter a valid rate'}
+                    ? t('{n} chips to the house', { n: fmt(commissionForPot(2000, parsed)) })
+                    : t('Enter a valid rate')}
                 </strong>
               </div>
               <p className="admin-help">
-                Each pot is rounded down to whole chips. Completed hands and hands in progress keep
-                their original rate.
+                {t('Each pot is rounded down to whole chips. Completed hands and hands in progress keep their original rate.')}
               </p>
               {success && (
                 <p className="admin-success" role="status">
@@ -168,9 +174,9 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
               )}
               <div className="admin-form-footer">
                 <Button type="submit" disabled={busy || loading || !valid || stale}>
-                  {busy ? 'Saving…' : 'Save house cut'}
+                  {busy ? t('Saving…') : t('Save house cut')}
                 </Button>
-                <span>Applies immediately. No redeploy needed.</span>
+                <span>{t('Applies immediately. No redeploy needed.')}</span>
               </div>
             </form>
           )
@@ -179,26 +185,24 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
           <p className="admin-error" role="alert">
             {error}{' '}
             <button type="button" onClick={() => void load()} disabled={busy}>
-              Reload settings
+              {t('Reload settings')}
             </button>
           </p>
         )}
       </section>
       <aside className="admin-panel admin-policy-note">
-        <h2>Qualification rules</h2>
+        <h2>{t('Qualification rules')}</h2>
         <p>
-          Rooms can require up to <strong>30 hands</strong> before winnings qualify.
+          {t('Rooms can require up to')} <strong>30</strong>
+          {t(' hands before winnings qualify.')}
         </p>
-        <p>
-          Hosts can choose a lower requirement or set it to zero. Existing requirements above 30
-          have been reduced.
-        </p>
+        <p>{t('Hosts can choose a lower requirement or set it to zero. Existing requirements above 30 have been reduced.')}</p>
       </aside>
       <section className="admin-panel admin-history" aria-labelledby="rate-history-heading">
         <div className="admin-section-heading">
           <div>
-            <h2 id="rate-history-heading">Rate history</h2>
-            <p>The latest 50 changes, with their scope and administrator.</p>
+            <h2 id="rate-history-heading">{t('Rate history')}</h2>
+            <p>{t('The latest 50 changes, with their scope and administrator.')}</p>
           </div>
         </div>
         {settings ? (
@@ -206,10 +210,10 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
             <table>
               <thead>
                 <tr>
-                  <th>Changed</th>
-                  <th>House cut</th>
-                  <th>Applies to</th>
-                  <th>Changed by</th>
+                  <th>{t('Changed')}</th>
+                  <th>{t('House cut')}</th>
+                  <th>{t('Applies to')}</th>
+                  <th>{t('Changed by')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,10 +221,7 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
                   <tr key={change.id}>
                     <td>
                       <time dateTime={new Date(change.createdAt).toISOString()}>
-                        {new Date(change.createdAt).toLocaleString(undefined, {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        })}
+                        {fmtDate(change.createdAt)} {fmtTime(change.createdAt)}
                       </time>
                     </td>
                     <td className="admin-rate-history-value">
@@ -230,8 +231,8 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
                       <strong>{commissionRateLabel(change.commissionBps)}</strong>
                     </td>
                     <td>
-                      {change.scope === 'all_rooms' ? 'All rooms' : 'New rooms only'}
-                      <small>{change.affectedRooms} existing rooms updated</small>
+                      {change.scope === 'all_rooms' ? t('All rooms') : t('New rooms only')}
+                      <small>{t('{n} existing rooms updated', { n: change.affectedRooms })}</small>
                     </td>
                     <td>{change.changedByName}</td>
                   </tr>
@@ -240,7 +241,7 @@ export function CommissionControl({ onChanged }: { onChanged: () => void }) {
             </table>
           </div>
         ) : (
-          <p className="admin-help">Load settings to view the change history.</p>
+          <p className="admin-help">{t('Load settings to view the change history.')}</p>
         )}
       </section>
     </div>

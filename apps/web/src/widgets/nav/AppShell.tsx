@@ -21,6 +21,7 @@ import {
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { Dialog, Input } from '../../shared/ui/index.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
@@ -132,6 +133,11 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
     all.find((item) => item.to === loc.pathname)?.label ??
     (loc.pathname.startsWith('/tournaments/') ? 'Tournament' : 'Table');
   const waiting = (pending?.invites ?? 0) + (pending?.friendRequests ?? 0);
+  // Match either the English source or its translation, so both languages
+  // find the same destination in the ⌘K dialog.
+  const q = query.trim().toLowerCase();
+  const matches = (item: Destination) =>
+    item.label.toLowerCase().includes(q) || t(item.label).toLowerCase().includes(q);
 
   function toggleSidebar() {
     setCollapsed((previous) => {
@@ -147,7 +153,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
       logout();
       navigate('/login', { replace: true });
     } catch {
-      setLogoutError('Could not log out. Check your connection and try again.');
+      setLogoutError(t('Could not log out. Check your connection and try again.'));
     } finally {
       setLoggingOut(false);
     }
@@ -157,12 +163,13 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
       loc.pathname === item.to ||
       (item.to === '/tournaments' && loc.pathname.startsWith('/tournaments/'));
     const Icon = item.icon;
-    const name = item.label + (item.badge ? ' (' + item.badge + ' waiting)' : '');
+    const label = t(item.label);
+    const name = item.badge ? t('{label} ({n} waiting)', { label, n: item.badge }) : label;
     return (
       <Link
         key={item.to}
         to={item.to}
-        aria-label={name + (newTab && !active ? ' (opens in a new tab)' : '')}
+        aria-label={newTab && !active ? t('{name} (opens in a new tab)', { name }) : name}
         aria-current={active ? 'page' : undefined}
         title={rail ? name : undefined}
         {...(newTab && !active ? { target: '_blank', rel: 'noreferrer' } : {})}
@@ -173,7 +180,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
         className={cn('zeus-nav-item', active && 'is-active', rail && 'is-rail')}
       >
         <Icon className="size-5 shrink-0" aria-hidden />
-        {!rail && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
+        {!rail && <span className="min-w-0 flex-1 truncate">{label}</span>}
         {!!item.badge && (
           <span className={cn('zeus-nav-badge', rail && 'is-dot')} aria-hidden>
             {!rail && item.badge}
@@ -184,11 +191,11 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   };
   const navigation = (rail: boolean) => (
     <>
-      <nav aria-label="Main navigation" className="zeus-nav-list">
+      <nav aria-label={t('Main navigation')} className="zeus-nav-list">
         {primary.map((item) => row(item, rail))}
         {tableLinks.length > 0 && (
           <div className="zeus-nav-section">
-            {!rail && <p className="zeus-nav-label">Your tables</p>}
+            {!rail && <p className="zeus-nav-label">{t('Your tables')}</p>}
             {tableLinks.map((item) => row(item, rail))}
           </div>
         )}
@@ -199,28 +206,36 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
             to="/lobby"
             {...(newTab ? { target: '_blank', rel: 'noreferrer' } : {})}
             className={cn('zeus-nav-item', rail && 'is-rail')}
-            title="Invites and friend requests"
+            title={t('Invites and friend requests')}
             aria-label={
-              waiting + ' invites and friend requests' + (newTab ? ' (opens in a new tab)' : '')
+              newTab
+                ? t('{name} (opens in a new tab)', {
+                    name: t('{n} invites and friend requests', { n: waiting }),
+                  })
+                : t('{n} invites and friend requests', { n: waiting })
             }
           >
             <span className="zeus-pending-count">{waiting}</span>
-            {!rail && <span className="truncate text-xs">Invites & requests</span>}
+            {!rail && <span className="truncate text-xs">{t('Invites & requests')}</span>}
           </Link>
         )}
-        <nav aria-label="Account navigation">{secondary.map((item) => row(item, rail))}</nav>
+        <nav aria-label={t('Account navigation')}>{secondary.map((item) => row(item, rail))}</nav>
         <AppearanceToggle compact={rail} />
         <div className="zeus-account">
           <Link
             to={'/players/' + auth.userId}
-            aria-label={'Your profile' + (newTab ? ' (opens in a new tab)' : '')}
-            title={rail ? 'Your profile' : undefined}
+            aria-label={
+              newTab
+                ? t('{name} (opens in a new tab)', { name: t('Your profile') })
+                : t('Your profile')
+            }
+            title={rail ? t('Your profile') : undefined}
             {...(newTab ? { target: '_blank', rel: 'noreferrer' } : {})}
             className="flex min-w-0 flex-1 items-center gap-2"
           >
             <Avatar
               userId={auth.userId ?? 0}
-              name={prefs.displayName || auth.username || 'You'}
+              name={prefs.displayName || auth.username || t('You')}
               size="sm"
               version={prefs.avatarVersion}
             />
@@ -234,8 +249,8 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
             <ZeusButton
               variant="ghost"
               iconOnly
-              aria-label="Log out"
-              title="Log out"
+              aria-label={t('Log out')}
+              title={t('Log out')}
               disabled={loggingOut}
               onClick={() => void doLogout()}
               leadingIcon={RiLogoutBoxLine}
@@ -246,8 +261,8 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
           <ZeusButton
             variant="ghost"
             iconOnly
-            aria-label="Log out"
-            title="Log out"
+            aria-label={t('Log out')}
+            title={t('Log out')}
             disabled={loggingOut}
             onClick={() => void doLogout()}
             leadingIcon={RiLogoutBoxLine}
@@ -261,12 +276,16 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   return (
     <div className={cn('zeus-app-shell', collapsed && 'rail-mode')}>
       <a href="#app-content" className="zeus-skip-link">
-        Skip to content
+        {t('Skip to content')}
       </a>
-      <aside className="zeus-sidebar" aria-label="Sidebar">
+      <aside className="zeus-sidebar" aria-label={t('Sidebar')}>
         <Link
           to="/lobby"
-          aria-label={'4AM Casino lobby' + (newTab ? ' (opens in a new tab)' : '')}
+          aria-label={
+            newTab
+              ? t('{name} (opens in a new tab)', { name: t('4AM Casino lobby') })
+              : t('4AM Casino lobby')
+          }
           {...(newTab ? { target: '_blank', rel: 'noreferrer' } : {})}
           title="4AM Casino"
           className="zeus-brand"
@@ -283,19 +302,19 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
             variant="ghost"
             iconOnly={collapsed}
             leadingIcon={RiSearchLine}
-            aria-label="Search navigation"
-            title="Search navigation (⌘K)"
+            aria-label={t('Search navigation')}
+            title={t('Search navigation (⌘K)')}
             onClick={() => setSearchOpen(true)}
             className={cn('min-w-0', !collapsed && 'flex-1 justify-start')}
           >
-            {!collapsed && 'Search'}
+            {!collapsed && t('Search')}
           </ZeusButton>
           <ZeusButton
             variant="ghost"
             iconOnly
             leadingIcon={RiSideBarLine}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? t('Expand sidebar') : t('Collapse sidebar')}
+            title={collapsed ? t('Expand sidebar') : t('Collapse sidebar')}
             aria-expanded={!collapsed}
             onClick={toggleSidebar}
           />
@@ -308,19 +327,19 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
             variant="ghost"
             iconOnly
             leadingIcon={RiMenuLine}
-            aria-label="Open navigation"
+            aria-label={t('Open navigation')}
             aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen(true)}
             className="md:hidden"
           />
           <span className="text-text-tertiary">4AM Casino</span>
           <RiArrowRightSLine className="size-4 text-foreground-icon-tertiary" aria-hidden />
-          <span className="truncate text-text-primary">{pageName}</span>
+          <span className="truncate text-text-primary">{t(pageName)}</span>
           <ZeusButton
             variant="ghost"
             iconOnly
             leadingIcon={RiSearchLine}
-            aria-label="Search pages"
+            aria-label={t('Search pages')}
             onClick={() => setSearchOpen(true)}
             className="ml-auto"
           />
@@ -329,7 +348,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
           {children}
         </main>
       </div>
-      <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Navigation">
+      <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} title={t('Navigation')}>
         <div className="zeus-mobile-nav">{navigation(false)}</div>
       </Dialog>
       <Dialog
@@ -338,33 +357,34 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
           setSearchOpen(false);
           setQuery('');
         }}
-        title="Go to"
+        title={t('Go to')}
       >
         <div ref={searchInput}>
           <Input
-            aria-label="Search pages and tables"
-            placeholder="Search pages and tables…"
+            aria-label={t('Search pages and tables')}
+            placeholder={t('Search pages and tables…')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <nav aria-label="Search results" className="mt-3 max-h-[55dvh] space-y-1 overflow-y-auto">
-          {all
-            .filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase()))
-            .map((item) => row(item))}
-          {!all.some((item) => item.label.toLowerCase().includes(query.trim().toLowerCase())) && (
+        <nav
+          aria-label={t('Search results')}
+          className="mt-3 max-h-[55dvh] space-y-1 overflow-y-auto"
+        >
+          {all.filter(matches).map((item) => row(item))}
+          {!all.some(matches) && (
             <p role="status" className="px-2 py-6 text-sm text-text-secondary">
-              No pages or tables match “{query}”.
+              {t('No pages or tables match “{query}”.', { query })}
             </p>
           )}
         </nav>
       </Dialog>
-      <Dialog open={!!logoutError} onClose={() => setLogoutError('')} title="Log out">
+      <Dialog open={!!logoutError} onClose={() => setLogoutError('')} title={t('Log out')}>
         <p role="alert" className="mb-4 text-sm">
           {logoutError}
         </p>
         <ZeusButton disabled={loggingOut} onClick={() => void doLogout()}>
-          Try again
+          {t('Try again')}
         </ZeusButton>
       </Dialog>
     </div>

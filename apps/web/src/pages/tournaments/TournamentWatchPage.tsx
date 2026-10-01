@@ -12,6 +12,7 @@ import { carriesStacks, tournamentFormatLabel } from '@4am/shared';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
+import { t } from '../../shared/i18n/index.ts';
 import { safeExternalUrl, SponsorPlacements } from './SponsorPlacements.tsx';
 import './broadcast.css';
 
@@ -28,7 +29,7 @@ type HandReplay = {
 const number = (value: number) => value.toLocaleString();
 const signed = (value: number) => `${value > 0 ? '+' : ''}${number(value)}`;
 const errorText = (error: unknown) =>
-  error instanceof Error ? error.message : 'Connection interrupted. Please try again.';
+  error instanceof Error ? error.message : t('Connection interrupted. Please try again.');
 const time = (value: number) =>
   new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -48,10 +49,12 @@ async function publicRequest<T>(path: string, signal: AbortSignal): Promise<T> {
     throw new PublicRequestError(
       response.status,
       response.status === 404 || response.status === 403
-        ? 'This tournament is not available for public watching. It may be private or awaiting approval.'
+        ? t(
+            'This tournament is not available for public watching. It may be private or awaiting approval.',
+          )
         : response.status === 409
-          ? 'This hand is still in progress. Its replay becomes available after it finishes.'
-          : 'Public updates are temporarily unavailable. We’ll keep trying.',
+          ? t('This hand is still in progress. Its replay becomes available after it finishes.')
+          : t('Public updates are temporarily unavailable. We’ll keep trying.'),
     );
   }
   return response.json() as Promise<T>;
@@ -63,8 +66,8 @@ export function TournamentWatchPage() {
     <PublicTournament key={id} id={id} />
   ) : (
     <main className="broadcast-page">
-      <h1>Tournament not found</h1>
-      <Link to="/tournaments">Browse tournaments</Link>
+      <h1>{t('Tournament not found')}</h1>
+      <Link to="/tournaments">{t('Browse tournaments')}</Link>
     </main>
   );
 }
@@ -120,13 +123,13 @@ function PublicTournament({ id }: { id: string }) {
   const meetUrl = safeExternalUrl(state?.policy.meetUrl);
   return (
     <main className="broadcast-page">
-      <nav className="broadcast-nav" aria-label="Tournament navigation">
+      <nav className="broadcast-nav" aria-label={t('Tournament navigation')}>
         <Link className="broadcast-brand" to="/">
           4AM Casino
         </Link>
         <div className="broadcast-controls">
           <Link className="broadcast-link" to={`/tournaments/${encodeURIComponent(id)}`}>
-            <RiArrowLeftLine size={16} aria-hidden="true" /> Tournament details
+            <RiArrowLeftLine size={16} aria-hidden="true" /> {t('Tournament details')}
           </Link>
           <AppearanceToggle compact />
         </div>
@@ -135,7 +138,7 @@ function PublicTournament({ id }: { id: string }) {
         <section className="broadcast-unavailable">
           {error ? (
             <>
-              <h1>Public watch unavailable</h1>
+              <h1>{t('Public watch unavailable')}</h1>
               <p className="broadcast-muted" role="alert">
                 {error}
               </p>
@@ -146,15 +149,15 @@ function PublicTournament({ id }: { id: string }) {
                     setRetry((value) => value + 1);
                   }}
                 >
-                  Try again
+                  {t('Try again')}
                 </Button>
                 <Link className="broadcast-link" to="/tournaments">
-                  Browse tournaments
+                  {t('Browse tournaments')}
                 </Link>
               </div>
             </>
           ) : (
-            <Spinner label="Loading public tournament…" />
+            <Spinner label={t('Loading public tournament…')} />
           )}
         </section>
       ) : (
@@ -164,30 +167,34 @@ function PublicTournament({ id }: { id: string }) {
               <h1>{state.name}</h1>
               <p className="broadcast-muted">
                 {state.description ||
-                  'Watch the table, follow the standings, and review every completed hand.'}
+                  t('Watch the table, follow the standings, and review every completed hand.')}
               </p>
             </div>
             <span
               className={`broadcast-status ${state.status === 'running' && !error && !hidden ? 'is-live' : ''}`}
             >
-              {error
-                ? 'Updates interrupted'
-                : hidden
-                  ? 'Updates paused'
-                  : state.status === 'running'
-                    ? 'Live · public table'
-                    : state.status === 'registration'
-                      ? 'Enrollment open'
-                      : state.status === 'completed'
-                        ? 'Tournament complete'
-                        : state.status === 'cancelled'
-                          ? 'Tournament cancelled'
-                          : 'Tournament paused'}
+              {t(
+                error
+                  ? 'Updates interrupted'
+                  : hidden
+                    ? 'Updates paused'
+                    : state.status === 'running'
+                      ? 'Live · public table'
+                      : state.status === 'registration'
+                        ? 'Enrollment open'
+                        : state.status === 'completed'
+                          ? 'Tournament complete'
+                          : state.status === 'cancelled'
+                            ? 'Tournament cancelled'
+                            : 'Tournament paused',
+              )}
             </span>
           </header>
           {error && (
             <p className="broadcast-error" role="alert">
-              {error} {lastUpdated && `Showing the last update from ${time(lastUpdated)}.`}
+              {error}{' '}
+              {lastUpdated &&
+                t('Showing the last update from {time}.', { time: time(lastUpdated) })}
             </p>
           )}
           <div className="broadcast-layout">
@@ -195,11 +202,11 @@ function PublicTournament({ id }: { id: string }) {
               <LiveTable state={state} />
               <CompletedHands id={id} state={state} />
             </div>
-            <aside className="broadcast-sidebar" aria-label="Tournament information">
+            <aside className="broadcast-sidebar" aria-label={t('Tournament information')}>
               <Standings state={state} />
               {(streamUrl || meetUrl) && (
                 <section className="broadcast-panel">
-                  <h2>Join the broadcast</h2>
+                  <h2>{t('Join the broadcast')}</h2>
                   <div className="broadcast-external-links">
                     {streamUrl && (
                       <a
@@ -208,7 +215,8 @@ function PublicTournament({ id }: { id: string }) {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Open stream <RiExternalLinkLine size={16} aria-label="Opens in a new tab" />
+                        {t('Open stream')}{' '}
+                        <RiExternalLinkLine size={16} aria-label={t('Opens in a new tab')} />
                       </a>
                     )}
                     {meetUrl && (
@@ -218,14 +226,15 @@ function PublicTournament({ id }: { id: string }) {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Open Google Meet{' '}
-                        <RiExternalLinkLine size={16} aria-label="Opens in a new tab" />
+                        {t('Open Google Meet')}{' '}
+                        <RiExternalLinkLine size={16} aria-label={t('Opens in a new tab')} />
                       </a>
                     )}
                   </div>
                   <p className="broadcast-muted broadcast-small">
-                    External links open separately. This page does not control recording in Google
-                    Meet.
+                    {t(
+                      'External links open separately. This page does not control recording in Google Meet.',
+                    )}
                   </p>
                 </section>
               )}
@@ -234,9 +243,12 @@ function PublicTournament({ id }: { id: string }) {
             </aside>
           </div>
           <footer className="broadcast-footer">
-            <span>Public view · Live hole cards stay hidden, including your own.</span>
+            <span>{t('Public view · Live hole cards stay hidden, including your own.')}</span>
             <span>
-              {lastUpdated ? `Updated ${time(lastUpdated)}` : 'Connecting…'} · Competition chips
+              {lastUpdated
+                ? t('Updated {time}', { time: time(lastUpdated) })
+                : t('Connecting…')}{' '}
+              · {t('Competition chips')}
             </span>
           </footer>
         </>
@@ -248,7 +260,8 @@ function PublicTournament({ id }: { id: string }) {
 function LiveTable({ state }: { state: TournamentState }) {
   const round = state.round;
   const name = (userId: number) =>
-    state.entries.find((entry) => entry.userId === userId)?.agentName ?? `Player ${userId}`;
+    state.entries.find((entry) => entry.userId === userId)?.agentName ??
+    t('Player {n}', { n: userId });
   const complete = !!round?.result;
   const running = state.status === 'running' && !complete;
   return (
@@ -256,58 +269,71 @@ function LiveTable({ state }: { state: TournamentState }) {
       <div className="broadcast-section-heading">
         <h2 id="broadcast-table-title">
           {state.status === 'registration'
-            ? 'The table is assembling'
+            ? t('The table is assembling')
             : round
-              ? `Hand ${number(round.handNumber)}${complete ? ' · finished' : ''}`
-              : 'Waiting for the table'}
+              ? t('Hand {n}', { n: number(round.handNumber) }) +
+                (complete ? ` · ${t('finished')}` : '')
+              : t('Waiting for the table')}
         </h2>
         <span className="broadcast-muted broadcast-small">
-          {number(state.completedHands)} / {number(state.handLimit)} hands
+          {t('{done} / {limit} hands', {
+            done: number(state.completedHands),
+            limit: number(state.handLimit),
+          })}
         </span>
       </div>
       {state.status === 'registration' ? (
         <div className="broadcast-waiting">
           <p>
             {state.policy.startsAt
-              ? `Scheduled for ${new Date(state.policy.startsAt).toLocaleString()}.`
-              : 'Play begins when the organizer starts the tournament.'}
+              ? t('Scheduled for {date}.', {
+                  date: new Date(state.policy.startsAt).toLocaleString(),
+                })
+              : t('Play begins when the organizer starts the tournament.')}
           </p>
           <p className="broadcast-muted">
-            {state.entries.length} of {state.capacity} seats filled.{' '}
-            {state.scheduleNote || 'The live board and decisions appear here when play starts.'}
+            {t('{n} of {m} seats filled.', { n: state.entries.length, m: state.capacity })}{' '}
+            {state.scheduleNote || t('The live board and decisions appear here when play starts.')}
           </p>
           <Link className="broadcast-link" to={`/tournaments/${encodeURIComponent(state.id)}`}>
-            View rules and enroll <RiExternalLinkLine size={16} aria-hidden="true" />
+            {t('View rules and enroll')} <RiExternalLinkLine size={16} aria-hidden="true" />
           </Link>
         </div>
       ) : !round ? (
         <p className="broadcast-muted broadcast-waiting">
-          {state.status === 'cancelled'
-            ? 'This tournament has ended.'
-            : 'The next hand will appear here when it starts.'}
+          {t(
+            state.status === 'cancelled'
+              ? 'This tournament has ended.'
+              : 'The next hand will appear here when it starts.',
+          )}
         </p>
       ) : (
         <>
           <div className="broadcast-table-meta">
             <span>
-              {round.betting.street[0]!.toUpperCase() + round.betting.street.slice(1)}
-              {complete ? ' · final board' : ''}
+              {t(round.betting.street[0]!.toUpperCase() + round.betting.street.slice(1))}
+              {complete ? ` · ${t('final board')}` : ''}
             </span>
             <span>
-              Blinds {number(round.betting.sb)} / {number(round.betting.bb)}
+              {t('Blinds {sb} / {bb}', {
+                sb: number(round.betting.sb),
+                bb: number(round.betting.bb),
+              })}
             </span>
             <strong>
               {complete
-                ? 'Hand settled'
-                : `Pot ${number(round.seats.reduce((sum, seat) => sum + seat.total, 0))}`}
+                ? t('Hand settled')
+                : t('Pot {n}', {
+                    n: number(round.seats.reduce((sum, seat) => sum + seat.total, 0)),
+                  })}
             </strong>
           </div>
           <div
             className="broadcast-board"
             aria-label={
               complete
-                ? `Final community cards for completed hand ${round.handNumber}`
-                : 'Live community cards'
+                ? t('Final community cards for completed hand {n}', { n: round.handNumber })
+                : t('Live community cards')
             }
           >
             {round.board.length ? (
@@ -315,31 +341,31 @@ function LiveTable({ state }: { state: TournamentState }) {
             ) : (
               <p className="broadcast-muted">
                 {complete
-                  ? 'The hand ended before the flop.'
-                  : 'Preflop · Waiting for community cards'}
+                  ? t('The hand ended before the flop.')
+                  : t('Preflop · Waiting for community cards')}
               </p>
             )}
           </div>
           <div className="broadcast-turn" role="status">
             {complete ? (
-              'Hand finished. Review the disclosed cards and decisions below.'
+              t('Hand finished. Review the disclosed cards and decisions below.')
             ) : running && round.toActUserId !== null ? (
               <>
-                <strong>{name(round.toActUserId)}</strong> to act{' '}
+                <strong>{name(round.toActUserId)}</strong> {t('to act')}{' '}
                 <span className="broadcast-muted">
-                  · Decision {round.actionSeq + 1}
-                  {state.deadline ? ` · due ${time(state.deadline)}` : ''}
+                  · {t('Decision {n}', { n: round.actionSeq + 1 })}
+                  {state.deadline ? ` · ${t('due {time}', { time: time(state.deadline) })}` : ''}
                 </span>
               </>
             ) : state.status === 'paused' ? (
-              'Play is paused.'
+              t('Play is paused.')
             ) : state.status === 'cancelled' || state.status === 'completed' ? (
-              'The tournament has ended.'
+              t('The tournament has ended.')
             ) : (
-              'Waiting for the next hand.'
+              t('Waiting for the next hand.')
             )}
           </div>
-          <ol className="broadcast-seats" aria-label="Table seats">
+          <ol className="broadcast-seats" aria-label={t('Table seats')}>
             {round.seats.map((seat) => (
               <li
                 key={seat.userId}
@@ -349,7 +375,7 @@ function LiveTable({ state }: { state: TournamentState }) {
                   <span className="broadcast-seat-number">{seat.seat + 1}</span>
                   <strong>{name(seat.userId)}</strong>
                   {seat.seat === round.betting.buttonSeat && (
-                    <span className="broadcast-dealer" title="Dealer button">
+                    <span className="broadcast-dealer" title={t('Dealer button')}>
                       D
                     </span>
                   )}
@@ -368,16 +394,16 @@ function LiveTable({ state }: { state: TournamentState }) {
                   </strong>
                   <span className="broadcast-muted">
                     {seat.folded
-                      ? 'Folded'
+                      ? t('Folded')
                       : seat.allIn
-                        ? 'All-in'
+                        ? t('All-in')
                         : complete
-                          ? 'Final stack'
-                          : `${number(seat.committed)} committed`}
+                          ? t('Final stack')
+                          : t('{n} committed', { n: number(seat.committed) })}
                   </span>
                 </div>
                 {!complete && (
-                  <div className="broadcast-hole-backs" aria-label="Live hole cards hidden">
+                  <div className="broadcast-hole-backs" aria-label={t('Live hole cards hidden')}>
                     <PlayingCard faceDown size="xs" />
                     <PlayingCard faceDown size="xs" />
                   </div>
@@ -396,18 +422,20 @@ function Standings({ state }: { state: TournamentState }) {
   return (
     <section className="broadcast-panel">
       <div className="broadcast-section-heading">
-        <h2>{state.status === 'completed' ? 'Final standings' : 'Standings'}</h2>
+        <h2>{t(state.status === 'completed' ? 'Final standings' : 'Standings')}</h2>
         <span className="broadcast-muted broadcast-small">
-          {tournamentFormatLabel(state.policy.format)}
+          {t(tournamentFormatLabel(state.policy.format))}
         </span>
       </div>
       {state.entries.length ? (
         <table className="broadcast-standings">
-          <caption className="sr-only">Tournament standings in competition chips</caption>
+          <caption className="sr-only">
+            {t('Tournament standings in competition chips')}
+          </caption>
           <thead>
             <tr>
-              <th scope="col">Place / player</th>
-              <th scope="col">{knockout ? 'Stack' : 'Net chips'}</th>
+              <th scope="col">{t('Place / player')}</th>
+              <th scope="col">{t(knockout ? 'Stack' : 'Net chips')}</th>
             </tr>
           </thead>
           <tbody>
@@ -420,8 +448,11 @@ function Standings({ state }: { state: TournamentState }) {
                       <strong>{entry.agentName}</strong>
                       <span className="broadcast-muted broadcast-small">
                         {entry.eliminatedHand !== null
-                          ? `Out · Hand ${entry.eliminatedHand}`
-                          : `${entry.hands} hands · ${entry.wins} wins`}
+                          ? t('Out · Hand {n}', { n: entry.eliminatedHand })
+                          : t('{hands} hands · {wins} wins', {
+                              hands: entry.hands,
+                              wins: entry.wins,
+                            })}
                       </span>
                     </div>
                   </div>
@@ -442,7 +473,9 @@ function Standings({ state }: { state: TournamentState }) {
           </tbody>
         </table>
       ) : (
-        <p className="broadcast-muted">No entrants yet. The standings appear as players enroll.</p>
+        <p className="broadcast-muted">
+          {t('No entrants yet. The standings appear as players enroll.')}
+        </p>
       )}
     </section>
   );
@@ -560,7 +593,8 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
   }, [step]);
 
   const name = (userId: number) =>
-    state.entries.find((entry) => entry.userId === userId)?.agentName ?? `Player ${userId}`;
+    state.entries.find((entry) => entry.userId === userId)?.agentName ??
+    t('Player {n}', { n: userId });
   const options =
     latest !== null && !results.some((result) => result.handNumber === latest)
       ? [latest, ...results.map((result) => result.handNumber)]
@@ -569,14 +603,14 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
     <section className="broadcast-panel broadcast-review" aria-labelledby="broadcast-review-title">
       <div className="broadcast-section-heading">
         <div>
-          <h2 id="broadcast-review-title">Completed-hand review</h2>
+          <h2 id="broadcast-review-title">{t('Completed-hand review')}</h2>
           <p className="broadcast-muted broadcast-small">
-            Historical cards and decisions. The live table above stays separate.
+            {t('Historical cards and decisions. The live table above stays separate.')}
           </p>
         </div>
         {!!finished && (
           <label className="broadcast-hand-select">
-            Hand
+            {t('Hand')}
             <select
               value={selectedHand ?? ''}
               onChange={(event) => {
@@ -586,7 +620,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
             >
               {options.map((hand) => (
                 <option value={hand} key={hand}>
-                  Hand {number(hand)}
+                  {t('Hand {n}', { n: number(hand) })}
                 </option>
               ))}
             </select>
@@ -595,7 +629,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
       </div>
       {!finished ? (
         <p className="broadcast-muted broadcast-waiting">
-          The first replay appears after a hand finishes. Live hole cards are never shown here.
+          {t('The first replay appears after a hand finishes. Live hole cards are never shown here.')}
         </p>
       ) : (
         <>
@@ -608,13 +642,13 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                 setFollowLatest(event.target.checked);
               }}
             />
-            Follow the latest finished hand
+            {t('Follow the latest finished hand')}
           </label>
           {listError && (
             <p className="broadcast-error" role="alert">
-              Could not load the hand list. {listError}{' '}
+              {t('Could not load the hand list.')} {listError}{' '}
               <button className="broadcast-link" onClick={() => setRetry((value) => value + 1)}>
-                Retry
+                {t('Retry')}
               </button>
             </p>
           )}
@@ -622,27 +656,31 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
             <p className="broadcast-error" role="alert">
               {handError}{' '}
               <button className="broadcast-link" onClick={() => setRetry((value) => value + 1)}>
-                Retry replay
+                {t('Retry replay')}
               </button>
             </p>
           ) : !replay ? (
-            <Spinner label="Loading completed hand…" />
+            <Spinner label={t('Loading completed hand…')} />
           ) : (
             <>
               <div className="broadcast-final-label">
-                <strong>Hand {replay.result.handNumber} · Final reveal</strong>
-                <span>These cards are shown after the hand, including disclosed folded hands.</span>
+                <strong>
+                  {t('Hand {n} · Final reveal', { n: replay.result.handNumber })}
+                </strong>
+                <span>
+                  {t('These cards are shown after the hand, including disclosed folded hands.')}
+                </span>
               </div>
               <div
                 className="broadcast-board broadcast-final-board"
-                aria-label={`Completed hand ${replay.result.handNumber} final board`}
+                aria-label={t('Completed hand {n} final board', { n: replay.result.handNumber })}
               >
                 {replay.result.board.length ? (
                   replay.result.board.map((card) => (
                     <PlayingCard key={card} card={card} size="sm" />
                   ))
                 ) : (
-                  <p className="broadcast-muted">No community cards were dealt.</p>
+                  <p className="broadcast-muted">{t('No community cards were dealt.')}</p>
                 )}
               </div>
               <div className="broadcast-reveals">
@@ -663,15 +701,17 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                                 : 'broadcast-muted'
                           }
                         >
-                          {signed(entry.net)} chips
-                          {entry.won > 0 ? ` · Won ${number(entry.won)}` : ''}
+                          {t('{n} chips', { n: signed(entry.net) })}
+                          {entry.won > 0 ? ` · ${t('Won {n}', { n: number(entry.won) })}` : ''}
                         </span>
                       </div>
                       <div className="broadcast-reveal-cards">
                         {cards.length ? (
                           cards.map((card) => <PlayingCard card={card} key={card} size="sm" />)
                         ) : (
-                          <span className="broadcast-muted broadcast-small">Not disclosed</span>
+                          <span className="broadcast-muted broadcast-small">
+                            {t('Not disclosed')}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -681,9 +721,9 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
               <div className="broadcast-decisions">
                 <div className="broadcast-section-heading">
                   <div>
-                    <h3>Decision replay</h3>
+                    <h3>{t('Decision replay')}</h3>
                     <p className="broadcast-muted broadcast-small">
-                      Step through recorded actions. The final cards above do not change.
+                      {t('Step through recorded actions. The final cards above do not change.')}
                     </p>
                   </div>
                   <span className="broadcast-muted broadcast-small" aria-live="polite">
@@ -701,7 +741,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setStep((value) => Math.max(0, value - 1));
                         }}
                       >
-                        Previous
+                        {t('Previous')}
                       </Button>
                       <Button
                         variant="secondary"
@@ -710,11 +750,13 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setPlaying((value) => !value);
                         }}
                       >
-                        {playing
-                          ? 'Pause replay'
-                          : step >= actionCount
-                            ? 'Play again'
-                            : 'Play decisions'}
+                        {t(
+                          playing
+                            ? 'Pause replay'
+                            : step >= actionCount
+                              ? 'Play again'
+                              : 'Play decisions',
+                        )}
                       </Button>
                       <Button
                         variant="secondary"
@@ -724,7 +766,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setStep((value) => Math.min(actionCount, value + 1));
                         }}
                       >
-                        Next
+                        {t('Next')}
                       </Button>
                       <Button
                         variant="ghost"
@@ -734,17 +776,20 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setStep(actionCount);
                         }}
                       >
-                        Show all
+                        {t('Show all')}
                       </Button>
                     </div>
                     <ol
                       ref={actionList}
                       className="broadcast-action-list"
-                      aria-label="Recorded actions"
+                      aria-label={t('Recorded actions')}
                     >
                       {step === 0 ? (
                         <li className="broadcast-muted">
-                          Ready to replay {actionCount} decisions. Select Next or Play decisions.
+                          {t(
+                            'Ready to replay {n} decisions. Select Next or Play decisions.',
+                            { n: actionCount },
+                          )}
                         </li>
                       ) : (
                         replay.actions.slice(0, step).map((item, index) => (
@@ -756,19 +801,21 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                             <div>
                               <strong>{name(item.userId)}</strong>
                               <span>
-                                {item.action.type === 'raise'
-                                  ? 'Raise to'
-                                  : item.action.type === 'bet'
-                                    ? 'Bet'
-                                    : item.action.type === 'fold'
-                                      ? 'Fold'
-                                      : item.action.type === 'call'
-                                        ? 'Call'
-                                        : 'Check'}
+                                {t(
+                                  item.action.type === 'raise'
+                                    ? 'Raise to'
+                                    : item.action.type === 'bet'
+                                      ? 'Bet'
+                                      : item.action.type === 'fold'
+                                        ? 'Fold'
+                                        : item.action.type === 'call'
+                                          ? 'Call'
+                                          : 'Check',
+                                )}
                                 {item.action.amount !== undefined
                                   ? ` ${number(item.action.amount)}`
                                   : ''}
-                                {item.timedOut ? ' · Automatic action after timeout' : ''}
+                                {item.timedOut ? ` · ${t('Automatic action after timeout')}` : ''}
                               </span>
                             </div>
                             <time dateTime={new Date(item.ts).toISOString()}>{time(item.ts)}</time>
@@ -779,7 +826,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                   </>
                 ) : (
                   <p className="broadcast-muted">
-                    No player decisions were recorded for this hand.
+                    {t('No player decisions were recorded for this hand.')}
                   </p>
                 )}
               </div>
@@ -861,7 +908,7 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
     pending.current = true;
     const token = ++request.current;
     setPhase('choosing');
-    setNotice('Choose the tab, window, or screen to record in the browser picker.');
+    setNotice(t('Choose the tab, window, or screen to record in the browser picker.'));
     setElapsed(0);
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
     objectUrl.current = null;
@@ -890,7 +937,7 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
       }
       const video = captured.getVideoTracks()[0];
       if (!video || video.readyState !== 'live')
-        throw new Error('The selected surface is no longer available. Try recording again.');
+        throw new Error(t('The selected surface is no longer available. Try recording again.'));
       // Only tab audio is eligible. Remove every audio track for screen/window
       // capture, and conservatively remove it when the browser cannot identify the surface.
       if (!includeAudio || video.getSettings().displaySurface !== 'browser') {
@@ -921,21 +968,23 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
           failed = true;
           chunks.length = 0;
           stop(
-            'The browser exceeded the 200 MB recording limit. This clip could not be saved; try a shorter recording.',
+            t(
+              'The browser exceeded the 200 MB recording limit. This clip could not be saved; try a shorter recording.',
+            ),
           );
           return;
         }
         chunks.push(event.data);
         bytes += event.data.size;
         if (bytes >= MAX_RECORDING_BYTES * 0.95)
-          stop('Recording stopped near the 200 MB limit. Download your clip below.');
+          stop(t('Recording stopped near the 200 MB limit. Download your clip below.'));
         else if (Date.now() - began >= MAX_RECORDING_MS)
-          stop('Recording stopped at the 20-minute limit. Download your clip below.');
+          stop(t('Recording stopped at the 20-minute limit. Download your clip below.'));
       };
       current.onerror = () => {
         failed = true;
         chunks.length = 0;
-        stop('The browser could not finish this recording. Choose a surface and try again.');
+        stop(t('The browser could not finish this recording. Choose a surface and try again.'));
       };
       current.onstop = () => {
         clearTimers();
@@ -946,14 +995,14 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
         setPhase('idle');
         if (failed) return;
         if (!chunks.length) {
-          setNotice('No video was captured. Choose a surface and try again.');
+          setNotice(t('No video was captured. Choose a surface and try again.'));
           return;
         }
         const type = current.mimeType || chunks.find((chunk) => chunk.type)?.type || mime || '';
         const extension = type.includes('mp4') ? 'mp4' : type.includes('webm') ? 'webm' : null;
         if (!extension) {
           chunks.length = 0;
-          setNotice('This browser selected an unsupported video format. Try another browser.');
+          setNotice(t('This browser selected an unsupported video format. Try another browser.'));
           return;
         }
         const blob = new Blob(chunks, { type });
@@ -965,29 +1014,33 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
           filename: `4am-${tournamentId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)}-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`,
         });
         setNotice((previous) =>
-          /limit|stopped|ended/.test(previous)
+          // '上限/停止/结束' mirror the English limit|stopped|ended markers set by
+          // the stop() notices above — keep in sync when retranslating.
+          /limit|stopped|ended|上限|停止|结束/.test(previous)
             ? previous
-            : 'Your clip is ready. Download it before leaving or starting another recording.',
+            : t('Your clip is ready. Download it before leaving or starting another recording.'),
         );
       };
-      video.onended = () => stop('Screen sharing ended. Download your clip below.');
+      video.onended = () => stop(t('Screen sharing ended. Download your clip below.'));
       current.start(1000);
       setPhase('recording');
       setNotice(
-        captured.getAudioTracks().length
-          ? 'Recording the selected tab with its shared audio.'
-          : includeAudio
-            ? 'Recording video only. The selected surface did not provide tab audio.'
-            : 'Recording the selected surface without audio.',
+        t(
+          captured.getAudioTracks().length
+            ? 'Recording the selected tab with its shared audio.'
+            : includeAudio
+              ? 'Recording video only. The selected surface did not provide tab audio.'
+              : 'Recording the selected surface without audio.',
+        ),
       );
       interval.current = window.setInterval(() => {
         const duration = Date.now() - began;
         setElapsed(Math.floor(duration / 1000));
         if (duration >= MAX_RECORDING_MS)
-          stop('Recording stopped at the 20-minute limit. Download your clip below.');
+          stop(t('Recording stopped at the 20-minute limit. Download your clip below.'));
       }, 1000);
       deadline.current = window.setTimeout(
-        () => stop('Recording stopped at the 20-minute limit. Download your clip below.'),
+        () => stop(t('Recording stopped at the 20-minute limit. Download your clip below.')),
         MAX_RECORDING_MS,
       );
     } catch (cause) {
@@ -1000,9 +1053,9 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
       setPhase('idle');
       setNotice(
         cause instanceof DOMException && cause.name === 'NotAllowedError'
-          ? 'Recording was cancelled or permission was denied. Select Record tab to try again.'
+          ? t('Recording was cancelled or permission was denied. Select Record tab to try again.')
           : cause instanceof DOMException && cause.name === 'NotReadableError'
-            ? 'The browser could not capture that surface. Check screen-recording permissions and try again.'
+            ? t('The browser could not capture that surface. Check screen-recording permissions and try again.')
             : errorText(cause),
       );
     }
@@ -1013,10 +1066,9 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
       className="broadcast-panel broadcast-recording"
       aria-labelledby="broadcast-recording-title"
     >
-      <h2 id="broadcast-recording-title">Record a local clip</h2>
+      <h2 id="broadcast-recording-title">{t('Record a local clip')}</h2>
       <p className="broadcast-muted broadcast-small">
-        Choose a surface in your browser’s picker. Only that selection is recorded; the file stays
-        on this device.
+        {t('Choose a surface in your browser’s picker. Only that selection is recorded; the file stays on this device.')}
       </p>
       {supported ? (
         <>
@@ -1027,10 +1079,10 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
               disabled={phase !== 'idle'}
               onChange={(event) => setIncludeAudio(event.target.checked)}
             />
-            Include shared tab audio
+            {t('Include shared tab audio')}
           </label>
           <p className="broadcast-muted broadcast-small">
-            No microphone capture. Up to 20 minutes or 200 MB per clip.
+            {t('No microphone capture. Up to 20 minutes or 200 MB per clip.')}
           </p>
           <div className="broadcast-controls">
             {phase === 'recording' || phase === 'stopping' ? (
@@ -1038,14 +1090,14 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
                 <Button
                   variant="danger"
                   disabled={phase === 'stopping'}
-                  onClick={() => stop('Recording stopped. Download your clip below.')}
+                  onClick={() => stop(t('Recording stopped. Download your clip below.'))}
                 >
                   <RiStopCircleLine size={17} aria-hidden="true" />
-                  {phase === 'stopping' ? 'Finishing…' : 'Stop recording'}
+                  {phase === 'stopping' ? t('Finishing…') : t('Stop recording')}
                 </Button>
                 <span
                   className="broadcast-recording-time"
-                  aria-label={`${elapsed} seconds recorded`}
+                  aria-label={t('{n} seconds recorded', { n: elapsed })}
                 >
                   {Math.floor(elapsed / 60)
                     .toString()
@@ -1060,11 +1112,13 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
                 onClick={() => void start()}
               >
                 <RiRecordCircleLine size={17} aria-hidden="true" />
-                {phase === 'choosing'
-                  ? 'Choose a surface…'
-                  : download
-                    ? 'Record new clip'
-                    : 'Record tab'}
+                {t(
+                  phase === 'choosing'
+                    ? 'Choose a surface…'
+                    : download
+                      ? 'Record new clip'
+                      : 'Record tab',
+                )}
               </Button>
             )}
           </div>
@@ -1076,14 +1130,15 @@ function LocalRecording({ tournamentId }: { tournamentId: string }) {
           {download && (
             <a className="broadcast-download" href={download.url} download={download.filename}>
               <RiDownloadLine size={18} aria-hidden="true" />
-              Download recording
+              {t('Download recording')}
             </a>
           )}
         </>
       ) : (
         <p className="broadcast-recording-notice">
-          Tab recording is unavailable in this browser. Open this page in a browser with screen
-          capture support to record a local clip.
+          {t(
+            'Tab recording is unavailable in this browser. Open this page in a browser with screen capture support to record a local clip.',
+          )}
         </p>
       )}
     </section>

@@ -16,6 +16,8 @@ import {
   YAxis,
 } from 'recharts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 const ACCENT = 'var(--color-accent-500)';
 const GRID = 'var(--color-border-button-default)';
@@ -64,41 +66,40 @@ export function NetAreaChart({
   // short sessions read better as times, long histories as dates
   const spanMs = points.length > 1 ? points[points.length - 1]!.ts - points[0]!.ts : 0;
   const asTime = spanMs < 48 * 3600_000;
-  const tickLabel = (ts: number) =>
-    asTime
-      ? new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-      : new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const tickLabel = (ts: number) => (asTime ? fmtTime(ts) : fmtDate(ts));
   return (
     <ChartCard
-      label="Net winnings"
+      label={t('Net winnings')}
       value={value}
       formatValue={(v) => (v > 0 ? '+' : '') + fmt(v)}
       caption={
-        hands ? fmt(hands) + ' hands played · chips' : 'Your results appear after your first hand'
+        hands
+          ? t('{n} hands played · chips', { n: fmt(hands) })
+          : t('Your results appear after your first hand')
       }
       height="auto"
       className="zeus-chart"
       action={
         <select
-          aria-label="Winnings time range"
+          aria-label={t('Winnings time range')}
           value={range}
           onChange={(e) => setRange(e.target.value)}
         >
-          <option value="all">All time</option>
-          <option value="30">Last 30 days</option>
-          <option value="7">Last 7 days</option>
+          <option value="all">{t('All time')}</option>
+          <option value="30">{t('Last 30 days')}</option>
+          <option value="7">{t('Last 7 days')}</option>
         </select>
       }
     >
       {filtered.length === 0 ? (
         <div className="zeus-chart-empty" role="status">
           <span className="font-medium">
-            {points.length ? 'No hands in this period' : 'Your next poker night starts here'}
+            {points.length ? t('No hands in this period') : t('Your next poker night starts here')}
           </span>
           <span>
             {points.length
-              ? 'Choose a longer period to see your results.'
-              : 'Create or join a table to start your history.'}
+              ? t('Choose a longer period to see your results.')
+              : t('Create or join a table to start your history.')}
           </span>
         </div>
       ) : (
@@ -132,13 +133,10 @@ export function NetAreaChart({
               content={
                 <ChartTooltip
                   format={(label, value) => [
-                    new Date(Number(label)).toLocaleString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
+                    `${fmtDate(Number(label))} ${fmtTime(Number(label))}`,
+                    t('{n} chips', {
+                      n: `${value >= 0 ? '+' : '−'}${fmt(Math.abs(value))}`,
                     }),
-                    `${value >= 0 ? '+' : '−'}${fmt(Math.abs(value))} chips`,
                   ]}
                 />
               }
@@ -155,20 +153,20 @@ export function NetAreaChart({
           </AreaChart>
         </ResponsiveContainer>
       )}
-      <ChartLegend entries={[{ label: 'Cumulative chips', color: ACCENT }]} />
+      <ChartLegend entries={[{ label: t('Cumulative chips'), color: ACCENT }]} />
       {filtered.length > 0 && (
         <details className="mt-3 text-xs text-text-secondary">
-          <summary className="w-fit cursor-pointer rounded py-1">View chart data</summary>
+          <summary className="w-fit cursor-pointer rounded py-1">{t('View chart data')}</summary>
           <div className="mt-2 max-h-48 overflow-auto">
             <table className="w-full text-left tabular-nums">
-              <caption className="sr-only">Net winnings over time</caption>
+              <caption className="sr-only">{t('Net winnings over time')}</caption>
               <thead>
                 <tr>
                   <th scope="col" className="py-2">
-                    Date
+                    {t('Date')}
                   </th>
                   <th scope="col" className="text-right">
-                    Net chips
+                    {t('Net chips')}
                   </th>
                 </tr>
               </thead>
@@ -178,7 +176,9 @@ export function NetAreaChart({
                     key={point.ts + '-' + index}
                     className="border-t border-border-button-default"
                   >
-                    <td className="py-2">{new Date(point.ts).toLocaleString()}</td>
+                    <td className="py-2">
+                      {fmtDate(point.ts)} {fmtTime(point.ts)}
+                    </td>
                     <td className="text-right">{fmt(point.net)}</td>
                   </tr>
                 ))}
@@ -204,11 +204,11 @@ export function StyleRadar({ style }: { style: StyleAxes }) {
   const INDIGO = ACCENT;
   const reducedMotion = useReducedMotion();
   const data = [
-    { axis: 'Loose', value: Math.min(100, style.vpipPct) },
-    { axis: 'Aggressive', value: Math.min(100, Math.round(style.aggressionFactor * 33)) },
-    { axis: 'Pressure', value: Math.min(100, style.quietWinPct) },
-    { axis: 'Showdowns', value: Math.min(100, style.showdownPct) },
-    { axis: 'Wins', value: Math.min(100, style.winPct) },
+    { axis: t('Loose'), value: Math.min(100, style.vpipPct) },
+    { axis: t('Aggressive'), value: Math.min(100, Math.round(style.aggressionFactor * 33)) },
+    { axis: t('Pressure'), value: Math.min(100, style.quietWinPct) },
+    { axis: t('Showdowns'), value: Math.min(100, style.showdownPct) },
+    { axis: t('Wins'), value: Math.min(100, style.winPct) },
   ];
   return (
     <ResponsiveContainer width="100%" height={230}>

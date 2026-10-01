@@ -17,6 +17,8 @@ import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { isAdminSite } from '../../shared/adminSite.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate } from '../../shared/lib/datetime.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { PlatformDues } from '../../features/house/PlatformDues.tsx';
@@ -86,17 +88,17 @@ function RevenueChart({ data }: { data: AdminOverview['revenue'] }) {
     <figure className="admin-chart">
       <div className="admin-section-heading">
         <div>
-          <h2>Commission activity</h2>
-          <p>Actual deductions in active rooms · last 14 days · UTC</p>
+          <h2>{t('Commission activity')}</h2>
+          <p>{t('Actual deductions in active rooms · last 14 days · UTC')}</p>
         </div>
         <strong className="admin-chart-total">
-          {fmt(total)} <span>chips</span>
+          {fmt(total)} <span>{t('chips')}</span>
         </strong>
       </div>
       <svg
         viewBox="0 0 720 200"
         role="img"
-        aria-label={`${fmt(total)} chips accrued over the last 14 days`}
+        aria-label={t('{n} chips accrued over the last 14 days', { n: fmt(total) })}
       >
         {[0, 1, 2].map((n) => (
           <g key={n}>
@@ -117,7 +119,7 @@ function RevenueChart({ data }: { data: AdminOverview['revenue'] }) {
             className="admin-chart-bar"
           >
             <title>
-              {d.date}: {fmt(d.commission)} chips
+              {t('{date}: {n} chips', { date: d.date, n: fmt(d.commission) })}
             </title>
           </rect>
         ))}
@@ -126,18 +128,18 @@ function RevenueChart({ data }: { data: AdminOverview['revenue'] }) {
         <span>{data[0]?.date}</span>
         <span>
           {total
-            ? 'Each bar is one day of commission.'
-            : 'Commission will appear after qualifying pots are settled.'}
+            ? t('Each bar is one day of commission.')
+            : t('Commission will appear after qualifying pots are settled.')}
         </span>
         <span>{data.at(-1)?.date}</span>
       </figcaption>
       <details className="admin-chart-data">
-        <summary>View daily amounts</summary>
+        <summary>{t('View daily amounts')}</summary>
         <table>
           <thead>
             <tr>
-              <th>Date (UTC)</th>
-              <th>Commission</th>
+              <th>{t('Date (UTC)')}</th>
+              <th>{t('Commission')}</th>
             </tr>
           </thead>
           <tbody>
@@ -160,24 +162,24 @@ function Overview({ data, base }: { data: AdminOverview; base: string }) {
       <dl className="admin-metrics">
         {[
           [
-            'Outstanding dues',
+            t('Outstanding dues'),
             fmt(data.dues.outstanding),
-            `${data.dues.usersOwing} users need to pay`,
+            t('{n} users need to pay', { n: data.dues.usersOwing }),
             'revenue',
           ],
-          ['Active rooms', fmt(data.activeRooms), `${data.rooms} rooms in total`, 'rooms'],
           [
-            'Player accounts',
+            t('Active rooms'),
+            fmt(data.activeRooms),
+            t('{n} rooms in total', { n: data.rooms }),
+            'rooms',
+          ],
+          [
+            t('Player accounts'),
             fmt(data.users),
-            `${fmt(data.hands)} settled hands in active rooms`,
+            t('{n} settled hands in active rooms', { n: fmt(data.hands) }),
             'users',
           ],
-          [
-            'House cut',
-            commissionRateLabel(data.commissionBps),
-            'Default for newly created rooms',
-            'settings',
-          ],
+          [t('House cut'), commissionRateLabel(data.commissionBps), t('Default for newly created rooms'), 'settings'],
         ].map(([label, value, detail, route]) => (
           <div key={label}>
             <dt>{label}</dt>
@@ -194,53 +196,52 @@ function Overview({ data, base }: { data: AdminOverview; base: string }) {
           <RevenueChart data={data.revenue} />
         </section>
         <section className="admin-panel admin-attention">
-          <h2>Needs attention</h2>
+          <h2>{t('Needs attention')}</h2>
           <Link to={`${base}/requests`}>
             <RiInboxLine size={21} />
             <span>
-              <strong>{data.pendingRequests} pending requests</strong>
-              <small>Room changes and account merges</small>
+              <strong>{t('{n} pending requests', { n: data.pendingRequests })}</strong>
+              <small>{t('Room changes and account merges')}</small>
             </span>
             <RiArrowRightUpLine size={18} />
           </Link>
           <Link to={`${base}/revenue`}>
             <RiExchangeDollarLine size={21} />
             <span>
-              <strong>{data.dues.usersOwing} users with dues</strong>
-              <small>{fmt(data.dues.outstanding)} chips outstanding</small>
+              <strong>{t('{n} users with dues', { n: data.dues.usersOwing })}</strong>
+              <small>{t('{n} chips outstanding', { n: fmt(data.dues.outstanding) })}</small>
             </span>
             <RiArrowRightUpLine size={18} />
           </Link>
           <div className="admin-attention-note">
             <RiShieldCheckLine size={20} />
             <p>
-              Payments shown here are recorded by users. Confirm receipt separately before treating
-              them as paid.
+              {t('Payments shown here are recorded by users. Confirm receipt separately before treating them as paid.')}
             </p>
           </div>
         </section>
       </div>
       <section className="admin-panel admin-revenue-summary">
         <div>
-          <h2>House accounting</h2>
-          <p>Active rooms, excluding voided hands. Amounts are in chips.</p>
+          <h2>{t('House accounting')}</h2>
+          <p>{t('Active rooms, excluding voided hands. Amounts are in chips.')}</p>
         </div>
         <dl>
           <div>
-            <dt>Accrued commission</dt>
+            <dt>{t('Accrued commission')}</dt>
             <dd>{fmt(data.dues.accrued + data.dues.unallocated)}</dd>
           </div>
           <div>
-            <dt>Payments recorded</dt>
+            <dt>{t('Payments recorded')}</dt>
             <dd>{fmt(data.dues.paid)}</dd>
           </div>
           <div>
-            <dt>User credits</dt>
+            <dt>{t('User credits')}</dt>
             <dd>{fmt(data.dues.credit)}</dd>
           </div>
         </dl>
         <Link to={`${base}/revenue`}>
-          Open dues breakdown <RiArrowRightUpLine size={16} />
+          {t('Open dues breakdown')} <RiArrowRightUpLine size={16} />
         </Link>
       </section>
     </>
@@ -271,7 +272,7 @@ function UsersDirectory() {
       setResult(await api.adminUsers(q, offset));
       setAppliedQuery(q);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load users.');
+      setError(e instanceof Error ? e.message : t('Could not load users.'));
     } finally {
       setBusy(false);
     }
@@ -288,45 +289,47 @@ function UsersDirectory() {
       <section className="admin-panel" aria-busy={busy}>
         <div className="admin-section-heading">
           <div>
-            <h2>User directory</h2>
-            <p>Search all accounts, including users without outstanding dues.</p>
+            <h2>{t('User directory')}</h2>
+            <p>{t('Search all accounts, including users without outstanding dues.')}</p>
           </div>
         </div>
         <form className="admin-search" onSubmit={search}>
           <Input
             type="search"
-            aria-label="Search users by name or ID"
-            placeholder="Name, @username, or user ID"
+            aria-label={t('Search users by name or ID')}
+            placeholder={t('Name, @username, or user ID')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <Button type="submit" disabled={busy}>
-            {busy ? 'Searching…' : 'Search users'}
+            {busy ? t('Searching…') : t('Search users')}
           </Button>
         </form>
         {error && (
           <p className="admin-error" role="alert">
-            {error} <button onClick={() => void load(query)}>Retry</button>
+            {error} <button onClick={() => void load(query)}>{t('Retry')}</button>
           </p>
         )}
         {!result ? (
           <p className="admin-loading" role="status">
-            {error ? 'Search again to load the directory.' : 'Loading accounts…'}
+            {error ? t('Search again to load the directory.') : t('Loading accounts…')}
           </p>
         ) : result.users.length === 0 ? (
-          <p className="admin-empty">No accounts match this search. Try a username or user ID.</p>
+          <p className="admin-empty">
+            {t('No accounts match this search. Try a username or user ID.')}
+          </p>
         ) : (
           <>
             <div className="admin-table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>User</th>
-                    <th>Status</th>
-                    <th>Rooms</th>
-                    <th>Joined</th>
+                    <th>{t('User')}</th>
+                    <th>{t('Status')}</th>
+                    <th>{t('Rooms')}</th>
+                    <th>{t('Joined')}</th>
                     <th>
-                      <span className="sr-only">Actions</span>
+                      <span className="sr-only">{t('Actions')}</span>
                     </th>
                   </tr>
                 </thead>
@@ -343,18 +346,18 @@ function UsersDirectory() {
                         <span
                           className={`admin-status ${u.disabled ? 'admin-status-disabled' : ''}`}
                         >
-                          {u.isPlatform ? 'Platform' : u.disabled ? 'Disabled' : 'Active'}
+                          {u.isPlatform ? t('Platform') : u.disabled ? t('Disabled') : t('Active')}
                         </span>
                       </td>
                       <td>{u.rooms}</td>
-                      <td>{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td>{fmtDate(u.createdAt)}</td>
                       <td>
                         <Button
                           variant="secondary"
                           onClick={() => setTarget(u)}
-                          aria-label={`Manage ${u.username}`}
+                          aria-label={t('Manage {user}', { user: u.username })}
                         >
-                          Manage
+                          {t('Manage')}
                         </Button>
                       </td>
                     </tr>
@@ -364,7 +367,11 @@ function UsersDirectory() {
             </div>
             <div className="admin-pagination">
               <span>
-                {result.offset + 1}–{result.offset + result.users.length} of {result.total} accounts
+                {t('{from}–{to} of {total} accounts', {
+                  from: result.offset + 1,
+                  to: result.offset + result.users.length,
+                  total: result.total,
+                })}
               </span>
               <div>
                 <Button
@@ -372,14 +379,14 @@ function UsersDirectory() {
                   disabled={busy || result.offset === 0}
                   onClick={() => void load(appliedQuery, Math.max(0, result.offset - 50))}
                 >
-                  Previous
+                  {t('Previous')}
                 </Button>
                 <Button
                   variant="secondary"
                   disabled={busy || !result.hasMore}
                   onClick={() => void load(appliedQuery, result.offset + 50)}
                 >
-                  Next
+                  {t('Next')}
                 </Button>
               </div>
             </div>
@@ -389,9 +396,9 @@ function UsersDirectory() {
       {target && (
         <section className="admin-user-actions">
           <div className="admin-section-heading">
-            <h2>Manage @{target.username}</h2>
+            <h2>{t('Manage @{user}', { user: target.username })}</h2>
             <Button variant="ghost" onClick={() => setTarget(null)}>
-              Close account controls
+              {t('Close account controls')}
             </Button>
           </div>
           <UserAdminSection key={target.userId} initialTarget={target} />
@@ -428,7 +435,7 @@ export function AdminPage() {
         if (active) setAccess({ token, allowed: !!me.isPlatform });
       })
       .catch((e) => {
-        if (active) setAccessError(e instanceof Error ? e.message : 'Could not check access.');
+        if (active) setAccessError(e instanceof Error ? e.message : t('Could not check access.'));
       });
     return () => {
       active = false;
@@ -441,7 +448,7 @@ export function AdminPage() {
     try {
       setData(await api.adminOverview());
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load the dashboard.');
+      setError(e instanceof Error ? e.message : t('Could not load the dashboard.'));
     } finally {
       setLoading(false);
     }
@@ -457,7 +464,7 @@ export function AdminPage() {
       logout();
       nav('/login?admin=1', { replace: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not sign out. Try again.');
+      setError(e instanceof Error ? e.message : t('Could not sign out. Try again.'));
     } finally {
       setLogoutBusy(false);
     }
@@ -466,28 +473,23 @@ export function AdminPage() {
     return (
       <div className="admin-gate">
         <RiShieldCheckLine size={34} />
-        <h1>Platform access</h1>
+        <h1>{t('Platform access')}</h1>
         <p role={accessError ? 'alert' : 'status'}>
-          {accessError || 'Checking your platform account…'}
+          {accessError || t('Checking your platform account…')}
         </p>
-        {accessError && (
-          <Button onClick={() => setAttempt((a) => a + 1)}>Retry access check</Button>
-        )}
+        {accessError && <Button onClick={() => setAttempt((a) => a + 1)}>{t('Retry access check')}</Button>}
       </div>
     );
   if (!allowed)
     return (
       <div className="admin-gate">
         <RiShieldCheckLine size={34} />
-        <h1>Platform account required</h1>
-        <p>
-          This dashboard is only available to the platform account. Your player account can continue
-          on the main site.
-        </p>
+        <h1>{t('Platform account required')}</h1>
+        <p>{t('This dashboard is only available to the platform account. Your player account can continue on the main site.')}</p>
         <Button onClick={() => void signOut()} disabled={logoutBusy}>
-          Sign in with another account
+          {t('Sign in with another account')}
         </Button>
-        <a href="https://4amcasino.com">Back to 4AM Casino</a>
+        <a href="https://4amcasino.com">{t('Back to 4AM Casino')}</a>
         {error && <p role="alert">{error}</p>}
       </div>
     );
@@ -495,7 +497,7 @@ export function AdminPage() {
   return (
     <div className="admin-app">
       <a className="admin-skip" href="#admin-content">
-        Skip to dashboard content
+        {t('Skip to dashboard content')}
       </a>
       <aside className="admin-sidebar">
         <Link className="admin-brand" to={base || '/'}>
@@ -503,14 +505,14 @@ export function AdminPage() {
             <RiPokerClubsLine size={25} />
           </span>
           <strong>
-            4AM Casino<small>Administration</small>
+            4AM Casino<small>{t('Administration')}</small>
           </strong>
         </Link>
-        <nav aria-label="Admin navigation">
+        <nav aria-label={t('Admin navigation')}>
           {sections.map((item) => (
             <NavLink key={item.id} to={item.id ? `${base}/${item.id}` : base || '/'} end>
               <item.icon size={20} />
-              <span>{item.name}</span>
+              <span>{t(item.name)}</span>
               {item.id === 'requests' && !!data?.pendingRequests && <b>{data.pendingRequests}</b>}
             </NavLink>
           ))}
@@ -518,18 +520,18 @@ export function AdminPage() {
         <div className="admin-sidebar-bottom">
           <a href="https://4amcasino.com">
             <RiArrowRightUpLine size={19} />
-            Open casino
+            {t('Open casino')}
           </a>
           <div className="admin-account">
             <RiShieldCheckLine size={19} />
             <span>
-              <strong>{username || 'Platform account'}</strong>
-              <small>Platform administrator</small>
+              <strong>{username || t('Platform account')}</strong>
+              <small>{t('Platform administrator')}</small>
             </span>
           </div>
           <button onClick={() => void signOut()} disabled={logoutBusy}>
             <RiLogoutBoxLine size={19} />
-            {logoutBusy ? 'Signing out…' : 'Sign out'}
+            {logoutBusy ? t('Signing out…') : t('Sign out')}
           </button>
         </div>
       </aside>
@@ -537,7 +539,7 @@ export function AdminPage() {
         <header className="admin-topbar">
           <span>
             <RiShieldCheckLine size={17} />
-            Platform workspace
+            {t('Platform workspace')}
           </span>
           <div>
             <AppearanceToggle compact />
@@ -550,36 +552,36 @@ export function AdminPage() {
               }}
             >
               <RiRefreshLine size={16} />
-              {loading ? 'Refreshing…' : 'Refresh'}
+              {loading ? t('Refreshing…') : t('Refresh')}
             </Button>
           </div>
         </header>
         <main id="admin-content" tabIndex={-1} className="admin-content">
           <header className="admin-page-heading">
             <div>
-              <h1>{section?.name ?? 'Page not found'}</h1>
-              <p>{section?.description ?? 'Choose a dashboard section from the navigation.'}</p>
+              <h1>{section ? t(section.name) : t('Page not found')}</h1>
+              <p>{section ? t(section.description) : t('Choose a dashboard section from the navigation.')}</p>
             </div>
             {data && sectionId !== 'settings' && (
               <Link className="admin-rate-shortcut" to={`${base}/settings`}>
-                House cut <strong>{commissionRateLabel(data.commissionBps)}</strong>
+                {t('House cut')} <strong>{commissionRateLabel(data.commissionBps)}</strong>
                 <RiSettings3Line size={16} />
               </Link>
             )}
           </header>
           {error && (
             <p className="admin-error" role="alert">
-              {error} <button onClick={() => void load()}>Retry</button>
+              {error} <button onClick={() => void load()}>{t('Retry')}</button>
             </p>
           )}
-          {!section && <Link to={base || '/'}>Return to overview</Link>}
+          {!section && <Link to={base || '/'}>{t('Return to overview')}</Link>}
           {sectionId === '' &&
             (data ? (
               <Overview data={data} base={base} />
             ) : (
               !error && (
                 <div className="admin-loading" role="status">
-                  Loading platform activity…
+                  {t('Loading platform activity…')}
                 </div>
               )
             ))}

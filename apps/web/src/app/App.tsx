@@ -6,6 +6,7 @@ import { peekPendingJoin } from '../shared/pendingJoin.ts';
 import { api } from '../shared/api.ts';
 import { authDestination } from '../shared/authDestination.ts';
 import { adminDestination, isAdminSite } from '../shared/adminSite.ts';
+import { t } from '../shared/i18n/index.ts';
 import { LandingPage } from '../pages/landing/LandingPage.tsx';
 
 const LoginPage = lazy(() =>
@@ -349,7 +350,7 @@ function RouteFallback() {
       role="status"
     >
       <span className="flex items-center gap-3 text-sm">
-        <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400" /> Loading…
+        <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400" /> {t('Loading…')}
       </span>
     </div>
   );

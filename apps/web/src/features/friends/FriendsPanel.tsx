@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { UserPlus } from '@phosphor-icons/react';
 import { api } from '../../shared/api.ts';
 import { cn } from '../../shared/lib/cn.ts';
+import { fmtRelative } from '../../shared/lib/datetime.ts';
+import { t, tr } from '../../shared/i18n/index.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { Badge, Button, Input, Panel } from '../../shared/ui/index.tsx';
 
@@ -18,7 +20,7 @@ interface FriendRow {
 function OnlineDot({ online }: { online: boolean }) {
   return (
     <span
-      title={online ? 'online' : 'offline'}
+      title={online ? t('online') : t('offline')}
       className={cn(
         'h-2.5 w-2.5 shrink-0 rounded-full',
         online ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600',
@@ -28,12 +30,8 @@ function OnlineDot({ online }: { online: boolean }) {
 }
 
 function lastSeenLabel(ts: number): string {
-  if (!ts) return 'never seen';
-  const m = Math.round((Date.now() - ts) / 60_000);
-  if (m < 3) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+  if (!ts) return t('never seen');
+  return fmtRelative(ts);
 }
 
 /** Friends list with live presence, requests, and add-by-username. */
@@ -65,21 +63,21 @@ export function FriendsPanel() {
     setNote(null);
     try {
       const r = await api.addFriend(name.trim());
-      setNote(r.accepted ? 'You are now friends.' : 'Request sent.');
+      setNote(r.accepted ? t('You are now friends.') : t('Request sent.'));
       setName('');
       void load();
     } catch (err) {
-      setNote(err instanceof Error ? err.message : 'could not add');
+      setNote(err instanceof Error ? tr(err.message) : t('could not add'));
     }
   }
 
   return (
     <Panel>
-      <h2 className="mb-3 font-display font-semibold">Friends</h2>
+      <h2 className="mb-3 font-display font-semibold">{t('Friends')}</h2>
       <form onSubmit={add} className="mb-3 flex gap-2">
         <Input
-          aria-label="Add by username"
-          placeholder="Add by username"
+          aria-label={t('Add by username')}
+          placeholder={t('Add by username')}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -87,7 +85,7 @@ export function FriendsPanel() {
           type="submit"
           variant="secondary"
           disabled={name.trim().length < 2}
-          aria-label="Send friend request"
+          aria-label={t('Send friend request')}
         >
           <UserPlus size={16} />
         </Button>
@@ -101,27 +99,25 @@ export function FriendsPanel() {
         >
           <Avatar userId={f.userId} name={f.displayName} version={f.avatarVersion} size="sm" />
           <span className="min-w-0 flex-1 truncate text-sm">
-            <b>{f.displayName}</b> wants to be friends
+            <b>{f.displayName}</b> {t('wants to be friends')}
           </span>
           <Button
             variant="success"
             onClick={() => void api.respondFriend(f.userId, true).then(load)}
           >
-            Accept
+            {t('Accept')}
           </Button>
           <Button
             variant="ghost"
             onClick={() => void api.respondFriend(f.userId, false).then(load)}
           >
-            No
+            {t('No')}
           </Button>
         </div>
       ))}
 
       {friends.length === 0 && incoming.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No friends yet. Add someone by username and play at the same tables.
-        </p>
+        <p className="text-sm text-slate-500">{t('No friends yet. Add someone by username and play at the same tables.')}</p>
       ) : (
         <div className="space-y-1.5">
           {friends.map((f) => (
@@ -133,7 +129,7 @@ export function FriendsPanel() {
               <Avatar userId={f.userId} name={f.displayName} version={f.avatarVersion} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{f.displayName}</span>
               <span className="text-xs text-slate-400">
-                {f.online ? 'online' : lastSeenLabel(f.lastSeen)}
+                {f.online ? t('online') : lastSeenLabel(f.lastSeen)}
               </span>
               <OnlineDot online={f.online} />
             </Link>
@@ -143,7 +139,7 @@ export function FriendsPanel() {
 
       {outgoing.length > 0 && (
         <p className="mt-3 text-xs text-slate-400">
-          Waiting on: {outgoing.map((f) => f.displayName).join(', ')}
+          {t('Waiting on: {names}', { names: outgoing.map((f) => f.displayName).join(', ') })}
         </p>
       )}
     </Panel>
@@ -184,13 +180,13 @@ export function InvitesPanel({ onJoined }: { onJoined: (roomId: string) => void 
         >
           <div className="min-w-0 flex-1">
             <div className="text-sm">
-              <b>{i.fromName}</b> invited you to <b>{i.roomName}</b>
+              <b>{i.fromName}</b> {t('invited you to')} <b>{i.roomName}</b>
             </div>
             <div className="text-xs text-slate-500">
-              Blinds {i.sb}/{i.bb} · Code {i.joinCode}
+              {t('Blinds {sb}/{bb} · Code {code}', { sb: i.sb, bb: i.bb, code: i.joinCode })}
             </div>
           </div>
-          <Badge tone="indigo">invite</Badge>
+          <Badge tone="indigo">{t('invite')}</Badge>
           <Button
             onClick={() =>
               void api.respondInvite(i.id, true).then((r) => {
@@ -199,10 +195,10 @@ export function InvitesPanel({ onJoined }: { onJoined: (roomId: string) => void 
               })
             }
           >
-            Join table
+            {t('Join table')}
           </Button>
           <Button variant="ghost" onClick={() => void api.respondInvite(i.id, false).then(load)}>
-            Decline
+            {t('Decline')}
           </Button>
         </div>
       ))}
@@ -231,8 +227,9 @@ export function InviteFriendsDialogBody({
   if (candidates.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        All your friends are already here, or you have none yet. Add friends from the lobby, or just
-        share the join code.
+        {t(
+          'All your friends are already here, or you have none yet. Add friends from the lobby, or just share the join code.',
+        )}
       </p>
     );
   }
@@ -262,7 +259,10 @@ export function InviteFriendsDialogBody({
                   )
               }
             >
-              {sent[f.userId] ?? 'Invite'}
+              {(() => {
+                const status = sent[f.userId];
+                return status ? tr(status) : t('Invite');
+              })()}
             </Button>
           </div>
         ))}

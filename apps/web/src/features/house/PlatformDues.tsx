@@ -4,6 +4,7 @@ import { commissionRateLabel, type HouseRoom, type PlatformDuesReport } from '@4
 import { isAdminSite } from '../../shared/adminSite.ts';
 import { api } from '../../shared/api.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { t, tr } from '../../shared/i18n/index.ts';
 import { Button, Input, Panel } from '../../shared/ui/index.tsx';
 
 export function HouseRooms({ rooms }: { rooms: HouseRoom[] }) {
@@ -41,7 +42,7 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
     try {
       setReport(await api.adminHouse());
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load platform dues.');
+      setError(e instanceof Error ? tr(e.message) : t('Could not load platform dues.'));
     } finally {
       setLoading(false);
     }
@@ -65,38 +66,38 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 id={id} className="font-display text-lg font-semibold">
-              Platform dues
+              {t('Platform dues')}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Who needs to pay the house, across active rooms.
+              {t('Who needs to pay the house, across active rooms.')}
             </p>
           </div>
           <Button variant="secondary" disabled={loading} onClick={() => void load()}>
-            {loading ? 'Refreshing…' : 'Refresh dues'}
+            {loading ? t('Refreshing…') : t('Refresh dues')}
           </Button>
         </div>
         {error && (
           <p role="alert" className="mt-4 text-sm text-rose-600 dark:text-rose-400">
             {error}{' '}
             {report
-              ? 'The amounts below are from the last successful refresh.'
-              : 'Use Refresh dues to try again.'}
+              ? t('The amounts below are from the last successful refresh.')
+              : t('Use Refresh dues to try again.')}
           </p>
         )}
         {!report ? (
           !error && (
             <p role="status" className="mt-6 text-sm text-slate-500">
-              Loading platform dues…
+              {t('Loading platform dues…')}
             </p>
           )
         ) : (
           <>
             <dl className="my-5 grid grid-cols-2 gap-x-4 gap-y-5 border-y border-slate-200 py-4 dark:border-slate-700 sm:grid-cols-4">
               {[
-                ['Outstanding', report.totals.outstanding],
-                ['Users owing', report.totals.usersOwing],
-                ['Commission accrued', report.totals.accrued],
-                ['Payments recorded', report.totals.paid],
+                [t('Outstanding'), report.totals.outstanding],
+                [t('Users owing'), report.totals.usersOwing],
+                [t('Commission accrued'), report.totals.accrued],
+                [t('Payments recorded'), report.totals.paid],
               ].map(([label, amount]) => (
                 <div key={label} className="min-w-0">
                   <dt className="text-xs text-slate-500">{label}</dt>
@@ -107,22 +108,27 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
               ))}
             </dl>
             <p className="mb-4 text-xs leading-relaxed text-slate-500">
-              Outstanding is commission minus payments recorded by each user. Payment records are
-              self-reported; they are not bank confirmations.
-              {report.totals.credit > 0 && <> Recorded credit: {fmt(report.totals.credit)}.</>}
+              {t(
+                'Outstanding is commission minus payments recorded by each user. Payment records are self-reported; they are not bank confirmations.',
+              )}
+              {report.totals.credit > 0 && (
+                <> {t('Recorded credit: {n}.', { n: fmt(report.totals.credit) })}</>
+              )}
             </p>
             {report.totals.unallocated > 0 && (
               <p className="mb-4 text-sm text-amber-700 dark:text-amber-300">
-                {fmt(report.totals.unallocated)} in commission has no recorded winner to assign it
-                to. It is excluded from user dues.
+                {t(
+                  '{n} in commission has no recorded winner to assign it to. It is excluded from user dues.',
+                  { n: fmt(report.totals.unallocated) },
+                )}
               </p>
             )}
             <div className="flex flex-wrap items-center gap-3">
               <div className="min-w-0 flex-1 basis-48">
                 <Input
-                  aria-label="Find a user with platform dues"
+                  aria-label={t('Find a user with platform dues')}
                   type="search"
-                  placeholder="Search name, username or ID"
+                  placeholder={t('Search name, username or ID')}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -133,19 +139,21 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
                   checked={showCleared}
                   onChange={(e) => setShowCleared(e.target.checked)}
                 />
-                Show cleared users
+                {t('Show cleared users')}
               </label>
             </div>
             <p role="status" className="mt-3 text-xs text-slate-500">
-              {visible.length} user{visible.length === 1 ? '' : 's'} shown
+              {t('{n} users shown', { n: visible.length })}
             </p>
             {visible.length === 0 ? (
               <p className="py-6 text-sm text-slate-500">
                 {query.trim()
-                  ? 'No matching users. Try another name or include cleared users.'
+                  ? t('No matching users. Try another name or include cleared users.')
                   : report.people.length
-                    ? 'No outstanding platform dues. Include cleared users to see previous charges and payments.'
-                    : 'No platform dues recorded yet. Commission from completed hands will appear here.'}
+                    ? t(
+                        'No outstanding platform dues. Include cleared users to see previous charges and payments.',
+                      )
+                    : t('No platform dues recorded yet. Commission from completed hands will appear here.')}
               </p>
             ) : (
               <ul className="mt-1 divide-y divide-slate-200 dark:divide-slate-700">
@@ -153,7 +161,7 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
                   <li
                     key={person.userId}
                     className="py-4"
-                    aria-label={`Dues for ${person.username}`}
+                    aria-label={t('Dues for {name}', { name: person.username })}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -172,18 +180,22 @@ export function PlatformDues({ initialReport }: { initialReport?: PlatformDuesRe
                           {fmt(person.outstanding)}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {person.outstanding > 0 ? 'To pay' : 'Cleared'}
+                          {person.outstanding > 0 ? t('To pay') : t('Cleared')}
                         </div>
                       </div>
                     </div>
                     <p className="mt-2 text-xs text-slate-500">
-                      Accrued: {fmt(person.accrued)} · Payments recorded: {fmt(person.paid)}
-                      {person.credit > 0 && <> · {fmt(person.credit)} credit</>}
+                      {t('Accrued: {accrued} · Payments recorded: {paid}', {
+                        accrued: fmt(person.accrued),
+                        paid: fmt(person.paid),
+                      })}
+                      {person.credit > 0 &&
+                        <> · {t('{n} credit', { n: fmt(person.credit) })}</>}
                     </p>
                     {person.rooms.length > 0 && (
                       <details className="mt-3 text-sm">
                         <summary className="w-fit cursor-pointer text-indigo-600 underline-offset-4 hover:underline dark:text-indigo-300">
-                          Commission by room ({person.rooms.length})
+                          {t('Commission by room ({n})', { n: person.rooms.length })}
                         </summary>
                         <HouseRooms rooms={person.rooms} />
                       </details>

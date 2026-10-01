@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SponsorPlacement } from '@4am/shared';
 import { RiExternalLinkLine } from '@remixicon/react';
+import { t } from '../../shared/i18n/index.ts';
 import './broadcast.css';
 
 export function safeExternalUrl(value: string | undefined): string | null {
@@ -71,16 +72,19 @@ export function SponsorPlacements({
   );
   if (!visible.length) return null;
   return (
-    <aside className="broadcast-sponsors" aria-label="Sponsors">
+    <aside className="broadcast-sponsors" aria-label={t('Sponsors')}>
       {visible.map((item) => (
         <div className="broadcast-sponsor" key={item.id}>
-          <div className="broadcast-sponsor-disclosure">Sponsored · {item.name}</div>
+          <div className="broadcast-sponsor-disclosure">
+            {t('Sponsored · {name}', { name: item.name })}
+          </div>
           <a
             href={safeExternalUrl(item.destinationUrl)!}
             target="_blank"
             rel="sponsored noopener noreferrer"
           >
-            {item.headline} <RiExternalLinkLine size={15} aria-label="Opens in a new tab" />
+            {item.headline}{' '}
+            <RiExternalLinkLine size={15} aria-label={t('Opens in a new tab')} />
           </a>
           {item.description && <p>{item.description}</p>}
         </div>

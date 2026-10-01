@@ -7,12 +7,13 @@ import {
   type TournamentSummary,
 } from '@4am/shared';
 import { Button, Input } from '../../shared/ui/index.tsx';
+import { t } from '../../shared/i18n/index.ts';
 import './tournament-operations.css';
 
 export const chips = (n: number) => n.toLocaleString();
 export const signedChips = (n: number) => `${n > 0 ? '+' : ''}${chips(n)}`;
 export const tournamentError = (e: unknown) =>
-  e instanceof Error ? e.message : 'Request failed. Please try again.';
+  e instanceof Error ? e.message : t('Request failed. Please try again.');
 export const formatName = (format: string) =>
   tournamentFormatLabel(format as TournamentPolicy['format']);
 export const localDateInput = (value: number | null) =>
@@ -21,7 +22,7 @@ export const localDateInput = (value: number | null) =>
     : new Date(value - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 export const eventDate = (value: number | null) =>
   value === null
-    ? 'Organizer starts when ready'
+    ? t('Organizer starts when ready')
     : new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 export function safeExternalUrl(value: string): string | undefined {
   try {
@@ -46,125 +47,139 @@ export function ApprovalStatus({ tournament }: { tournament: TournamentSummary }
   const status = tournament.approvalStatus;
   return (
     <span className={`arena-status tournament-approval ${status}`}>
-      {status === 'approved'
-        ? 'Published'
-        : status === 'pending'
-          ? 'Awaiting approval'
-          : 'Changes requested'}
+      {t(
+        status === 'approved'
+          ? 'Published'
+          : status === 'pending'
+            ? 'Awaiting approval'
+            : 'Changes requested',
+      )}
     </span>
   );
 }
-export function TournamentTerms({ tournament: t }: { tournament: TournamentSummary }) {
-  const p = t.policy;
+export function TournamentTerms({ tournament: tour }: { tournament: TournamentSummary }) {
+  const p = tour.policy;
   return (
     <div className="tournament-terms">
       <div className="tournament-section-head">
-        <h3>Entry terms · revision {t.revision}</h3>
+        <h3>{t('Entry terms · revision {n}', { n: tour.revision })}</h3>
         <span className="arena-muted">
-          {t.termsLocked ? 'Locked on first enrollment' : 'Locks on first enrollment'}
+          {t(tour.termsLocked ? 'Locked on first enrollment' : 'Locks on first enrollment')}
         </span>
       </div>
       <dl className="tournament-facts">
         <div>
-          <dt>Format</dt>
-          <dd>{formatName(p.format)}</dd>
+          <dt>{t('Format')}</dt>
+          <dd>{t(formatName(p.format))}</dd>
         </div>
         <div>
-          <dt>Scheduled start</dt>
+          <dt>{t('Scheduled start')}</dt>
           <dd>{eventDate(p.startsAt)}</dd>
         </div>
         <div>
-          <dt>Entry fee</dt>
-          <dd>{p.entryFee ? `${chips(p.entryFee)} chips` : 'Free entry'}</dd>
+          <dt>{t('Entry fee')}</dt>
+          <dd>{p.entryFee ? t('{n} chips', { n: chips(p.entryFee) }) : t('Free entry')}</dd>
         </div>
         <div>
-          <dt>Joining reward</dt>
-          <dd>{chips(p.joiningReward)} chips · vests at start</dd>
+          <dt>{t('Joining reward')}</dt>
+          <dd>{t('{n} chips · vests at start', { n: chips(p.joiningReward) })}</dd>
         </div>
         <div>
-          <dt>Organizer guarantee</dt>
-          <dd>{chips(p.guaranteedPool)} chips</dd>
+          <dt>{t('Organizer guarantee')}</dt>
+          <dd>{t('{n} chips', { n: chips(p.guaranteedPool) })}</dd>
         </div>
         <div>
-          <dt>Payout places</dt>
+          <dt>{t('Payout places')}</dt>
           <dd>{p.payoutBps.map((bps, i) => `${i + 1}: ${bps / 100}%`).join(' · ')}</dd>
         </div>
         <div>
-          <dt>Pot deductions</dt>
+          <dt>{t('Pot deductions')}</dt>
           <dd>
-            House {p.houseBps / 100}% · prize pool {p.prizeBps / 100}%
+            {t('House {rate} · prize pool {pool}', {
+              rate: `${p.houseBps / 100}%`,
+              pool: `${p.prizeBps / 100}%`,
+            })}
           </dd>
         </div>
         <div>
-          <dt>Blinds</dt>
+          <dt>{t('Blinds')}</dt>
           <dd>
-            {t.sb}/{t.bb}
+            {tour.sb}/{tour.bb}
             {carriesStacks(p.format)
-              ? ` · double every ${p.blindEveryHands} hands`
-              : ' · fixed throughout'}
+              ? ` · ${t('double every {n} hands', { n: p.blindEveryHands })}`
+              : ` · ${t('fixed throughout')}`}
           </dd>
         </div>
         <div>
-          <dt>Starting stack</dt>
+          <dt>{t('Starting stack')}</dt>
           <dd>
             {p.format === 'freezeout'
-              ? `${chips(p.entryFee)} chips · your entry fee, carried between hands`
-              : `${chips(t.startingStack)} chips${
-                  p.format === 'fixed-hand-league'
-                    ? ' · reset every hand'
-                    : ' · carried between hands'
-                }`}
+              ? t('{n} chips · your entry fee, carried between hands', { n: chips(p.entryFee) })
+              : p.format === 'fixed-hand-league'
+                ? t('{n} chips · reset every hand', { n: chips(tour.startingStack) })
+                : t('{n} chips · carried between hands', { n: chips(tour.startingStack) })}
           </dd>
         </div>
         <div>
-          <dt>Sit-out budget</dt>
+          <dt>{t('Sit-out budget')}</dt>
           <dd>
-            {chips(p.sitOutBudget)} hands · up to {chips(p.maxSitOutPerRequest)} at a time
+            {t('{a} hands · up to {b} at a time', {
+              a: chips(p.sitOutBudget),
+              b: chips(p.maxSitOutPerRequest),
+            })}
             <br />
-            <span className="arena-muted">Blinds keep posting while you sit out.</span>
+            <span className="arena-muted">{t('Blinds keep posting while you sit out.')}</span>
           </dd>
         </div>
         <div>
-          <dt>Hand limit</dt>
+          <dt>{t('Hand limit')}</dt>
           <dd>
-            {chips(t.handLimit)}
-            {carriesStacks(p.format) ? ' · then ranked by remaining stack' : ' hands'}
+            {carriesStacks(p.format)
+              ? t('{n} · then ranked by remaining stack', { n: chips(tour.handLimit) })
+              : t('{n} hands', { n: chips(tour.handLimit) })}
           </dd>
         </div>
         <div>
-          <dt>Decision timer</dt>
-          <dd>{t.actionSeconds} seconds · timeout checks when free, otherwise folds</dd>
+          <dt>{t('Decision timer')}</dt>
+          <dd>
+            {t('{n} seconds · timeout checks when free, otherwise folds', {
+              n: tour.actionSeconds,
+            })}
+          </dd>
         </div>
         <div>
-          <dt>Watching & disclosure</dt>
+          <dt>{t('Watching & disclosure')}</dt>
           <dd>
-            {p.publicWatch ? 'Public watching enabled.' : 'Public watching disabled.'}{' '}
-            {p.revealAllAfterHand
-              ? 'All hole cards, including folded cards, revealed after each hand.'
-              : 'Only showdown cards revealed.'}
+            {t(
+              p.publicWatch ? 'Public watching enabled.' : 'Public watching disabled.',
+            )}{' '}
+            {t(
+              p.revealAllAfterHand
+                ? 'All hole cards, including folded cards, revealed after each hand.'
+                : 'Only showdown cards revealed.',
+            )}
           </dd>
         </div>
       </dl>
-      {t.prizeDescription && (
+      {tour.prizeDescription && (
         <p className="arena-note">
-          <strong>Prizes:</strong> {t.prizeDescription}
+          <strong>{t('Prizes:')}</strong> {tour.prizeDescription}
         </p>
       )}
-      {t.rules && (
+      {tour.rules && (
         <p className="arena-note mt-3">
-          <strong>Organizer rules:</strong> {t.rules}
+          <strong>{t('Organizer rules:')}</strong> {tour.rules}
         </p>
       )}
       <p className="arena-muted mt-4">
-        Whole competition chips, settled manually. These amounts are separate from cash and ordinary
-        room balances. Entry obligations reverse if cancelled before play. After play, cancellation
-        allocates the earned pool by current standings. Tied places share their combined prize
-        allocation.
+        {t(
+          'Whole competition chips, settled manually. These amounts are separate from cash and ordinary room balances. Entry obligations reverse if cancelled before play. After play, cancellation allocates the earned pool by current standings. Tied places share their combined prize allocation.',
+        )}
       </p>
       <p className="arena-muted mt-3">
-        Deductions apply once to each contested pot; uncalled returns are exempt. The organizer
-        guarantee funds joining rewards and the starting prize pool. Recorded payments are platform
-        records of settlement.
+        {t(
+          'Deductions apply once to each contested pot; uncalled returns are exempt. The organizer guarantee funds joining rewards and the starting prize pool. Recorded payments are platform records of settlement.',
+        )}
       </p>
     </div>
   );
@@ -204,7 +219,9 @@ export function TournamentTermsForm({
             payoutBps.reduce((sum, n) => sum + n, 0) !== 10000
           )
             throw new Error(
-              'Payout percentages must be positive and add up to 100%. Separate each place with a comma.',
+              t(
+                'Payout percentages must be positive and add up to 100%. Separate each place with a comma.',
+              ),
             );
           const policy = {
             ...p,
@@ -227,20 +244,23 @@ export function TournamentTermsForm({
           const capacity = Number(f.get('capacity'));
           if (policy.guaranteedPool < capacity * policy.joiningReward)
             throw new Error(
-              `The organizer guarantee must cover joining rewards for all ${capacity} seats (${chips(capacity * policy.joiningReward)} chips).`,
+              t('The organizer guarantee must cover joining rewards for all {n} seats ({total} chips).', {
+                n: capacity,
+                total: chips(capacity * policy.joiningReward),
+              }),
             );
           for (const url of [policy.streamUrl, policy.meetUrl])
             if (url && !safeExternalUrl(url))
               throw new Error(
-                'Broadcast links must use HTTPS and contain no embedded credentials.',
+                t('Broadcast links must use HTTPS and contain no embedded credentials.'),
               );
           if (!supportedStreamUrl(policy.streamUrl))
-            throw new Error('Use a YouTube or Twitch HTTPS link for the stream.');
+            throw new Error(t('Use a YouTube or Twitch HTTPS link for the stream.'));
           if (
             policy.meetUrl &&
             (new URL(policy.meetUrl).hostname !== 'meet.google.com' || new URL(policy.meetUrl).port)
           )
-            throw new Error('Use a meet.google.com link for Google Meet.');
+            throw new Error(t('Use a meet.google.com link for Google Meet.'));
           const body: Record<string, unknown> = {
             name: String(f.get('name')).trim(),
             description: String(f.get('description')).trim(),
@@ -269,20 +289,20 @@ export function TournamentTermsForm({
       }}
     >
       <fieldset disabled={busy} className="tournament-fieldset arena-form">
-        <legend>Event details</legend>
+        <legend>{t('Event details')}</legend>
         <label className="arena-field wide">
-          Tournament name
+          {t('Tournament name')}
           <Input
             name="name"
             required
             minLength={3}
             maxLength={80}
             defaultValue={tournament?.name ?? ''}
-            placeholder="Friday Agent League"
+            placeholder={t('Friday Agent League')}
           />
         </label>
         <label className="arena-field wide">
-          Description
+          {t('Description')}
           <textarea
             className="arena-input"
             name="description"
@@ -292,27 +312,27 @@ export function TournamentTermsForm({
           />
         </label>
         <label className="arena-field">
-          Format
+          {t('Format')}
           <select
             className="arena-input"
             value={format}
             onChange={(e) => setFormat(e.target.value as typeof format)}
           >
-            <option value="fixed-hand-league">Fixed-hand league · equal stacks</option>
-            <option value="knockout">Knockout · last player standing</option>
-            <option value="freezeout">Freezeout · entry fee is your stack</option>
+            <option value="fixed-hand-league">{t('Fixed-hand league · equal stacks')}</option>
+            <option value="knockout">{t('Knockout · last player standing')}</option>
+            <option value="freezeout">{t('Freezeout · entry fee is your stack')}</option>
           </select>
         </label>
         <label className="arena-field">
-          Scheduled start · your local time
+          {t('Scheduled start · your local time')}
           <Input type="datetime-local" name="startsAt" defaultValue={localDateInput(p.startsAt)} />
           <span className="arena-muted">
-            Optional. Approved events start with at least two entrants.
+            {t('Optional. Approved events start with at least two entrants.')}
           </span>
         </label>
         <>
           <label className="arena-field">
-            Seats
+            {t('Seats')}
             <Input
               name="capacity"
               type="number"
@@ -324,7 +344,7 @@ export function TournamentTermsForm({
             />
           </label>
           <label className="arena-field">
-            {carriesStacks(format) ? 'Maximum hands' : 'Hands per entrant'}
+            {t(carriesStacks(format) ? 'Maximum hands' : 'Hands per entrant')}
             <Input
               name="handLimit"
               type="number"
@@ -336,11 +356,13 @@ export function TournamentTermsForm({
             />
           </label>
           <label className="arena-field">
-            {format === 'freezeout'
-              ? 'Starting stack · set by the entry fee'
-              : carriesStacks(format)
-                ? 'Starting stack'
-                : 'Stack reset every hand'}
+            {t(
+              format === 'freezeout'
+                ? 'Starting stack · set by the entry fee'
+                : carriesStacks(format)
+                  ? 'Starting stack'
+                  : 'Stack reset every hand',
+            )}
             <Input
               name="startingStack"
               type="number"
@@ -352,7 +374,7 @@ export function TournamentTermsForm({
             />
           </label>
           <label className="arena-field">
-            Seconds per decision
+            {t('Seconds per decision')}
             <Input
               name="actionSeconds"
               type="number"
@@ -364,7 +386,7 @@ export function TournamentTermsForm({
             />
           </label>
           <label className="arena-field">
-            Small blind
+            {t('Small blind')}
             <Input
               name="sb"
               type="number"
@@ -376,7 +398,7 @@ export function TournamentTermsForm({
             />
           </label>
           <label className="arena-field">
-            Big blind
+            {t('Big blind')}
             <Input
               name="bb"
               type="number"
@@ -389,7 +411,7 @@ export function TournamentTermsForm({
           </label>
         </>
         <label className="arena-field">
-          Blind increase interval · hands
+          {t('Blind increase interval · hands')}
           <Input
             name="blindEveryHands"
             type="number"
@@ -400,11 +422,11 @@ export function TournamentTermsForm({
             required
           />
           <span className="arena-muted">
-            Blinds double at this interval in knockout and freezeout events.
+            {t('Blinds double at this interval in knockout and freezeout events.')}
           </span>
         </label>
         <label className="arena-field">
-          Sit-out budget · hands
+          {t('Sit-out budget · hands')}
           <Input
             name="sitOutBudget"
             type="number"
@@ -415,11 +437,11 @@ export function TournamentTermsForm({
             required
           />
           <span className="arena-muted">
-            Total hands one entrant may sit out. Blinds still post, so sitting out costs chips.
+            {t('Total hands one entrant may sit out. Blinds still post, so sitting out costs chips.')}
           </span>
         </label>
         <label className="arena-field">
-          Longest single sit-out · hands
+          {t('Longest single sit-out · hands')}
           <Input
             name="maxSitOutPerRequest"
             type="number"
@@ -429,16 +451,16 @@ export function TournamentTermsForm({
             defaultValue={p.maxSitOutPerRequest}
             required
           />
-          <span className="arena-muted">Cannot exceed the whole sit-out budget.</span>
+          <span className="arena-muted">{t('Cannot exceed the whole sit-out budget.')}</span>
         </label>
       </fieldset>
       <fieldset disabled={busy} className="tournament-fieldset arena-form">
-        <legend>Chips & payouts</legend>
+        <legend>{t('Chips & payouts')}</legend>
         <p className="arena-muted tournament-wide">
-          Whole competition chips. No cash collection or automated payment occurs here.
+          {t('Whole competition chips. No cash collection or automated payment occurs here.')}
         </p>
         <label className="arena-field">
-          Entry fee · chips
+          {t('Entry fee · chips')}
           <Input
             name="entryFee"
             type="number"
@@ -450,7 +472,7 @@ export function TournamentTermsForm({
           />
         </label>
         <label className="arena-field">
-          Joining reward · chips
+          {t('Joining reward · chips')}
           <Input
             name="joiningReward"
             type="number"
@@ -462,7 +484,7 @@ export function TournamentTermsForm({
           />
         </label>
         <label className="arena-field">
-          Organizer guarantee · chips
+          {t('Organizer guarantee · chips')}
           <Input
             name="guaranteedPool"
             type="number"
@@ -472,16 +494,16 @@ export function TournamentTermsForm({
             defaultValue={p.guaranteedPool}
             required
           />
-          <span className="arena-muted">Funds joining rewards and any starting prize pool.</span>
+          <span className="arena-muted">{t('Funds joining rewards and any starting prize pool.')}</span>
         </label>
         {(
           [
-            ['houseRate', 'House', p.houseBps],
-            ['prizeRate', 'Prize pool', p.prizeBps],
+            ['houseRate', 'House cut · %', p.houseBps],
+            ['prizeRate', 'Prize pool cut · %', p.prizeBps],
           ] as const
         ).map(([name, label, value]) => (
           <label className="arena-field" key={name}>
-            {label} cut · %
+            {t(label)}
             <Input
               name={name}
               type="number"
@@ -494,7 +516,7 @@ export function TournamentTermsForm({
           </label>
         ))}
         <label className="arena-field wide">
-          Payout percentages · first place onward
+          {t('Payout percentages · first place onward')}
           <Input
             name="payouts"
             defaultValue={p.payoutBps.map((v) => v / 100).join(', ')}
@@ -502,11 +524,11 @@ export function TournamentTermsForm({
             placeholder="60, 30, 10"
           />
           <span className="arena-muted">
-            Comma-separated percentages adding to 100. Ties split affected places.
+            {t('Comma-separated percentages adding to 100. Ties split affected places.')}
           </span>
         </label>
         <label className="arena-field wide">
-          Prize description
+          {t('Prize description')}
           <textarea
             className="arena-input"
             name="prizeDescription"
@@ -516,7 +538,7 @@ export function TournamentTermsForm({
           />
         </label>
         <label className="arena-field wide">
-          Additional entry & award rules
+          {t('Additional entry & award rules')}
           <textarea
             className="arena-input"
             name="rules"
@@ -527,21 +549,22 @@ export function TournamentTermsForm({
         </label>
       </fieldset>
       <fieldset disabled={busy} className="tournament-fieldset arena-form">
-        <legend>Watching & broadcast</legend>
+        <legend>{t('Watching & broadcast')}</legend>
         <label className="tournament-checkbox tournament-wide">
           <input name="publicWatch" type="checkbox" defaultChecked={p.publicWatch} />
-          Allow anonymous public watching
+          {t('Allow anonymous public watching')}
         </label>
         <p className="arena-muted tournament-wide">
-          Saving these terms publishes all hole cards, including folded hands, after each hand. This
-          disclosure is included in the entry terms accepted by entrants.
+          {t(
+            'Saving these terms publishes all hole cards, including folded hands, after each hand. This disclosure is included in the entry terms accepted by entrants.',
+          )}
         </p>
         <label className="arena-field">
-          YouTube or Twitch stream URL
+          {t('YouTube or Twitch stream URL')}
           <Input name="streamUrl" type="url" defaultValue={p.streamUrl} placeholder="https://" />
         </label>
         <label className="arena-field">
-          Google Meet URL
+          {t('Google Meet URL')}
           <Input
             name="meetUrl"
             maxLength={1000}
@@ -552,10 +575,11 @@ export function TournamentTermsForm({
         </label>
       </fieldset>
       <p className="arena-muted">
-        {platform
-          ? 'Publishing opens enrollment. '
-          : 'Your proposal stays private until the platform approves it. Changes return it for review. '}
-        Published terms permanently lock when the first entrant enrolls.
+        {t(
+          platform
+            ? 'Publishing opens enrollment. Published terms permanently lock when the first entrant enrolls.'
+            : 'Your proposal stays private until the platform approves it. Changes return it for review. Published terms permanently lock when the first entrant enrolls.',
+        )}
       </p>
       {error && (
         <p className="arena-error" role="alert">
@@ -565,18 +589,20 @@ export function TournamentTermsForm({
       <div className="arena-controls">
         <Button disabled={busy}>
           {busy
-            ? 'Saving…'
-            : tournament
-              ? platform
-                ? 'Save published terms'
-                : 'Save & submit for review'
-              : platform
-                ? 'Publish tournament'
-                : 'Submit for approval'}
+            ? t('Saving…')
+            : t(
+                tournament
+                  ? platform
+                    ? 'Save published terms'
+                    : 'Save & submit for review'
+                  : platform
+                    ? 'Publish tournament'
+                    : 'Submit for approval',
+              )}
         </Button>
         {onCancel && (
           <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
-            Cancel editing
+            {t('Cancel editing')}
           </Button>
         )}
       </div>
@@ -606,18 +632,18 @@ export function TournamentMediaForm({
           meetUrl: String(f.get('meetUrl')).trim(),
         };
         if ([body.streamUrl, body.meetUrl].some((url) => url && !safeExternalUrl(url))) {
-          setError('Use HTTPS links without embedded credentials.');
+          setError(t('Use HTTPS links without embedded credentials.'));
           return;
         }
         if (!supportedStreamUrl(body.streamUrl)) {
-          setError('Use a YouTube or Twitch HTTPS link for the stream.');
+          setError(t('Use a YouTube or Twitch HTTPS link for the stream.'));
           return;
         }
         if (
           body.meetUrl &&
           (new URL(body.meetUrl).hostname !== 'meet.google.com' || new URL(body.meetUrl).port)
         ) {
-          setError('Use a meet.google.com link for Google Meet.');
+          setError(t('Use a meet.google.com link for Google Meet.'));
           return;
         }
         pending.current = true;
@@ -634,7 +660,7 @@ export function TournamentMediaForm({
       }}
     >
       <label className="arena-field">
-        YouTube or Twitch stream URL
+        {t('YouTube or Twitch stream URL')}
         <Input
           name="streamUrl"
           maxLength={1000}
@@ -645,7 +671,7 @@ export function TournamentMediaForm({
         />
       </label>
       <label className="arena-field">
-        Google Meet URL
+        {t('Google Meet URL')}
         <Input
           name="meetUrl"
           maxLength={1000}
@@ -656,14 +682,14 @@ export function TournamentMediaForm({
         />
       </label>
       <p className="arena-muted">
-        Broadcast links can be updated after entry terms lock. Clear a field to remove its link.
+        {t('Broadcast links can be updated after entry terms lock. Clear a field to remove its link.')}
       </p>
       {error && (
         <p role="alert" className="arena-error">
           {error}
         </p>
       )}
-      <Button disabled={busy}>{busy ? 'Saving links…' : 'Save broadcast links'}</Button>
+      <Button disabled={busy}>{busy ? t('Saving links…') : t('Save broadcast links')}</Button>
     </form>
   );
 }
