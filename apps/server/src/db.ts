@@ -318,6 +318,89 @@ function migrate(db: DB): void {
       decided_by INTEGER
     );
   `);
+
+  // ---- new-gameplay room settings (squid / time bank / bomb pot / multi-run) --
+  // Each feature is independent: a room can switch one on without the others.
+  // The numeric defaults mirror the shared RoomGameplaySettings defaults except
+  // where the orchestrator specified otherwise (e.g. 3 min squid players).
+  ensureColumn(db, 'rooms', 'squid_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'squid_penalty_bb', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'rooms', 'squid_min_players', 'INTEGER NOT NULL DEFAULT 3');
+  ensureColumn(db, 'rooms', 'time_bank_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'time_bank_initial_secs', 'INTEGER NOT NULL DEFAULT 30');
+  ensureColumn(db, 'rooms', 'time_bank_refill_every_hands', 'INTEGER NOT NULL DEFAULT 30');
+  ensureColumn(db, 'rooms', 'time_bank_refill_secs', 'INTEGER NOT NULL DEFAULT 30');
+  // Bumped on every time-bank config change so in-flight hands and clients can
+  // tell a stale snapshot from the current configuration.
+  ensureColumn(db, 'rooms', 'time_bank_epoch', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'bomb_pot_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'bomb_pot_ante_bb', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'rooms', 'bomb_pot_schedule_mode', "TEXT NOT NULL DEFAULT 'hands'");
+  ensureColumn(db, 'rooms', 'bomb_pot_schedule_value', 'INTEGER NOT NULL DEFAULT 10');
+  ensureColumn(db, 'rooms', 'multi_run_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'multi_run_max_runs', 'INTEGER NOT NULL DEFAULT 3');
+  // Per-player time bank snapshot. The epoch stamps which config the ms/hands
+  // belong to; a stale epoch means the row predates the current settings.
+  ensureColumn(db, 'room_players', 'time_bank_ms', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'room_players', 'time_bank_hands', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'room_players', 'time_bank_epoch', 'INTEGER NOT NULL DEFAULT 0');
+  db.exec(`
+    -- Progress the game engine keeps for the scheduled features. Kept in its own
+    -- row (one per room) so settings writes never race the hand loop.
+    CREATE TABLE IF NOT EXISTS room_gameplay_state (
+      room_id TEXT PRIMARY KEY,
+      completed_hands INTEGER NOT NULL DEFAULT 0,
+      last_bomb_completed_hands INTEGER NOT NULL DEFAULT 0,
+      last_bomb_at INTEGER,
+      schedule_reset_at INTEGER
+    );
+    -- A request to start squid/bomb, however it was raised. source records who
+    -- asked (a host tap, the hand counter, or the clock); status tracks it
+    -- through claim -> apply. The partial unique index allows at most one pending
+    -- trigger of a kind per room while letting resolved history pile up.
+    CREATE TABLE IF NOT EXISTS room_feature_triggers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('squid', 'bomb')),
+      source TEXT NOT NULL CHECK (source IN ('manual', 'timed-hands', 'timed-duration')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'claimed', 'applied', 'cancelled')),
+      requested_by INTEGER,
+      created_at INTEGER NOT NULL,
+      claimed_hand_id TEXT,
+      resolved_at INTEGER,
+      UNIQUE(room_id, request_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_triggers_pending
+      ON room_feature_triggers(room_id, kind) WHERE status = 'pending';
+    -- Pending lookups (e.g. "what should this hand run?") stay cheap as the
+    -- resolved history grows.
+    CREATE INDEX IF NOT EXISTS idx_feature_triggers_room
+      ON room_feature_triggers(room_id, status);
+  `);
+  // A trigger claimed by a hand that never produced a transcript (the process
+  // restarted mid-hand) is stuck: neither pending nor resolved. Put it back so
+  // it can be claimed again. Only the newest claimed row per kind is restored,
+  // and never while a pending row exists - otherwise the partial unique index
+  // would reject the update.
+  db.exec(`
+    UPDATE room_feature_triggers
+    SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL
+    WHERE status = 'claimed'
+      AND (claimed_hand_id IS NULL
+           OR NOT EXISTS (
+             SELECT 1 FROM transcripts t WHERE t.hand_id = room_feature_triggers.claimed_hand_id))
+      AND id = (
+        SELECT MAX(x.id) FROM room_feature_triggers x
+        WHERE x.room_id = room_feature_triggers.room_id
+          AND x.kind = room_feature_triggers.kind
+          AND x.status = 'claimed')
+      AND NOT EXISTS (
+        SELECT 1 FROM room_feature_triggers p
+        WHERE p.room_id = room_feature_triggers.room_id
+          AND p.kind = room_feature_triggers.kind
+          AND p.status = 'pending')
+  `);
 }
 
 function ensureColumn(db: DB, table: string, column: string, decl: string): void {

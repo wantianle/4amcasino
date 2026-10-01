@@ -93,6 +93,49 @@ export function startHand(
   return st;
 }
 
+/**
+ * Open a bomb-pot hand: no blinds are posted, every seat antes
+ * `min(stack, ante)` straight into the pot, and the result is a synthetic,
+ * already-closed preflop state so the caller can immediately advance to the
+ * flop. The ante is not a street wager, so `committed` stays 0 for everyone -
+ * it only shows up in `total` (the side-pot basis). Short stacks post what they
+ * have and are marked all-in.
+ */
+export function startBombPot(
+  seats: { seat: number; stack: number }[],
+  buttonSeat: number,
+  bb: number,
+  ante: number,
+): BettingState {
+  if (seats.length < 2) throw new Error('need at least 2 players');
+  const st: BettingState = {
+    street: 'preflop',
+    seats: seats.map((s) => ({
+      seat: s.seat,
+      stack: s.stack,
+      committed: 0,
+      total: 0,
+      folded: false,
+      allIn: false,
+      lastActedAt: null,
+    })),
+    buttonSeat,
+    sb: 0,
+    bb,
+    currentBet: 0,
+    lastRaiseSize: bb,
+    lastFullRaiseAt: 0,
+    toAct: null,
+    needToAct: [],
+    winnerByFold: null,
+  };
+  for (const s of st.seats) {
+    commit(s, ante); // ante hits total but not committed...
+    s.committed = 0; // ...the ante is not this street's wager
+  }
+  return st;
+}
+
 export function activeNonAllIn(st: BettingState): number {
   return st.seats.filter((s) => !s.folded && !s.allIn).length;
 }
@@ -252,4 +295,42 @@ export function awardPots(
     }
   }
   return out;
+}
+
+/**
+ * The seats among `eligible` that hold the best score, in ascending seat order.
+ * Returns an empty array when nobody has a score (e.g. everyone mucked).
+ */
+export function bestScoreSeats(eligible: number[], scores: Map<number, number>): number[] {
+  const scored = eligible.filter((s) => scores.has(s));
+  if (scored.length === 0) return [];
+  const best = Math.max(...scored.map((s) => scores.get(s)!));
+  return scored.filter((s) => scores.get(s) === best).sort((a, b) => a - b);
+}
+
+/**
+ * Seats present in every one of the given winner sets. With multiple board
+ * runs, a player only scoops the whole pot when they would win each run; this
+ * is that intersection (ascending). Empty input -> empty result.
+ */
+export function intersectSeatSets(sets: number[][]): number[] {
+  if (sets.length === 0) return [];
+  const first = [...new Set(sets[0]!)];
+  return first
+    .filter((seat) => sets.every((set) => set.includes(seat)))
+    .sort((a, b) => a - b);
+}
+
+/**
+ * Split `amount` into `parts` integer chunks as evenly as the chips allow. Any
+ * remainder is handed out one chip at a time to the earliest parts, so the
+ * first run(s) get the odd chip - matching the "odd chip to the earliest run"
+ * rule used when a pot is divided across multiple board runs.
+ */
+export function splitAmountEven(amount: number, parts: number): number[] {
+  if (!Number.isInteger(parts) || parts <= 0) throw new Error('parts must be a positive integer');
+  if (!Number.isInteger(amount) || amount < 0) throw new Error('amount must be a non-negative integer');
+  const base = Math.floor(amount / parts);
+  let remainder = amount - base * parts;
+  return Array.from({ length: parts }, () => base + (remainder-- > 0 ? 1 : 0));
 }

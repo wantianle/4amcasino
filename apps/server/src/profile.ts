@@ -79,13 +79,28 @@ const avatarSchema = z.object({
   image: z.string().regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/),
 });
 
+// Squid-game transfers ride on the same hand ref as the settlement, so a hand
+// can contribute several ledger rows. Folding them into one row per
+// (room, ref, user) first keeps `biggestWin` a per-hand figure and lets the
+// hand COUNT stay anchored to the settlement rows alone.
 const LEADERBOARD_SQL = `
+  WITH per_hand AS (
+    SELECT l.room_id AS room_id, l.ref AS ref, l.user_id AS user_id,
+           SUM(l.delta) AS net,
+           MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
+    FROM ledger l JOIN rooms r ON r.id = l.room_id
+    WHERE l.kind IN ('hand-settlement', 'squid-game')
+      AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+      AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref) %ROOM%
+    GROUP BY l.room_id, l.ref, l.user_id
+  )
   SELECT u.id as userId, u.username, u.display_name as displayName, u.avatar_version as avatarVersion,
-         SUM(l.delta) as net, COUNT(*) as handsPlayed, MAX(l.delta) as biggestWin
-  FROM ledger l JOIN users u ON u.id = l.user_id JOIN rooms r ON r.id = l.room_id
-  WHERE l.kind = 'hand-settlement' AND u.private_mode = 0 AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+         SUM(ph.net) as net,
+         COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.ref END) as handsPlayed,
+         MAX(ph.net) as biggestWin
+  FROM per_hand ph JOIN users u ON u.id = ph.user_id
+  WHERE u.private_mode = 0
     AND u.id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'platform_user_id')
-    AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref) %ROOM%
   GROUP BY u.id ORDER BY net DESC, handsPlayed DESC
 `;
 
@@ -293,16 +308,29 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
 
     const stats = db
       .prepare(
-        `SELECT COALESCE(SUM(l.delta),0) as net, COUNT(*) as handsPlayed, COALESCE(MAX(l.delta),0) as biggestWin
-         FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND l.kind = 'hand-settlement' AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-           AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)`,
+        `WITH per_hand AS (
+           SELECT l.room_id AS room_id, l.ref AS ref, SUM(l.delta) AS net,
+                  MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
+           FROM ledger l JOIN rooms r ON r.id = l.room_id
+           WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
+             AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+             AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+           GROUP BY l.room_id, l.ref
+         )
+         SELECT COALESCE(SUM(net), 0) as net,
+                COUNT(DISTINCT CASE WHEN settled = 1 THEN room_id || ':' || ref END) as handsPlayed,
+                COALESCE(MAX(net), 0) as biggestWin
+         FROM per_hand`,
       )
       .get(id) as { net: number; handsPlayed: number; biggestWin: number };
 
     // rivals: everyone who shared a settled hand (same ref) — hands together + this user's net in those hands
     const mine = db
-      .prepare("SELECT ref, delta FROM ledger WHERE user_id = ? AND kind = 'hand-settlement' AND ref IS NOT NULL")
+      .prepare(
+        `SELECT ref, SUM(delta) as delta FROM ledger
+         WHERE user_id = ? AND kind IN ('hand-settlement', 'squid-game') AND ref IS NOT NULL
+         GROUP BY ref`,
+      )
       .all(id) as { ref: string; delta: number }[];
     const myDelta = new Map(mine.map((m) => [m.ref, m.delta]));
     const rivalAgg = new Map<number, { handsTogether: number; netVs: number }>();
@@ -310,8 +338,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       const others = db
         .prepare(
           `SELECT DISTINCT user_id as userId, ref FROM ledger
-           WHERE kind = 'hand-settlement' AND user_id != ?
-             AND ref IN (SELECT ref FROM ledger WHERE user_id = ? AND kind = 'hand-settlement')`,
+           WHERE kind IN ('hand-settlement', 'squid-game') AND user_id != ?
+             AND ref IN (SELECT ref FROM ledger WHERE user_id = ? AND kind IN ('hand-settlement', 'squid-game'))`,
         )
         .all(id, id) as { userId: number; ref: string }[];
       for (const o of others) {
@@ -383,7 +411,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const rows = db
       .prepare(
         `SELECT l.ts, l.delta FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND l.kind = 'hand-settlement' AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
+           AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
          ORDER BY l.ts LIMIT 2000`,
       )
@@ -521,15 +550,21 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
            WHERE room_id = @roomId AND kind IN ('purchase', 'revert') GROUP BY user_id
          ) b ON b.user_id = rp.user_id
          LEFT JOIN (
-           SELECT user_id,
-                  COUNT(*) as handsPlayed,
-                  SUM(CASE WHEN delta > 0 THEN 1 ELSE 0 END) as wins,
-                  SUM(delta) as net,
-                  MAX(delta) as biggestWin,
-                  MIN(delta) as biggestLoss
-           FROM ledger l WHERE l.room_id = @roomId AND l.kind = 'hand-settlement'
-             AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
-           GROUP BY l.user_id
+           SELECT ph.user_id,
+                  COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.ref END) as handsPlayed,
+                  COUNT(DISTINCT CASE WHEN ph.settled = 1 AND ph.net > 0 THEN ph.room_id || ':' || ph.ref END) as wins,
+                  SUM(ph.net) as net,
+                  MAX(ph.net) as biggestWin,
+                  MIN(ph.net) as biggestLoss
+           FROM (
+             SELECT l.room_id as room_id, l.ref as ref, l.user_id as user_id,
+                    SUM(l.delta) as net,
+                    MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) as settled
+             FROM ledger l WHERE l.room_id = @roomId AND l.kind IN ('hand-settlement', 'squid-game')
+               AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+             GROUP BY l.room_id, l.ref, l.user_id
+           ) ph
+           GROUP BY ph.user_id
          ) st ON st.user_id = rp.user_id
          WHERE rp.room_id = @roomId
          ORDER BY net DESC`,
@@ -572,7 +607,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       )
       .all(req.userId) as { handId: string; roomId: string; roomName: string; head: string; entries: string; ts: number }[];
     const netStmt = db.prepare(
-      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND ref = ? AND kind = 'hand-settlement'",
+      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND ref = ? AND kind IN ('hand-settlement', 'squid-game')",
     );
     const voidStmt = db.prepare("SELECT 1 FROM ledger WHERE kind = 'void-hand' AND ref = ? LIMIT 1");
     const hands: unknown[] = [];

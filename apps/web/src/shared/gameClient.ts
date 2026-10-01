@@ -177,6 +177,40 @@ export function ritVote(yes: boolean): void {
   });
 }
 
+/** Multi-run, choice stage: the player ahead picks how many times to run the
+ *  board (1-3). Signed like every other in-hand decision. */
+export function chooseRunCount(count: 1 | 2 | 3): void {
+  const h = useStore.getState().hand;
+  const offer = h.multiRunOffer;
+  if (!h.handId || !offer || offer.stage !== 'choice') return;
+  // optimistic: show the pick immediately; multi_run_offer/result reconcile
+  useStore.getState().patchHand({
+    multiRunOffer: { ...offer, requestedRuns: count },
+  });
+  wsClient.send({
+    t: 'run_count_choice',
+    handId: h.handId,
+    decisionId: offer.decisionId,
+    count,
+    sig: signed(h.handId, 'run_count_choice', { decisionId: offer.decisionId, count }),
+  });
+}
+
+/** Multi-run, agreement stage: the player behind accepts or declines the
+ *  ahead player's requested run count. Signed like every other decision. */
+export function agreeRunCount(agree: boolean): void {
+  const h = useStore.getState().hand;
+  const offer = h.multiRunOffer;
+  if (!h.handId || !offer || offer.stage !== 'agreement') return;
+  wsClient.send({
+    t: 'run_count_agree',
+    handId: h.handId,
+    decisionId: offer.decisionId,
+    agree,
+    sig: signed(h.handId, 'run_count_agree', { decisionId: offer.decisionId, agree }),
+  });
+}
+
 export function sendChat(text: string, kind: 'text' | 'sticker' | 'phrase' = 'text'): void {
   wsClient.send({ t: 'chat', text, kind });
 }
@@ -342,16 +376,14 @@ function handle(msg: ServerMsg): void {
 
     case 'board_open': {
       const { hand } = useStore.getState();
-      if (msg.run === 2) {
-        if (!hand.board2.includes(msg.card)) {
-          play('flip');
-          store.patchHand({ board2: [...hand.board2, msg.card] });
-        }
-        return;
-      }
-      if (!hand.board.includes(msg.card)) {
+      const runIndex = (msg.run ?? 1) - 1;
+      const boards = hand.boards.map((run) => run);
+      while (boards.length <= runIndex) boards.push([]);
+      const board = boards[runIndex]!;
+      if (!board.includes(msg.card)) {
         play('flip');
-        store.patchHand({ board: [...hand.board, msg.card] });
+        boards[runIndex] = [...board, msg.card];
+        store.patchHand({ boards });
       }
       return;
     }
@@ -364,11 +396,21 @@ function handle(msg: ServerMsg): void {
       if (mySeat !== undefined && msg.state.toAct === mySeat && prev.betting?.toAct !== mySeat) {
         play('turn');
       }
+      const boards = prev.boards.map((run) => run);
+      boards[0] = msg.board;
+      // baseDeadline/timeBanks are optional while the server rolls out: keep the
+      // last known values rather than clearing them when a frame omits them.
+      const timeBanks: Record<number, number> = { ...prev.timeBanks };
+      if (msg.timeBanks !== undefined) {
+        for (const tb of msg.timeBanks) timeBanks[tb.seat] = tb.remainingMs;
+      }
       store.patchHand({
         betting: msg.state,
         actionSeq: msg.actionSeq,
         deadline: msg.deadline,
-        board: msg.board,
+        baseDeadline: msg.baseDeadline !== undefined ? msg.baseDeadline : prev.baseDeadline,
+        timeBanks,
+        boards,
         ...(streetChanged ? { lastActions: {}, preAction: null, preActionCallAt: null } : {}),
       });
       // the street closed with chips out front: they sweep into the pot
@@ -502,9 +544,60 @@ function handle(msg: ServerMsg): void {
 
     case 'rit_result': {
       if (msg.runTwice) play('chip');
-      // the second board starts as a copy of everything already open and
-      // grows as run-2 cards land
-      store.patchHand({ ritOffer: null, board2: msg.runTwice ? [...msg.sharedBoard] : [] });
+      // run 1 is the shared board; run 2 starts as a copy of everything already
+      // open and grows as run-2 cards land
+      const shared = [...msg.sharedBoard];
+      store.patchHand({ ritOffer: null, boards: [shared, msg.runTwice ? [...shared] : []] });
+      return;
+    }
+
+    case 'feature_started': {
+      // announces which new-gameplay features are live for this hand; re-sent
+      // on reconnect, so it simply overwrites the previous announcement
+      store.patchHand({
+        featureStarted: { squid: msg.squid, bombPot: msg.bombPot },
+      });
+      return;
+    }
+
+    case 'time_bank_update': {
+      const { hand } = useStore.getState();
+      store.patchHand({
+        timeBanks: { ...hand.timeBanks, [msg.seat]: msg.remainingMs },
+      });
+      return;
+    }
+
+    case 'multi_run_offer': {
+      // authoritative snapshot of the negotiation, including its stage. Sent
+      // again after a reconnect, so overwrite rather than merge: a stale stage
+      // would leave the wrong player's buttons armed.
+      play('turn');
+      store.patchHand({
+        multiRunOffer: {
+          t: 'multi_run_offer',
+          handId: msg.handId,
+          decisionId: msg.decisionId,
+          stage: msg.stage,
+          aheadSeat: msg.aheadSeat,
+          behindSeat: msg.behindSeat,
+          equities: msg.equities,
+          ...(msg.requestedRuns !== undefined ? { requestedRuns: msg.requestedRuns } : {}),
+          deadlineTs: msg.deadlineTs,
+        },
+      });
+      return;
+    }
+
+    case 'multi_run_result': {
+      if (msg.reason === 'agreed') play('chip');
+      store.patchHand({ multiRunOffer: null, multiRunResult: msg });
+      return;
+    }
+
+    case 'squid_result': {
+      play('chip');
+      store.patchHand({ squidResult: msg });
       return;
     }
 
@@ -585,14 +678,19 @@ function handle(msg: ServerMsg): void {
         runTwice: h.showdown?.runTwice ?? null,
         names: Object.fromEntries(h.seats.map((s) => [s.seat, nameOf(s.seat)])),
       });
-      store.patchHand({ result: msg, deadline: null });
+      store.patchHand({
+        result: msg,
+        deadline: null,
+        baseDeadline: null,
+        multiRunOffer: null,
+      });
       // the hand key stays until the next deal so "Show cards" can still prove reveals
       return;
     }
 
     case 'hand_abort': {
       endedHands.add(msg.handId);
-      store.patchHand({ abort: msg, deadline: null });
+      store.patchHand({ abort: msg, deadline: null, baseDeadline: null, multiRunOffer: null });
       return;
     }
 

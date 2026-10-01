@@ -8,8 +8,36 @@ import type {
   TournamentEarning,
   SponsorCampaign,
   SponsorPlacement,
+  RoomGameplaySettings,
 } from '@4am/shared';
 import { isAdminSite } from './adminSite.ts';
+
+/** The new-gameplay features a host can fire on demand (as opposed to the
+ *  always-on time bank / multi-run switches). Matches the server's
+ *  `room_feature_triggers.kind` allowlist. */
+export type FeatureTriggerKind = 'squid' | 'bomb';
+
+/** A deep-partial feature patch: the server merges it over the stored settings,
+ *  so the UI can send just the knob that changed (`{ squid: { enabled: true } }`).
+ *  Mirrors the server's `gameplayFeaturesSchema`. */
+export interface RoomFeaturesPatch {
+  squid?: Partial<RoomGameplaySettings['squid']>;
+  timeBank?: Partial<RoomGameplaySettings['timeBank']>;
+  bombPot?: Partial<Omit<RoomGameplaySettings['bombPot'], 'schedule'>> & {
+    schedule?: Partial<RoomGameplaySettings['bombPot']['schedule']>;
+  };
+  multiRun?: Partial<RoomGameplaySettings['multiRun']>;
+}
+
+/** Client-generated opaque id for manual feature triggers. Lets the server
+ *  dedupe the POST/DELETE pair without trusting anything else in the body. */
+function newRequestId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
 
 /** Fetch with retries on 502/503/504 and network failure, GETs only. Redeploys
  *  take the server down for a few seconds; reads ride the gap out instead of
@@ -192,6 +220,7 @@ export const api = {
     actionSecs?: number,
     minSettleHands?: number,
     commissionRevision?: number,
+    features?: RoomFeaturesPatch,
   ) =>
     req('/api/rooms', {
       name,
@@ -201,6 +230,7 @@ export const api = {
       ...(actionSecs !== undefined ? { actionSecs } : {}),
       ...(minSettleHands ? { minSettleHands } : {}),
       ...(commissionRevision !== undefined ? { commissionRevision } : {}),
+      ...(features ? { features } : {}),
     }),
   joinRoom: (joinCode: string) => req('/api/rooms/join', { joinCode }),
   getRoom: (id: string) => req(`/api/rooms/${id}`),
@@ -296,6 +326,29 @@ export const api = {
     req(`/api/rooms/${roomId}/settings`, { tvReplays }, 'PUT'),
   setAutoDeal: (roomId: string, autoDeal: boolean) =>
     req(`/api/rooms/${roomId}/settings`, { autoDeal }, 'PUT'),
+  /** Patch the room's new-gameplay feature settings (squid, time bank, bomb
+   *  pot, multi-run). The server merges a deep-partial and validates bounds. */
+  setRoomFeatures: (roomId: string, features: RoomFeaturesPatch) =>
+    req(`/api/rooms/${roomId}/settings`, { features }, 'PUT') as Promise<{ ok: boolean }>,
+  /** Fire a manual feature trigger on demand. `requestId` is client-generated
+   *  so a retried POST can be deduped server-side. Returns the queued trigger. */
+  triggerFeature: (roomId: string, feature: FeatureTriggerKind, requestId = newRequestId()) =>
+    req(`/api/rooms/${roomId}/feature-triggers`, { feature, requestId }) as Promise<{
+      trigger: { requestId: string; feature: string; status: string };
+      duplicate?: boolean;
+    }>,
+  /** Cancel a previously queued manual trigger. The id must be the one returned
+   *  by `triggerFeature`. */
+  cancelFeatureTrigger: (
+    roomId: string,
+    feature: FeatureTriggerKind,
+    requestId: string,
+  ) =>
+    req(
+      `/api/rooms/${roomId}/feature-triggers/${encodeURIComponent(requestId)}`,
+      { feature, requestId },
+      'DELETE',
+    ) as Promise<{ ok: boolean }>,
   myDebts: () => req('/api/me/debts'),
   handHistory: () => req('/api/me/hand-history'),
   bestHand: (userId: number) => req(`/api/users/${userId}/best-hand`),

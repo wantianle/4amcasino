@@ -1,13 +1,23 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_POKER_HOTKEYS, parsePokerHotkeys, type PokerHotkeys } from '@4am/shared';
-import type { BettingState, CardId, LoungePosition, PlayerAction, ServerMsg } from '@4am/shared';
+import type {
+  BettingState,
+  CardId,
+  FeatureStartedPayload,
+  LoungePosition,
+  PlayerAction,
+  ServerMsg,
+} from '@4am/shared';
 
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 type HandStartMsg = Extract<ServerMsg, { t: 'hand_start' }>;
 type ShowdownMsg = Extract<ServerMsg, { t: 'showdown' }>;
 type HandEndMsg = Extract<ServerMsg, { t: 'hand_end' }>;
 type HandAbortMsg = Extract<ServerMsg, { t: 'hand_abort' }>;
+type MultiRunOfferMsg = Extract<ServerMsg, { t: 'multi_run_offer' }>;
+type MultiRunResultMsg = Extract<ServerMsg, { t: 'multi_run_result' }>;
+type SquidResultMsg = Extract<ServerMsg, { t: 'squid_result' }>;
 
 export interface ChatMsg {
   from: string;
@@ -100,7 +110,6 @@ interface HandView {
   myCards: CardId[];
   myCardPoints: { deckIndex: number; point: string }[];
   shown: Record<number, CardId[]>;
-  board: CardId[];
   betting: BettingState | null;
   actionSeq: number;
   deadline: number | null;
@@ -121,8 +130,29 @@ interface HandView {
   readyCheck: { deadlineTs: number; eligible: number[]; ready: number[] } | null;
   /** Run-it-twice vote in progress (everyone all-in before the river). */
   ritOffer: { deadlineTs: number; voters: number[]; voted: boolean } | null;
-  /** The second runout's board, filled progressively after a unanimous yes. */
+  /** Canonical per-run board state. Index 0 = run 1, index 1 = run 2 (or the
+   *  second runout), index 2 = run 3. Sparse until each run's cards land. */
+  boards: CardId[][];
+  /** @deprecated TEMPORARY compatibility adapter — always `boards[0] ?? []`.
+   *  Kept so existing table/replay components keep compiling while they migrate
+   *  to reading `boards` directly. Do not write to this from new code. */
+  board: CardId[];
+  /** @deprecated TEMPORARY compatibility adapter — always `boards[1] ?? []`.
+   *  Kept so existing table/replay components keep compiling while they migrate
+   *  to reading `boards` directly. Do not write to this from new code. */
   board2: CardId[];
+  /** Shared base clock deadline for the current street (ms epoch), or null. */
+  baseDeadline: number | null;
+  /** Per-seat time-bank balance in ms, keyed by absolute seat. */
+  timeBanks: Record<number, number>;
+  /** Feature announcement for the hand (squid / bomb pot), from feature_started. */
+  featureStarted: FeatureStartedPayload | null;
+  /** Live multi-run negotiation, including its current stage. */
+  multiRunOffer: MultiRunOfferMsg | null;
+  /** The multi-run negotiation's terminal outcome. */
+  multiRunResult: MultiRunResultMsg | null;
+  /** Squid-game settlement for the hand, from squid_result. */
+  squidResult: SquidResultMsg | null;
 }
 
 /** Everything the last-hand recap needs, frozen at hand_end. */
@@ -148,7 +178,6 @@ export const emptyHand: HandView = {
   myCards: [],
   myCardPoints: [],
   shown: {},
-  board: [],
   betting: null,
   actionSeq: 0,
   deadline: null,
@@ -163,8 +192,36 @@ export const emptyHand: HandView = {
   autoDealAt: null,
   readyCheck: null,
   ritOffer: null,
+  boards: [],
+  board: [],
   board2: [],
+  baseDeadline: null,
+  timeBanks: {},
+  featureStarted: null,
+  multiRunOffer: null,
+  multiRunResult: null,
+  squidResult: null,
 };
+
+/** TEMPORARY migration shim for the `board`/`board2` split.
+ *
+ *  `boards` is now the canonical state. Components still read the derived
+ *  `board` (= `boards[0]`) and `board2` (= `boards[1]`) fields, and some legacy
+ *  callers still write to them. This folds either shape into `boards` and then
+ *  re-derives both adapters, so the two representations can never drift.
+ *  Delete this (and the two `@deprecated` fields) once every consumer reads
+ *  `boards` directly. */
+function reconcileBoards(prev: HandView, p: Partial<HandView>): Partial<HandView> {
+  if (p.boards !== undefined) {
+    const boards = p.boards.map((run) => run);
+    return { boards, board: boards[0] ?? [], board2: boards[1] ?? [] };
+  }
+  if (p.board === undefined && p.board2 === undefined) return {};
+  const boards = prev.boards.map((run) => run);
+  if (p.board !== undefined) boards[0] = p.board;
+  if (p.board2 !== undefined) boards[1] = p.board2;
+  return { boards, board: boards[0] ?? [], board2: boards[1] ?? [] };
+}
 
 interface Store {
   auth: AuthState;
@@ -245,8 +302,10 @@ export const useStore = create<Store>()(
       setChat: (chat) => set({ chat }),
 
       hand: emptyHand,
-      patchHand: (p) => set((s) => ({ hand: { ...s.hand, ...p } })),
-      resetHand: (p = {}) => set({ hand: { ...emptyHand, ...p } }),
+      patchHand: (p) =>
+        set((s) => ({ hand: { ...s.hand, ...p, ...reconcileBoards(s.hand, p) } })),
+      resetHand: (p = {}) =>
+        set(() => ({ hand: { ...emptyHand, ...p, ...reconcileBoards(emptyHand, p) } })),
       lastHand: null,
       setLastHand: (lastHand) => set({ lastHand }),
 

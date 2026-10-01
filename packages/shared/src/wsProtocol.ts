@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { BettingState, PlayerAction, Street } from './betting.js';
 import type { CardId } from './cards.js';
 import type { LoungePosition } from './lounge.js';
+import type { RoomGameplaySettings } from './roomRules.js';
 
 const hex = (len?: number) =>
   len
@@ -172,6 +173,23 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
       .refine((d) => JSON.stringify(d ?? null).length <= 8192, 'rtc payload too large'),
   }),
   z.object({ t: z.literal('voice_state'), muted: z.boolean() }),
+  // ---- multi-run negotiation (signed) ----
+  // The player ahead picks how many times to run the board; the player behind
+  // then agrees (or not). `decisionId` ties the reply to the offer.
+  z.object({
+    t: z.literal('run_count_choice'),
+    handId: z.string(),
+    decisionId: z.string(),
+    count: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    sig: hex(128),
+  }),
+  z.object({
+    t: z.literal('run_count_agree'),
+    handId: z.string(),
+    decisionId: z.string(),
+    agree: z.boolean(),
+    sig: hex(128),
+  }),
 ]);
 export type ClientMsg = z.infer<typeof clientMsgSchema>;
 
@@ -196,6 +214,10 @@ export function signedBody(msg: ClientMsg): unknown {
       return { shares: msg.shares };
     case 'peek_accept':
       return { offerId: msg.offerId, shares: msg.shares };
+    case 'run_count_choice':
+      return { decisionId: msg.decisionId, count: msg.count };
+    case 'run_count_agree':
+      return { decisionId: msg.decisionId, agree: msg.agree };
     default:
       return null;
   }
@@ -319,7 +341,7 @@ export type ServerMsg =
       forSeat: number | null;
     }
   | { t: 'your_card'; handId: string; deckIndex: number; point: string }
-  | { t: 'board_open'; handId: string; deckIndex: number; card: CardId; run?: number }
+  | { t: 'board_open'; handId: string; deckIndex: number; card: CardId; run?: 1 | 2 | 3 }
   | { t: 'rit_offer'; handId: string; deadlineTs: number; voters: number[] }
   | { t: 'rit_result'; handId: string; runTwice: boolean; sharedBoard: CardId[] }
   | {
@@ -328,7 +350,13 @@ export type ServerMsg =
       actionSeq: number;
       state: BettingState;
       board: CardId[];
+      /** Deadline for the current actor (ms epoch), or null when untimed. */
       deadline: number | null;
+      /** Shared base clock deadline (ms epoch), or null when untimed.
+       *  Optional while clients/servers roll between releases. */
+      baseDeadline?: number | null;
+      /** Per-seat time bank remaining (ms). Optional while rolling out. */
+      timeBanks?: SeatTimeBank[];
     }
   | { t: 'action_applied'; handId: string; seat: number; action: PlayerAction; auto?: boolean }
   | {
@@ -341,6 +369,43 @@ export type ServerMsg =
         boards: [CardId[], CardId[]];
         awards: [{ seat: number; amount: number }[], { seat: number; amount: number }[]];
       };
+      /** Present when the board was run 2 or 3 times (supersedes runTwice). */
+      multiRun?: {
+        boards: CardId[][];
+        awards: { seat: number; amount: number }[][];
+      };
+    }
+  // ---- new gameplay features ----
+  | { t: 'feature_started'; handId?: string } & FeatureStartedPayload
+  | { t: 'time_bank_update'; handId: string; seat: number; remainingMs: number }
+  | {
+      t: 'multi_run_offer';
+      handId: string;
+      decisionId: string;
+      stage: MultiRunStage;
+      aheadSeat: number;
+      behindSeat: number;
+      /** Pot equities of the all-in players, in basis points. */
+      equities: MultiRunEquity[];
+      /** How many runs the ahead player has asked for (set once chosen). */
+      requestedRuns?: 1 | 2 | 3;
+      deadlineTs: number;
+    }
+  | {
+      t: 'multi_run_result';
+      handId: string;
+      runs: number;
+      reason: MultiRunReason;
+      sharedBoard: CardId[];
+    }
+  | {
+      t: 'squid_result';
+      handId: string;
+      winners: number[];
+      transfers: SquidTransfer[];
+      requestedPerLoser: number;
+      paidBySeat: SquidPayment[];
+      noClaimant: boolean;
     }
   | {
       t: 'hand_end';
@@ -382,3 +447,42 @@ export type ServerMsg =
     };
 
 export type { BettingState, PlayerAction, Street };
+
+// ---- new-gameplay server payload helpers ----
+
+/** Multi-run negotiation stage: ahead player chooses, behind player agrees. */
+export type MultiRunStage = 'choice' | 'agreement';
+
+/** Why a multi-run decision resolved the way it did. */
+export type MultiRunReason = 'agreed' | 'declined' | 'timeout' | 'ineligible' | 'disabled';
+
+/** A player's pot equity expressed in basis points (10_000 = 100%). */
+export interface MultiRunEquity {
+  seat: number;
+  bps: number;
+}
+
+/** One squid-game transfer between seats. */
+export interface SquidTransfer {
+  from: number;
+  to: number;
+  amount: number;
+}
+
+/** What a seat actually paid into the squid pot. */
+export interface SquidPayment {
+  seat: number;
+  amount: number;
+}
+
+/** Per-seat time bank snapshot. */
+export interface SeatTimeBank {
+  seat: number;
+  remainingMs: number;
+}
+
+/** Payloads carried by `feature_started`. */
+export interface FeatureStartedPayload {
+  squid?: RoomGameplaySettings['squid'];
+  bombPot?: RoomGameplaySettings['bombPot'];
+}

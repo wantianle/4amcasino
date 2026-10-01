@@ -10,6 +10,14 @@ import { appendLedger, verifyLedger } from './ledger.js';
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
 import { platformUserId } from './platform.js';
+import {
+  applyRoomFeatures,
+  bombScheduleError,
+  gameplayFeaturesSchema,
+  mergeRoomFeatures,
+  readRoomFeatures,
+  ROOM_FEATURE_DEFAULTS,
+} from './gameplaySettings.js';
 
 export interface RoomRow {
   id: string;
@@ -26,6 +34,7 @@ export interface RoomRow {
   seven_deuce_bonus: number;
   voided: number;
   archived: number;
+  deleted: number;
   meet_link: string | null;
   visibility: string;
   spectate_token: string | null;
@@ -35,6 +44,21 @@ export interface RoomRow {
   auto_deal: number;
   commission_bps: number;
   created_at: number;
+  // gameplay features - see gameplaySettings.ts
+  squid_enabled: number;
+  squid_penalty_bb: number;
+  squid_min_players: number;
+  time_bank_enabled: number;
+  time_bank_initial_secs: number;
+  time_bank_refill_every_hands: number;
+  time_bank_refill_secs: number;
+  time_bank_epoch: number;
+  bomb_pot_enabled: number;
+  bomb_pot_ante_bb: number;
+  bomb_pot_schedule_mode: string;
+  bomb_pot_schedule_value: number;
+  multi_run_enabled: number;
+  multi_run_max_runs: number;
 }
 
 /** The main banker and the backup banker both hold banking powers. */
@@ -66,6 +90,7 @@ const createSchema = z.object({
   meetLink: meetLinkSchema.optional(),
   visibility: z.enum(['private', 'public']).optional(),
   autoApproveBuys: z.boolean().optional(),
+  features: gameplayFeaturesSchema.optional(),
 });
 
 function newJoinCode(): string {
@@ -159,6 +184,8 @@ function roomJson(db: DB, room: RoomRow) {
     tvReplays: !!room.tv_replays,
     autoDeal: !!room.auto_deal,
     commissionBps: room.commission_bps,
+    features: readRoomFeatures(room),
+    timeBankEpoch: room.time_bank_epoch,
     players: presentablePlayers(db, room.id).map((p) => ({
       ...p,
       privateMode: undefined,
@@ -166,6 +193,33 @@ function roomJson(db: DB, room: RoomRow) {
       totalBought: p.privateMode ? 0 : p.totalBought,
       pendingBuy: p.pendingBuy,
     })),
+  };
+}
+
+interface FeatureTriggerRow {
+  id: number;
+  room_id: string;
+  request_id: string;
+  kind: string;
+  source: string;
+  status: string;
+  requested_by: number | null;
+  created_at: number;
+  claimed_hand_id: string | null;
+  resolved_at: number | null;
+}
+
+function featureTriggerJson(row: FeatureTriggerRow) {
+  return {
+    id: row.id,
+    requestId: row.request_id,
+    feature: row.kind,
+    source: row.source,
+    status: row.status,
+    requestedBy: row.requested_by,
+    createdAt: row.created_at,
+    claimedHandId: row.claimed_hand_id,
+    resolvedAt: row.resolved_at,
   };
 }
 
@@ -192,8 +246,18 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       meetLink,
       visibility,
       autoApproveBuys,
+      features,
     } = parsed.data;
     if (bb < sb) return reply.code(400).send({ error: 'big blind must be >= small blind' });
+    // Normalize against the migrated defaults up front so an invalid bomb-pot
+    // cadence is rejected before a room row exists.
+    const normalizedFeatures = features
+      ? mergeRoomFeatures(ROOM_FEATURE_DEFAULTS, features)
+      : undefined;
+    if (normalizedFeatures) {
+      const bombError = bombScheduleError(normalizedFeatures);
+      if (bombError) return reply.code(400).send({ error: bombError });
+    }
     const id = randomBytes(6).toString('hex');
     const joinCode = newJoinCode();
     db.prepare(
@@ -218,6 +282,10 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       commissionSettings(db).commissionBps,
     );
     db.prepare('INSERT INTO room_players (room_id, user_id) VALUES (?, ?)').run(id, req.userId);
+    if (normalizedFeatures) {
+      const stored = readRoomFeatures(getRoom(db, id)!);
+      applyRoomFeatures(db, id, normalizedFeatures, stored);
+    }
     return roomJson(db, getRoom(db, id)!);
   });
 
@@ -482,6 +550,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         autoApproveBuys: z.boolean().optional(),
         tvReplays: z.boolean().optional(),
         autoDeal: z.boolean().optional(),
+        features: gameplayFeaturesSchema.optional(),
       })
       .safeParse(req.body);
     if (!parsed.success)
@@ -499,6 +568,20 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       parsed.data.autoApproveBuys !== undefined || parsed.data.visibility !== undefined;
     if (privileged && room.banker_id !== req.userId && room.host_id !== req.userId) {
       return reply.code(403).send({ error: 'only the host or the main banker can change that' });
+    }
+    // Gameplay features are a host call, never the (backup) banker's: they
+    // change how chips move, so the same reasoning as auto-approve applies but
+    // stricter. They also only make sense at a hand boundary.
+    if (parsed.data.features !== undefined) {
+      if (room.host_id !== req.userId)
+        return reply.code(403).send({ error: 'only the host can change gameplay settings' });
+      if (activeHands.has(id))
+        return reply.code(409).send({ error: 'Gameplay settings apply between hands.' });
+      const current = readRoomFeatures(room);
+      const next = mergeRoomFeatures(current, parsed.data.features);
+      const bombError = bombScheduleError(next);
+      if (bombError) return reply.code(400).send({ error: bombError });
+      applyRoomFeatures(db, id, next, current);
     }
     if (parsed.data.actionSecs !== undefined)
       db.prepare('UPDATE rooms SET action_secs = ? WHERE id = ?').run(parsed.data.actionSecs, id);
@@ -538,7 +621,9 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         id,
       );
     roomEvents.emit('changed', id, { restartAutoDeal: parsed.data.autoDeal === true });
-    return { ok: true };
+    // Hand back the normalized gameplay settings so the client can render the
+    // canonical values (e.g. merged defaults) instead of echoing its own patch.
+    return { ok: true, features: readRoomFeatures(getRoom(db, id)!) };
   });
 
   app.get('/api/my-rooms', authed, async (req) => {
@@ -571,7 +656,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         db
           .prepare(
             `SELECT ref, SUM(delta) as net FROM ledger
-             WHERE room_id = ? AND user_id = ? AND kind = 'hand-settlement' GROUP BY ref`,
+             WHERE room_id = ? AND user_id = ? AND kind IN ('hand-settlement', 'squid-game') GROUP BY ref`,
           )
           .all(id, req.userId) as { ref: string; net: number }[]
       ).map((r) => [r.ref, r.net]),
@@ -665,5 +750,105 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       )
       .all(id);
     return { entries, verified: verifyLedger(db, id) };
+  });
+
+  const featureTriggerSchema = z.object({
+    feature: z.enum(['squid', 'bomb']),
+    requestId: z
+      .union([z.string().trim().min(1).max(128), z.number().int().nonnegative()])
+      .transform(String),
+  });
+
+  /**
+   * Host asks for squid/bomb to run on the next hand. Idempotent by
+   * `(room, requestId)`: a retried request returns the row it originally
+   * created, while reusing an id for a different feature is a 409 instead of a
+   * silent mix-up.
+   */
+  app.post('/api/rooms/:id/feature-triggers', authed, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = featureTriggerSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.host_id !== req.userId) return reply.code(403).send({ error: 'host only' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
+    const { feature, requestId } = parsed.data;
+    if (feature === 'squid' && !room.squid_enabled)
+      return reply.code(400).send({ error: 'squid game is not enabled for this table' });
+    if (feature === 'bomb' && !room.bomb_pot_enabled)
+      return reply.code(400).send({ error: 'bomb pot is not enabled for this table' });
+    if (activeHands.has(id))
+      return reply.code(409).send({ error: 'wait for the current hand to finish' });
+
+    const existing = db
+      .prepare('SELECT * FROM room_feature_triggers WHERE room_id = ? AND request_id = ?')
+      .get(id, requestId) as FeatureTriggerRow | undefined;
+    if (existing) {
+      if (existing.kind !== feature)
+        return reply
+          .code(409)
+          .send({ error: 'that request id was already used for a different feature' });
+      return { trigger: featureTriggerJson(existing), duplicate: true };
+    }
+
+    // Squid only bites when enough people were dealt in; bomb pot has no such
+    // gate (it hitches a ride on whatever hand is dealt).
+    if (feature === 'squid') {
+      const { n } = db
+        .prepare(
+          `SELECT COUNT(*) as n FROM room_players rp
+           WHERE rp.room_id = ? AND rp.sitting_out = 0
+             AND rp.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'platform_user_id')`,
+        )
+        .get(id) as { n: number };
+      if (n < room.squid_min_players)
+        return reply
+          .code(400)
+          .send({ error: `squid game needs at least ${room.squid_min_players} players` });
+    }
+
+    const pending = db
+      .prepare(
+        "SELECT 1 FROM room_feature_triggers WHERE room_id = ? AND kind = ? AND status = 'pending'",
+      )
+      .get(id, feature);
+    if (pending)
+      return reply.code(409).send({ error: `a ${feature} trigger is already pending` });
+
+    const info = db
+      .prepare(
+        `INSERT INTO room_feature_triggers (room_id, request_id, kind, source, status, requested_by, created_at)
+         VALUES (?, ?, ?, 'manual', 'pending', ?, ?)`,
+      )
+      .run(id, requestId, feature, req.userId, Date.now());
+    const row = db
+      .prepare('SELECT * FROM room_feature_triggers WHERE id = ?')
+      .get(info.lastInsertRowid) as FeatureTriggerRow;
+    roomEvents.emit('changed', id);
+    return { trigger: featureTriggerJson(row) };
+  });
+
+  /** Host cancels their own not-yet-claimed manual trigger. */
+  app.delete('/api/rooms/:id/feature-triggers/:requestId', authed, async (req, reply) => {
+    const { id, requestId } = req.params as { id: string; requestId: string };
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.host_id !== req.userId) return reply.code(403).send({ error: 'host only' });
+    const row = db
+      .prepare(
+        "SELECT * FROM room_feature_triggers WHERE room_id = ? AND request_id = ? AND status = 'pending'",
+      )
+      .get(id, requestId) as FeatureTriggerRow | undefined;
+    if (!row) return reply.code(404).send({ error: 'no such pending trigger' });
+    if (row.source !== 'manual')
+      return reply.code(400).send({ error: 'only manual triggers can be cancelled' });
+    db.prepare("UPDATE room_feature_triggers SET status = 'cancelled', resolved_at = ? WHERE id = ?").run(
+      Date.now(),
+      row.id,
+    );
+    roomEvents.emit('changed', id);
+    return { ok: true };
   });
 }

@@ -4,9 +4,13 @@ import {
   legalActions,
   nextStreet,
   startHand,
+  startBombPot,
   streetClosed,
   computePots,
   awardPots,
+  bestScoreSeats,
+  intersectSeatSets,
+  splitAmountEven,
 } from '../src/betting.js';
 
 const seats3 = [
@@ -224,5 +228,130 @@ describe('awardPots', () => {
         [1, 200],
       ]),
     );
+  });
+});
+
+describe('startBombPot', () => {
+  const seats = [
+    { seat: 2, stack: 1000 },
+    { seat: 5, stack: 800 },
+    { seat: 7, stack: 1000 },
+  ];
+
+  it('antes everyone equally and opens a closed synthetic preflop', () => {
+    const st = startBombPot(seats, 7, 20, 25);
+    for (const s of st.seats) {
+      expect(s).toMatchObject({ committed: 0, total: 25, allIn: false });
+    }
+    expect(st.seats.map((s) => s.stack)).toEqual([975, 775, 975]);
+    expect(st).toMatchObject({
+      street: 'preflop',
+      sb: 0,
+      bb: 20,
+      currentBet: 0,
+      toAct: null,
+      needToAct: [],
+      winnerByFold: null,
+    });
+  });
+
+  it('marks a short stack all-in for what it has', () => {
+    const st = startBombPot(
+      [
+        { seat: 0, stack: 100 },
+        { seat: 1, stack: 100 },
+        { seat: 2, stack: 3 },
+      ],
+      1,
+      10,
+      10,
+    );
+    expect(st.seats[2]).toMatchObject({ seat: 2, stack: 0, total: 3, allIn: true, committed: 0 });
+    expect(st.seats[0]).toMatchObject({ stack: 90, total: 10, allIn: false });
+    expect(st.seats[1]).toMatchObject({ stack: 90, total: 10, allIn: false });
+  });
+
+  it('produces main and side pots from unequal ante posting', () => {
+    const st = startBombPot(
+      [
+        { seat: 0, stack: 100 },
+        { seat: 1, stack: 100 },
+        { seat: 2, stack: 4 },
+      ],
+      1,
+      10,
+      10,
+    );
+    // totals: 10, 10, 4 -> main pot 12 (all), side pot 12 (two big stacks)
+    expect(computePots(st.seats)).toEqual([
+      { amount: 12, eligible: [0, 1, 2] },
+      { amount: 12, eligible: [0, 1] },
+    ]);
+  });
+
+  it('never posts blinds', () => {
+    const st = startBombPot(
+      [
+        { seat: 0, stack: 500 },
+        { seat: 1, stack: 500 },
+        { seat: 2, stack: 500 },
+      ],
+      2,
+      20,
+      5,
+    );
+    // the SB seat keeps its full blind and only pays the ante
+    expect(st.seats[0]).toMatchObject({ committed: 0, stack: 495, total: 5 });
+    expect(st.sb).toBe(0);
+  });
+
+  it('conserves chips', () => {
+    const st = startBombPot(
+      [
+        { seat: 0, stack: 37 },
+        { seat: 1, stack: 100 },
+        { seat: 2, stack: 7 },
+      ],
+      2,
+      20,
+      10,
+    );
+    const before = 37 + 100 + 7;
+    const behind = st.seats.reduce((s, x) => s + x.stack, 0);
+    const posted = st.seats.reduce((s, x) => s + x.total, 0);
+    expect(behind + posted).toBe(before);
+    expect(posted).toBe(Math.min(37, 10) + Math.min(100, 10) + Math.min(7, 10));
+  });
+
+  it('requires at least two players', () => {
+    expect(() => startBombPot([{ seat: 0, stack: 100 }], 0, 10, 5)).toThrow();
+  });
+});
+
+describe('multi-run / winner helpers', () => {
+  it('bestScoreSeats returns the top scorers in seat order', () => {
+    const scores = new Map([
+      [0, 100],
+      [1, 250],
+      [2, 250],
+    ]);
+    expect(bestScoreSeats([2, 0, 1], scores)).toEqual([1, 2]);
+    expect(bestScoreSeats([0, 1], new Map([[0, 5]]))).toEqual([0]);
+    expect(bestScoreSeats([0, 1], new Map())).toEqual([]);
+  });
+
+  it('intersectSeatSets keeps only seats that win every run', () => {
+    expect(intersectSeatSets([[0, 1], [1, 2]])).toEqual([1]);
+    expect(intersectSeatSets([[0, 1], [1, 0]])).toEqual([0, 1]);
+    expect(intersectSeatSets([[0], [1]])).toEqual([]);
+    expect(intersectSeatSets([])).toEqual([]);
+  });
+
+  it('splitAmountEven hands the remainder to earlier runs', () => {
+    expect(splitAmountEven(100, 3)).toEqual([34, 33, 33]);
+    expect(splitAmountEven(101, 3)).toEqual([34, 34, 33]);
+    expect(splitAmountEven(10, 1)).toEqual([10]);
+    expect(splitAmountEven(0, 3)).toEqual([0, 0, 0]);
+    expect(() => splitAmountEven(10, 0)).toThrow();
   });
 });
