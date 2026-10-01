@@ -34,6 +34,9 @@ const table: Record<string, string> = {
   // ── Table dock（A6/A9：排名·聊天浮层 + 下手牌离座）─────────────────────
   // '{n} hands' 复用 dict/leaderboard.ts 已有键。
   'Betting options': '下注选项',
+  // A8 下注区（GGPoker 样式，牌桌区右下角的紧凑下注面板）。BB 是单位缩写，
+  // 按 4.5 保持原样，不进词典。
+  'Betting controls': '下注控制',
 
   // ── Win moment (WinnerFx) ────────────────────────────────────────────────
   // The WIN tag stays in English on purpose: it is a poker-table glyph, like

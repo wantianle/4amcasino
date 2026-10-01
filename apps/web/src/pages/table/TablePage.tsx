@@ -24,6 +24,7 @@ import {
   Trophy,
   UserPlus,
   VideoCamera,
+  Wallet,
 } from '@phosphor-icons/react';
 import NumberFlow from '@number-flow/react';
 import confetti from 'canvas-confetti';
@@ -58,7 +59,7 @@ import { tHandCategory, tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import type { SeatView } from '../../widgets/table/players.tsx';
-import { ActionBar } from '../../widgets/table/ActionBar.tsx';
+import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
 import { FloatingCards } from '../../widgets/table/FloatingCards.tsx';
@@ -68,6 +69,7 @@ import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
 import { ResultFlash } from '../../widgets/table/ResultFlash.tsx';
 import { TableDock } from '../../widgets/table/TableDock.tsx';
 import { TableQuickControls } from '../../widgets/table/TableQuickControls.tsx';
+import { PokerShortcutButton } from '../../features/settings/PokerShortcutButton.tsx';
 import { BrokeBuyInDialog } from '../../features/bank/BrokeBuyInDialog.tsx';
 import { InviteFriendsDialogBody } from '../../features/friends/FriendsPanel.tsx';
 import { LeaderboardTable, type LeaderboardRow } from '../leaderboard/LeaderboardPage.tsx';
@@ -692,6 +694,22 @@ export function TablePage({
   const takenSeats = new Set(seatViews.map((s) => s.seat));
   const notInHand = handLive && mySeat !== null && !hand.seats.some((s) => s.seat === mySeat);
   const meSittingOut = !!room.players.find((p) => p.userId === auth.userId)?.sittingOut;
+  // feedback #4: the 牌型 line for every pod - yours from the hole cards, a
+  // revealed opponent's from their shown ones. Evaluation is the same
+  // evaluate5/7 math the recap already runs; this only feeds the seat display.
+  const strengthLabels: Record<number, string> = {};
+  for (const s of seatViews) {
+    const cards = s.seat === mySeat ? hand.myCards : s.revealed;
+    if (!cards || cards.length < 2) continue;
+    if (!s.inHand && !s.revealed) continue;
+    const label = holeStrengthLabel(cards, hand.board);
+    if (label) strengthLabels[s.seat] = label;
+  }
+  // feedback #3: the balance moved out of the deleted bottom box into a small
+  // chip above the dock (your on-table stack already rides the seat pod).
+  const roomMeRow = room.players.find((p) => p.seat === mySeat);
+  const myBought = roomMeRow?.totalBought ?? 0;
+  const myNet = (roomMeRow?.stack ?? 0) - myBought;
   const seatName = (seat: number) =>
     seatViews.find((s) => s.seat === seat)?.displayName ?? t('Seat {n}', { n: seat + 1 });
 
@@ -1717,12 +1735,17 @@ export function TablePage({
           </motion.div>
         )}
 
-        {/* the stage: a fixed-aspect oval that scales to fit (A1/A2/A3) */}
-        {/* review fix #5: the stage keeps a real minimum so the table never
-            collapses to a sliver; the control rows cap + scroll on very short
-            phones instead of eating the felt. */}
+        {/* the stage: a fixed-aspect oval that scales to fit - down to a
+            readability floor, past which the stage itself scrolls (RoundTable).
+            On phones the canvas is lifted above the betting widget + dock. */}
         <div className="relative min-h-[8rem] flex-1">
-          <div className={cn('h-full min-h-0', notInHand && 'opacity-60 saturate-50')}>
+          <div
+            className={cn(
+              'h-full min-h-0',
+              notInHand && 'opacity-60 saturate-50',
+              isPhone && 'pb-[10.5rem]',
+            )}
+          >
           <RoundTable
             narrow={isPhone}
             seats={seatViews}
@@ -1752,13 +1775,9 @@ export function TablePage({
             hostId={room.room.hostId}
             coBankerId={room.room.coBankerId}
             bb={room.room.bb}
-            onMyCardsClick={() => {
-              localStorage.setItem('4am-big-cards', 'on');
-              setBigCards(true);
-            }}
             readyCheck={!handLive ? hand.readyCheck : null}
             onShareHand={shareData ? () => setShareOpen(true) : undefined}
-            myStrength={me && me.inHand ? holeStrengthLabel(hand.myCards, hand.board) : null}
+            handTypes={strengthLabels}
           >
             {/* A5: pot - transparent background, chip pile + number beside it,
                 centered directly above the cards area */}
@@ -1890,6 +1909,14 @@ export function TablePage({
           </RoundTable>
           </div>
 
+          {/* feedback #3: the last-hand recap floats over the top-left of the
+              felt now - the standalone bottom panel is gone */}
+          <div className="pointer-events-none absolute inset-x-2 top-1 z-20 flex justify-start [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+            <div className="w-[min(23rem,100%)]">
+              <LastHandStrip roomId={roomId!} />
+            </div>
+          </div>
+
           {/* seat picker / spectator notice / buy-peek, as floating cards */}
           {(!me || peekPanel) && (
             <div className="pointer-events-none absolute inset-x-0 top-1 z-20 flex flex-col items-center gap-2 px-2">
@@ -1914,7 +1941,24 @@ export function TablePage({
             />
           )}
 
-          {/* A6 + A9: rankings / chat popovers and sit-out, bottom-left */}
+          {/* A8 (GGPoker ref, user feedback #5): the betting area is now a
+              compact widget anchored bottom-right of the table area - % pills,
+              slider + amount (chips and BB), big action buttons, action-clock
+              ring. The old full-width bottom box is gone. */}
+          <fieldset
+            disabled={!wsConnected}
+            className="absolute bottom-2 right-2 z-30 m-0 min-w-0 border-0 p-0 md:bottom-3 md:right-3"
+          >
+            <BettingPanel
+              mySeat={mySeat}
+              isHost={!!isHost}
+              urgent={urgent}
+              hideIdleStart={!showResult}
+            />
+          </fieldset>
+
+          {/* A6 + A9: rankings / chat popovers, sit-out, shortcuts button and
+              the balance chip - bottom-left, and on top of everything docked */}
           <TableDock
             compact={isPhone || compactBar}
             hasSeat={mySeat !== null}
@@ -1936,35 +1980,41 @@ export function TablePage({
                 <ChatPanel chrome={false} />
               </fieldset>
             }
+            balance={
+              me ? (
+                <div
+                  title={t('Your balance. Bought {n} total.', { n: fmt(myBought) })}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 font-display text-xs font-bold text-slate-800 shadow-sm ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/80 dark:text-slate-100 dark:ring-slate-700/70"
+                >
+                  <Wallet
+                    size={14}
+                    weight="fill"
+                    className="shrink-0 text-amber-500"
+                    aria-label={t('Your balance')}
+                  />
+                  <NumberFlow value={me.stack} />
+                  {myBought > 0 && (
+                    <span
+                      className={cn(
+                        'text-[0.65rem]',
+                        myNet >= 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400',
+                      )}
+                    >
+                      {myNet >= 0 ? `+${fmt(myNet)}` : `−${fmt(-myNet)}`}
+                    </span>
+                  )}
+                </div>
+              ) : null
+            }
+            shortcut={
+              <div className="inline-flex items-center rounded-full bg-white/85 p-0.5 shadow-sm ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/80 dark:ring-slate-700/70">
+                <PokerShortcutButton className="!text-slate-700 dark:!text-slate-200" />
+              </div>
+            }
           />
         </div>
-
-        {/* A7: the old bottom bar - last-hand recap, action bar with status,
-            your bet, your balance and the shortcuts toggle - merged into the
-            bottom of the table area itself. Review fix #5: capped and
-            scrollable on very short phones so it can never eat the felt. */}
-        <div className="max-h-[45dvh] shrink-0 space-y-2 overflow-y-auto px-2 pb-2">
-          <LastHandStrip roomId={roomId!} />
-          <fieldset disabled={!wsConnected} className="min-w-0">
-            <ActionBar
-              mySeat={mySeat}
-              isHost={!!isHost}
-              urgent={urgent}
-              hideIdleStart={!showResult}
-              sizingCollapsible={isPhone}
-            />
-          </fieldset>
-        </div>
-
-        {bigCards && handLive && hand.myCards.length > 0 && !notInHand && (
-          <FloatingCards
-            cards={hand.myCards}
-            onClose={() => {
-              localStorage.setItem('4am-big-cards', 'off');
-              setBigCards(false);
-            }}
-          />
-        )}
       </section>
 
       {sharedDialogs}

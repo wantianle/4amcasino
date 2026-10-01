@@ -17,23 +17,20 @@ import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
  *  docs/FEATURES.md). Empty seats are sittable in place.
  *
  *  P1 table redesign (docs/table-redesign-spec.md):
- *  - A3 ONE locked design canvas defines the oval. Phones render the exact
- *    same canvas at half its size (590×330 of 1180×660 - same aspect, same
- *    seat geometry), and the fit is a uniform CSS scale(k) - the ellipse can
- *    never stretch, on any viewport, in either direction. Card/text sizes on
- *    the phone canvas are picked relative to that half canvas ("camera"),
- *    which changes nothing about the table geometry.
- *  - A2 the hole-cards / board area lives on the canvas, so it scales with the
- *    table rather than keeping fixed pixel sizes.
- *  - A4 seats have no card frame: name / stack / D·SB·BB badges / status float
- *    around the avatar on the felt. */
+ *  - A3 ONE locked design canvas defines the oval; the phone instance is the
+ *    same canvas at exact 1/2 (identical aspect and seat geometry), fitted
+ *    with a uniform CSS scale(k).
+ *  - User feedback #1: k has a readable FLOOR. When the viewport cannot fit
+ *    the canvas at the floor, the stage SCROLLS instead of shrinking the
+ *    table into illegibility. The ellipse never stretches either way.
+ *  - User feedback #4: no separate big-card panel. Hole cards are compact and
+ *    sit ON the avatar; below it the player's name, then stack with a BB
+ *    equivalent, then the hand type (牌型) at the bottom of the pod. */
 
 const SEATS = 9;
 
-/** THE design canvas (A3). Geometry is percentage-based, so the half-size
- *  phone instance of the same numbers draws an identically-proportioned oval:
- *  ellipse = 87%×60% of the canvas → 1026.6×396 (2.592:1) on desktop,
- *  513.3×198 (2.592:1) on phone. rx/ry/ryNear/ryFar are shared as-is. */
+/** THE design canvas (A3). Ellipse = 87%×60% of the canvas = 1026.6×396
+ *  (2.592:1) on desktop, 513.3×198 (2.592:1) on the phone half-canvas. */
 export const TABLE_CANVAS = {
   w: 1180,
   h: 660,
@@ -42,7 +39,7 @@ export const TABLE_CANVAS = {
   ryFar: 33,
 } as const;
 
-/** Phone instance: exact 1/2 scale of the locked canvas. */
+/** Phone instance: exact 1/2 of the locked canvas (same aspect, same rx/ry). */
 export const PHONE_CANVAS = {
   w: TABLE_CANVAS.w / 2,
   h: TABLE_CANVAS.h / 2,
@@ -50,6 +47,11 @@ export const PHONE_CANVAS = {
   ryNear: TABLE_CANVAS.ryNear,
   ryFar: TABLE_CANVAS.ryFar,
 } as const;
+
+/** User feedback #1: never scale below this or the avatars/cards/labels stop
+ *  being readable. At 0.55 a desktop 'table' card still renders 53px; below
+ *  the floor the stage scrolls instead. */
+const K_FLOOR = 0.55;
 
 /** Floating seat text on bare felt stays legible in both themes. */
 const feltText =
@@ -80,6 +82,35 @@ function useStageBox() {
   return [ref, box] as const;
 }
 
+/** Two compact cards fanned ON the avatar - the seat's only card display
+ *  (the floating big-card mini panel was removed by user request). */
+function AvatarCards({ size, cards, faceDown }: { size: 'xs' | 'sm' | 'md'; cards?: CardId[]; faceDown?: boolean }) {
+  return (
+    <div className="flex -space-x-2.5">
+      {cards && cards.length > 0 ? (
+        cards.slice(0, 2).map((c, i) => (
+          <PlayingCard
+            key={c}
+            card={c}
+            size={size}
+            deal
+            className={i === 0 ? '-rotate-6' : 'rotate-6'}
+          />
+        ))
+      ) : faceDown ? (
+        <>
+          <span className="-rotate-6">
+            <PlayingCard faceDown size={size} />
+          </span>
+          <span className="rotate-6">
+            <PlayingCard faceDown size={size} />
+          </span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function RoundTable({
   seats,
   mySeat,
@@ -96,11 +127,10 @@ export function RoundTable({
   coBankerId,
   hostId,
   bb,
-  onMyCardsClick,
   readyCheck = null,
   onShareHand,
   narrow = false,
-  myStrength = null,
+  handTypes,
   children,
 }: {
   seats: SeatView[];
@@ -119,15 +149,14 @@ export function RoundTable({
   /** Whoever can deal right now - it moves if the host goes offline. */
   hostId?: number | null;
   bb: number;
-  onMyCardsClick?: () => void;
   /** Pre-deal ready check: green tick on the seats that clicked I'm ready. */
   readyCheck?: { eligible: number[]; ready: number[] } | null;
   /** Opens the share card for the settled hand; rides the top winner's badge. */
   onShareHand?: () => void;
   /** Phone instance of the SAME locked canvas (exact 1/2, aspect unchanged). */
   narrow?: boolean;
-  /** Current hand strength of my hole cards, shown floating under my stack. */
-  myStrength?: string | null;
+  /** Hand type (牌型) to show at the bottom of each pod, keyed by seat. */
+  handTypes?: Record<number, string>;
   children: React.ReactNode;
 }) {
   // two-tap kick: first tap arms, second confirms, so a stray click never stands anyone up
@@ -141,15 +170,13 @@ export function RoundTable({
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});
   const shareSeat = onShareHand ? (winners[0]?.seat ?? null) : null;
 
-  // A3 + A1: measure the container, fit the fixed canvas inside it. The
-  // decision uses BOTH width and height (review fix #3) and the canvas is
-  // the same locked design on every viewport (review fix #2).
+  // A3 + feedback #1: fit the locked canvas into the box (both dimensions),
+  // but never below the readability floor - past it, the stage scrolls.
   const [boxRef, box] = useStageBox();
   const canvas = narrow ? PHONE_CANVAS : TABLE_CANVAS;
   const measured = box.w > 0 && box.h > 0;
-  const k = measured
-    ? Math.min(Math.max(Math.min(box.w / canvas.w, box.h / canvas.h), 0.3), narrow ? 0.9 : 1.3)
-    : 0.6;
+  const fit = measured ? Math.min(box.w / canvas.w, box.h / canvas.h) : K_FLOOR;
+  const k = Math.min(Math.max(fit, K_FLOOR), narrow ? 0.9 : 1.3);
 
   // only occupied seats show, auto-spread evenly around the oval; when seated,
   // the order rotates so YOUR seat sits bottom-center
@@ -190,14 +217,13 @@ export function RoundTable({
   }
 
   return (
-    <div ref={boxRef} className="relative h-full min-h-0 w-full">
+    // feedback #1: the stage scrolls rather than shrinking below the floor
+    <div ref={boxRef} className="flex h-full min-h-0 w-full overflow-auto">
       {/* review fix #16: invisible until the first real measurement so a
-        pre-fit scale-1 frame can never flash or overflow */}
+        pre-fit frame can never flash; m-auto keeps it centered while still
+        scrollable when it overflows */}
       <div
-        className={cn(
-          'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-          !measured && 'invisible',
-        )}
+        className={cn('relative m-auto shrink-0', !measured && 'invisible')}
         style={{ width: canvas.w * k, height: canvas.h * k }}
       >
         {/* the locked-aspect canvas, scaled uniformly (never stretched) */}
@@ -268,6 +294,8 @@ export function RoundTable({
             const committed = committedBySeat[seat] ?? 0;
             const bet = { x: 50 + 27 * Math.cos(a), y: 50 + 19 * Math.sin(a) };
             const isMe = p.userId === myUserId;
+            const bbCount = Math.round(p.stack / Math.max(1, bb));
+            const strength = handTypes?.[seat] ?? null;
 
             const isBanker = p.userId === bankerId;
             const isHost = hostId != null && p.userId === hostId;
@@ -322,11 +350,9 @@ export function RoundTable({
                   className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
                   style={{ left: `${x}%`, top: `${y}%` }}
                 >
-                  {/* A4: no card frame. Name / stack / badges / status float
-                      around the avatar on the felt. Typography is sized
-                      against the canvas; on the phone's half canvas the SAME
-                      class renders ~2x larger in canvas terms - the "camera"
-                      answer that keeps the table geometry untouched. */}
+                  {/* A4 + feedback #4: no card frame, no side panel. The seat
+                    reads top-down: status pill, avatar WITH its cards fanned
+                    on top, name, stack · BB, hand type, street status. */}
                   <div
                     className={cn(
                       'relative flex w-28 flex-col items-center gap-0.5 text-center transition-transform',
@@ -340,7 +366,7 @@ export function RoundTable({
                     {p.isToAct && (
                       <span
                         className={cn(
-                          'absolute -top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full px-2 py-0.5 whitespace-nowrap font-bold uppercase tracking-wide text-white shadow-md',
+                          'absolute -top-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full px-2 py-0.5 whitespace-nowrap font-bold uppercase tracking-wide text-white shadow-md',
                           narrow ? 'text-[0.72rem]' : 'text-[0.6rem]',
                           urgent ? 'bg-rose-600' : 'bg-indigo-600',
                         )}
@@ -349,10 +375,8 @@ export function RoundTable({
                         {t('playing')}
                       </span>
                     )}
-                    {/* the win moment rides the card itself: a gold WIN tag with
-                        the amount, where the little recap pill used to hover */}
                     {p.won && !p.isToAct && (
-                      <span className="absolute -top-3 left-1/2 z-30 -translate-x-1/2">
+                      <span className="absolute -top-4 left-1/2 z-30 -translate-x-1/2">
                         <WinBadge
                           amount={p.wonAmount ?? 0}
                           onShare={p.seat === shareSeat ? onShareHand : undefined}
@@ -362,7 +386,7 @@ export function RoundTable({
                     {readyCheck && !p.won && readyCheck.eligible.includes(p.userId) && (
                       <span
                         className={cn(
-                          'absolute -top-3 left-1/2 z-30 -translate-x-1/2 rounded-full px-2 py-0.5 whitespace-nowrap font-bold uppercase tracking-wide text-white shadow-md',
+                          'absolute -top-4 left-1/2 z-30 -translate-x-1/2 rounded-full px-2 py-0.5 whitespace-nowrap font-bold uppercase tracking-wide text-white shadow-md',
                           narrow ? 'text-[0.72rem]' : 'text-[0.6rem]',
                           readyCheck.ready.includes(p.userId)
                             ? 'bg-emerald-500'
@@ -372,34 +396,11 @@ export function RoundTable({
                         {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
                       </span>
                     )}
-                    {/* my hole cards ride above my pod; opponents show backs or
-                        reveals - and all of it scales with the canvas (A2) */}
-                    {p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || p.revealed) && (
-                      <div
-                        className={cn('flex', isMe ? 'cursor-pointer gap-1' : '-space-x-2')}
-                        onClick={isMe ? onMyCardsClick : undefined}
-                        title={isMe ? t('Show big cards') : undefined}
-                      >
-                        {isMe && myCards.length > 0 ? (
-                          myCards.map((c) => (
-                            <PlayingCard key={c} card={c} size={narrow ? 'md' : 'sm'} deal />
-                          ))
-                        ) : p.revealed ? (
-                          p.revealed.map((c) => (
-                            <PlayingCard key={c} card={c} size={narrow ? 'sm' : 'xs'} deal />
-                          ))
-                        ) : (
-                          <>
-                            <PlayingCard faceDown size={narrow ? 'sm' : 'xs'} />
-                            <PlayingCard faceDown size={narrow ? 'sm' : 'xs'} />
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {/* the turn cue wraps the avatar now that the card frame is gone */}
+                    {/* the turn cue wraps the avatar; the seat's cards fan on
+                        top of it (compact, on the avatar - feedback #4) */}
                     <div
                       className={cn(
-                        'relative rounded-full transition-shadow',
+                        'relative mt-6 rounded-full transition-shadow',
                         p.isToAct && (urgent ? 'turn-glow-rose' : 'turn-glow'),
                         p.won && 'animate-winner',
                         p.isLeader && !p.isToAct && !p.won && 'ring-2 ring-amber-400/80',
@@ -414,8 +415,16 @@ export function RoundTable({
                           speaking={p.speaking}
                         />
                       </Link>
-                      {/* review fix #15: corner markers announce themselves,
-                          not just on hover - title + aria-label + role */}
+                      {p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || p.revealed) && (
+                        <span className="absolute -top-4 left-1/2 z-10 -translate-x-1/2">
+                          <AvatarCards
+                            size={isMe ? 'sm' : p.revealed && narrow ? 'sm' : 'xs'}
+                            cards={isMe ? myCards : p.revealed}
+                            faceDown={!isMe && !p.revealed}
+                          />
+                        </span>
+                      )}
+                      {/* corner markers announce themselves (review fix #15) */}
                       {p.isLeader && (
                         <span
                           role="img"
@@ -514,6 +523,7 @@ export function RoundTable({
                         </span>
                       )}
                     </div>
+                    {/* username - everyone, including you (feedback #4) */}
                     <div
                       className={cn(
                         'w-full truncate px-1 font-semibold leading-tight text-slate-900 dark:text-white',
@@ -522,8 +532,9 @@ export function RoundTable({
                       )}
                       title={p.displayName}
                     >
-                      {isMe ? t('You') : p.displayName}
+                      {p.displayName}
                     </div>
+                    {/* stack, with the BB equivalent to its right (feedback #4/#5) */}
                     <div
                       className={cn(
                         'font-display leading-none text-slate-600 dark:text-slate-200',
@@ -533,18 +544,18 @@ export function RoundTable({
                       )}
                     >
                       <StackValue stack={p.stack} won={p.won} />
+                      <span className="opacity-60"> · {bbCount} BB</span>
                     </div>
-                    {/* your current hand strength, floating under your stack
-                      (moved here when the mobile table merged into this layout) */}
-                    {isMe && myStrength && (
+                    {/* 牌型 at the bottom of the pod */}
+                    {strength && (
                       <div
                         className={cn(
-                          'font-semibold text-slate-500 dark:text-slate-300',
-                          narrow ? 'text-xs' : 'text-[0.62rem]',
+                          'font-semibold text-indigo-600 dark:text-indigo-300',
+                          narrow ? 'text-[0.85rem]' : 'text-[0.66rem]',
                           feltText,
                         )}
                       >
-                        {myStrength}
+                        {strength}
                       </div>
                     )}
                     {p.pendingBuy > 0 && (

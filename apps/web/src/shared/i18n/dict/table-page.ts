@@ -111,7 +111,7 @@ const tablePage: Record<string, string> = {
   Hands: '牌局记录',
   'Sit out next hand': '下一手休息',
   'Sit out next hands': '接下来几手休息',
-  'Deal me back in': '把我发回来',
+  'Deal me back in': '继续发牌',
   '(next hand)': '（下一手起）',
   'Applies from the next hand': '下一手起生效',
   '{n}s': '{n} 秒',

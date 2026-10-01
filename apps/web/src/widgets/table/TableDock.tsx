@@ -122,6 +122,8 @@ export function TableDock({
   onToggleChat,
   unread,
   chatBody,
+  balance,
+  shortcut,
 }: {
   /** Narrow viewport: labels drop out, icons carry the meaning (A1). */
   compact: boolean;
@@ -141,6 +143,11 @@ export function TableDock({
   unread: number;
   /** The chat panel (input + quick phrases + stickers) - supplied by the page. */
   chatBody: ReactNode;
+  /** Feedback #3: the account balance chip, folded out of the deleted bottom
+   *  box into the bottom-left dock column. */
+  balance?: ReactNode;
+  /** Feedback #3: 「快捷键」 as its own standalone button, bottom-left. */
+  shortcut?: ReactNode;
 }) {
   const rankTriggerRef = useRef<HTMLButtonElement>(null);
   const chatTriggerRef = useRef<HTMLButtonElement>(null);
@@ -205,6 +212,10 @@ export function TableDock({
       )}
 
       <div className="pointer-events-auto relative z-40 flex flex-col items-start gap-1.5">
+        {/* feedback #3: balance chip + the standalone 「快捷键」 button join the
+            dock column, so everything the old bottom box carried is reachable */}
+        {balance}
+        {shortcut}
         {/* A9: sit-out for the next hand, bottom-left of the table area */}
         {hasSeat && (
           <button
