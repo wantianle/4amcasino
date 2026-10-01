@@ -26,6 +26,14 @@ const table: Record<string, string> = {
   '⅓ pot': '⅓ 池',
   '½ pot': '½ 池',
   '¾ pot': '¾ 池',
+  // A10 bet-ratio labels: the configured slots can reach beyond pot-sized.
+  // 'Pot' / 'All-in' / 'Min' are reused from dict/settings.ts and above.
+  '¼ pot': '¼ 池',
+  '{n}× pot': '{n}× 池',
+
+  // ── Table dock（A6/A9：排名·聊天浮层 + 下手牌离座）─────────────────────
+  // '{n} hands' 复用 dict/leaderboard.ts 已有键。
+  'Betting options': '下注选项',
 
   // ── Win moment (WinnerFx) ────────────────────────────────────────────────
   // The WIN tag stays in English on purpose: it is a poker-table glyph, like
@@ -69,7 +77,7 @@ const table: Record<string, string> = {
   'Enter to confirm': '回车确认',
   'Enter a whole-chip amount from {min} to {max}.': '请输入 {min} 到 {max} 之间的整数筹码。',
 
-  // ── Seat / player badges (players.tsx, RoundTable.tsx, MobileTable.tsx) ──
+  // ── Seat / player badges (players.tsx, RoundTable.tsx) ───────────────────
   You: '你',
   '(dealer)': '（庄位）',
   'Dealer button': '庄位',

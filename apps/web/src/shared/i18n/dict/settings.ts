@@ -12,6 +12,10 @@ const settings: Record<string, string> = {
     '已登录：{name}。你是什么样的玩家，牌桌就怎么配合你。',
   Profile: '个人资料',
   'Table & play': '牌桌与对战',
+  // A10 (docs/table-redesign-spec.md): configurable quick-bet pot ratios
+  'Bet sizing': '下注比例',
+  'Quick bet buttons on the table, saved to your account.': '牌桌上的快捷下注按钮，保存在你的账号里。',
+  'Bet button {n}': '快捷下注按钮 {n}',
   'Keyboard shortcuts': '快捷键',
   Appearance: '外观',
   'Account & security': '账号与安全',

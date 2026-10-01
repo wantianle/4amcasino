@@ -140,6 +140,9 @@ const tablePage: Record<string, string> = {
   // ── Header / chrome（aria-label 与 title 同源）────────────────────────
   'Leave table': '离开牌桌',
   'Table menu': '牌桌菜单',
+  // 手机 ⋮ 菜单里的视图组（3D / 全屏收进来，见 table-redesign-spec A1）
+  View: '视图',
+  'Not available': '不可用',
   'Open chat': '打开聊天',
   'Table chat': '牌桌聊天',
   'Close chat': '关闭聊天',

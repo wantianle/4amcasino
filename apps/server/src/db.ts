@@ -166,6 +166,9 @@ function migrate(db: DB): void {
   // dealt into a hand they walked away from, which is a per-player call
   ensureColumn(db, 'users', 'auto_ready', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'poker_hotkeys', 'TEXT');
+  // Quick-bet ratios (A10): the four table action-bar slots, stored as a JSON
+  // array of pot fractions (with -1 as the all-in sentinel).
+  ensureColumn(db, 'users', 'bet_ratios', 'TEXT');
   // account recovery: hash of the one-time recovery code, salted like a password
   // (requested by notpritam, docs/FEATURES.md)
   // Signup order, as its own fact rather than something inferred from the

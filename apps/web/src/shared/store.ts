@@ -29,6 +29,25 @@ export function isCardBack(value: unknown): value is CardBack {
   return typeof value === 'string' && (CARD_BACKS as readonly string[]).includes(value);
 }
 
+/** Quick-bet ratios (A10, docs/table-redesign-spec.md). A slot is either a
+ *  fraction of the pot (0.25 … 2) or the ALL_IN_RATIO sentinel meaning
+ *  "shove the whole stack". The Settings → Bet sizing card edits four of
+ *  these; the table's action bar reads them instead of hardcoded values. */
+export const ALL_IN_RATIO = -1;
+export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 2, ALL_IN_RATIO] as const;
+export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 1, ALL_IN_RATIO];
+
+/** Four slots, each one of the allowed options - anything else falls back to
+ *  the defaults (the same defensive job isCardBack does for the server copy). */
+export function sanitizeBetRatios(raw: unknown): number[] {
+  if (!Array.isArray(raw) || raw.length !== 4) return [...DEFAULT_BET_RATIOS];
+  const clean = raw.filter(
+    (r): r is number =>
+      typeof r === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(r),
+  );
+  return clean.length === 4 ? clean : [...DEFAULT_BET_RATIOS];
+}
+
 export interface Prefs {
   pokerHotkeys: PokerHotkeys;
   displayName: string;
@@ -44,6 +63,8 @@ export interface Prefs {
   autoJoinInvites: boolean;
   /** Skip the ready check: deal me in without asking every hand. */
   autoReady: boolean;
+  /** Quick-bet ratios for the table's action bar (A10). */
+  betRatios: number[];
 }
 
 export const defaultPrefs: Prefs = {
@@ -58,6 +79,7 @@ export const defaultPrefs: Prefs = {
   privateMode: false,
   autoJoinInvites: false,
   autoReady: false,
+  betRatios: [...DEFAULT_BET_RATIOS],
 };
 
 export interface AuthState {
@@ -263,7 +285,9 @@ export const useStore = create<Store>()(
               key,
               key === 'pokerHotkeys'
                 ? (parsePokerHotkeys(p?.prefs?.pokerHotkeys) ?? fallback)
-                : (p?.prefs?.[key as keyof Prefs] ?? fallback),
+                : key === 'betRatios'
+                  ? sanitizeBetRatios(p?.prefs?.betRatios)
+                  : (p?.prefs?.[key as keyof Prefs] ?? fallback),
             ]),
           ) as unknown as Prefs,
         };

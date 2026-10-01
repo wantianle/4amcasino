@@ -23,6 +23,39 @@ function storedPokerHotkeys(raw: string | null) {
 
 export const CARD_BACKS = ['indigo', 'crimson', 'emerald', 'slate'] as const;
 
+/** Quick-bet ratios (A10). Mirrors apps/web/src/shared/store.ts: four slots,
+ *  each either a fraction of the pot or the ALL_IN_RATIO sentinel. Kept local
+ *  so the server never has to import the web bundle. */
+export const ALL_IN_RATIO = -1;
+export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 2, ALL_IN_RATIO] as const;
+export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 1, ALL_IN_RATIO];
+
+function isBetRatio(value: unknown): value is number {
+  return typeof value === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(value);
+}
+
+/** Reads back the stored JSON array, sanitizing a damaged or foreign value back
+ *  to the defaults rather than letting it reach the action bar. */
+function storedBetRatios(raw: string | null): number[] {
+  if (raw === null) return [...DEFAULT_BET_RATIOS];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed) && parsed.length === 4 && parsed.every(isBetRatio)) return parsed;
+  } catch {
+    /* A damaged preference must not break the rest of the profile. */
+  }
+  return [...DEFAULT_BET_RATIOS];
+}
+
+const betRatiosSchema = z
+  .array(
+    z
+      .number()
+      .refine((value) => isBetRatio(value), 'Invalid bet ratio')
+      .describe('a pot fraction or the all-in sentinel'),
+  )
+  .length(4);
+
 const profileSchema = z.object({
   pokerHotkeys: z
     .unknown()
@@ -39,6 +72,7 @@ const profileSchema = z.object({
   autoJoinInvites: z.boolean().optional(),
   autoReady: z.boolean().optional(),
   showBestHand: z.boolean().optional(),
+  betRatios: betRatiosSchema.optional(),
 });
 
 const avatarSchema = z.object({
@@ -70,7 +104,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/profile', authed, async (req) => {
     const row = db
       .prepare(
-        'SELECT id, username, display_name, bio, avatar_version, card_back, four_color, theme, avatar3d, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
+        'SELECT id, username, display_name, bio, avatar_version, card_back, four_color, theme, avatar3d, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, bet_ratios, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
       )
       .get(req.userId) as {
       id: number;
@@ -87,6 +121,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       auto_join_invites: number;
       auto_ready: number;
       poker_hotkeys: string | null;
+      bet_ratios: string | null;
       hasAvatar: number;
     };
     return {
@@ -105,6 +140,11 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       autoJoinInvites: !!row.auto_join_invites,
       autoReady: !!row.auto_ready,
       pokerHotkeys: storedPokerHotkeys(row.poker_hotkeys),
+      // A NULL column means the player has never saved quick-bet ratios, so
+      // omit the field entirely: the web's loadPrefs then keeps whatever the
+      // player picked locally instead of overwriting it with the defaults.
+      // A stored (even damaged) value still resolves to a sanitized array.
+      ...(row.bet_ratios === null ? {} : { betRatios: storedBetRatios(row.bet_ratios) }),
     };
   });
 
@@ -115,6 +155,11 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     if (parsed.data.pokerHotkeys !== undefined)
       db.prepare('UPDATE users SET poker_hotkeys = ? WHERE id = ?').run(
         JSON.stringify(parsed.data.pokerHotkeys),
+        req.userId,
+      );
+    if (parsed.data.betRatios !== undefined)
+      db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?').run(
+        JSON.stringify(parsed.data.betRatios),
         req.userId,
       );
     if (privateMode !== undefined)

@@ -4,7 +4,7 @@ import { legalActions, type PokerHotkeyAction, type PlayerAction } from '@4am/sh
 import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
-import { Coins, HandWaving, HourglassMedium, Wallet } from '@phosphor-icons/react';
+import { CaretDown, Coins, HandWaving, HourglassMedium, Wallet } from '@phosphor-icons/react';
 import { PokerShortcutButton } from '../../features/settings/PokerShortcutButton.tsx';
 import { usePokerHotkeys } from '../../features/table/usePokerHotkeys.ts';
 import { pokerActionLatch } from '../../features/table/pokerHotkeys.ts';
@@ -12,6 +12,7 @@ import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
 import { useSettling } from '../../features/table/useSettling.ts';
 import { t } from '../../shared/i18n/index.ts';
+import { ALL_IN_RATIO } from '../../shared/store.ts';
 
 export function ActionBar({
   mySeat,
@@ -19,17 +20,28 @@ export function ActionBar({
   urgent,
   hideIdleStart = false,
   presentation = 'standard',
+  sizingCollapsible = false,
 }: {
   mySeat: number | null;
   isHost: boolean;
   urgent: boolean;
   hideIdleStart?: boolean;
   presentation?: 'standard' | 'overlay';
+  /** Phones start with the amount input + slider collapsed so the table
+   *  keeps a usable stage height (review fix #5); quick ratios stay visible. */
+  sizingCollapsible?: boolean;
 }) {
   const hand = useStore((s) => s.hand);
   const room = useStore((s) => s.room);
   const myUserId = useStore((s) => s.auth.userId);
+  // A10: the quick bet buttons read the account's configured pot ratios
+  // (Settings → Bet sizing) instead of a hardcoded list. The store value is
+  // sanitized on write (saveBetRatios) and on rehydration (persist merge).
+  const betRatios = useStore((s) => s.prefs.betRatios);
   const [raiseTo, setRaiseTo] = useState(0);
+  // review fix #5: on phones the amount input + slider start collapsed (the
+  // quick-ratio row always stays); opening is one tap and auto-resets.
+  const [sizingOpen, setSizingOpen] = useState(false);
   const connected = useStore((s) => s.wsConnected);
   const rootRef = useRef<HTMLDivElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -59,6 +71,11 @@ export function ActionBar({
   useEffect(() => {
     if (myTurn && la) setRaiseTo(la.minRaiseTo);
   }, [myTurn, la?.minRaiseTo, hand.actionSeq, hand.handId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // collapse back automatically when the turn passes (review fix #5)
+  useEffect(() => {
+    if (!myTurn) setSizingOpen(false);
+  }, [myTurn]);
 
   const handIdle = !hand.handId || handOver;
   const sb = room?.room.sb ?? 1;
@@ -169,17 +186,32 @@ export function ActionBar({
     return Math.min(Math.max(snapped, la.minRaiseTo), la.maxRaiseTo);
   };
 
-  const quicks =
-    la && st
-      ? [
-          { label: t('Min'), value: la.minRaiseTo },
-          { label: t('⅓ pot'), value: potRaise(1 / 3) },
-          { label: t('½ pot'), value: potRaise(1 / 2) },
-          { label: t('¾ pot'), value: potRaise(3 / 4) },
-          { label: t('Pot'), value: potRaise(1) },
-          { label: t('All-in'), value: la.maxRaiseTo },
-        ]
-      : [];
+  /** Label for a configured ratio slot: fractions read as pot words, the
+   *  ALL_IN_RATIO sentinel as All-in. */
+  const ratioLabel = (frac: number): string => {
+    if (frac === ALL_IN_RATIO) return t('All-in');
+    if (frac === 0.25) return t('¼ pot');
+    if (frac === 1 / 3) return t('⅓ pot');
+    if (frac === 0.5) return t('½ pot');
+    if (frac === 0.75) return t('¾ pot');
+    if (frac === 1) return t('Pot');
+    return t('{n}× pot', { n: frac });
+  };
+
+  // quicks come from the account's betRatios pref (A10); two slots can clamp
+  // to the same chip amount near the min/max, so drop duplicate values.
+  const quicks = (() => {
+    if (!la || !st) return [];
+    const seen = new Set<number>();
+    const out: { label: string; value: number }[] = [];
+    for (const frac of betRatios) {
+      const value = frac === ALL_IN_RATIO ? la.maxRaiseTo : potRaise(frac);
+      if (seen.has(value)) continue;
+      seen.add(value);
+      out.push({ label: ratioLabel(frac), value });
+    }
+    return out;
+  })();
 
   // seat currently facing action, for the "waiting on…" status line
   const waitingOn = st
@@ -197,7 +229,7 @@ export function ActionBar({
     const armedCall = !myTurn && (hand.preAction === 'call' || hand.preAction === 'check');
     const lock = settling || (myTurn && pending);
     return (
-      <div className="poker-action-buttons flex items-center gap-2">
+      <div className="poker-action-buttons flex flex-wrap items-center gap-2">
         {myTurn && pending && (
           <span className="flex items-center gap-1.5 text-xs text-indigo-100">
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -455,6 +487,25 @@ export function ActionBar({
               </button>
             ))}
           </div>
+          {/* phone (review fix #5): the amount input + slider hide behind one
+              tap so the collapsed bar never crowds the table; the quick-ratio
+              row above always stays visible */}
+          {sizingCollapsible && (
+            <button
+              type="button"
+              onClick={() => setSizingOpen((open) => !open)}
+              aria-expanded={sizingOpen}
+              className="self-start rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/85 transition-colors hover:bg-white/20"
+            >
+              <CaretDown
+                size={12}
+                className={cn('mr-1 inline-block transition-transform', sizingOpen && 'rotate-180')}
+              />
+              {t('Betting options')}
+            </button>
+          )}
+          {(!sizingCollapsible || sizingOpen) && (
+            <>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs">
               {st?.currentBet === 0 ? t('Bet amount') : t('Raise to')}
@@ -499,6 +550,8 @@ export function ActionBar({
             />
             <span className="font-display text-sm">{fmt(la.maxRaiseTo)}</span>
           </div>
+            </>
+          )}
         </div>
       )}
       <div className="mt-2 flex justify-end">

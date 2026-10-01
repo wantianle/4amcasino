@@ -6,12 +6,18 @@ import {
   RiLogoutBoxLine,
   RiSunLine,
   RiKeyboardLine,
+  RiCoinsLine,
 } from '@remixicon/react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
-import { loadPrefs } from '../../shared/prefs.ts';
-import { useStore } from '../../shared/store.ts';
+import { loadPrefs, saveBetRatios } from '../../shared/prefs.ts';
+import {
+  ALL_IN_RATIO,
+  BET_RATIO_OPTIONS,
+  DEFAULT_BET_RATIOS,
+  useStore,
+} from '../../shared/store.ts';
 import { Button, Input, Spinner } from '../../shared/ui/index.tsx';
 import { cn } from '../../shared/lib/cn.ts';
 import { ProfileEditor } from '../../features/profile/ProfileDialog.tsx';
@@ -24,18 +30,93 @@ import { tNode } from '../../shared/i18n/trans.tsx';
 import { LOCALES, useLocaleStore } from '../../shared/i18n/locale.ts';
 
 /** Profile and preferences as a real page: linkable, refreshable, back-button
- *  friendly - and laid out as titled sections with a rail instead of one long
+ *  friendly - and laid out as titled cards with a rail instead of one long
  *  undifferentiated form (requested by notpritam, docs/FEATURES.md). */
 
 const SECTIONS = [
   { id: 'profile', label: 'Profile', icon: RiUser3Line },
   { id: 'table', label: 'Table & play', icon: RiPokerClubsLine },
+  { id: 'bet-sizing', label: 'Bet sizing', icon: RiCoinsLine },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: RiKeyboardLine },
   { id: 'appearance', label: 'Appearance', icon: RiSunLine },
   { id: 'account', label: 'Account & security', icon: RiShieldKeyholeLine },
   { id: 'merge', label: 'Merge accounts', icon: RiLinksLine },
   { id: 'session', label: 'Session', icon: RiLogoutBoxLine },
 ] as const;
+
+/** A10 (docs/table-redesign-spec.md): the quick-bet buttons at the table are
+ *  four configurable pot ratios. The list applies instantly and is saved to
+ *  the account; the table's ActionBar reads it from the store. */
+function BetSizingSettings() {
+  const ratios = useStore((s) => s.prefs.betRatios);
+  const [saved, setSaved] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashSaved = () => {
+    setSaved(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 2500);
+  };
+
+  const optionLabel = (frac: number): string => {
+    if (frac === ALL_IN_RATIO) return t('All-in');
+    if (frac === 0.25) return t('¼ pot');
+    if (frac === 1 / 3) return t('⅓ pot');
+    if (frac === 0.5) return t('½ pot');
+    if (frac === 0.75) return t('¾ pot');
+    if (frac === 1) return t('Pot');
+    return t('{n}× pot', { n: frac });
+  };
+
+  // review fix #12: duplicates would just collapse into one button at the
+  // table, so picking an already-used ratio SWAPS the two slots instead - the
+  // four quick buttons stay four distinct buttons.
+  const changeSlot = (index: number, value: number) => {
+    const next = [...ratios];
+    const moved = next[index] ?? value;
+    const clash = next.indexOf(value);
+    if (clash !== -1 && clash !== index) next[clash] = moved;
+    next[index] = value;
+    saveBetRatios(next);
+    flashSaved();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {ratios.map((frac, index) => (
+          <label key={index} className="block text-sm">
+            <span className="mb-1 block text-slate-500">{t('Bet button {n}', { n: index + 1 })}</span>
+            <select
+              value={String(frac)}
+              onChange={(e) => changeSlot(index, Number(e.target.value))}
+              className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-800"
+            >
+              {BET_RATIO_OPTIONS.map((option) => (
+                <option key={String(option)} value={String(option)}>
+                  {optionLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={() => {
+            saveBetRatios([...DEFAULT_BET_RATIOS]);
+            flashSaved();
+          }}
+        >
+          {t('Restore defaults')}
+        </Button>
+        {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">{t('Saved.')}</p>}
+      </div>
+    </div>
+  );
+}
 
 /** Asks the platform to fold one account into another. Nothing changes until
  *  a platform admin approves the request. */
@@ -272,6 +353,15 @@ export function SettingsPage() {
 
         <div className="min-w-0 flex-1 space-y-6">
           <ProfileEditor sectioned />
+
+          <SettingsCard
+            id="bet-sizing"
+            title={t('Bet sizing')}
+            icon={<RiCoinsLine className="size-4" aria-hidden />}
+            desc={t('Quick bet buttons on the table, saved to your account.')}
+          >
+            <BetSizingSettings />
+          </SettingsCard>
 
           <SettingsCard
             id="shortcuts"

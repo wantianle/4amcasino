@@ -20,9 +20,12 @@ interface BuyRequest {
 export function BankControls({
   roomId,
   mode = 'expanded',
+  compact = false,
 }: {
   roomId: string;
   mode?: 'expanded' | 'hub';
+  /** A1: under the label threshold the hub trigger keeps icon + badge only. */
+  compact?: boolean;
 }) {
   const room = useStore((s) => s.room);
   const userId = useStore((s) => s.auth.userId);
@@ -132,21 +135,25 @@ export function BankControls({
             ref={hubTriggerRef}
             type="button"
             className={cn(
-              'relative inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 transition-[color,background-color,transform] duration-200',
+              'relative inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-900 transition-[color,background-color,transform] duration-200',
               'hover:bg-slate-50 active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600',
               'dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700',
+              compact ? 'w-10 px-0' : 'px-3',
             )}
             onClick={() => setHubOpen((open) => !open)}
             aria-haspopup="menu"
             aria-expanded={hubOpen}
+            aria-label={t('Chips')}
           >
             <Coins size={17} weight="bold" />
-            {t('Chips')}
-            <CaretDown
-              size={13}
-              weight="bold"
-              className={hubOpen ? 'rotate-180 transition-transform' : 'transition-transform'}
-            />
+            {!compact && t('Chips')}
+            {!compact && (
+              <CaretDown
+                size={13}
+                weight="bold"
+                className={hubOpen ? 'rotate-180 transition-transform' : 'transition-transform'}
+              />
+            )}
             {requests.length > 0 && (
               <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[0.65rem] font-bold text-white ring-2 ring-white dark:ring-slate-950">
                 {requests.length > 9 ? '9+' : requests.length}

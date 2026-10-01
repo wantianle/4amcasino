@@ -1,16 +1,18 @@
-import { CardsThree, GearSix, PauseCircle, Play, Receipt, Timer } from '@phosphor-icons/react';
+import { CardsThree, GearSix, Play, Receipt, Timer } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
 
 /** The switches you actually touch between hands, moved out of the ⋮ menu and
- *  onto the top bar: auto-deal on/off, sit out for the next hand, the turn
- *  timer, the two record pages you always reach for (出牌记录 and 账本) and a
- *  gear straight to Settings. Rendered on the desktop header only - the mobile
- *  sheet keeps its compact list variant of the same. */
+ *  onto the top bar: auto-deal on/off, the turn timer, the two record pages
+ *  you always reach for (出牌记录 and 账本) and a gear straight to Settings.
+ *  P1 redesign: sit-out moved to the table-area dock (A9); when the top bar
+ *  runs out of room (A1) labels drop and only icons stay. */
 
 const chipClass =
   'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-semibold text-slate-600 transition-[color,background-color,transform] duration-200 hover:bg-slate-200/70 hover:text-slate-900 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white';
+
+const iconOnlyClass = 'w-8 justify-center px-0';
 
 /** A miniature switch for the auto-deal chip, decorative: the button
  *  itself carries aria-pressed. */
@@ -38,15 +40,12 @@ export function TableQuickControls({
   isHost,
   autoDeal,
   autoDealPaused,
-  hasSeat,
-  sittingOut,
-  sitOutDisabled,
   actionSecs,
   timerDisabled,
   amSpectator,
+  compact = false,
   onChangeAutoDeal,
   onOpenAutoDealDialog,
-  onToggleSitOut,
   onChangeActionSecs,
 }: {
   /** Same room the ⋮ menu's record links point at - they live here now. */
@@ -55,24 +54,21 @@ export function TableQuickControls({
   autoDeal: boolean;
   /** The engine paused auto-deal (too few ready players) though it is on. */
   autoDealPaused: boolean;
-  hasSeat: boolean;
-  sittingOut: boolean;
-  /** Socket down: sit-out rides the WS, so it waits for a reconnect. */
-  sitOutDisabled: boolean;
   actionSecs: number;
   /** Mid-hand: a timer edit only lands from the next deal. */
   timerDisabled: boolean;
   amSpectator: boolean;
+  /** A1: below the layout minimum, labels drop to icon-only. */
+  compact?: boolean;
   onChangeAutoDeal: (value: boolean) => void;
   onOpenAutoDealDialog: () => void;
-  onToggleSitOut: () => void;
   onChangeActionSecs: (seconds: number) => void;
 }) {
   return (
     <div
       role="group"
       aria-label={t('Table controls')}
-      className="mx-1 flex flex-wrap items-center gap-1 rounded-2xl bg-slate-100/70 p-1 ring-1 ring-slate-200/50 dark:bg-slate-900/60 dark:ring-slate-800"
+      className="mx-1 flex items-center gap-1 rounded-2xl bg-slate-100/70 p-1 ring-1 ring-slate-200/50 dark:bg-slate-900/60 dark:ring-slate-800"
     >
       {!amSpectator && (
         <button
@@ -82,38 +78,24 @@ export function TableQuickControls({
           title={isHost ? t('Auto-deal') : t('Only the host can change this room setting.')}
           className={cn(
             chipClass,
+            compact && iconOnlyClass,
             autoDeal && !autoDealPaused && 'text-indigo-700 dark:text-indigo-300',
             autoDealPaused && 'text-amber-600 dark:text-amber-400',
           )}
         >
           <Play size={13} weight={autoDeal ? 'fill' : 'regular'} />
-          <span>{t('Auto-deal')}</span>
-          <MiniSwitch on={autoDeal} />
-        </button>
-      )}
-
-      {hasSeat && (
-        <button
-          type="button"
-          onClick={onToggleSitOut}
-          disabled={sitOutDisabled}
-          aria-pressed={sittingOut}
-          title={t('Sit out next hand')}
-          className={cn(
-            chipClass,
-            sittingOut &&
-              'bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300',
-            sitOutDisabled && 'opacity-50',
-          )}
-        >
-          <PauseCircle size={14} />
-          <span>{sittingOut ? t('Deal me back in') : t('Sit out next hand')}</span>
+          {!compact && <span>{t('Auto-deal')}</span>}
+          {!compact && <MiniSwitch on={autoDeal} />}
         </button>
       )}
 
       {isHost && (
         <label
-          className={cn(chipClass, 'cursor-default hover:bg-transparent dark:hover:bg-transparent')}
+          className={cn(
+            chipClass,
+            'cursor-default hover:bg-transparent dark:hover:bg-transparent',
+            compact && 'w-auto px-1',
+          )}
           title={timerDisabled ? t('Applies from the next hand') : t('Turn timer')}
         >
           <Timer size={14} />
@@ -122,7 +104,10 @@ export function TableQuickControls({
             value={actionSecs}
             disabled={timerDisabled}
             onChange={(event) => onChangeActionSecs(+event.target.value)}
-            className="w-20 cursor-pointer rounded-md bg-white px-1 py-1 text-xs font-semibold tabular-nums text-slate-700 ring-1 ring-slate-200/70 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700"
+            className={cn(
+              'cursor-pointer rounded-md bg-white px-1 py-1 text-xs font-semibold tabular-nums text-slate-700 ring-1 ring-slate-200/70 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
+              compact ? 'w-14' : 'w-20',
+            )}
           >
             {[15, 30, 45, 60, 90, 120].map((seconds) => (
               <option key={seconds} value={seconds}>
@@ -137,26 +122,32 @@ export function TableQuickControls({
       {/* the two records you actually check between hands: 出牌记录 and 账本 */}
       <Link
         to={`/room/${roomId}/hands`}
-        className={chipClass}
+        className={cn(chipClass, compact && iconOnlyClass)}
         title={t('Hand history')}
         aria-label={t('Hand history')}
       >
         <CardsThree size={15} />
-        <span>{t('Hand history')}</span>
+        {!compact && <span>{t('Hand history')}</span>}
       </Link>
       <Link
         to={`/room/${roomId}/ledger`}
-        className={chipClass}
+        className={cn(chipClass, compact && iconOnlyClass)}
         title={t('Ledger')}
         aria-label={t('Ledger')}
       >
         <Receipt size={15} />
-        <span>{t('Ledger')}</span>
+        {!compact && <span>{t('Ledger')}</span>}
       </Link>
 
-      <Link to="/settings" target="_blank" rel="noreferrer" className={chipClass} title={t('Settings')}>
+      <Link
+        to="/settings"
+        target="_blank"
+        rel="noreferrer"
+        className={cn(chipClass, iconOnlyClass)}
+        title={t('Settings')}
+        aria-label={t('Settings')}
+      >
         <GearSix size={15} />
-        <span className="sr-only">{t('Settings')}</span>
         <span className="sr-only">{t('(opens in a new tab)')}</span>
       </Link>
     </div>
