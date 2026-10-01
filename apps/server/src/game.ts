@@ -20,16 +20,22 @@ import {
   activeNonAllIn,
   applyAction,
   awardPots,
+  bestScoreSeats,
   computePots,
   commissionForPot,
   evaluate7,
+  intersectSeatSets,
   nextStreet,
+  splitAmountEven,
+  startBombPot,
   startHand,
   streetClosed,
   type BettingState,
   type CardId,
   type ClientMsg,
+  type MultiRunReason,
   type PlayerAction,
+  type RoomGameplaySettings,
   type ServerMsg,
   signedBody,
   isLoungeWalkable,
@@ -40,6 +46,8 @@ import {
 import type { DB } from './db.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
+import { readRoomFeatures } from './gameplaySettings.js';
+import { computeHeadsUpEquity, EquityError } from './equity.js';
 import { settleRake } from './rake.js';
 import { publishRoomEvent } from './agentEvents.js';
 import { platformUserId } from './platform.js';
@@ -115,6 +123,47 @@ interface ShowSnapshot {
 }
 
 type Share = { deckIndex: number; out: string; proof: { A1: string; A2: string; z: string } };
+
+/** Which feature trigger a hand claimed, and the settings/balances it must
+ *  settle against. Snapshot at claim time so a mid-hand settings write (blocked
+ *  anyway) or a later config change can never move the goalposts. */
+interface HandFeatureSnapshot {
+  squid: {
+    /** Null unless a squid trigger was claimed for this hand. */
+    settings: RoomGameplaySettings['squid'] | null;
+    triggerId: number | null;
+  };
+  bomb: {
+    /** Null unless this hand is a bomb pot. */
+    ante: number;
+    anteBb: number;
+    settings: RoomGameplaySettings['bombPot'] | null;
+    triggerId: number | null;
+    source: string | null;
+  };
+  multiRun: RoomGameplaySettings['multiRun'];
+  timeBank: {
+    enabled: boolean;
+    initialMs: number;
+    refillEveryHands: number;
+    refillMs: number;
+    epoch: number;
+    /** seat -> remaining ms at deal time. */
+    balances: Map<number, number>;
+    /** seat -> completed hands since the last refill. */
+    hands: Map<number, number>;
+  } | null;
+}
+
+/** The squid-game outcome computed at settlement and applied atomically. */
+interface SquidSettlement {
+  winners: number[];
+  transfers: { from: number; to: number; amount: number }[];
+  requestedPerLoser: number;
+  paidBySeat: { seat: number; amount: number }[];
+  noClaimant: boolean;
+  netBySeat: Map<number, number>;
+}
 
 /** Verifies a player's DLEQ unmask shares against a finished hand's snapshot. */
 function verifySnapshotShares(
@@ -699,7 +748,8 @@ export class GameRoom {
       case 'unmask_share':
       case 'action':
       case 'reveal_key':
-      case 'rit_vote':
+      case 'run_count_choice':
+      case 'run_count_agree':
       case 'fold_key': {
         if (!this.hand || this.hand.id !== msg.handId)
           return this.send(userId, { t: 'error', message: 'no such hand' });
@@ -726,6 +776,157 @@ export class GameRoom {
       default:
         return;
     }
+  }
+
+  /**
+   * Atomically claim the triggers a new hand should carry and snapshot every
+   * setting/balance it settles against. One IMMEDIATE transaction so the manual
+   * triggers and the scheduled anchors move together: two concurrent starts can
+   * never both claim the same pending row. Startup recovery for a claimed trigger
+   * whose hand never produced a transcript lives in the migrations (db.ts).
+   */
+  private claimHandFeatures(
+    roomId: string,
+    seats: HandSeatInfo[],
+    handId: string,
+  ): HandFeatureSnapshot {
+    const room = getRoom(this.db, roomId)!;
+    const settings = readRoomFeatures(room);
+    const now = Date.now();
+    const snapshot: HandFeatureSnapshot = {
+      squid: { settings: null, triggerId: null },
+      bomb: {
+        ante: 0,
+        anteBb: settings.bombPot.anteBb,
+        settings: null,
+        triggerId: null,
+        source: null,
+      },
+      multiRun: settings.multiRun,
+      timeBank: null,
+    };
+
+    const claim = this.db.transaction(() => {
+      const pending = this.db
+        .prepare(
+          "SELECT id, kind, source FROM room_feature_triggers WHERE room_id = ? AND status = 'pending'",
+        )
+        .all(roomId) as { id: number; kind: string; source: string }[];
+      const gs = this.db
+        .prepare(
+          `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
+           FROM room_gameplay_state WHERE room_id = ?`,
+        )
+        .get(roomId) as
+        | {
+            completed_hands: number;
+            last_bomb_completed_hands: number;
+            last_bomb_at: number | null;
+            schedule_reset_at: number | null;
+          }
+        | undefined;
+      const claimTrigger = (id: number): void => {
+        this.db
+          .prepare(
+            "UPDATE room_feature_triggers SET status = 'claimed', claimed_hand_id = ?, resolved_at = NULL WHERE id = ? AND status = 'pending'",
+          )
+          .run(handId, id);
+      };
+
+      // ---- bomb pot: manual trigger OR the hand/time schedule ----
+      const manualBomb = pending.find((t) => t.kind === 'bomb');
+      let timedDue = false;
+      if (settings.bombPot.enabled && settings.bombPot.schedule.mode === 'hands') {
+        const completed = gs?.completed_hands ?? 0;
+        const last = gs?.last_bomb_completed_hands ?? 0;
+        timedDue = completed - last >= settings.bombPot.schedule.value;
+      } else if (settings.bombPot.enabled && settings.bombPot.schedule.mode === 'duration') {
+        const anchor = gs?.last_bomb_at ?? gs?.schedule_reset_at ?? null;
+        if (anchor === null) {
+          // seed the clock rather than firing the moment bomb pot is enabled
+          this.db
+            .prepare(
+              `INSERT INTO room_gameplay_state
+                 (room_id, completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at)
+               VALUES (?, ?, ?, NULL, ?)
+               ON CONFLICT(room_id) DO UPDATE SET schedule_reset_at = excluded.schedule_reset_at`,
+            )
+            .run(roomId, gs?.completed_hands ?? 0, gs?.last_bomb_completed_hands ?? 0, now);
+        } else {
+          timedDue = now - anchor >= settings.bombPot.schedule.value * 1000;
+        }
+      }
+      if (settings.bombPot.enabled && (manualBomb || timedDue)) {
+        let triggerId: number;
+        let source: string;
+        if (manualBomb) {
+          // manual and timed colliding on one hand still opens a single bomb
+          claimTrigger(manualBomb.id);
+          triggerId = manualBomb.id;
+          source = 'manual';
+        } else {
+          source = settings.bombPot.schedule.mode === 'duration' ? 'timed-duration' : 'timed-hands';
+          const info = this.db
+            .prepare(
+              `INSERT INTO room_feature_triggers
+                 (room_id, request_id, kind, source, status, requested_by, created_at, claimed_hand_id)
+               VALUES (?, ?, 'bomb', ?, 'claimed', NULL, ?, ?)`,
+            )
+            .run(roomId, `auto-${handId}`, source, now, handId);
+          triggerId = Number(info.lastInsertRowid);
+        }
+        snapshot.bomb = {
+          ante: settings.bombPot.anteBb * room.bb,
+          anteBb: settings.bombPot.anteBb,
+          settings: settings.bombPot,
+          triggerId,
+          source,
+        };
+      }
+
+      // ---- squid game: manual only, and only with enough participants ----
+      const manualSquid = pending.find((t) => t.kind === 'squid');
+      if (manualSquid && settings.squid.enabled && seats.length >= settings.squid.minPlayers) {
+        claimTrigger(manualSquid.id);
+        snapshot.squid = { settings: settings.squid, triggerId: manualSquid.id };
+      }
+      // too few players: the manual trigger stays pending for a later deal
+
+      // ---- time bank balances (in-memory; persisted atomically at settle) ----
+      if (settings.timeBank.enabled) {
+        const rows = this.db
+          .prepare(
+            'SELECT user_id, time_bank_ms, time_bank_hands, time_bank_epoch FROM room_players WHERE room_id = ?',
+          )
+          .all(roomId) as {
+          user_id: number;
+          time_bank_ms: number;
+          time_bank_hands: number;
+          time_bank_epoch: number;
+        }[];
+        const byUser = new Map(rows.map((r) => [r.user_id, r]));
+        const initialMs = settings.timeBank.initialSeconds * 1000;
+        const balances = new Map<number, number>();
+        const hands = new Map<number, number>();
+        for (const s of seats) {
+          const row = byUser.get(s.userId);
+          const fresh = !row || row.time_bank_epoch !== room.time_bank_epoch;
+          balances.set(s.seat, fresh ? initialMs : row.time_bank_ms);
+          hands.set(s.seat, fresh ? 0 : row.time_bank_hands);
+        }
+        snapshot.timeBank = {
+          enabled: true,
+          initialMs,
+          refillEveryHands: settings.timeBank.refillEveryHands,
+          refillMs: settings.timeBank.refillSeconds * 1000,
+          epoch: room.time_bank_epoch,
+          balances,
+          hands,
+        };
+      }
+    });
+    claim.immediate();
+    return snapshot;
   }
 
   private startHand(auto = false, onlyIds?: Set<number>): void {
@@ -768,12 +969,18 @@ export class GameRoom {
     this.shown.clear();
     this.shownHandId = null;
     this.peekOffers.clear();
+    // The hand id is minted before feature claiming so a claimed trigger can be
+    // bound to the hand that will actually carry it through to a transcript.
+    const handId = randomBytes(8).toString('hex');
+    const features = this.claimHandFeatures(room.id, handSeats, handId);
     activeHands.add(this.roomId);
     this.hand = new Hand(
       this,
       this.db,
       room.id,
+      handId,
       handSeats,
+      features,
       button,
       room.sb,
       room.bb,
@@ -1008,9 +1215,16 @@ class Hand {
       !this.betting?.seats.find((s) => s.seat === player.seat)?.folded
     );
   }
-  readonly id = randomBytes(8).toString('hex');
-  private phase: 'commit' | 'shuffle' | 'deal' | 'betting' | 'rit' | 'reveal' | 'audit' | 'done' =
-    'commit';
+  readonly id: string;
+  private phase:
+    | 'commit'
+    | 'shuffle'
+    | 'deal'
+    | 'betting'
+    | 'multirun'
+    | 'reveal'
+    | 'audit'
+    | 'done' = 'commit';
   private readonly n: number;
   private commits = new Map<number, Point>();
   private transcript = new Transcript();
@@ -1036,31 +1250,46 @@ class Hand {
   // cards (nobody else's). Requested by notpritam, docs/FEATURES.md.
   private foldedKeys = new Map<number, bigint>();
   private runout = false;
-  // run it twice: when everyone is all-in before the river, the players still
-  // in the hand vote; a unanimous yes deals the remaining streets twice and
-  // splits every pot between the two boards (requested by notpritam,
-  // docs/FEATURES.md). ritMap sends each not-yet-open board position to the
-  // deck index that replaces it on the second runout.
-  private ritVoters: number[] = [];
-  private ritVotes = new Map<number, boolean>();
-  private ritMap = new Map<number, number>();
+  // Bomb pot: blinds are skipped and everyone antes straight to the flop.
+  private bombPot = false;
+  // Multi-run: when the all-in runout has undealt cards, the player behind
+  // chooses 1-3 runs and the player ahead has to agree. `runMaps` sends each
+  // not-yet-open board position to the deck index that replaces it on runs 2..N.
+  private runs = 1;
+  private runMaps = new Map<number, Map<number, number>>();
+  private multiRunResolved = false;
+  private multiRun: {
+    decisionId: string;
+    stage: 'choice' | 'agreement';
+    behindSeat: number;
+    aheadSeat: number;
+    equities: { seat: number; bps: number }[];
+    requestedRuns: 1 | 2 | 3;
+    deadline: number;
+  } | null = null;
+  private squidSettlement: SquidSettlement | null = null;
+  // Turn timing: one shared base clock per turn plus each actor's own bank.
+  private turnBaseDeadline: number | null = null;
   private goneTimer: NodeJS.Timeout | null = null;
   private timer: NodeJS.Timeout | null = null;
   private lookup = cardLookup();
   readonly commissionBps: number;
   private settlement: {
     awards: Map<number, number>;
-    deltas: { seat: number; delta: number }[];
+    pokerDeltas: { seat: number; delta: number }[];
     stacks: { seat: number; stack: number }[];
     showdown: ServerMsg | null;
     rake: number;
+    squid: SquidSettlement | null;
   } | null = null;
 
   constructor(
     private room: GameRoom,
     private db: DB,
     private roomId: string,
+    private id_: string,
     private seats: HandSeatInfo[],
+    private features: HandFeatureSnapshot,
     private buttonSeat: number,
     private sb: number,
     private bb: number,
@@ -1069,6 +1298,7 @@ class Hand {
     private opts: GameOpts,
     private onDone: () => void,
   ) {
+    this.id = id_;
     this.n = seats.length;
     this.retriesLeft = opts.cryptoRetries ?? 3;
     this.commissionBps = getRoom(db, roomId)!.commission_bps;
@@ -1089,6 +1319,8 @@ class Hand {
       sb: this.sb,
       bb: this.bb,
       commissionBps: this.commissionBps,
+      ...(this.features.bomb.settings ? { bombPot: this.features.bomb.settings } : {}),
+      ...(this.features.squid.settings ? { squid: this.features.squid.settings } : {}),
     });
     this.startMsg = {
       t: 'hand_start',
@@ -1106,6 +1338,12 @@ class Hand {
       auditMode: this.auditMode,
     };
     this.room.broadcast(this.startMsg);
+    if (this.features.squid.settings)
+      this.room.broadcast({
+        t: 'feature_started',
+        handId: this.id,
+        squid: this.features.squid.settings,
+      });
     this.armTimer(this.opts.cryptoTimeoutMs);
   }
 
@@ -1125,7 +1363,7 @@ class Hand {
     if (
       this.phase !== 'betting' &&
       this.phase !== 'audit' &&
-      this.phase !== 'rit' &&
+      this.phase !== 'multirun' &&
       this.phase !== 'done' &&
       this.retriesLeft > 0
     ) {
@@ -1180,9 +1418,9 @@ class Hand {
         this.finalizeSettlement();
         return;
       }
-      case 'rit': {
-        // deadline: whoever has not voted counts as a no
-        this.resolveRitVote();
+      case 'multirun': {
+        // nobody answered the run-count stage in time: fall back to a single run
+        this.finishMultiRun(1, 'timeout');
         return;
       }
       default:
@@ -1195,10 +1433,45 @@ class Hand {
     this.clearTimer();
     this.phase = 'done';
     this.appendServer('hand_abort', { reason, blamedSeat });
+    // an aborted hand moves no chips, no ledger rows and no time bank: put any
+    // claimed manual trigger back so the next deal can pick it up again
+    this.releaseFeatureClaims();
     // no sitting-out penalty: the next deal already skips disconnected players,
     // and punishing a flaky connection kept locking people out of their seat
     this.room.broadcast({ t: 'hand_abort', handId: this.id, reason, blamedSeat });
     this.onDone();
+  }
+
+  /** Abort path: un-claim the features this hand never settled. Scheduled
+   *  triggers are cancelled (the schedule anchors themselves are only advanced
+   *  at settlement, so the next deal re-triggers); manual triggers go pending. */
+  private releaseFeatureClaims(): void {
+    const { squid, bomb } = this.features;
+    if (!squid.triggerId && !bomb.triggerId) return;
+    this.db.transaction(() => {
+      if (squid.triggerId) {
+        this.db
+          .prepare(
+            "UPDATE room_feature_triggers SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL WHERE id = ? AND status = 'claimed'",
+          )
+          .run(squid.triggerId);
+      }
+      if (bomb.triggerId) {
+        if (bomb.source === 'manual') {
+          this.db
+            .prepare(
+              "UPDATE room_feature_triggers SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL WHERE id = ? AND status = 'claimed'",
+            )
+            .run(bomb.triggerId);
+        } else {
+          this.db
+            .prepare(
+              "UPDATE room_feature_triggers SET status = 'cancelled', resolved_at = ? WHERE id = ? AND status = 'claimed'",
+            )
+            .run(Date.now(), bomb.triggerId);
+        }
+      }
+    })();
   }
 
   /** Re-send whatever request the stalled player(s) may have missed. */
@@ -1239,7 +1512,14 @@ class Hand {
         });
     }
     for (const [deckIndex, card] of this.boardCards) {
-      this.room.send(userId, { t: 'board_open', handId: this.id, deckIndex, card });
+      const run = this.runForDeckIndex(deckIndex);
+      this.room.send(userId, {
+        t: 'board_open',
+        handId: this.id,
+        deckIndex,
+        card,
+        ...(run > 1 ? { run: run as 2 | 3 } : {}),
+      });
     }
     if (this.phase === 'shuffle' && this.seats[this.shuffleIdx]?.seat === info.seat) {
       this.requestShuffle();
@@ -1256,7 +1536,12 @@ class Hand {
         state: this.betting,
         board: this.currentBoard(),
         deadline: this.lastDeadline,
+        baseDeadline: this.turnBaseDeadline,
+        timeBanks: this.timeBankList(),
       });
+    }
+    if (this.phase === 'multirun' && this.multiRun) {
+      this.sendMultiRunOffer(this.multiRun);
     }
     if (this.phase === 'audit' && !this.revealedKeys.has(info.seat)) {
       this.room.send(userId, { t: 'need_keys', handId: this.id });
@@ -1321,7 +1606,8 @@ class Hand {
       msg.t === 'action' ||
       msg.t === 'reveal_key' ||
       msg.t === 'show_cards' ||
-      msg.t === 'rit_vote' ||
+      msg.t === 'run_count_choice' ||
+      msg.t === 'run_count_agree' ||
       msg.t === 'fold_key'
     ) {
       if (!verifyContent(info.pubkey, this.id, msg.t, signedBody(msg), msg.sig)) {
@@ -1341,8 +1627,10 @@ class Hand {
         return this.onRevealKey(info, msg.key, msg.sig);
       case 'show_cards':
         return this.onShowCards(info, msg.shares, msg.sig);
-      case 'rit_vote':
-        return this.onRitVote(info, msg.yes, msg.sig);
+      case 'run_count_choice':
+        return this.onRunCountChoice(info, msg.decisionId, msg.count, msg.sig);
+      case 'run_count_agree':
+        return this.onRunCountAgree(info, msg.decisionId, msg.agree, msg.sig);
       case 'fold_key':
         return this.onFoldKey(info, msg.key);
       default:
@@ -1596,18 +1884,18 @@ class Hand {
             null,
           );
         this.boardCards.set(chain.deckIndex, card);
-        const run2 = chain.deckIndex > 2 * this.n + 4;
+        const run = this.runForDeckIndex(chain.deckIndex);
         this.appendServer('board_open', {
           deckIndex: chain.deckIndex,
           card,
-          ...(run2 ? { run: 2 } : {}),
+          ...(run > 1 ? { run } : {}),
         });
         this.room.broadcast({
           t: 'board_open',
           handId: this.id,
           deckIndex: chain.deckIndex,
           card,
-          ...(run2 ? { run: 2 } : {}),
+          ...(run > 1 ? { run: run as 2 | 3 } : {}),
         });
         this.pendingBoard.delete(chain.deckIndex);
         if (this.pendingBoard.size === 0) this.afterBoardOpened();
@@ -1636,6 +1924,10 @@ class Hand {
   // ---------- betting ----------
 
   private startBetting(): void {
+    if (this.features.bomb.settings) {
+      this.startBombBetting();
+      return;
+    }
     this.phase = 'betting';
     this.betting = startHand(
       this.seats.map((s) => ({ seat: s.seat, stack: s.stack })),
@@ -1644,14 +1936,90 @@ class Hand {
       this.bb,
     );
     this.appendServer('betting_start', { street: 'preflop' });
-    this.broadcastBetting();
-    this.armActionTimer();
+    this.coordinateTurn(true);
+  }
+
+  /** Bomb pot: everyone antes, blinds and preflop betting are skipped, and the
+   *  flop opens straight away. Short stacks ante what they have and are all-in. */
+  private startBombBetting(): void {
+    const { ante, anteBb, settings } = this.features.bomb;
+    this.phase = 'betting';
+    this.bombPot = true;
+    this.betting = startBombPot(
+      this.seats.map((s) => ({ seat: s.seat, stack: s.stack })),
+      this.buttonSeat,
+      this.bb,
+      ante,
+    );
+    this.appendServer('betting_start', { street: 'preflop', bomb: true, ante, anteBb });
+    this.appendServer('bomb_pot_start', {
+      ante,
+      anteBb,
+      seats: this.seats.map((s) => ({ seat: s.seat, stack: s.stack })),
+    });
+    this.room.broadcast({
+      t: 'feature_started',
+      handId: this.id,
+      ...(settings ? { bombPot: settings } : {}),
+    });
+    // Open the flop directly. `streetIndexesToOpen` reads `preflop` here, so it
+    // returns the three flop positions; afterBoardOpened then switches to flop
+    // betting without dealing the turn.
+    this.openNextStreetBoards();
   }
 
   /** actionTimeoutMs of 0 means unlimited thinking time: no timer, no auto-fold. */
-  private armActionTimer(): void {
-    if (this.opts.actionTimeoutMs > 0) this.armTimer(this.opts.actionTimeoutMs);
-    else this.clearTimer();
+  private finishTurnTimer(): void {
+    this.clearTimer();
+  }
+
+  /**
+   * Start the clock for whoever is to act. The shared base clock is the host's
+   * turn time; a seat's own time bank extends it. A fresh deadline is minted
+   * ONLY here - `broadcastBetting` just re-sends whatever is current.
+   */
+  private beginTurnTimer(): void {
+    this.finishTurnTimer();
+    const st = this.betting;
+    if (!st || st.toAct === null || this.opts.actionTimeoutMs <= 0) {
+      this.turnBaseDeadline = null;
+      this.lastDeadline = null;
+      return;
+    }
+    const now = Date.now();
+    this.turnBaseDeadline = now + this.opts.actionTimeoutMs;
+    const bank = this.timeBanks().get(st.toAct) ?? 0;
+    this.lastDeadline = this.turnBaseDeadline + bank;
+    this.armTimer(this.lastDeadline - now);
+  }
+
+  /** Debit the time this action consumed past the base clock, clamped to the
+   *  seat's remaining bank. Called only after an action was successfully applied. */
+  private consumeTurnTime(seat: number): void {
+    const bank = this.features.timeBank;
+    if (!bank || this.turnBaseDeadline === null) return;
+    const spent = Math.max(0, Date.now() - this.turnBaseDeadline);
+    const current = bank.balances.get(seat) ?? 0;
+    const used = Math.min(spent, current);
+    if (used <= 0) return;
+    bank.balances.set(seat, current - used);
+    this.room.broadcast({
+      t: 'time_bank_update',
+      handId: this.id,
+      seat,
+      remainingMs: current - used,
+    });
+  }
+
+  private timeBanks(): Map<number, number> {
+    const bank = this.features.timeBank;
+    return bank ? bank.balances : new Map<number, number>();
+  }
+
+  private timeBankList(): { seat: number; remainingMs: number }[] | undefined {
+    const bank = this.features.timeBank;
+    if (!bank) return undefined;
+    return this.seats.map((s) => ({ seat: s.seat, remainingMs: bank.balances.get(s.seat) ?? 0 }));
   }
 
   private broadcastBetting(): void {
@@ -1661,8 +2029,9 @@ class Hand {
       actionSeq: this.actionSeq,
       state: this.betting!,
       board: this.currentBoard(),
-      deadline: (this.lastDeadline =
-        this.opts.actionTimeoutMs > 0 ? Date.now() + this.opts.actionTimeoutMs : null),
+      deadline: this.lastDeadline,
+      baseDeadline: this.turnBaseDeadline,
+      timeBanks: this.timeBankList(),
     });
   }
 
@@ -1688,9 +2057,12 @@ class Hand {
     try {
       this.betting = applyAction(this.betting!, seat, action);
     } catch (e) {
+      // an illegal or duplicate action must not consume the actor's time bank
       if (userId !== undefined) this.err(userId, e instanceof Error ? e.message : 'illegal action');
       return;
     }
+    // the action really applied: charge the clock it used past the base deadline
+    this.consumeTurnTime(seat);
     this.actionSeq++;
     this.room.broadcast({
       t: 'action_applied',
@@ -1699,33 +2071,32 @@ class Hand {
       action,
       ...(auto ? { auto: true } : {}),
     });
-    this.broadcastBetting();
-    this.afterBettingChange();
+    this.coordinateTurn();
   }
 
-  private afterBettingChange(): void {
+  /**
+   * The single turn coordinator. Either a new turn begins (fresh deadline +
+   * betting broadcast), or the street is closed and the hand advances to the
+   * next street / runout / settlement. Every path out of a betting change goes
+   * through here so `toAct = null` can never stall the hand.
+   */
+  private coordinateTurn(initial = false): void {
     const st = this.betting!;
     if (!streetClosed(st)) {
-      this.armActionTimer();
+      if (!initial) this.finishTurnTimer();
+      this.beginTurnTimer();
+      this.broadcastBetting();
       return;
     }
+    this.finishTurnTimer();
     if (st.winnerByFold !== null) {
       this.settle();
       return;
     }
     if (activeNonAllIn(st) < 2) {
+      // Everyone is all-in: reveal the hole cards BEFORE any runout decision,
+      // then decide how many times to run the board.
       this.runout = true;
-      const inHand = st.seats.filter((x) => !x.folded);
-      const boardIncomplete = this.boardIndexes().some((i) => !this.boardCards.has(i));
-      // Run-it-twice is off by default. It adds a vote round and a second
-      // runout, and both were stalling into unmask timeouts and aborting hands
-      // that would otherwise have completed. The remaining streets now deal
-      // once, which is the normal all-in path. Re-enable per-instance with
-      // `runItTwice: true` once the second-board chains are trustworthy.
-      if (this.opts.runItTwice && inHand.length >= 2 && boardIncomplete) {
-        this.beginRitVote(inHand.map((x) => x.seat));
-        return;
-      }
       this.requestReveals();
       return;
     }
@@ -1778,11 +2149,24 @@ class Hand {
       }
       return;
     }
+    if (this.bombPot && this.betting!.street === 'preflop') {
+      // the flop just opened; bomb pots never see a preflop betting round
+      this.bombPot = false;
+      this.betting = nextStreet(this.betting!);
+      if (activeNonAllIn(this.betting) < 2) {
+        this.runout = true;
+        this.requestReveals();
+        return;
+      }
+      this.phase = 'betting';
+      this.appendServer('street', { street: this.betting.street, board: this.currentBoard() });
+      this.coordinateTurn(true);
+      return;
+    }
     this.betting = nextStreet(this.betting!);
     this.phase = 'betting';
     this.appendServer('street', { street: this.betting.street, board: this.currentBoard() });
-    this.broadcastBetting();
-    this.armActionTimer();
+    this.coordinateTurn(true);
   }
 
   private openRemainingRunoutBoards(): void {
@@ -1937,50 +2321,191 @@ class Hand {
     return recoveredAny;
   }
 
-  // ---------- run it twice ----------
+  // ---------- multi-run negotiation ----------
 
-  private beginRitVote(voters: number[]): void {
-    this.phase = 'rit';
-    this.ritVoters = voters;
+  /** The deck positions that make up one run's board. Runs 2..N map any card
+   *  still hidden at decision time to a fresh deck index; cards already seen are
+   *  shared with run 1. */
+  private runBoardIndexes(run: number): number[] {
+    const base = this.boardIndexes();
+    if (run <= 1) return base;
+    const map = this.runMaps.get(run);
+    return base.map((pos) => map?.get(pos) ?? pos);
+  }
+
+  private boardForRun(run: number): CardId[] {
+    return this.runBoardIndexes(run).map((i) => this.boardCards.get(i)!);
+  }
+
+  private runForDeckIndex(idx: number): number {
+    for (const [run, map] of this.runMaps) {
+      for (const v of map.values()) if (v === idx) return run;
+    }
+    return 1;
+  }
+
+  /** Every deck index the runout still has to open: run 1 first, then 2, then 3. */
+  private runoutIndexes(): number[] {
+    const out: number[] = [];
+    for (let run = 1; run <= this.runs; run++) {
+      for (const idx of this.runBoardIndexes(run)) if (!out.includes(idx)) out.push(idx);
+    }
+    return out;
+  }
+
+  private remainingRunoutCount(): number {
+    return this.runoutIndexes().filter((i) => !this.boardCards.has(i)).length;
+  }
+
+  private sendMultiRunOffer(state: NonNullable<Hand['multiRun']>): void {
+    this.room.broadcast({
+      t: 'multi_run_offer',
+      handId: this.id,
+      decisionId: state.decisionId,
+      stage: state.stage,
+      aheadSeat: state.aheadSeat,
+      behindSeat: state.behindSeat,
+      equities: state.equities,
+      ...(state.stage === 'agreement' ? { requestedRuns: state.requestedRuns } : {}),
+      deadlineTs: state.deadline,
+    });
+  }
+
+  /** Decide whether the all-in runout can be negotiated, then ask the player
+   *  behind how many times to run. Every ineligible path resolves to one run. */
+  private beginMultiRunDecision(): void {
+    if (this.multiRunResolved) return;
+    const st = this.betting!;
+    const remaining = this.remainingRunoutCount();
+    const live = st.seats.filter((s) => !s.folded);
+    if (!this.features.multiRun.enabled) return this.finishMultiRun(1, 'disabled');
+    if (live.length !== 2) return this.finishMultiRun(1, 'ineligible');
+    if (remaining <= 0) return this.finishMultiRun(1, 'ineligible');
+    const a = live[0]!;
+    const b = live[1]!;
+    const cardsA = this.reveals.get(a.seat);
+    const cardsB = this.reveals.get(b.seat);
+    if (!cardsA || !cardsB || cardsA.length !== 2 || cardsB.length !== 2)
+      return this.finishMultiRun(1, 'ineligible');
+
+    // The reveal/crypto timer is spent; the decision timer starts only once the
+    // equity worker has produced an offer to answer.
+    this.clearTimer();
+    this.phase = 'multirun';
+    const decisionId = randomBytes(6).toString('hex');
+    computeHeadsUpEquity({
+      holeA: [cardsA[0]!, cardsA[1]!],
+      holeB: [cardsB[0]!, cardsB[1]!],
+      board: this.currentBoard(),
+      seed: `${this.id}:${decisionId}`,
+    })
+      .then((eq) => {
+        if (this.phase === 'done' || this.multiRunResolved) return;
+        if (eq.equitiesBps[0] === eq.equitiesBps[1])
+          return this.finishMultiRun(1, 'ineligible');
+        const aAhead = eq.equitiesBps[0] > eq.equitiesBps[1];
+        const ms = this.opts.ritVoteMs ?? 15_000;
+        this.multiRun = {
+          decisionId,
+          stage: 'choice',
+          aheadSeat: aAhead ? a.seat : b.seat,
+          behindSeat: aAhead ? b.seat : a.seat,
+          equities: [
+            { seat: a.seat, bps: eq.equitiesBps[0] },
+            { seat: b.seat, bps: eq.equitiesBps[1] },
+          ],
+          requestedRuns: 1,
+          deadline: Date.now() + ms,
+        };
+        this.appendServer('multi_run_offer', {
+          decisionId,
+          stage: 'choice',
+          aheadSeat: this.multiRun.aheadSeat,
+          behindSeat: this.multiRun.behindSeat,
+          equities: this.multiRun.equities,
+        });
+        this.sendMultiRunOffer(this.multiRun);
+        this.armTimer(ms);
+      })
+      .catch((err) => {
+        if (this.phase === 'done' || this.multiRunResolved) return;
+        this.appendServer('equity_failed', {
+          decisionId,
+          reason: err instanceof EquityError ? err.code : 'equity_failed',
+        });
+        this.finishMultiRun(1, 'ineligible');
+      });
+  }
+
+  private onRunCountChoice(
+    info: HandSeatInfo,
+    decisionId: string,
+    count: 1 | 2 | 3,
+    sig: string,
+  ): void {
+    if (this.phase !== 'multirun' || !this.multiRun) return;
+    if (this.multiRun.decisionId !== decisionId) return; // stale decision
+    if (this.multiRun.stage !== 'choice') return; // wrong stage / duplicate
+    if (info.seat !== this.multiRun.behindSeat) return; // wrong role
+    this.appendPlayer('run_count_choice', info.pubkey, { decisionId, count, seat: info.seat }, sig);
+    if (count === 1) return this.finishMultiRun(1, 'agreed');
     const ms = this.opts.ritVoteMs ?? 15_000;
-    this.room.broadcast({ t: 'rit_offer', handId: this.id, deadlineTs: Date.now() + ms, voters });
+    this.multiRun.stage = 'agreement';
+    this.multiRun.requestedRuns = count;
+    this.multiRun.deadline = Date.now() + ms;
+    this.sendMultiRunOffer(this.multiRun);
     this.armTimer(ms);
   }
 
-  private onRitVote(info: HandSeatInfo, yes: boolean, sig: string): void {
-    if (this.phase !== 'rit') return;
-    if (!this.ritVoters.includes(info.seat) || this.ritVotes.has(info.seat)) return;
-    this.appendPlayer('rit_vote', info.pubkey, { yes, seat: info.seat }, sig);
-    this.ritVotes.set(info.seat, yes);
-    // one no sinks it immediately; a full house of yes runs it right away
-    if (!yes || this.ritVotes.size === this.ritVoters.length) this.resolveRitVote();
+  private onRunCountAgree(info: HandSeatInfo, decisionId: string, agree: boolean, sig: string): void {
+    if (this.phase !== 'multirun' || !this.multiRun) return;
+    if (this.multiRun.decisionId !== decisionId) return; // stale decision
+    if (this.multiRun.stage !== 'agreement') return; // wrong stage / duplicate
+    if (info.seat !== this.multiRun.aheadSeat) return; // wrong role
+    this.appendPlayer('run_count_agree', info.pubkey, { decisionId, agree, seat: info.seat }, sig);
+    this.finishMultiRun(agree ? this.multiRun.requestedRuns : 1, agree ? 'agreed' : 'declined');
   }
 
-  private resolveRitVote(): void {
-    if (this.phase !== 'rit') return;
+  /** Lock in the run count, seed runs 2..N's board positions from the untouched
+   *  tail of the deck, and deal them out. A deck that cannot fit every run falls
+   *  back to a single run. */
+  private finishMultiRun(runs: number, reason: MultiRunReason): void {
+    if (this.multiRunResolved) return;
+    this.multiRunResolved = true;
     this.clearTimer();
-    const runTwice = this.ritVoters.every((v) => this.ritVotes.get(v) === true);
-    if (runTwice) {
-      // each still-hidden board position gets a twin card from the untouched
-      // part of the deck (hole cards end at 2n-1, the board at 2n+4)
+    this.multiRun = null;
+    let resolved = runs;
+    if (resolved > 1) {
       let extra = 2 * this.n + 5;
-      for (const pos of this.boardIndexes()) {
-        if (!this.boardCards.has(pos)) this.ritMap.set(pos, extra++);
+      const maps = new Map<number, Map<number, number>>();
+      let fits = true;
+      for (let run = 2; run <= resolved; run++) {
+        const map = new Map<number, number>();
+        for (const pos of this.boardIndexes()) {
+          if (this.boardCards.has(pos)) continue; // shared card from run 1
+          if (extra >= 52) {
+            fits = false;
+            break;
+          }
+          map.set(pos, extra++);
+        }
+        if (!fits) break;
+        maps.set(run, map);
       }
+      if (fits) this.runMaps = maps;
+      else resolved = 1;
     }
-    this.appendServer('rit_result', { runTwice });
+    this.runs = resolved;
+    this.appendServer('multi_run_result', { runs: resolved, reason });
     this.room.broadcast({
-      t: 'rit_result',
+      t: 'multi_run_result',
       handId: this.id,
-      runTwice,
+      runs: resolved,
+      reason,
       sharedBoard: this.currentBoard(),
     });
-    this.requestReveals();
-  }
-
-  /** Every deck index the runout still has to open: run 1 first, then run 2. */
-  private runoutIndexes(): number[] {
-    return [...this.boardIndexes(), ...this.ritMap.values()];
+    if (this.remainingRunoutCount() > 0) this.openRemainingRunoutBoards();
+    else this.settle();
   }
 
   // ---------- showdown ----------
@@ -2006,12 +2531,14 @@ class Hand {
   }
 
   private afterRevealsComplete(): void {
-    if (this.runout) {
-      const remaining = this.runoutIndexes().filter((i) => !this.boardCards.has(i));
-      if (remaining.length > 0) {
-        this.openRemainingRunoutBoards();
-        return;
-      }
+    if (this.runout && !this.multiRunResolved) {
+      // hole cards are now public: decide the run count before dealing on
+      this.beginMultiRunDecision();
+      return;
+    }
+    if (this.runout && this.remainingRunoutCount() > 0) {
+      this.openRemainingRunoutBoards();
+      return;
     }
     this.settle();
   }
@@ -2032,93 +2559,127 @@ class Hand {
       rake += cut;
     }
     const dealingOrder = this.seats.map((s) => s.seat);
-    let awards: Map<number, number>;
+    const runs = this.runs;
+    const awards = new Map<number, number>();
     let showdownMsg: ServerMsg | null = null;
-
-    // when the table ran it twice, board 1 is the normal five positions and
-    // board 2 swaps in the twin card for every position dealt after the vote
-    const ranTwice = this.ritMap.size > 0;
-    const board2 = ranTwice
-      ? this.boardIndexes().map((pos) => this.boardCards.get(this.ritMap.get(pos) ?? pos)!)
-      : null;
+    /** Per-run winner sets, used for the squid intersection. */
+    let winnerSets: number[][] = [];
 
     if (st.winnerByFold !== null) {
-      awards = new Map([[st.winnerByFold, pots.reduce((s, p) => s + p.amount, 0)]]);
-    } else if (ranTwice && board2) {
-      const scores1 = new Map<number, number>();
-      const scores2 = new Map<number, number>();
-      const revealList: { seat: number; cards: CardId[]; score: number }[] = [];
-      for (const [seat, cards] of this.reveals) {
-        scores1.set(seat, evaluate7([...cards, ...board]));
-        scores2.set(seat, evaluate7([...cards, ...board2]));
-        revealList.push({ seat, cards, score: scores1.get(seat)! });
-      }
-      // every pot splits between the runs; the odd chip rides on run 1
-      const half2 = (a: number) => Math.floor(a / 2);
-      const awards1 = awardPots(
-        pots.map((p) => ({ ...p, amount: p.amount - half2(p.amount) })),
-        scores1,
-        dealingOrder,
-      );
-      const awards2 = awardPots(
-        pots.map((p) => ({ ...p, amount: half2(p.amount) })),
-        scores2,
-        dealingOrder,
-      );
-      awards = new Map<number, number>();
-      for (const [seat, amount] of awards1) awards.set(seat, (awards.get(seat) ?? 0) + amount);
-      for (const [seat, amount] of awards2) awards.set(seat, (awards.get(seat) ?? 0) + amount);
-      showdownMsg = {
-        t: 'showdown',
-        handId: this.id,
-        reveals: revealList,
-        awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
-        runTwice: {
-          boards: [board, board2],
-          awards: [
-            [...awards1.entries()].map(([seat, amount]) => ({ seat, amount })),
-            [...awards2.entries()].map(([seat, amount]) => ({ seat, amount })),
-          ],
-        },
-      };
+      awards.set(st.winnerByFold, pots.reduce((s, p) => s + p.amount, 0));
+      winnerSets = [[st.winnerByFold]];
     } else {
-      const scores = new Map<number, number>();
       const revealList: { seat: number; cards: CardId[]; score: number }[] = [];
-      for (const [seat, cards] of this.reveals) {
-        const score = evaluate7([...cards, ...board]);
-        scores.set(seat, score);
-        revealList.push({ seat, cards, score });
+      for (const [seat, cards] of this.reveals) revealList.push({ seat, cards, score: 0 });
+
+      if (runs > 1) {
+        const boards: CardId[][] = [];
+        const perRun: { seat: number; amount: number }[][] = [];
+        // every pot splits across the runs; the odd chip rides on the earlier run
+        const slicesByPot = pots.map((p) => splitAmountEven(p.amount, runs));
+        const runWinnerSets: number[][] = [];
+        for (let r = 0; r < runs; r++) {
+          const runBoard = this.boardForRun(r + 1);
+          boards.push(runBoard);
+          const scores = new Map<number, number>();
+          for (const [seat, cards] of this.reveals) {
+            const score = evaluate7([...cards, ...runBoard]);
+            scores.set(seat, score);
+            if (r === 0) {
+              const entry = revealList.find((x) => x.seat === seat);
+              if (entry) entry.score = score;
+            }
+          }
+          const slicePots = pots.map((p, i) => ({
+            amount: slicesByPot[i]![r]!,
+            eligible: p.eligible,
+          }));
+          const awardsR = awardPots(slicePots, scores, dealingOrder);
+          perRun.push([...awardsR.entries()].map(([seat, amount]) => ({ seat, amount })));
+          runWinnerSets.push(bestScoreSeats([...scores.keys()], scores));
+          for (const [seat, amount] of awardsR) awards.set(seat, (awards.get(seat) ?? 0) + amount);
+        }
+        winnerSets = runWinnerSets;
+        showdownMsg = {
+          t: 'showdown',
+          handId: this.id,
+          reveals: revealList,
+          awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
+          multiRun: { boards, awards: perRun },
+        };
+      } else {
+        const scores = new Map<number, number>();
+        for (const [seat, cards] of this.reveals) {
+          const score = evaluate7([...cards, ...board]);
+          scores.set(seat, score);
+          const entry = revealList.find((x) => x.seat === seat);
+          if (entry) entry.score = score;
+        }
+        const awards1 = awardPots(pots, scores, dealingOrder);
+        for (const [seat, amount] of awards1) awards.set(seat, amount);
+        winnerSets = [bestScoreSeats([...scores.keys()], scores)];
+        showdownMsg = {
+          t: 'showdown',
+          handId: this.id,
+          reveals: revealList,
+          awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
+        };
       }
-      awards = awardPots(pots, scores, dealingOrder);
-      showdownMsg = {
-        t: 'showdown',
-        handId: this.id,
-        reveals: revealList,
-        awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
-      };
     }
 
-    const deltas = st.seats.map((s) => ({
+    const pokerDeltas = st.seats.map((s) => ({
       seat: s.seat,
       delta: (awards.get(s.seat) ?? 0) - s.total,
     }));
-    const stacks = st.seats.map((s) => ({
+    const pokerStacks = st.seats.map((s) => ({
       seat: s.seat,
       stack: s.stack + (awards.get(s.seat) ?? 0),
     }));
-    this.settlement = { awards, deltas, stacks, showdown: showdownMsg, rake };
+    // Squid is assessed on the stacks as they stand after the poker pot pays out.
+    const squid = this.settleSquid(winnerSets, pokerStacks);
+    const stacks = pokerStacks.map((s) => ({
+      seat: s.seat,
+      stack: s.stack + (squid?.netBySeat.get(s.seat) ?? 0),
+    }));
+    this.settlement = { awards, pokerDeltas, stacks, showdown: showdownMsg, rake, squid };
+
+    const combined = pokerDeltas.map((d) => ({
+      seat: d.seat,
+      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
+    }));
     this.appendServer('settlement', {
       board,
-      ...(board2 ? { board2 } : {}),
+      ...(runs > 1
+        ? { boards: Array.from({ length: runs }, (_, i) => this.boardForRun(i + 1)) }
+        : {}),
       ...(rake > 0 ? { commission: rake } : {}),
       awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
-      deltas,
+      deltas: combined,
+      ...(squid
+        ? {
+            squid: {
+              winners: squid.winners,
+              requestedPerLoser: squid.requestedPerLoser,
+              noClaimant: squid.noClaimant,
+            },
+          }
+        : {}),
       reveals:
         showdownMsg && showdownMsg.t === 'showdown'
           ? showdownMsg.reveals.map((r) => ({ seat: r.seat, cards: r.cards }))
           : [],
     });
     if (showdownMsg) this.room.broadcast(showdownMsg);
+    if (squid)
+      this.room.broadcast({
+        t: 'squid_result',
+        handId: this.id,
+        winners: squid.winners,
+        transfers: squid.transfers,
+        requestedPerLoser: squid.requestedPerLoser,
+        paidBySeat: squid.paidBySeat,
+        noClaimant: squid.noClaimant,
+      });
 
     if (this.auditMode === 'strict-audit' || this.opts.tvReplays) {
       // TV replays: collect everyone's per-hand key so the stored transcript
@@ -2131,6 +2692,62 @@ class Hand {
     } else {
       this.finalizeSettlement();
     }
+  }
+
+  /**
+   * B1 squid game. Only a claimed manual trigger reaches here. Every
+   * non-winner pays `penaltyBb x bb x (participants - 1)`, capped by the chips
+   * they have left after the pot, split evenly among every other participant.
+   * With multiple runs you must win every run to be a winner; if the runs have
+   * no common winner nobody collects and no chips move.
+   */
+  private settleSquid(
+    winnerSets: number[][],
+    stacks: { seat: number; stack: number }[],
+  ): SquidSettlement | null {
+    const settings = this.features.squid.settings;
+    if (!settings) return null;
+    const participants = this.seats.map((s) => s.seat);
+    const winners = intersectSeatSets(winnerSets);
+    const opponentCount = participants.length - 1;
+    const requestedPerLoser = settings.penaltyBb * this.bb * opponentCount;
+    const netBySeat = new Map<number, number>();
+    const transfers: { from: number; to: number; amount: number }[] = [];
+    const paidBySeat: { seat: number; amount: number }[] = [];
+    if (winners.length === 0 || opponentCount <= 0) {
+      return {
+        winners: [],
+        transfers: [],
+        requestedPerLoser,
+        paidBySeat: [],
+        noClaimant: true,
+        netBySeat,
+      };
+    }
+    const available = new Map(stacks.map((s) => [s.seat, Math.max(0, s.stack)]));
+    for (const loser of participants) {
+      if (winners.includes(loser)) continue;
+      const paid = Math.min(requestedPerLoser, available.get(loser) ?? 0);
+      if (paid <= 0) continue;
+      paidBySeat.push({ seat: loser, amount: paid });
+      const recipients = participants.filter((s) => s !== loser);
+      const shares = splitAmountEven(paid, recipients.length);
+      recipients.forEach((to, i) => {
+        const amount = shares[i]!;
+        if (amount <= 0) return;
+        transfers.push({ from: loser, to, amount });
+        netBySeat.set(loser, (netBySeat.get(loser) ?? 0) - amount);
+        netBySeat.set(to, (netBySeat.get(to) ?? 0) + amount);
+      });
+    }
+    return {
+      winners,
+      transfers,
+      requestedPerLoser,
+      paidBySeat,
+      noClaimant: false,
+      netBySeat,
+    };
   }
 
   private onRevealKey(info: HandSeatInfo, keyHex: string, sig: string): void {
@@ -2165,22 +2782,32 @@ class Hand {
     if (this.phase === 'done' || !this.settlement) return;
     this.clearTimer();
     this.phase = 'done';
-    const { deltas, stacks, rake } = this.settlement;
+    const { stacks, rake, squid } = this.settlement;
     const head = this.transcript.head;
     const room = getRoom(this.db, this.roomId);
+    const now = Date.now();
+    const pokerDeltas = this.settlement.pokerDeltas;
+    const squidDeltas = this.seats.map((s) => ({
+      seat: s.seat,
+      delta: squid?.netBySeat.get(s.seat) ?? 0,
+    }));
+    const combinedDeltas = pokerDeltas.map((d) => ({
+      seat: d.seat,
+      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
+    }));
     const write = this.db.transaction(() => {
       // settle by DELTA, never by absolute stack: the hand's snapshot predates
       // anything credited while it ran (a mid-hand buy, a banker revert), and
-      // an absolute write would silently erase those chips
-      for (const d of deltas) {
-        if (d.delta !== 0) {
-          const info = this.seats.find((x) => x.seat === d.seat)!;
-          this.db
-            .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
-            .run(d.delta, this.roomId, info.userId);
-        }
+      // an absolute write would silently erase those chips. Poker and squid
+      // move in the same transaction so a crash cannot apply one but not the other.
+      for (const d of combinedDeltas) {
+        if (d.delta === 0) continue;
+        const info = this.seats.find((x) => x.seat === d.seat)!;
+        this.db
+          .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
+          .run(d.delta, this.roomId, info.userId);
       }
-      for (const d of deltas) {
+      for (const d of pokerDeltas) {
         if (d.delta === 0) continue;
         const info = this.seats.find((x) => x.seat === d.seat)!;
         appendLedger(this.db, {
@@ -2190,6 +2817,21 @@ class Hand {
           kind: 'hand-settlement',
           ref: head,
         });
+      }
+      // one aggregate squid ledger row per seat, on the same hand ref
+      if (squid) {
+        for (const d of squidDeltas) {
+          if (d.delta === 0) continue;
+          const info = this.seats.find((x) => x.seat === d.seat)!;
+          appendLedger(this.db, {
+            roomId: this.roomId,
+            userId: info.userId,
+            delta: d.delta,
+            kind: 'squid-game',
+            ref: head,
+            note: 'Squid Game penalty/payout',
+          });
+        }
       }
       // the raked chips move to the platform account on the same ledger, same
       // hand ref, so every chip stays accounted for and settle-up still
@@ -2204,22 +2846,85 @@ class Hand {
           commissionBps: this.commissionBps,
         });
       }
+      // time bank: the turn debits are already in memory, add this hand's count
+      // and refill. Epoch-guarded so a config change mid-flight never writes.
+      const bank = this.features.timeBank;
+      if (bank) {
+        for (const s of this.seats) {
+          const remaining = bank.balances.get(s.seat) ?? 0;
+          let hands = (bank.hands.get(s.seat) ?? 0) + 1;
+          let ms = remaining;
+          if (bank.refillEveryHands > 0 && hands >= bank.refillEveryHands) {
+            ms += bank.refillMs;
+            hands = 0;
+          }
+          this.db
+            .prepare(
+              'UPDATE room_players SET time_bank_ms = ?, time_bank_hands = ?, time_bank_epoch = ? WHERE room_id = ? AND user_id = ? AND time_bank_epoch = ?',
+            )
+            .run(ms, hands, bank.epoch, this.roomId, s.userId, bank.epoch);
+        }
+      }
+      // claimed triggers are now resolved
+      for (const id of [this.features.squid.triggerId, this.features.bomb.triggerId]) {
+        if (!id) continue;
+        this.db
+          .prepare(
+            "UPDATE room_feature_triggers SET status = 'applied', resolved_at = ? WHERE id = ? AND status = 'claimed'",
+          )
+          .run(now, id);
+      }
       this.db
         .prepare(
           'INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)',
         )
-        .run(this.id, this.roomId, head, JSON.stringify(this.transcript.entries), Date.now());
+        .run(this.id, this.roomId, head, JSON.stringify(this.transcript.entries), now);
+      // hand progress: drives both the bomb schedule and the time-bank refill
+      const gs = this.db
+        .prepare(
+          `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
+           FROM room_gameplay_state WHERE room_id = ?`,
+        )
+        .get(this.roomId) as
+        | {
+            completed_hands: number;
+            last_bomb_completed_hands: number;
+            last_bomb_at: number | null;
+            schedule_reset_at: number | null;
+          }
+        | undefined;
+      const completed = (gs?.completed_hands ?? 0) + 1;
+      const bombRan = !!this.features.bomb.settings;
+      const lastBombHands = bombRan ? completed : (gs?.last_bomb_completed_hands ?? 0);
+      const lastBombAt = bombRan ? now : (gs?.last_bomb_at ?? null);
+      this.db
+        .prepare(
+          `INSERT INTO room_gameplay_state
+             (room_id, completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(room_id) DO UPDATE SET
+             completed_hands = excluded.completed_hands,
+             last_bomb_completed_hands = excluded.last_bomb_completed_hands,
+             last_bomb_at = excluded.last_bomb_at,
+             schedule_reset_at = excluded.schedule_reset_at`,
+        )
+        .run(this.roomId, completed, lastBombHands, lastBombAt, gs?.schedule_reset_at ?? null);
     });
     write();
-    this.room.broadcast({
-      t: 'hand_end',
+    // `hand_end.deltas` are the combined poker+squid nets; the split is kept
+    // alongside for clients/stats that want to attribute each source.
+    const endMsg = {
+      t: 'hand_end' as const,
       handId: this.id,
       head,
       stacks,
-      deltas,
+      deltas: combinedDeltas,
+      pokerDeltas,
+      squidDeltas,
       commission: rake,
       commissionBps: this.commissionBps,
-    });
+    };
+    this.room.broadcast(endMsg as ServerMsg);
     this.onDone();
   }
 }

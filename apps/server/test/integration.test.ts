@@ -21,8 +21,9 @@ import {
 import type { CardId, PlayerAction, ServerMsg } from '@4am/shared';
 import { createSession, createUser } from '../src/auth.js';
 import { setPlatformUserId } from '../src/platform.js';
+import { activeHands } from '../src/liveHands.js';
 
-type Strategy = 'passive' | 'fold-first' | 'allin-first';
+type Strategy = 'passive' | 'fold-first' | 'allin-first' | 'shove-flop';
 
 class TestClient {
   username: string;
@@ -34,11 +35,34 @@ class TestClient {
   ritAnswer: boolean | null = true;
   /** Escrow the hand key with the server on fold (like the real clients). */
   autoFoldKey = true;
+  /** Never answer a betting turn (used to exercise the timeout path). */
+  ignoreActions = false;
+  /** Delay before acting, in ms, to spend the time bank past the base clock. */
+  thinkMs = 0;
   sawRitOffer = false;
   /** Set when this client's own fold has been applied by the server. */
   sawOwnFold = false;
   errors: string[] = [];
   board2: CardId[] = [];
+  board3: CardId[] = [];
+  /** How the player behind answers the run-count stage; null = never answer. */
+  runCountAnswer: 1 | 2 | 3 | null = 1;
+  /** How the player ahead answers the agreement stage; null = never answer. */
+  runAgreeAnswer: boolean | null = true;
+  sawMultiRunOffer = false;
+  multiRunOffers: {
+    decisionId: string;
+    stage: string;
+    aheadSeat: number;
+    behindSeat: number;
+    requestedRuns?: number;
+    equities: { seat: number; bps: number }[];
+  }[] = [];
+  multiRunResult: { runs: number; reason: string } | null = null;
+  lastShowdown: Extract<ServerMsg, { t: 'showdown' }> | null = null;
+  timeBankUpdates: { seat: number; remainingMs: number }[] = [];
+  squidResult: Extract<ServerMsg, { t: 'squid_result' }> | null = null;
+  featureStarted: Extract<ServerMsg, { t: 'feature_started' }>[] = [];
   identity = genIdentity();
   ws!: WebSocket;
   baseUrl: string;
@@ -55,7 +79,12 @@ class TestClient {
   peekOffers: { offerId: string; fromUserId: number; amount: number }[] = [];
   peekResults: { targetSeat: number; status: string; cards?: CardId[] }[] = [];
   sawShowdown = false;
-  handEnd: Extract<ServerMsg, { t: 'hand_end' }> | null = null;
+  handEnd:
+    | (Extract<ServerMsg, { t: 'hand_end' }> & {
+        pokerDeltas?: { seat: number; delta: number }[];
+        squidDeltas?: { seat: number; delta: number }[];
+      })
+    | null = null;
   handAbort: Extract<ServerMsg, { t: 'hand_abort' }> | null = null;
   lastRespondedActionSeq = -1;
   roomState: Extract<ServerMsg, { t: 'room_state' }> | null = null;
@@ -164,12 +193,20 @@ class TestClient {
           this.myCardPoints = [];
           this.board = [];
           this.board2 = [];
+          this.board3 = [];
           this.cardsShown = [];
           this.sawShowdown = false;
           this.handEnd = null;
           this.handAbort = null;
           this.sawOwnFold = false;
           this.lastRespondedActionSeq = -1;
+          this.sawMultiRunOffer = false;
+          this.multiRunOffers = [];
+          this.multiRunResult = null;
+          this.lastShowdown = null;
+          this.timeBankUpdates = [];
+          this.squidResult = null;
+          this.featureStarted = [];
         }
         const commit = pointHex(handKeyCommit(this.handKey!));
         this.send({
@@ -217,9 +254,64 @@ class TestClient {
       case 'board_open': {
         if (msg.run === 2) {
           if (!this.board2.includes(msg.card)) this.board2.push(msg.card);
+        } else if (msg.run === 3) {
+          if (!this.board3.includes(msg.card)) this.board3.push(msg.card);
         } else if (!this.board.includes(msg.card)) {
           this.board.push(msg.card);
         }
+        break;
+      }
+      case 'multi_run_offer': {
+        this.sawMultiRunOffer = true;
+        this.multiRunOffers.push({
+          decisionId: msg.decisionId,
+          stage: msg.stage,
+          aheadSeat: msg.aheadSeat,
+          behindSeat: msg.behindSeat,
+          requestedRuns: msg.requestedRuns,
+          equities: msg.equities,
+        });
+        if (
+          msg.stage === 'choice' &&
+          msg.behindSeat === this.seat &&
+          this.runCountAnswer !== null
+        ) {
+          const count = this.runCountAnswer;
+          const body = { decisionId: msg.decisionId, count };
+          this.send({
+            t: 'run_count_choice',
+            handId: this.handId,
+            decisionId: msg.decisionId,
+            count,
+            sig: this.signed('run_count_choice', body),
+          });
+        } else if (
+          msg.stage === 'agreement' &&
+          msg.aheadSeat === this.seat &&
+          this.runAgreeAnswer !== null
+        ) {
+          const agree = this.runAgreeAnswer;
+          const body = { decisionId: msg.decisionId, agree };
+          this.send({
+            t: 'run_count_agree',
+            handId: this.handId,
+            decisionId: msg.decisionId,
+            agree,
+            sig: this.signed('run_count_agree', body),
+          });
+        }
+        break;
+      }
+      case 'multi_run_result': {
+        this.multiRunResult = { runs: msg.runs, reason: msg.reason };
+        break;
+      }
+      case 'squid_result': {
+        this.squidResult = msg;
+        break;
+      }
+      case 'feature_started': {
+        this.featureStarted.push(msg);
         break;
       }
       case 'action_applied': {
@@ -278,19 +370,33 @@ class TestClient {
         )
           break;
         this.lastRespondedActionSeq = msg.actionSeq;
+        if (this.ignoreActions) break;
         const me = st.seats.find((s) => s.seat === this.seat)!;
-        if (this.strategy === 'fold-first') this.act({ type: 'fold' });
-        else if (this.strategy === 'allin-first' && me.stack + me.committed > st.currentBet)
-          this.act({
-            type: st.currentBet === 0 ? 'bet' : 'raise',
-            amount: me.stack + me.committed,
-          });
-        else if (st.currentBet === me.committed) this.act({ type: 'check' });
-        else this.act({ type: 'call' });
+        const respond = () => {
+          const wantsShove =
+            (this.strategy === 'allin-first' ||
+              (this.strategy === 'shove-flop' && st.street !== 'preflop')) &&
+            me.stack + me.committed > st.currentBet;
+          if (this.strategy === 'fold-first') this.act({ type: 'fold' });
+          else if (wantsShove)
+            this.act({
+              type: st.currentBet === 0 ? 'bet' : 'raise',
+              amount: me.stack + me.committed,
+            });
+          else if (st.currentBet === me.committed) this.act({ type: 'check' });
+          else this.act({ type: 'call' });
+        };
+        if (this.thinkMs > 0) setTimeout(respond, this.thinkMs);
+        else respond();
+        break;
+      }
+      case 'time_bank_update': {
+        this.timeBankUpdates.push({ seat: msg.seat, remainingMs: msg.remainingMs });
         break;
       }
       case 'showdown': {
         this.sawShowdown = true;
+        this.lastShowdown = msg;
         break;
       }
       case 'hand_end': {
@@ -331,6 +437,12 @@ class TestClient {
       if (Date.now() - start > ms) throw new Error(`timeout waiting (${this.username})`);
       await new Promise((r) => setTimeout(r, 25));
     }
+  }
+
+  /** Wait until the server has fully released the previous hand, so a second
+   *  `start_hand` cannot race the room teardown. */
+  async waitIdle(roomId: string, ms = 8000): Promise<void> {
+    await this.waitFor(() => !activeHands.has(roomId), ms);
   }
 
   close(): void {
@@ -440,7 +552,7 @@ describe('full hand integration', () => {
     expect(mine.myNet).toBe(hostDelta.delta);
     expect(['won at showdown', 'lost at showdown']).toContain(mine.outcome);
     expect(mine.voided).toBe(false);
-  });
+  }, 20000);
 
   it('a mid-hand buy survives the hand settlement', async () => {
     const { players, room, host } = await setupRoom(['heala', 'healb', 'healc']);
@@ -462,7 +574,7 @@ describe('full hand integration', () => {
       .prepare('SELECT SUM(delta) as s FROM ledger WHERE room_id = ? AND user_id = ?')
       .get(room.id, me.userId) as { s: number };
     expect(sum.s).toBe(me.stack);
-  });
+  }, 20000);
 
   it('a mid-hand kick unseats for the next deal without breaking the hand', async () => {
     const { players, room, host } = await setupRoom(['kicka', 'kickb', 'kickc']);
@@ -478,7 +590,7 @@ describe('full hand integration', () => {
     const carolRow = state.players.find((p: { username: string }) => p.username === 'kickc');
     expect(carolRow.seat).toBeNull();
     expect(state.players.reduce((t: number, p: { stack: number }) => t + p.stack, 0)).toBe(3000);
-  });
+  }, 20000);
 
   it('fold-out ends the hand without any reveal', async () => {
     const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'fold-first']);
@@ -637,45 +749,59 @@ describe('full hand integration', () => {
     expect(row.head).toBe(hand.head);
   });
 
-  it('run it twice: a unanimous vote deals two boards and splits the pot', async () => {
-    const { players, room, host } = await setupRoom(['rita', 'ritb'], ['allin-first', 'passive']);
+  it('multi-run: the player behind chooses 2 runs and the ahead player agrees', async () => {
+    const { players, room, host } = await setupRoom(['mra', 'mrb'], ['shove-flop', 'passive']);
+    await host.api(
+      `/api/rooms/${room.id}/settings`,
+      { features: { multiRun: { enabled: true } } },
+      'PUT',
+    );
+    players[0]!.runCountAnswer = 2;
+    players[1]!.runCountAnswer = 2;
+    players[0]!.runAgreeAnswer = true;
+    players[1]!.runAgreeAnswer = true;
     host.send({ t: 'start_hand' });
-    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
     expect(players[0]!.handAbort).toBeNull();
-    expect(players.every((p) => p.sawRitOffer)).toBe(true);
-    // preflop all-in: run 1 gets its five cards, run 2 five fresh ones
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 2, reason: 'agreed' });
+    expect(players[0]!.sawMultiRunOffer).toBe(true);
+    // the all-in happened on the flop, so only turn/river are run twice: the
+    // flop is a shared card and the showdown reconstructs both full boards
     expect(players[0]!.board).toHaveLength(5);
-    expect(players[0]!.board2).toHaveLength(5);
-    const all = [...players[0]!.board, ...players[0]!.board2, ...players.flatMap((p) => p.myCards)];
-    expect(new Set(all).size).toBe(all.length);
-    // both halves settle: the 2,000 pot pays its 0.5% commission to the banker,
-    // the rest returns through the awards - every chip still accounted for
-    const deltas = players[0]!.handEnd!.deltas;
+    expect(players[0]!.board2).toHaveLength(2);
+    expect(players[1]!.board2).toEqual(players[0]!.board2);
+    const boards = players[0]!.lastShowdown!.multiRun!.boards;
+    expect(boards).toHaveLength(2);
+    for (const b of boards) expect(b).toHaveLength(5);
+    expect(boards[1]!.slice(0, 3)).toEqual(boards[0]!.slice(0, 3)); // shared flop
+    const all = [...boards.flat(), ...players.flatMap((p) => p.myCards)];
+    // 5 shared run-1 cards + 2 run-2 turn/river + 4 hole cards, all distinct
+    expect(new Set(all).size).toBe(11);
+    // both halves settle: 2,000 pot, 0.5% rake, every chip accounted for
     expect(players[0]!.handEnd!.commission).toBe(10);
-    expect(deltas.reduce((s, x) => s + x.delta, 0)).toBe(-10);
-    const state = await host.api(`/api/rooms/${room.id}`);
-    expect(state.players.reduce((t: number, p: { stack: number }) => t + p.stack, 0)).toBe(2000);
-    const hand = await host.api(`/api/rooms/${room.id}/hands/${players[0]!.handEnd!.handId}`);
-    expect(
-      hand.entries.find((e: { type: string }) => e.type === 'rit_result').payload.runTwice,
-    ).toBe(true);
-    expect(
-      hand.entries.find((e: { type: string }) => e.type === 'settlement').payload.board2,
-    ).toHaveLength(5);
+    expect(players[0]!.handEnd!.deltas.reduce((s, x) => s + x.delta, 0)).toBe(-10);
     const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
     expect(ledger.verified.ok).toBe(true);
-  }, 20000);
+  }, 25000);
 
-  it('one no vote runs the all-in board once', async () => {
-    const { players, host } = await setupRoom(['ritc', 'ritd'], ['allin-first', 'passive']);
-    players[1]!.ritAnswer = false;
+  it('multi-run: refusing the run count runs the all-in board once', async () => {
+    const { players, room, host } = await setupRoom(['mrc', 'mrd'], ['shove-flop', 'passive']);
+    await host.api(
+      `/api/rooms/${room.id}/settings`,
+      { features: { multiRun: { enabled: true } } },
+      'PUT',
+    );
+    players[0]!.runCountAnswer = 3;
+    players[1]!.runCountAnswer = 3;
+    players[0]!.runAgreeAnswer = false;
+    players[1]!.runAgreeAnswer = false;
     host.send({ t: 'start_hand' });
-    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
     expect(players[0]!.handAbort).toBeNull();
-    expect(players.every((p) => p.sawRitOffer)).toBe(true);
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 1, reason: 'declined' });
     expect(players[0]!.board).toHaveLength(5);
     expect(players[0]!.board2).toHaveLength(0);
-  }, 20000);
+  }, 25000);
 
   it('new rooms pay 0.5% to the platform, conserving chips on the ledger', async () => {
     const { players, room, host } = await setupRoom(['coma', 'comb'], ['allin-first', 'passive']);
@@ -1079,4 +1205,354 @@ describe('player leave resilience', () => {
     expect(hole).toBeDefined();
     expect(new Set(hole.payload.cards)).toEqual(new Set(folderCards));
   }, 20000);
+});
+
+describe('P2 gameplay integration', () => {
+  async function enable(host: TestClient, roomId: string, features: unknown): Promise<void> {
+    const res = await host.api(`/api/rooms/${roomId}/settings`, { features }, 'PUT');
+    expect(res.ok).toBe(true);
+  }
+
+  it('multi-run: choosing 3 runs with agreement deals three boards', async () => {
+    const { players, room, host } = await setupRoom(['m3a', 'm3b'], ['shove-flop', 'passive']);
+    await enable(host, room.id, { multiRun: { enabled: true } });
+    for (const p of players) {
+      p.runCountAnswer = 3;
+      p.runAgreeAnswer = true;
+    }
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 3, reason: 'agreed' });
+    expect(players[0]!.board).toHaveLength(5);
+    expect(players[0]!.board2).toHaveLength(2);
+    expect(players[0]!.board3).toHaveLength(2);
+    const boards = players[0]!.lastShowdown!.multiRun!.boards;
+    expect(boards).toHaveLength(3);
+    for (const b of boards) expect(b).toHaveLength(5);
+    expect(boards[1]!.slice(0, 3)).toEqual(boards[0]!.slice(0, 3)); // shared flop
+    expect(boards[2]!.slice(0, 3)).toEqual(boards[0]!.slice(0, 3));
+    const all = [...boards.flat(), ...players.flatMap((p) => p.myCards)];
+    // 5 shared run-1 + 2 + 2 run-specific + 4 hole cards, all distinct
+    expect(new Set(all).size).toBe(13);
+    expect(players[0]!.handEnd!.deltas.reduce((s, d) => s + d.delta, 0)).toBe(-10);
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+  }, 25000);
+
+  it('multi-run: ignoring the choice stage times out to a single run', async () => {
+    const { players, room, host } = await setupRoom(['mta', 'mtb'], ['shove-flop', 'passive']);
+    await enable(host, room.id, { multiRun: { enabled: true } });
+    for (const p of players) p.runCountAnswer = null;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 1, reason: 'timeout' });
+    expect(players[0]!.board).toHaveLength(5);
+    expect(players[0]!.board2).toHaveLength(0);
+  }, 25000);
+
+  it('multi-run: an unanswered agreement stage also falls back to one run', async () => {
+    const { players, room, host } = await setupRoom(['mua', 'mub'], ['shove-flop', 'passive']);
+    await enable(host, room.id, { multiRun: { enabled: true } });
+    for (const p of players) {
+      p.runCountAnswer = 2; // the player behind asks for two runs...
+      p.runAgreeAnswer = null; // ...but the player ahead never answers
+    }
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 1, reason: 'timeout' });
+    expect(players[0]!.board2).toHaveLength(0);
+  }, 25000);
+
+  it('multi-run: more than two players all-in is forced to a single run', async () => {
+    const { players, room, host } = await setupRoom(
+      ['mwa', 'mwb', 'mwc'],
+      ['shove-flop', 'shove-flop', 'shove-flop'],
+    );
+    await enable(host, room.id, { multiRun: { enabled: true } });
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players.every((p) => !p.sawMultiRunOffer)).toBe(true);
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 1, reason: 'ineligible' });
+    expect(players[0]!.board).toHaveLength(5);
+    expect(players[0]!.board2).toHaveLength(0);
+  }, 25000);
+
+  it('bomb pot: a scheduled bomb antes everyone and opens the flop directly', async () => {
+    const { players, room, host } = await setupRoom(['bomba', 'bombb']);
+    await enable(host, room.id, {
+      bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 1 } },
+    });
+    // hand 1 is a normal deal: no bomb is due until one hand has completed
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(false);
+    const firstId = players[0]!.handEnd!.handId;
+    await players[0]!.waitIdle(room.id);
+
+    host.send({ t: 'start_hand' });
+    await Promise.all(
+      players.map((p) =>
+        p.waitFor(() => p.handEnd !== null && p.handEnd.handId !== firstId, 15000),
+      ),
+    );
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(true);
+    expect(players[0]!.board).toHaveLength(5);
+    // the transcript records the bomb and starts betting on the flop
+    const hand = await host.api(`/api/rooms/${room.id}/hands/${players[0]!.handEnd!.handId}`);
+    expect(hand.entries.some((e: { type: string }) => e.type === 'bomb_pot_start')).toBe(true);
+    const bettingStart = hand.entries.find((e: { type: string }) => e.type === 'betting_start');
+    expect(bettingStart.payload.bomb).toBe(true);
+    const streets = hand.entries.filter((e: { type: string }) => e.type === 'street');
+    expect(streets[0].payload.street).toBe('flop');
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+  }, 30000);
+
+  it('bomb pot: a duration schedule fires once its clock has elapsed', async () => {
+    const { players, room, host } = await setupRoom(['bda', 'bdb']);
+    await enable(host, room.id, {
+      bombPot: { enabled: true, anteBb: 2, schedule: { mode: 'duration', value: 60 } },
+    });
+    // hand 1 seeds the schedule clock and is a normal deal
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(false);
+    const firstId = players[0]!.handEnd!.handId;
+    await players[0]!.waitIdle(room.id);
+    // age the anchor past the 60s interval
+    ctx.db
+      .prepare('UPDATE room_gameplay_state SET schedule_reset_at = ? WHERE room_id = ?')
+      .run(Date.now() - 61_000, room.id);
+
+    host.send({ t: 'start_hand' });
+    await Promise.all(
+      players.map((p) =>
+        p.waitFor(() => p.handEnd !== null && p.handEnd.handId !== firstId, 15000),
+      ),
+    );
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(true);
+    expect(players[0]!.board).toHaveLength(5);
+  }, 30000);
+
+  it('bomb pot: a short stack antes what it has and goes all-in', async () => {
+    const { players, room, host } = await setupRoom(['shorta', 'shortb']);
+    await enable(host, room.id, {
+      bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 1 } },
+    });
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    // stand bob down to a stack smaller than the ante before the bomb hand
+    ctx.db
+      .prepare('UPDATE room_players SET stack = 5 WHERE room_id = ? AND user_id = ?')
+      .run(room.id, players[1]!.userId);
+    const before = (
+      ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
+        s: number;
+      }
+    ).s;
+
+    const firstId = players[0]!.handEnd!.handId;
+    await players[0]!.waitIdle(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(
+      players.map((p) =>
+        p.waitFor(() => p.handEnd !== null && p.handEnd.handId !== firstId, 20000),
+      ),
+    );
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[1]!.myCards).toHaveLength(2);
+    expect(players[0]!.board).toHaveLength(5);
+    expect(players[0]!.handEnd!.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before);
+    const shortDelta = players[0]!.handEnd!.deltas.find((d) => d.seat === players[1]!.seat)!;
+    expect(shortDelta.delta).toBeGreaterThanOrEqual(-5);
+  }, 30000);
+
+  it('time bank: a slow-but-legal action spends bank past the base clock', async () => {
+    const { players, room, host } = await setupRoom(['tba', 'tbb']);
+    await enable(host, room.id, {
+      timeBank: { enabled: true, initialSeconds: 10, refillEveryHands: 30, refillSeconds: 30 },
+    });
+    // the host acts ~200ms past the 1,500ms base clock each turn
+    players[0]!.thinkMs = 1700;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    const updates = players[0]!.timeBankUpdates.filter((u) => u.seat === players[0]!.seat);
+    expect(updates.length).toBeGreaterThan(0);
+    const last = updates[updates.length - 1]!;
+    expect(last.remainingMs).toBeLessThan(10_000);
+    expect(last.remainingMs).toBeGreaterThan(0);
+    const row = ctx.db
+      .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(room.id, players[0]!.userId) as { time_bank_ms: number };
+    expect(row.time_bank_ms).toBe(last.remainingMs);
+  }, 30000);
+
+  it('time bank: a timeout burns what is left and auto-folds', async () => {
+    const { players, room, host } = await setupRoom(['tca', 'tcb']);
+    await enable(host, room.id, {
+      timeBank: { enabled: true, initialSeconds: 1, refillEveryHands: 30, refillSeconds: 30 },
+    });
+    // the host never acts: base 1.5s + 1s bank = 2.5s, then auto-fold
+    players[0]!.ignoreActions = true;
+    host.send({ t: 'start_hand' });
+    await players[1]!.waitFor(() => players[1]!.handEnd !== null, 20000);
+    expect(players[0]!.handAbort).toBeNull();
+    const updates = players[0]!.timeBankUpdates.filter((u) => u.seat === players[0]!.seat);
+    expect(updates.some((u) => u.remainingMs === 0)).toBe(true);
+    const row = ctx.db
+      .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(room.id, players[0]!.userId) as { time_bank_ms: number };
+    expect(row.time_bank_ms).toBe(0);
+  }, 25000);
+
+  it('squid: the fold loser pays the penalty to the winner', async () => {
+    const { players, room, host } = await setupRoom(['sqa', 'sqb'], ['fold-first', 'passive']);
+    await enable(host, room.id, { squid: { enabled: true, penaltyBb: 1, minPlayers: 2 } });
+    const trig = await host.api(`/api/rooms/${room.id}/feature-triggers`, {
+      feature: 'squid',
+      requestId: 'sq-1',
+    });
+    expect(trig.trigger.status).toBe('pending');
+
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.handAbort).toBeNull();
+    const hostSeat = players[0]!.seat!;
+    const bobSeat = players[1]!.seat!;
+    const sq = players[1]!.squidResult!;
+    expect(sq.noClaimant).toBe(false);
+    expect(sq.winners).toEqual([bobSeat]);
+    expect(sq.requestedPerLoser).toBe(20); // 1 * bb(20) * (2 - 1)
+    expect(sq.transfers).toEqual([{ from: hostSeat, to: bobSeat, amount: 20 }]);
+
+    const hostDelta = players[0]!.handEnd!.deltas.find((d) => d.seat === hostSeat)!.delta;
+    const bobDelta = players[1]!.handEnd!.deltas.find((d) => d.seat === bobSeat)!.delta;
+    expect(hostDelta).toBe(-30); // SB 10 + squid 20
+    expect(bobDelta).toBe(30);
+    expect(players[0]!.handEnd!.deltas.reduce((s, d) => s + d.delta, 0)).toBe(0);
+    expect(players[0]!.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
+
+    const row = ctx.db
+      .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
+      .get(room.id) as { status: string };
+    expect(row.status).toBe('applied');
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+    const squidRows = ledger.entries.filter((e: { kind: string }) => e.kind === 'squid-game');
+    expect(squidRows.map((e: { delta: number }) => e.delta).sort((a: number, b: number) => a - b)).toEqual(
+      [-20, 20],
+    );
+  }, 25000);
+
+  it('squid: a multi-run hand only pays a common winner and conserves chips', async () => {
+    const { players, room, host } = await setupRoom(['smra', 'smrb'], ['shove-flop', 'passive']);
+    await enable(host, room.id, {
+      multiRun: { enabled: true },
+      squid: { enabled: true, penaltyBb: 1, minPlayers: 2 },
+    });
+    await host.api(`/api/rooms/${room.id}/feature-triggers`, {
+      feature: 'squid',
+      requestId: 'smr-1',
+    });
+    for (const p of players) {
+      p.runCountAnswer = 2;
+      p.runAgreeAnswer = true;
+    }
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    const sq = players[1]!.squidResult!;
+    expect(sq).not.toBeNull();
+    expect(players[0]!.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
+    if (sq.winners.length === 0) {
+      expect(sq.noClaimant).toBe(true);
+      expect(sq.transfers).toEqual([]);
+    } else {
+      expect(sq.noClaimant).toBe(false);
+      // every transfer moves chips; the broke all-in loser can only pay what
+      // it has left, so an empty transfer list is legitimate
+      for (const t of sq.transfers) expect(t.amount).toBeGreaterThan(0);
+    }
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+  }, 25000);
+
+  it('abort: a claimed manual squid trigger returns to pending and moves no chips', async () => {
+    const { players, room, host } = await setupRoom(['aba', 'abb']);
+    await enable(host, room.id, { squid: { enabled: true, penaltyBb: 1, minPlayers: 2 } });
+    await host.api(`/api/rooms/${room.id}/feature-triggers`, {
+      feature: 'squid',
+      requestId: 'ab-1',
+    });
+    host.send({ t: 'start_hand' });
+    await players[0]!.waitFor(() => players[0]!.handId !== null, 5000);
+    await players[0]!.waitFor(() => {
+      const r = ctx.db
+        .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
+        .get(room.id) as { status: string } | undefined;
+      return r?.status === 'claimed';
+    }, 5000);
+    players[1]!.disconnect();
+    await players[0]!.waitFor(() => players[0]!.handAbort !== null, 15000);
+    const row = ctx.db
+      .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
+      .get(room.id) as { status: string };
+    expect(row.status).toBe('pending');
+    const state = await host.api(`/api/rooms/${room.id}`);
+    for (const p of state.players) expect(p.stack).toBe(1000);
+  }, 25000);
+
+  it('bomb pot x multi-run x squid all settle together in one hand', async () => {
+    // hand 1 stays small so both players remain funded for the bomb hand;
+    // they shove the flop only once the bomb is live
+    const { players, room, host } = await setupRoom(['comba', 'combb'], ['passive', 'passive']);
+    await enable(host, room.id, {
+      bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 1 } },
+      multiRun: { enabled: true },
+      squid: { enabled: true, penaltyBb: 1, minPlayers: 2 },
+    });
+    for (const p of players) {
+      p.runCountAnswer = 2;
+      p.runAgreeAnswer = true;
+    }
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 20000)));
+    expect(players[0]!.handAbort).toBeNull();
+    const firstId = players[0]!.handEnd!.handId;
+    await players[0]!.waitIdle(room.id);
+    for (const p of players) p.strategy = 'shove-flop';
+    const before = (
+      ctx.db
+        .prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?')
+        .get(room.id) as { s: number }
+    ).s;
+    await host.api(`/api/rooms/${room.id}/feature-triggers`, {
+      feature: 'squid',
+      requestId: 'combo-1',
+    });
+    host.send({ t: 'start_hand' });
+    await Promise.all(
+      players.map((p) =>
+        p.waitFor(() => p.handEnd !== null && p.handEnd.handId !== firstId, 30000),
+      ),
+    );
+    expect(players[0]!.handAbort).toBeNull();
+    expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(true);
+    expect(players[0]!.multiRunResult).toMatchObject({ runs: 2 });
+    expect(players[1]!.squidResult).not.toBeNull();
+    // `hand_end.stacks` exclude the rake credited separately, so the room total
+    // is conserved once that commission is added back
+    const end = players[0]!.handEnd!;
+    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before - (end.commission ?? 0));
+    expect(players[0]!.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+  }, 45000);
 });

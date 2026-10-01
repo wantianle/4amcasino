@@ -153,6 +153,8 @@ export function attachHub(
       'show_cards',
       'fold_key',
       'rit_vote',
+      'run_count_choice',
+      'run_count_agree',
       'im_ready',
       'peek_accept',
       'peek_decline',
