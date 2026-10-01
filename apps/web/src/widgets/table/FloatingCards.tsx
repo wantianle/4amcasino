@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { motion, useDragControls, useMotionValue } from 'motion/react';
 import { DotsSixVertical, Minus, Plus, X } from '@phosphor-icons/react';
 import type { CardId } from '@4am/shared';
+import { t } from '../../shared/i18n/index.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 
 /** Your hole cards as a big floating panel: drag it anywhere on the screen,
@@ -89,13 +90,13 @@ export function FloatingCards({
             : 'group fixed bottom-36 right-8 z-40 cursor-grab touch-none select-none active:cursor-grabbing'
         }
         role="region"
-        aria-label="Your cards (drag to move)"
+        aria-label={t('Your cards (drag to move)')}
       >
         <div className="rounded-2xl bg-white/85 p-2.5 pt-10 shadow-xl ring-1 ring-slate-200/80 backdrop-blur dark:bg-slate-900/85 dark:ring-slate-700/70">
           {/* Keep resize and close visible for touch and keyboard users. */}
           <div
             onPointerDown={bounded ? (event) => dragControls.start(event) : undefined}
-            title={bounded ? 'Drag here to move your cards' : undefined}
+            title={bounded ? t('Drag here to move your cards') : undefined}
             className="absolute inset-x-0 top-0 flex touch-none cursor-grab items-center justify-between px-1.5 pt-1 opacity-100 active:cursor-grabbing"
           >
             {bounded ? (
@@ -107,7 +108,7 @@ export function FloatingCards({
               <button
                 onClick={() => bumpScale(-0.15)}
                 onPointerDown={(e) => e.stopPropagation()}
-                aria-label="Smaller cards"
+                aria-label={t('Smaller cards')}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <Minus size={13} weight="bold" />
@@ -115,7 +116,7 @@ export function FloatingCards({
               <button
                 onClick={() => bumpScale(0.15)}
                 onPointerDown={(e) => e.stopPropagation()}
-                aria-label="Bigger cards"
+                aria-label={t('Bigger cards')}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <Plus size={13} weight="bold" />
@@ -123,7 +124,7 @@ export function FloatingCards({
               <button
                 onClick={onClose}
                 onPointerDown={(e) => e.stopPropagation()}
-                aria-label="Hide big cards (tap your seat's cards to bring them back)"
+                aria-label={t("Hide big cards (tap your seat's cards to bring them back)")}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <X size={13} weight="bold" />

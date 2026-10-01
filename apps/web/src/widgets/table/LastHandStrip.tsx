@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CaretDown, CaretUp, ClockCounterClockwise } from '@phosphor-icons/react';
-import { describeScore } from '@4am/shared';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
+import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { RitBoards, ShowdownCards } from './ShowdownCards.tsx';
 
@@ -22,18 +23,18 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
     setOpen(next);
     localStorage.setItem('4am-last-hand', next ? 'on' : 'off');
   };
-  const nameOf = (seat: number) => last.names[seat] ?? `Seat ${seat + 1}`;
+  const nameOf = (seat: number) => last.names[seat] ?? t('Seat {n}', { n: seat + 1 });
   const winners = last.deltas.filter((d) => d.delta > 0);
   const top = [...last.reveals].sort((a, b) => b.score - a.score)[0];
   const headline =
     winners.length === 0
-      ? 'chips stayed put'
+      ? t('chips stayed put')
       : `${winners.map((w) => `${nameOf(w.seat)} +${fmt(w.delta)}`).join(' & ')} · ${
           last.runTwice
-            ? 'ran it twice'
+            ? t('ran it twice')
             : top
-              ? describeScore(top.score)
-              : 'everyone folded'
+              ? tScore(top.score)
+              : t('everyone folded')
         }`;
 
   return (
@@ -53,9 +54,9 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
         <ClockCounterClockwise
           size={15}
           className={light ? 'text-white/50' : 'text-slate-400'}
-          aria-label="Last hand"
+          aria-label={t('Last hand')}
         />
-        <span className="text-xs font-semibold uppercase tracking-[0.14em]">Last hand</span>
+        <span className="text-xs font-semibold uppercase tracking-[0.14em]">{t('Last hand')}</span>
         <span className={cn('min-w-0 flex-1 truncate text-sm', light ? 'text-white/70' : 'text-slate-500')}>
           {headline}
         </span>
@@ -87,7 +88,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
           />
           {last.reveals.length === 0 && Object.keys(last.shown).length === 0 && (
             <p className={cn('text-xs', light ? 'text-white/50' : 'text-slate-500')}>
-              No cards were shown - the pot went to the last player standing.
+              {t('No cards were shown - the pot went to the last player standing.')}
             </p>
           )}
           <Link
@@ -97,7 +98,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
               light ? 'text-indigo-300' : 'text-indigo-600 dark:text-indigo-400',
             )}
           >
-            Full replay →
+            {t('Full replay →')}
           </Link>
         </div>
       )}

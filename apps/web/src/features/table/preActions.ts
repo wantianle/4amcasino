@@ -1,6 +1,7 @@
 import type { BettingState } from '@4am/shared';
 import { useStore } from '../../shared/store.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 /** Ahead-of-turn actions that track the live table (requested by notpritam,
  *  see docs/FEATURES.md). The options change with what you are facing:
@@ -22,14 +23,14 @@ export function preActionOptions(
   const toCall = myToCall(st, mySeat);
   if (toCall > 0)
     return [
-      { key: 'check-fold', label: 'Fold' },
-      { key: 'call', label: `Call ${fmt(toCall)}` },
-      { key: 'call-any', label: 'Call any' },
+      { key: 'check-fold', label: t('Fold') },
+      { key: 'call', label: t('Call {n}', { n: fmt(toCall) }) },
+      { key: 'call-any', label: t('Call any') },
     ];
   return [
-    { key: 'check-fold', label: 'Check / Fold' },
-    { key: 'check', label: 'Check' },
-    { key: 'call-any', label: 'Call any' },
+    { key: 'check-fold', label: t('Check / Fold') },
+    { key: 'check', label: t('Check') },
+    { key: 'call-any', label: t('Call any') },
   ];
 }
 

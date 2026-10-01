@@ -11,6 +11,7 @@ import { pokerActionLatch } from '../../features/table/pokerHotkeys.ts';
 import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
 import { useSettling } from '../../features/table/useSettling.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 export function ActionBar({
   mySeat,
@@ -93,11 +94,11 @@ export function ActionBar({
   useEffect(() => {
     if (sentAtSeq === null) return;
     const sentHand = hand.handId;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setSentAtSeq(null);
       if (sentHand) actionLatch.current.release(sentHand, sentAtSeq);
     }, 6000);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [sentAtSeq, hand.handId]);
   const send = (a: PlayerAction) => {
     if (
@@ -118,7 +119,7 @@ export function ActionBar({
       setSentAtSeq(null);
       useStore
         .getState()
-        .pushError(error instanceof Error ? error.message : 'Could not send your action.');
+        .pushError(error instanceof Error ? error.message : t('Could not send your action.'));
     }
   };
 
@@ -155,8 +156,8 @@ export function ActionBar({
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
     if (!rc) return;
-    const t = setInterval(() => setNowTick(Date.now()), 500);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNowTick(Date.now()), 500);
+    return () => clearInterval(timer);
   }, [rc !== null]); // eslint-disable-line react-hooks/exhaustive-deps
   const readySecs = rc ? Math.max(0, Math.ceil((rc.deadlineTs - nowTick) / 1000)) : 0;
 
@@ -171,14 +172,20 @@ export function ActionBar({
   const quicks =
     la && st
       ? [
-          { label: 'Min', value: la.minRaiseTo },
-          { label: '⅓ pot', value: potRaise(1 / 3) },
-          { label: '½ pot', value: potRaise(1 / 2) },
-          { label: '¾ pot', value: potRaise(3 / 4) },
-          { label: 'Pot', value: potRaise(1) },
-          { label: 'All-in', value: la.maxRaiseTo },
+          { label: t('Min'), value: la.minRaiseTo },
+          { label: t('⅓ pot'), value: potRaise(1 / 3) },
+          { label: t('½ pot'), value: potRaise(1 / 2) },
+          { label: t('¾ pot'), value: potRaise(3 / 4) },
+          { label: t('Pot'), value: potRaise(1) },
+          { label: t('All-in'), value: la.maxRaiseTo },
         ]
       : [];
+
+  // seat currently facing action, for the "waiting on…" status line
+  const waitingOn = st
+    ? (room?.players.find((p) => p.seat === st.toAct)?.displayName ??
+      t('Seat {n}', { n: st.toAct !== null ? st.toAct + 1 : '-' }))
+    : null;
 
   // Fold / Check-Call / Raise live in the SAME slots whether they are armable
   // pre-actions or your live turn, so nothing ever moves under the cursor
@@ -194,12 +201,12 @@ export function ActionBar({
         {myTurn && pending && (
           <span className="flex items-center gap-1.5 text-xs text-indigo-100">
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            Sending…
+            {t('Sending…')}
           </span>
         )}
         {canPreAct && (
           <>
-            <HourglassMedium size={15} className="text-slate-400" aria-label="Ahead of turn" />
+            <HourglassMedium size={15} className="text-slate-400" aria-label={t('Ahead of turn')} />
             <button
               onClick={() => !settling && togglePreAction('call-any', st!, mySeat!)}
               disabled={settling}
@@ -210,7 +217,7 @@ export function ActionBar({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
               )}
             >
-              Call any
+              {t('Call any')}
             </button>
           </>
         )}
@@ -225,14 +232,16 @@ export function ActionBar({
           aria-keyshortcuts={myTurn ? binding('fold') : undefined}
           title={
             myTurn
-              ? 'Fold' + (binding('fold') ? ` (${binding('fold')})` : '')
-              : 'Arms now, acts on your turn'
+              ? binding('fold')
+                ? t('Fold ({key})', { key: binding('fold')! })
+                : t('Fold')
+              : t('Arms now, acts on your turn')
           }
           onClick={() =>
             myTurn ? send({ type: 'fold' }) : togglePreAction('check-fold', st!, mySeat!)
           }
         >
-          {!myTurn && canCk ? 'Check / Fold' : 'Fold'}
+          {!myTurn && canCk ? t('Check / Fold') : t('Fold')}
           {myTurn && hint('fold')}
         </Button>
         <Button
@@ -247,9 +256,9 @@ export function ActionBar({
           title={
             myTurn
               ? binding(canCk ? 'check' : 'call')
-                ? `Shortcut: ${binding(canCk ? 'check' : 'call')}`
+                ? t('Shortcut: {key}', { key: binding(canCk ? 'check' : 'call')! })
                 : undefined
-              : 'Arms now, acts on your turn'
+              : t('Arms now, acts on your turn')
           }
           onClick={() =>
             myTurn
@@ -257,7 +266,7 @@ export function ActionBar({
               : togglePreAction(toCall > 0 ? 'call' : 'check', st!, mySeat!)
           }
         >
-          {canCk ? 'Check' : `Call ${fmt(toCall)}`}
+          {canCk ? t('Check') : t('Call {n}', { n: fmt(toCall) })}
           {myTurn && hint(canCk ? 'check' : 'call')}
         </Button>
         <Button
@@ -270,14 +279,14 @@ export function ActionBar({
               presentation !== 'overlay' &&
               'border-0 bg-white! text-indigo-700! hover:bg-indigo-50! dark:bg-white! dark:text-indigo-700! dark:hover:bg-indigo-50!',
           )}
-          title={myTurn ? undefined : 'Raising unlocks on your turn'}
+          title={myTurn ? undefined : t('Raising unlocks on your turn')}
           onClick={submitRaise}
         >
           {myTurn && la?.canRaise
             ? st!.currentBet === 0
-              ? `Bet ${fmt(raiseTo)}`
-              : `Raise to ${fmt(raiseTo)}`
-            : 'Raise'}
+              ? t('Bet {n}', { n: fmt(raiseTo) })
+              : t('Raise to {n}', { n: fmt(raiseTo) })
+            : t('Raise')}
         </Button>
       </div>
     );
@@ -296,11 +305,11 @@ export function ActionBar({
       )}
     >
       <div className="poker-action-summary flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="poker-your-bet min-w-16" title="Your bet this street">
+        <div className="poker-your-bet min-w-16" title={t('Your bet this street')}>
           <Coins
             size={15}
             className={myTurn ? 'text-indigo-200' : 'text-slate-400'}
-            aria-label="Your bet"
+            aria-label={t('Your bet')}
           />
           <div className="font-display text-2xl font-bold">
             <NumberFlow value={me?.committed ?? 0} />
@@ -312,15 +321,19 @@ export function ActionBar({
             {amEligible && !amReady ? (
               <Button variant="success" className="animate-pulse" onClick={imReady}>
                 <HandWaving size={16} weight="fill" className="mr-1.5 inline" />
-                I&apos;m ready · {readySecs}s
+                {t("I'm ready · {n}s", { n: readySecs })}
               </Button>
             ) : (
               <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                {amReady ? '✓ You are ready' : 'Ready check'}
+                {amReady ? t('✓ You are ready') : t('Ready check')}
               </span>
             )}
             <span className="text-sm text-slate-500">
-              {rc.ready.length}/{rc.eligible.length} ready · deals in {readySecs}s, without the rest
+              {t('{a}/{b} ready · deals in {n}s, without the rest', {
+                a: rc.ready.length,
+                b: rc.eligible.length,
+                n: readySecs,
+              })}
             </span>
           </div>
         ) : (
@@ -331,27 +344,24 @@ export function ActionBar({
             )}
           >
             {myTurn
-              ? 'Your turn.'
+              ? t('Your turn.')
               : handIdle
                 ? balance === 0
-                  ? 'Out of chips. Chips menu → Buy points.'
+                  ? t('Out of chips. Chips menu → Buy points.')
                   : hand.autoDealAt && hand.autoDealAt > Date.now()
-                    ? 'Automatic ready check soon…'
+                    ? t('Automatic ready check soon…')
                     : room?.autoDealPaused
-                      ? 'Auto-deal paused. Table menu → Auto-deal.'
+                      ? t('Auto-deal paused. Table menu → Auto-deal.')
                       : isHost
-                        ? 'Deal when ready.'
+                        ? t('Deal when ready.')
                         : room?.room.autoDeal
-                          ? 'Waiting for two online players with chips…'
-                          : 'Host deals soon…'
+                          ? t('Waiting for two online players with chips…')
+                          : t('Host deals soon…')
                 : disconnected.length > 0
-                  ? `Holding ~40s for ${disconnected.join(', ')}…`
+                  ? t('Holding ~40s for {names}…', { names: disconnected.join(', ') })
                   : st
-                    ? `${
-                        room?.players.find((p) => p.seat === st.toAct)?.displayName ??
-                        `Seat ${st.toAct !== null ? st.toAct + 1 : '-'}`
-                      }…`
-                    : 'Shuffling…'}
+                    ? t('{name}…', { name: waitingOn ?? '' })
+                    : t('Shuffling…')}
           </div>
         )}
 
@@ -370,7 +380,7 @@ export function ActionBar({
               showMyCards();
             }}
           >
-            Show cards
+            {t('Show cards')}
           </Button>
         )}
 
@@ -384,18 +394,18 @@ export function ActionBar({
             )}
             onClick={startHand}
           >
-            {presentation === 'overlay' ? 'Deal hand' : 'Start hand'}
+            {presentation === 'overlay' ? t('Deal hand') : t('Start hand')}
           </Button>
         )}
 
         <div
           className="poker-your-balance ml-auto text-right"
-          title={`Your balance. Bought ${fmt(bought)} total.`}
+          title={t('Your balance. Bought {n} total.', { n: fmt(bought) })}
         >
           <Wallet
             size={15}
             className={cn('ml-auto', myTurn ? 'text-indigo-200' : 'text-slate-400')}
-            aria-label="Your balance"
+            aria-label={t('Your balance')}
           />
           <div
             className={cn(
@@ -447,7 +457,7 @@ export function ActionBar({
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs">
-              {st?.currentBet === 0 ? 'Bet amount' : 'Raise to'}
+              {st?.currentBet === 0 ? t('Bet amount') : t('Raise to')}
               {hint('raise')}
               <input
                 ref={amountRef}
@@ -457,19 +467,22 @@ export function ActionBar({
                 max={la.maxRaiseTo}
                 step={1}
                 value={Number.isNaN(raiseTo) ? '' : raiseTo}
-                aria-label="Bet or raise amount"
+                aria-label={t('Bet or raise amount')}
                 aria-keyshortcuts={binding('raise')}
                 disabled={pending || settling}
                 {...amountInput}
                 onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : +e.target.value)}
                 className="min-h-9 w-28 min-w-0 rounded-lg border border-white/30 bg-white/10 px-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/70"
               />
-              <span className="text-[11px]">Enter to confirm</span>
+              <span className="text-[11px]">{t('Enter to confirm')}</span>
             </label>
           </div>
           {!amountValid && (
             <p role="status" className="text-xs">
-              Enter a whole-chip amount from {fmt(la.minRaiseTo)} to {fmt(la.maxRaiseTo)}.
+              {t('Enter a whole-chip amount from {min} to {max}.', {
+                min: fmt(la.minRaiseTo),
+                max: fmt(la.maxRaiseTo),
+              })}
             </p>
           )}
           <div className="flex items-center gap-3">
@@ -482,7 +495,7 @@ export function ActionBar({
               value={raiseTo}
               onChange={(e) => setRaiseTo(+e.target.value)}
               className="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-indigo-400 accent-white"
-              aria-label="Raise amount"
+              aria-label={t('Raise amount')}
             />
             <span className="font-display text-sm">{fmt(la.maxRaiseTo)}</span>
           </div>

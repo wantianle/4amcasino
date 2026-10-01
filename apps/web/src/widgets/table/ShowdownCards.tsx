@@ -1,5 +1,7 @@
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { HAND_CATEGORY_NAMES, handCategory } from '@4am/shared';
+import { t } from '../../shared/i18n/index.ts';
+import { tHandCategory } from '../../shared/i18n/pokerLabels.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 
 /** The hand's ending, per player: THEIR two cards, what they made, their net.
@@ -27,6 +29,11 @@ export function ShowdownCards({
   const deltaOf = (seat: number) => deltas.find((d) => d.seat === seat)?.delta ?? 0;
   rows.sort((a, b) => deltaOf(b.seat) - deltaOf(a.seat));
   if (rows.length === 0) return null;
+  const labelOf = (score: number | null) => {
+    if (score === null) return t('showed after folding');
+    const cat = HAND_CATEGORY_NAMES[handCategory(score)];
+    return cat ? tHandCategory(cat) : '';
+  };
   return (
     <div className="flex flex-wrap gap-2.5">
       {rows.map((r) => {
@@ -51,9 +58,7 @@ export function ShowdownCards({
             <div className="min-w-0">
               <div className="text-sm font-semibold leading-tight">{nameOf(r.seat)}</div>
               <div className={cn('text-xs', light ? 'text-white/60' : 'text-slate-500')}>
-                {r.score !== null
-                  ? HAND_CATEGORY_NAMES[handCategory(r.score)]
-                  : 'showed after folding'}
+                {labelOf(r.score)}
               </div>
             </div>
             <div
@@ -97,7 +102,7 @@ export function RitBoards({
       {[0, 1].map((k) => (
         <div key={k} className="flex flex-wrap items-center gap-1.5">
           <span className="w-11 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-            Run {k + 1}
+            {t('Run {n}', { n: k + 1 })}
           </span>
           {rt.boards[k]!.map((c) => (
             <PlayingCard key={c} card={c} size="xs" deal />

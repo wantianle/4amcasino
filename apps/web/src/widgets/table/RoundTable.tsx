@@ -5,6 +5,7 @@ import NumberFlow from '@number-flow/react';
 import { Crown, Coins, MicrophoneSlash, Play, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import type { SeatView } from './players.tsx';
@@ -18,11 +19,11 @@ import { ChipStack } from './ChipStack.tsx';
 const SEATS = 9;
 
 function actionLabel(a: PlayerAction & { auto?: boolean }): string {
-  if (a.type === 'fold') return a.auto ? 'timed out' : 'fold';
-  if (a.type === 'check') return 'check';
-  if (a.type === 'call') return 'call';
-  if (a.type === 'bet') return `bet ${fmt(a.amount ?? 0)}`;
-  return `raise ${fmt(a.amount ?? 0)}`;
+  if (a.type === 'fold') return a.auto ? t('Timed out') : t('Fold');
+  if (a.type === 'check') return t('Check');
+  if (a.type === 'call') return t('Call');
+  if (a.type === 'bet') return t('Bet {n}', { n: fmt(a.amount ?? 0) });
+  return t('Raise to {n}', { n: fmt(a.amount ?? 0) });
 }
 
 export function RoundTable({
@@ -147,7 +148,7 @@ export function RoundTable({
             onClick={() => onSit(spot.seat)}
             className="flex h-14 w-14 flex-col items-center justify-center rounded-full border-2 border-dashed border-indigo-400/50 text-xs font-semibold text-indigo-500 transition-colors hover:border-indigo-400 hover:bg-indigo-500/10 dark:text-indigo-300"
           >
-            Sit
+            {t('Sit')}
           </button>
         </div>
       ))}
@@ -227,7 +228,7 @@ export function RoundTable({
                     )}
                   >
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white motion-reduce:animate-none" />
-                    playing
+                    {t('playing')}
                   </span>
                 )}
                 {readyCheck && readyCheck.eligible.includes(p.userId) && (
@@ -239,7 +240,7 @@ export function RoundTable({
                         : 'animate-pulse bg-slate-500 motion-reduce:animate-none',
                     )}
                   >
-                    {readyCheck.ready.includes(p.userId) ? '✓ ready' : 'ready?'}
+                    {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
                   </span>
                 )}
                 {/* my hole cards ride above my pod; opponents show backs or reveals */}
@@ -247,7 +248,7 @@ export function RoundTable({
                   <div
                     className={cn('flex', isMe ? 'cursor-pointer gap-1' : '-space-x-2')}
                     onClick={isMe ? onMyCardsClick : undefined}
-                    title={isMe ? 'Show big cards' : undefined}
+                    title={isMe ? t('Show big cards') : undefined}
                   >
                     {isMe && myCards.length > 0 ? (
                       myCards.map((c) => <PlayingCard key={c} card={c} size="sm" deal />)
@@ -262,7 +263,7 @@ export function RoundTable({
                   </div>
                 )}
                 <div className="relative">
-                  <Link to={`/players/${p.userId}`} aria-label={`${p.displayName}'s profile`}>
+                  <Link to={`/players/${p.userId}`} aria-label={t("{name}'s profile", { name: p.displayName })}>
                     <Avatar
                       userId={p.userId}
                       name={p.displayName}
@@ -273,7 +274,7 @@ export function RoundTable({
                   </Link>
                   {p.isLeader && (
                     <span
-                      title="Chip leader"
+                      title={t('Chip leader')}
                       className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-white"
                     >
                       <Crown size={9} weight="fill" />
@@ -281,7 +282,7 @@ export function RoundTable({
                   )}
                   {isHost && (
                     <span
-                      title="Host - deals the hands"
+                      title={t('Host - deals the hands')}
                       className="absolute -top-1 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white"
                     >
                       <Play size={8} weight="fill" />
@@ -289,7 +290,7 @@ export function RoundTable({
                   )}
                   {(isBanker || isCoBanker) && (
                     <span
-                      title={isBanker ? 'Banker' : 'Backup banker'}
+                      title={isBanker ? t('Banker') : t('Backup banker')}
                       className={cn(
                         'absolute -bottom-1 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full text-white',
                         isBanker ? 'bg-indigo-600' : 'bg-slate-500',
@@ -302,7 +303,7 @@ export function RoundTable({
                     (requested by notpritam, docs/FEATURES.md) */}
                   {p.isButton && (
                     <span
-                      title="Dealer button"
+                      title={t('Dealer button')}
                       className="absolute -bottom-1.5 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[0.6rem] font-black text-slate-900 shadow-md ring-2 ring-slate-900/20 dark:ring-white/30"
                     >
                       D
@@ -310,7 +311,7 @@ export function RoundTable({
                   )}
                   {p.isSB && !p.isButton && (
                     <span
-                      title="Small blind"
+                      title={t('Small blind')}
                       className="absolute -bottom-1.5 -right-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-500 px-0.5 text-[0.55rem] font-black text-white shadow-md ring-2 ring-sky-300/40"
                     >
                       SB
@@ -318,7 +319,7 @@ export function RoundTable({
                   )}
                   {p.isBB && (
                     <span
-                      title="Big blind"
+                      title={t('Big blind')}
                       className="absolute -bottom-1.5 -right-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[0.55rem] font-black text-amber-950 shadow-md ring-2 ring-amber-300/40"
                     >
                       BB
@@ -326,7 +327,7 @@ export function RoundTable({
                   )}
                   {p.isSB && p.isButton && (
                     <span
-                      title="Small blind (button)"
+                      title={t('Small blind (button)')}
                       className="absolute -bottom-1.5 -left-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-500 px-0.5 text-[0.55rem] font-black text-sky-950 shadow-md ring-2 ring-sky-300/40"
                     >
                       SB
@@ -334,7 +335,7 @@ export function RoundTable({
                   )}
                   {p.voiceMuted && (
                     <span
-                      title="muted"
+                      title={t('muted')}
                       className="absolute -left-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-white"
                     >
                       <MicrophoneSlash size={9} weight="fill" />
@@ -345,7 +346,7 @@ export function RoundTable({
                   className="w-full truncate px-1 text-xs font-semibold leading-tight"
                   title={p.displayName}
                 >
-                  {isMe ? 'You' : p.displayName}
+                  {isMe ? t('You') : p.displayName}
                 </div>
                 <div
                   className={cn(
@@ -357,10 +358,10 @@ export function RoundTable({
                 </div>
                 {p.pendingBuy > 0 && (
                   <div
-                    title="Buy waiting for banker approval"
+                    title={t('Buy waiting for banker approval')}
                     className="rounded-full bg-amber-400/15 px-1.5 py-px font-display text-[0.62rem] font-bold text-amber-500"
                   >
-                    +{fmt(p.pendingBuy)} soon
+                    {t('+{n} soon', { n: fmt(p.pendingBuy) })}
                   </div>
                 )}
                 {p.broke || !p.connected || p.sittingOut ? (
@@ -374,7 +375,7 @@ export function RoundTable({
                           : 'text-slate-400',
                     )}
                   >
-                    {p.broke ? 'out of chips' : !p.connected ? 'offline' : 'sitting out'}
+                    {p.broke ? t('Out of chips') : !p.connected ? t('Offline') : t('Sitting out')}
                   </div>
                 ) : p.lastAction || p.allIn ? (
                   (() => {
@@ -396,7 +397,7 @@ export function RoundTable({
                               : 'bg-slate-200/80 text-slate-600 dark:bg-slate-700/80 dark:text-slate-200',
                         )}
                       >
-                        {a ? actionLabel(a) : 'all-in'}
+                        {a ? actionLabel(a) : t('All-in')}
                       </motion.div>
                     );
                   })()
@@ -414,7 +415,9 @@ export function RoundTable({
                     }
                   }}
                   title={
-                    kickArmed === p.userId ? 'Tap again to stand them up' : 'Stand this player up'
+                    kickArmed === p.userId
+                      ? t('Tap again to stand them up')
+                      : t('Stand this player up')
                   }
                   className={cn(
                     'absolute -right-2 -top-2 z-30 flex items-center justify-center rounded-full text-white shadow-sm transition-all',
@@ -423,7 +426,7 @@ export function RoundTable({
                       : 'h-5 w-5 bg-slate-400 hover:bg-rose-500 dark:bg-slate-600',
                   )}
                 >
-                  {kickArmed === p.userId ? 'stand up?' : <X size={11} weight="bold" />}
+                  {kickArmed === p.userId ? t('stand up?') : <X size={11} weight="bold" />}
                 </button>
               )}
             </div>

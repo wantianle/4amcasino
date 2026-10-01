@@ -13,6 +13,7 @@ import {
   UserPlus,
 } from '@phosphor-icons/react';
 import type { CardId, HouseDues } from '@4am/shared';
+import { evaluate7 } from '@4am/shared';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
@@ -20,12 +21,17 @@ import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { StyleRadar } from '../../features/stats/charts.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
+import { tScore } from '../../shared/i18n/pokerLabels.ts';
 
-/** 1 -> "1st", 2 -> "2nd", 11 -> "11th". */
-function ordinal(n: number): string {
-  const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
-  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+/** Chinese name for what the cards made, re-derived from the same score the
+ *  server described in English (`describeScore`), so we render through
+ *  `tScore()` instead of parsing prose (docs/zh-i18n.md §2.1). `serverLabel`
+ *  is the presence check the layout already keyed off. */
+function handZh(serverLabel: string | null, cards: CardId[] | null, board: CardId[]): string | null {
+  if (!serverLabel) return null;
+  if (cards && board.length === 5) return tScore(evaluate7([...cards, ...board]));
+  return tr(serverLabel);
 }
 
 interface PlayStyle {
@@ -153,20 +159,21 @@ function BestHandCard({ userId, own }: { userId: number; own: boolean }) {
         className="flex w-full items-center gap-2 rounded-xl bg-slate-50 px-4 py-3 text-left text-xs text-slate-500 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800"
       >
         <EyeSlash size={14} />
-        Your best hand is hidden from your profile. Show it?
+        {t('Your best hand is hidden from your profile. Show it?')}
       </button>
     );
   }
   const h = data.hand;
+  const hand = handZh(h.label, h.myCards, h.board);
   return (
     <Panel className="relative">
       <div className="mb-2 flex items-center gap-2">
         <Trophy size={16} weight="fill" className="text-amber-500" />
-        <h2 className="font-display font-semibold">Best hand</h2>
+        <h2 className="font-display font-semibold">{t('Best hand')}</h2>
         <span className="font-display text-lg font-bold text-emerald-600">+{fmt(h.amount)}</span>
         {own && (
           <button
-            title="Hide this from your profile"
+            title={t('Hide this from your profile')}
             onClick={() => setVisible(false)}
             className="ml-auto rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
@@ -189,15 +196,15 @@ function BestHandCard({ userId, own }: { userId: number; own: boolean }) {
         </div>
       )}
       <div className="text-xs text-slate-500">
-        {h.label ? `${h.label} · ` : ''}
-        {h.roomName} · {new Date(h.ts).toLocaleDateString()}
+        {hand ? `${hand} · ` : ''}
+        {h.roomName} · {new Date(h.ts).toLocaleDateString('zh-CN')}
       </div>
       {h.canReplay && (
         <Link
           to={`/room/${h.roomId}/replay/${h.handId}`}
           className="mt-1.5 inline-block text-xs font-semibold text-indigo-600 dark:text-indigo-400"
         >
-          Watch the replay →
+          {t('Watch the replay →')}
         </Link>
       )}
     </Panel>
@@ -273,7 +280,7 @@ function SettleUpPanel() {
   return (
     <Panel>
       <div className="mb-1 flex flex-wrap items-center gap-3">
-        <h2 className="font-display font-semibold">Settle up</h2>
+        <h2 className="font-display font-semibold">{t('Settle up')}</h2>
         <div className="flex rounded-lg bg-slate-100 p-0.5 text-xs font-semibold dark:bg-slate-800">
           {(['player', 'room'] as const).map((v) => (
             <button
@@ -286,13 +293,13 @@ function SettleUpPanel() {
                   : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300',
               )}
             >
-              By {v}
+              {t(`By ${v}`)}
             </button>
           ))}
         </div>
       </div>
       <p className="mb-3 text-xs text-slate-500">
-        Square the debt outside the app, then both of you mark it settled and it clears here too.
+        {t('Square the debt outside the app, then both of you mark it settled and it clears here too.')}
       </p>
       {view === 'player' && (
         <div className="space-y-1.5">
@@ -316,15 +323,15 @@ function SettleUpPanel() {
                     <span className="min-w-0 flex-1 truncate text-sm">
                       {net >= 0 ? (
                         <>
-                          <b>{g.name}</b> owes you
+                          <b>{g.name}</b> {t('owes you')}
                         </>
                       ) : (
                         <>
-                          You owe <b>{g.name}</b>
+                          {t('You owe')} <b>{g.name}</b>
                         </>
                       )}
                       <span className="ml-1 text-xs text-slate-400">
-                        · {g.rows.length} room{g.rows.length === 1 ? '' : 's'}
+                        · {t('{n} rooms', { n: g.rows.length })}
                       </span>
                     </span>
                     <span
@@ -351,7 +358,7 @@ function SettleUpPanel() {
                             <div className="min-w-0 flex-1">
                               <div className="text-sm">
                                 <span className="text-slate-500">{d.roomName}:</span>{' '}
-                                {d.direction === 'owe' ? 'you owe' : 'they owe'}{' '}
+                                {d.direction === 'owe' ? t('you owe') : t('they owe')}{' '}
                                 <span
                                   className={cn(
                                     'font-display font-bold',
@@ -363,8 +370,8 @@ function SettleUpPanel() {
                               </div>
                               {(d.myConfirmed || d.otherConfirmed) && (
                                 <div className="text-xs text-slate-500">
-                                  {d.otherConfirmed && !d.myConfirmed && 'they marked it settled - confirm?'}
-                                  {d.myConfirmed && !d.otherConfirmed && `waiting for ${d.otherName} to confirm`}
+                                  {d.otherConfirmed && !d.myConfirmed && t('they marked it settled - confirm?')}
+                                  {d.myConfirmed && !d.otherConfirmed && t('waiting for {name} to confirm', { name: d.otherName })}
                                 </div>
                               )}
                             </div>
@@ -373,7 +380,7 @@ function SettleUpPanel() {
                               disabled={d.myConfirmed || busy === rowKey}
                               onClick={() => settleRow(d)}
                             >
-                              {d.myConfirmed ? '✓ marked' : 'Mark settled'}
+                              {d.myConfirmed ? t('✓ marked') : t('Mark settled')}
                             </Button>
                           </div>
                         );
@@ -408,9 +415,7 @@ function SettleUpPanel() {
                   <CaretRight size={13} className="shrink-0 text-slate-400" />
                 )}
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold">{g.name}</span>
-                <span className="text-xs text-slate-400">
-                  {g.rows.length} debt{g.rows.length === 1 ? '' : 's'}
-                </span>
+                <span className="text-xs text-slate-400">{t('{n} debts', { n: g.rows.length })}</span>
                 <span
                   className={cn(
                     'font-display text-sm font-bold',
@@ -437,14 +442,14 @@ function SettleUpPanel() {
                           <div className="text-sm">
                             {d.direction === 'owe' ? (
                               <>
-                                You owe <b>{d.otherName}</b>{' '}
+                                {t('You owe')} <b>{d.otherName}</b>{' '}
                                 <span className="font-display font-bold text-rose-600">
                                   {fmt(d.amount)}
                                 </span>
                               </>
                             ) : (
                               <>
-                                <b>{d.otherName}</b> owes you{' '}
+                                <b>{d.otherName}</b> {t('owes you')}{' '}
                                 <span className="font-display font-bold text-emerald-600">
                                   {fmt(d.amount)}
                                 </span>
@@ -453,8 +458,8 @@ function SettleUpPanel() {
                           </div>
                           {(d.myConfirmed || d.otherConfirmed) && (
                             <div className="text-xs text-slate-500">
-                              {d.otherConfirmed && !d.myConfirmed && 'they marked it settled - confirm?'}
-                              {d.myConfirmed && !d.otherConfirmed && `waiting for ${d.otherName} to confirm`}
+                              {d.otherConfirmed && !d.myConfirmed && t('they marked it settled - confirm?')}
+                              {d.myConfirmed && !d.otherConfirmed && t('waiting for {name} to confirm', { name: d.otherName })}
                             </div>
                           )}
                         </div>
@@ -469,7 +474,7 @@ function SettleUpPanel() {
                               .finally(() => setBusy(null));
                           }}
                         >
-                          {d.myConfirmed ? '✓ marked' : 'Mark settled'}
+                          {d.myConfirmed ? t('✓ marked') : t('Mark settled')}
                         </Button>
                       </div>
                     );
@@ -489,10 +494,12 @@ function SettleUpPanel() {
           >
             <CheckCircle size={17} weight="fill" className="shrink-0 text-emerald-500" />
             <span className="min-w-0 flex-1 truncate">
-              {d.direction === 'owe' ? `You paid ${d.otherName}` : `${d.otherName} paid you`}{' '}
+              {d.direction === 'owe'
+                ? t('You paid {name}', { name: d.otherName })
+                : t('{name} paid you', { name: d.otherName })}{' '}
               {fmt(d.amount)} · {d.roomName}
             </span>
-            <span className="text-xs">{new Date(d.ts).toLocaleDateString()}</span>
+            <span className="text-xs">{new Date(d.ts).toLocaleDateString('zh-CN')}</span>
           </div>
         ))}
       </div>
@@ -547,22 +554,26 @@ function PlayerActions({ userId, name }: { userId: number; name: string }) {
       >
         <UserPlus size={16} className="mr-1 inline" />
         {friendState === 'friends'
-          ? 'Friends ✓'
+          ? t('Friends ✓')
           : friendState === 'sent'
-            ? 'Request sent'
-            : 'Add friend'}
+            ? t('Request sent')
+            : t('Add friend')}
       </Button>
       {rooms.length > 0 && (
         <Button variant="secondary" className="w-full" onClick={() => setSendOpen(true)}>
           <HandCoins size={16} className="mr-1 inline" />
-          Send points
+          {t('Send points')}
         </Button>
       )}
-      {note && <span className="text-xs text-slate-500">{note}</span>}
-      <Dialog open={sendOpen} onClose={() => setSendOpen(false)} title={`Send points to ${name}`}>
+      {note && <span className="text-xs text-slate-500">{tr(note)}</span>}
+      <Dialog
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        title={t('Send points to {name}', { name })}
+      >
         <div className="space-y-3">
           <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">From your stack in</span>
+            <span className="mb-1 block text-slate-500">{t('From your stack in')}</span>
             <select
               value={roomId}
               onChange={(e) => setRoomId(e.target.value)}
@@ -570,28 +581,28 @@ function PlayerActions({ userId, name }: { userId: number; name: string }) {
             >
               {rooms.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name} · you have {fmt(r.myStack)}
+                  {r.name} · {t('you have {n}', { n: fmt(r.myStack) })}
                 </option>
               ))}
             </select>
           </label>
           <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">Amount</span>
+            <span className="mb-1 block text-slate-500">{t('Amount')}</span>
             <input
               type="number"
               min={1}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
-              placeholder="points"
+              placeholder={t('points')}
             />
           </label>
           {room?.handActive && (
             <p className="text-xs text-amber-600">
-              A hand is running at that table - sends land between hands.
+              {t('A hand is running at that table - sends land between hands.')}
             </p>
           )}
-          {note && <p className="text-xs text-rose-600">{note}</p>}
+          {note && <p className="text-xs text-rose-600">{tr(note)}</p>}
           <Button
             className="w-full"
             disabled={!room || amt <= 0 || amt > (room?.myStack ?? 0)}
@@ -605,7 +616,7 @@ function PlayerActions({ userId, name }: { userId: number; name: string }) {
                 .catch((e) => setNote(e instanceof Error ? e.message : 'could not send'))
             }
           >
-            Send {fmt(amt)}
+            {t('Send {n}', { n: fmt(amt) })}
           </Button>
         </div>
       </Dialog>
@@ -639,12 +650,12 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
     (filter === 'lost' && h.net < 0 && !h.outcome.includes('folded')) ||
     (filter === 'folded' && h.outcome === 'folded');
   const money = useMemo(
-    () => transactions.filter((t) => t.kind !== 'hand-settlement').slice(0, 40),
+    () => transactions.filter((tx) => tx.kind !== 'hand-settlement').slice(0, 40),
     [transactions],
   );
-  const setTab = (t: 'hands' | 'money') => {
+  const setTab = (tab: 'hands' | 'money') => {
     const next = new URLSearchParams(params);
-    if (t === 'hands') next.delete('tab');
+    if (tab === 'hands') next.delete('tab');
     else next.set('tab', 'money');
     setParams(next, { replace: true });
   };
@@ -662,7 +673,7 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
                 : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300',
             )}
           >
-            Hands
+            {t('Hands')}
           </button>
         )}
         <button
@@ -674,15 +685,15 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300',
           )}
         >
-          Money moves
+          {t('Money moves')}
         </button>
       </div>
 
       {tab === 'hands' ? (
         hands === null ? (
-          <p className="p-4 text-sm text-slate-400">Loading hands…</p>
+          <p className="p-4 text-sm text-slate-400">{t('Loading hands…')}</p>
         ) : hands.length === 0 ? (
-          <p className="p-4 text-sm text-slate-400">No hands on record yet.</p>
+          <p className="p-4 text-sm text-slate-400">{t('No hands on record yet.')}</p>
         ) : (
           <>
           <div className="flex gap-1 px-3 pt-2.5">
@@ -697,13 +708,14 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
                     : 'bg-slate-100 text-slate-500 hover:text-slate-700 dark:bg-slate-800 dark:hover:text-slate-300',
                 )}
               >
-                {f}
+                {t(f)}
               </button>
             ))}
           </div>
           <div className="divide-y divide-slate-50 dark:divide-slate-800/70">
             {hands.filter(matches).map((h) => {
               const isOpen = openHand === h.handId;
+              const hand = handZh(h.label, h.myCards, h.board);
               return (
                 <div key={h.handId}>
                   <button
@@ -723,14 +735,16 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">
-                        {h.net > 0 && h.label ? `won with ${h.label}` : h.outcome}
+                        {h.net > 0 && hand
+                          ? t('won with {hand}', { hand })
+                          : tr(h.outcome)}
                         {h.voided && (
-                          <span className="ml-1.5 text-xs font-normal text-slate-400">(voided)</span>
+                          <span className="ml-1.5 text-xs font-normal text-slate-400">{t('(voided)')}</span>
                         )}
                       </span>
                       <span className="block truncate text-xs text-slate-400">
                         {h.roomName} ·{' '}
-                        {new Date(h.ts).toLocaleString(undefined, {
+                        {new Date(h.ts).toLocaleString('zh-CN', {
                           day: '2-digit',
                           month: '2-digit',
                           hour: '2-digit',
@@ -755,37 +769,40 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
                   </button>
                   {isOpen && (
                     <div className="space-y-2 bg-slate-50/60 px-3.5 py-2.5 dark:bg-slate-800/40">
-                      {h.label && (
+                      {hand && (
                         <div className="text-xs text-slate-500">
-                          You made <b>{h.label}</b>
+                          {t('You made')} <b>{hand}</b>
                         </div>
                       )}
                       {h.board.length > 0 && (
                         <div className="flex items-center gap-1">
                           <span className="mr-1 text-[0.65rem] uppercase tracking-wide text-slate-400">
-                            board
+                            {t('board')}
                           </span>
                           {h.board.map((c) => (
                             <PlayingCard key={c} card={c} size="xs" />
                           ))}
                         </div>
                       )}
-                      {h.opponents.map((o, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <span className="min-w-0 truncate">
-                            against <b>{o.name}</b>
-                            {o.label ? `'s ${o.label.replace(/^an? /, '')}` : ''}
-                          </span>
-                          {o.cards.map((c) => (
-                            <PlayingCard key={c} card={c} size="xs" />
-                          ))}
-                        </div>
-                      ))}
+                      {h.opponents.map((o, i) => {
+                        const oHand = handZh(o.label, o.cards, h.board);
+                        return (
+                          <div key={i} className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <span className="min-w-0 truncate">
+                              {t('against')} <b>{o.name}</b>
+                              {oHand ? <>：{oHand}</> : ''}
+                            </span>
+                            {o.cards.map((c) => (
+                              <PlayingCard key={c} card={c} size="xs" />
+                            ))}
+                          </div>
+                        );
+                      })}
                       <Link
                         to={`/room/${h.roomId}/replay/${h.handId}`}
                         className="inline-block text-xs font-semibold text-indigo-600 dark:text-indigo-400"
                       >
-                        Full replay →
+                        {t('Full replay →')}
                       </Link>
                     </div>
                   )}
@@ -797,16 +814,16 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
         )
       ) : (
         <div className="divide-y divide-slate-50 dark:divide-slate-800/70">
-          {money.length === 0 && <p className="p-4 text-sm text-slate-400">Nothing yet.</p>}
-          {money.map((t, i) => (
+          {money.length === 0 && <p className="p-4 text-sm text-slate-400">{t('Nothing yet.')}</p>}
+          {money.map((tx, i) => (
             <div key={i} className="flex items-center gap-2.5 px-3.5 py-2 text-sm">
-              <Badge tone={t.kind === 'purchase' ? 'indigo' : t.kind === 'commission' ? 'amber' : 'slate'}>
-                {t.kind}
+              <Badge tone={tx.kind === 'purchase' ? 'indigo' : tx.kind === 'commission' ? 'amber' : 'slate'}>
+                {tr(tx.kind)}
               </Badge>
               <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
-                {t.roomName}
-                {t.note ? ` · ${t.note}` : ''} ·{' '}
-                {new Date(t.ts).toLocaleString(undefined, {
+                {tx.roomName}
+                {tx.note ? ` · ${tr(tx.note)}` : ''} ·{' '}
+                {new Date(tx.ts).toLocaleString('zh-CN', {
                   day: '2-digit',
                   month: '2-digit',
                   hour: '2-digit',
@@ -816,11 +833,11 @@ function HistoryRail({ own, transactions }: { own: boolean; transactions: Player
               <span
                 className={cn(
                   'font-display font-semibold',
-                  t.delta > 0 ? 'text-emerald-600' : 'text-rose-600',
+                  tx.delta > 0 ? 'text-emerald-600' : 'text-rose-600',
                 )}
               >
-                {t.delta > 0 ? '+' : ''}
-                {fmt(t.delta)}
+                {tx.delta > 0 ? '+' : ''}
+                {fmt(tx.delta)}
               </span>
             </div>
           ))}
@@ -861,7 +878,7 @@ export function PlayerPage() {
   if (!p) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Spinner label="Loading player…" />
+        <Spinner label={t('Loading player…')} />
       </div>
     );
   }
@@ -885,7 +902,7 @@ export function PlayerPage() {
                 <Avatar userId={p.userId} name={p.displayName} version={p.avatarVersion} size="xl" />
                 {rank !== null && (
                   <span
-                    title={`#${rank} on the leaderboard`}
+                    title={t('#{rank} on the leaderboard', { rank })}
                     className={cn(
                       'absolute -bottom-1.5 -right-1.5 flex min-w-7 items-center justify-center rounded-full px-1.5 py-0.5 font-display text-xs font-bold ring-2 ring-white dark:ring-slate-900',
                       rank === 1
@@ -907,21 +924,21 @@ export function PlayerPage() {
                   {p.isPlatform && (
                     <Badge tone="indigo" className="gap-1">
                       <Bank size={12} weight="fill" />
-                      House
+                      {t('House')}
                     </Badge>
                   )}
                 </div>
                 <div className="text-sm text-slate-400">@{p.username}</div>
                 {rank !== null && (
                   <div className="mt-1 text-xs font-semibold text-indigo-500 dark:text-indigo-300">
-                    #{rank} on the leaderboard
+                    {t('#{rank} on the leaderboard', { rank })}
                   </div>
                 )}
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
-                  <span>joined {new Date(p.createdAt).toLocaleDateString()}</span>
+                  <span>{t('joined {date}', { date: new Date(p.createdAt).toLocaleDateString('zh-CN') })}</span>
                   {p.joinNumber !== null && (
                     <span
-                      title={`The ${ordinal(p.joinNumber)} account ever created on 4AM Casino`}
+                      title={t('The {n} account ever created on 4AM Casino', { n: p.joinNumber })}
                       className={cn(
                         'inline-flex items-center rounded-full px-2 py-0.5 font-semibold',
                         p.joinNumber <= 10
@@ -930,8 +947,9 @@ export function PlayerPage() {
                       )}
                     >
                       {p.joinNumber <= 10 ? '★ ' : ''}
-                      member #{p.joinNumber}
-                      {p.memberCount > 0 && ` of ${p.memberCount}`}
+                      {p.memberCount > 0
+                        ? t('member #{n} of {total}', { n: p.joinNumber, total: p.memberCount })
+                        : t('member #{n}', { n: p.joinNumber })}
                     </span>
                   )}
                 </div>
@@ -944,13 +962,13 @@ export function PlayerPage() {
           {!p.isPlatform && p.stats && (
             <div className="space-y-2">
               <StatRow
-                label="Net points"
+                label={t('Net points')}
                 value={`${p.stats.net > 0 ? '+' : ''}${fmt(p.stats.net)}`}
                 tone={p.stats.net > 0 ? 'up' : p.stats.net < 0 ? 'down' : undefined}
               />
-              <StatRow label="Hands played" value={fmt(p.stats.handsPlayed)} />
+              <StatRow label={t('Hands played')} value={fmt(p.stats.handsPlayed)} />
               <StatRow
-                label="Biggest win"
+                label={t('Biggest win')}
                 value={p.stats.biggestWin > 0 ? `+${fmt(p.stats.biggestWin)}` : '0'}
                 tone={p.stats.biggestWin > 0 ? 'up' : undefined}
               />
@@ -958,12 +976,12 @@ export function PlayerPage() {
           )}
           {own && p.house && (
             <div>
-              <StatRow label="Platform due" value={fmt(p.house.outstanding)} />
+              <StatRow label={t('Platform due')} value={fmt(p.house.outstanding)} />
               <Link
                 to="/settle"
                 className="mt-3 inline-block text-sm text-indigo-600 hover:underline dark:text-indigo-300"
               >
-                View platform dues in Settle up
+                {t('View platform dues in Settle up')}
               </Link>
             </div>
           )}
@@ -979,11 +997,12 @@ export function PlayerPage() {
             <Panel>
               <div className="mb-2 flex items-center gap-2">
                 <Bank size={18} weight="fill" className="text-indigo-500 dark:text-indigo-300" />
-                <h2 className="font-display font-semibold">The table's bank</h2>
+                <h2 className="font-display font-semibold">{t("The table's bank")}</h2>
               </div>
               <p className="text-sm text-slate-600 dark:text-slate-300">
-                This is the platform account that receives table commission. Its owner can review
-                amounts due from each user in Admin, on this profile, and in Settle up.
+                {t(
+                  'This is the platform account that receives table commission. Its owner can review amounts due from each user in Admin, on this profile, and in Settle up.',
+                )}
               </p>
             </Panel>
           ) : (
@@ -991,7 +1010,7 @@ export function PlayerPage() {
               {style && style.hands > 0 && (
                 <Panel>
                   <div className="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                    <h2 className="font-display font-semibold">Play style</h2>
+                    <h2 className="font-display font-semibold">{t('Play style')}</h2>
                     <Badge
                       tone={
                         style.archetype === 'The shark'
@@ -1001,36 +1020,41 @@ export function PlayerPage() {
                             : 'indigo'
                       }
                     >
-                      {style.archetype}
+                      {tr(style.archetype)}
                     </Badge>
                     <span className="text-xs text-slate-400">
-                      from {fmt(style.hands)} public hand transcripts
+                      {t('from {n} public hand transcripts', { n: fmt(style.hands) })}
                     </span>
                   </div>
                   <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_220px]">
                     <StyleRadar style={style} />
                     <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
                       <p>
-                        Plays <b>{style.vpipPct}%</b> of hands, raises first in <b>{style.pfrPct}%</b>.
+                        {t('Plays {vpip}% of hands, raises first in {pfr}%.', {
+                          vpip: style.vpipPct,
+                          pfr: style.pfrPct,
+                        })}
                       </p>
                       <p>
-                        Aggression factor <b>{style.aggressionFactor}</b> (bets and raises per call).
+                        {t('Aggression factor {af} (bets and raises per call).', {
+                          af: style.aggressionFactor,
+                        })}
                       </p>
                       <p>
-                        Reaches showdown in <b>{style.showdownPct}%</b> of hands and wins{' '}
-                        <b>{style.winPct}%</b>.
+                        {t('Reaches showdown in {sd}% of hands and wins {win}%.', {
+                          sd: style.showdownPct,
+                          win: style.winPct,
+                        })}
                       </p>
-                      <p>
-                        <b>{style.quietWinPct}%</b> of wins never showed a card.
-                      </p>
+                      <p>{t('{quiet}% of wins never showed a card.', { quiet: style.quietWinPct })}</p>
                     </div>
                   </div>
                 </Panel>
               )}
               <Panel>
-                <h2 className="mb-3 font-display font-semibold">Rivals</h2>
+                <h2 className="mb-3 font-display font-semibold">{t('Rivals')}</h2>
                 {p.rivals.length === 0 ? (
-                  <p className="text-sm text-slate-500">No shared hands yet.</p>
+                  <p className="text-sm text-slate-500">{t('No shared hands yet.')}</p>
                 ) : (
                   <div className="space-y-2">
                     {p.rivals.map((r, i) => (
@@ -1039,11 +1063,11 @@ export function PlayerPage() {
                         to={`/players/${r.userId}`}
                         className="flex items-center gap-3 rounded-lg p-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60"
                       >
-                        {i === 0 && <Badge tone="amber">top rival</Badge>}
+                        {i === 0 && <Badge tone="amber">{t('top rival')}</Badge>}
                         <Avatar userId={r.userId} name={r.displayName} version={r.avatarVersion} size="sm" />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium">{r.displayName}</span>
                         <span className="text-xs text-slate-400">
-                          {r.handsTogether} hand{r.handsTogether === 1 ? '' : 's'} together
+                          {t('{n} hands together', { n: r.handsTogether })}
                         </span>
                         <span
                           className={cn(
@@ -1055,8 +1079,7 @@ export function PlayerPage() {
                                 : 'text-slate-400',
                           )}
                         >
-                          {r.netVs > 0 ? '+' : ''}
-                          {fmt(r.netVs)} vs them
+                          {t('{n} vs them', { n: `${r.netVs > 0 ? '+' : ''}${fmt(r.netVs)}` })}
                         </span>
                       </Link>
                     ))}

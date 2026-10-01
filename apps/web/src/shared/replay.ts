@@ -7,6 +7,7 @@ import {
   type PlayerAction,
 } from '@4am/shared';
 import type { TranscriptEntry } from '@4am/mental-poker';
+import { t, tr } from './i18n/index.ts';
 
 export interface ReplaySeatInfo {
   seat: number;
@@ -40,13 +41,23 @@ export interface Replay {
   tv: boolean;
 }
 
-const ACTION_WORDS: Record<PlayerAction['type'], string> = {
-  fold: 'folds',
-  check: 'checks',
-  call: 'calls',
-  bet: 'bets',
-  raise: 'raises to',
+// English source for one action caption, split by whether the action carries
+// an amount. These strings are the dictionary keys (docs/zh-i18n.md §6.2 B+);
+// a missing key only ever shows the readable English fallback, never braces.
+const ACTION_KEYS: Record<PlayerAction['type'], { withAmount: string; plain: string }> = {
+  fold: { withAmount: 'Seat {seat} folds', plain: 'Seat {seat} folds' },
+  check: { withAmount: 'Seat {seat} checks', plain: 'Seat {seat} checks' },
+  call: { withAmount: 'Seat {seat} calls {amount}', plain: 'Seat {seat} calls' },
+  bet: { withAmount: 'Seat {seat} bets {amount}', plain: 'Seat {seat} bets' },
+  raise: { withAmount: 'Seat {seat} raises to {amount}', plain: 'Seat {seat} raises' },
 };
+
+/** Timeline caption for one player action, in the current UI language. */
+function actionLabel(seat: number, action: PlayerAction): string {
+  return action.amount !== undefined
+    ? t(ACTION_KEYS[action.type].withAmount, { seat, amount: action.amount })
+    : t(ACTION_KEYS[action.type].plain, { seat });
+}
 
 /**
  * Rebuild a hand's public timeline from its stored transcript.
@@ -103,7 +114,7 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
       lastActions: { ...lastActions },
     });
 
-  push('Cards dealt face down');
+  push(t('Cards dealt face down'));
 
   for (const e of entries) {
     const p = e.payload as Record<string, unknown>;
@@ -116,7 +127,7 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
             sp.sb,
             sp.bb,
           );
-          push('Blinds posted');
+          push(t('Blinds posted'));
           break;
         }
         case 'action': {
@@ -125,8 +136,7 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
           const seat = (p.seat as number) ?? betting.toAct;
           betting = applyAction(betting, seat!, action);
           lastActions[seat!] = action;
-          const amount = action.amount !== undefined ? ` ${action.amount}` : '';
-          push(`Seat ${seat! + 1} ${ACTION_WORDS[action.type]}${amount}`, seat);
+          push(actionLabel(seat! + 1, action), seat);
           break;
         }
         case 'timeout_fold': {
@@ -134,33 +144,38 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
           const seat = p.seat as number;
           betting = applyAction(betting, seat, { type: 'fold' });
           lastActions[seat] = { type: 'fold', auto: true };
-          push(`Seat ${seat + 1} timed out and folds`, seat);
+          push(t('Seat {seat} timed out and folds', { seat: seat + 1 }), seat);
           break;
         }
         case 'board_open': {
           if (p.run === 2) {
             board2.push(p.card as CardId);
-            push('Run 2 card revealed');
+            push(t('Run 2 card revealed'));
           } else {
             board.push(p.card as CardId);
-            push('Board card revealed');
+            push(t('Board card revealed'));
           }
           break;
         }
         case 'rit_vote': {
-          push(`Seat ${(p.seat as number) + 1} votes to run it ${p.yes ? 'twice' : 'once'}`);
+          push(
+            t(p.yes ? 'Seat {seat} votes to run it twice' : 'Seat {seat} votes to run it once', {
+              seat: (p.seat as number) + 1,
+            }),
+          );
           break;
         }
         case 'rit_result': {
           // run 2 shares whatever was already open when the vote passed
           if (p.runTwice) board2 = [...board];
-          push(p.runTwice ? 'Running it twice!' : 'Running it once');
+          push(t(p.runTwice ? 'Running it twice!' : 'Running it once'));
           break;
         }
         case 'street': {
           if (betting) betting = nextStreet(betting);
           lastActions = {}; // the seat pods clear when the street turns
-          push(`${String(p.street)[0]?.toUpperCase()}${String(p.street).slice(1)} betting`);
+          const streetName = String(p.street);
+          push(t(`${streetName[0]?.toUpperCase()}${streetName.slice(1)} betting`));
           break;
         }
         case 'settlement': {
@@ -168,11 +183,12 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
           board2 = (p.board2 as CardId[]) ?? board2;
           const rl = (p.reveals as { seat: number; cards: CardId[] }[]) ?? [];
           reveals = Object.fromEntries(rl.map((r) => [r.seat, r.cards]));
-          push('Result', null, (p.awards as { seat: number; amount: number }[]) ?? []);
+          push(t('Result'), null, (p.awards as { seat: number; amount: number }[]) ?? []);
           break;
         }
         case 'hand_abort': {
-          push(`Hand aborted: ${String(p.reason ?? '')}`);
+          // the reason is persisted server prose - tr() at the display step
+          push(t('Hand aborted: {reason}', { reason: tr(String(p.reason ?? '')) }));
           break;
         }
         default:

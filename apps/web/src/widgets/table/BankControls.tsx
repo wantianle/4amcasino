@@ -3,6 +3,7 @@ import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { useAsyncGuard } from '../../shared/lib/useAsyncGuard.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Badge, Button, Dialog, Input } from '../../shared/ui/index.tsx';
 import { CaretDown, Coins, HandCoins, Tray } from '@phosphor-icons/react';
 import { MAX_QUALIFYING_HANDS } from '@4am/shared';
@@ -100,7 +101,7 @@ export function BankControls({
           setNote('');
         }, 1200);
       } catch (err) {
-        pushError(err instanceof Error ? err.message : 'buy failed');
+        pushError(err instanceof Error ? err.message : t('buy failed'));
       }
     });
   }
@@ -113,7 +114,7 @@ export function BankControls({
       await api.approve(roomId, id, approve);
       setRequests((rs) => rs.filter((r) => r.id !== id));
     } catch (err) {
-      pushError(err instanceof Error ? err.message : 'approval failed');
+      pushError(err instanceof Error ? err.message : t('approval failed'));
     } finally {
       setDeciding((d) => {
         const next = new Set(d);
@@ -140,7 +141,7 @@ export function BankControls({
             aria-expanded={hubOpen}
           >
             <Coins size={17} weight="bold" />
-            Chips
+            {t('Chips')}
             <CaretDown
               size={13}
               weight="bold"
@@ -157,12 +158,12 @@ export function BankControls({
               <button
                 type="button"
                 className="fixed inset-0 z-20 cursor-default"
-                aria-label="Close chips menu"
+                aria-label={t('Close chips menu')}
                 onClick={() => setHubOpen(false)}
               />
               <div
                 role="menu"
-                aria-label="Chip controls"
+                aria-label={t('Chip controls')}
                 className="absolute right-0 top-12 z-30 w-56 rounded-2xl bg-white p-1.5 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
               >
                 <button
@@ -172,7 +173,7 @@ export function BankControls({
                   onClick={() => openFromHub(setBuyOpen)}
                   className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:hover:bg-slate-800"
                 >
-                  <Coins size={18} /> Buy points
+                  <Coins size={18} /> {t('Buy points')}
                 </button>
                 <button
                   type="button"
@@ -180,7 +181,7 @@ export function BankControls({
                   onClick={() => openFromHub(setSendOpen)}
                   className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:hover:bg-slate-800"
                 >
-                  <HandCoins size={18} /> Send chips
+                  <HandCoins size={18} /> {t('Send chips')}
                 </button>
                 {isBanker && (
                   <button
@@ -190,7 +191,7 @@ export function BankControls({
                     className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:hover:bg-slate-800"
                   >
                     <Tray size={18} />
-                    <span className="flex-1">Bank inbox</span>
+                    <span className="flex-1">{t('Bank inbox')}</span>
                     {requests.length > 0 && (
                       <span className="rounded-full bg-rose-100 px-2 py-0.5 font-display text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
                         {requests.length}
@@ -205,14 +206,14 @@ export function BankControls({
       ) : (
         <>
           <Button variant="secondary" onClick={() => setBuyOpen(true)}>
-            <Coins size={17} /> Buy points
+            <Coins size={17} /> {t('Buy points')}
           </Button>
           <Button variant="secondary" onClick={() => setSendOpen(true)}>
-            <HandCoins size={17} /> Send chips
+            <HandCoins size={17} /> {t('Send chips')}
           </Button>
           {isBanker && (
             <Button variant="secondary" onClick={() => setInboxOpen(true)} className="relative">
-              <Tray size={17} /> Bank inbox
+              <Tray size={17} /> {t('Bank inbox')}
               {requests.length > 0 && (
                 <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[0.65rem] font-bold text-white">
                   {requests.length}
@@ -223,24 +224,21 @@ export function BankControls({
         </>
       )}
 
-      <Dialog open={buyOpen} onClose={() => setBuyOpen(false)} title="Buy points from the bank">
+      <Dialog open={buyOpen} onClose={() => setBuyOpen(false)} title={t('Buy points from the bank')}>
         {sent ? (
           <p className="text-sm text-emerald-600">
             {room?.room.autoApproveBuys
-              ? 'Approved. The points are already in your stack.'
-              : 'Request sent. The banker will review it.'}
+              ? t('Approved. The points are already in your stack.')
+              : t('Request sent. The banker will review it.')}
           </p>
         ) : (
           <form onSubmit={buy} className="space-y-3">
             <p className="text-sm text-slate-500">
-              Points are play money. Every purchase is written to the room ledger so the group can
-              settle up later.
-              {room?.room.autoApproveBuys
-                ? ' This table auto-approves buys, so they land instantly.'
-                : ''}
+              {t('Points are play money. Every purchase is written to the room ledger so the group can settle up later.')}
+              {room?.room.autoApproveBuys ? t('This table auto-approves buys, so they land instantly.') : ''}
             </p>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-500">Amount</span>
+              <span className="mb-1 block text-slate-500">{t('Amount')}</span>
               <Input
                 type="number"
                 min={1}
@@ -249,21 +247,21 @@ export function BankControls({
               />
             </label>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-500">Note (optional)</span>
+              <span className="mb-1 block text-slate-500">{t('Note (optional)')}</span>
               <Input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="paid via UPI"
+                placeholder={t('paid via UPI')}
               />
             </label>
             <Button type="submit" className="w-full" disabled={buyGuard.busy}>
-              {buyGuard.busy ? 'Requesting…' : `Request ${fmt(amount)} points`}
+              {buyGuard.busy ? t('Requesting…') : t('Request {n} points', { n: fmt(amount) })}
             </Button>
           </form>
         )}
       </Dialog>
 
-      <Dialog open={sendOpen} onClose={() => setSendOpen(false)} title="Send chips to a player">
+      <Dialog open={sendOpen} onClose={() => setSendOpen(false)} title={t('Send chips to a player')}>
         {sendDone ? (
           <p className="text-sm text-emerald-600">{sendDone}</p>
         ) : (
@@ -275,7 +273,7 @@ export function BankControls({
                 api
                   .transfer(roomId, sendTo, sendAmount, sendNote || undefined)
                   .then(() => {
-                    setSendDone('Sent. It is on the ledger.');
+                    setSendDone(t('Sent. It is on the ledger.'));
                     setTimeout(() => {
                       setSendOpen(false);
                       setSendDone(null);
@@ -283,25 +281,24 @@ export function BankControls({
                     }, 1200);
                   })
                   .catch((err) =>
-                    pushError(err instanceof Error ? err.message : 'transfer failed'),
+                    pushError(err instanceof Error ? err.message : t('transfer failed')),
                   ),
               );
             }}
             className="space-y-3"
           >
             <p className="text-sm text-slate-500">
-              Lend a short-stacked friend some chips or settle a side bet. Every transfer is written
-              to the room ledger. Chips move between hands only.
+              {t('Lend a short-stacked friend some chips or settle a side bet. Every transfer is written to the room ledger. Chips move between hands only.')}
             </p>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-500">To</span>
+              <span className="mb-1 block text-slate-500">{t('To')}</span>
               <select
                 value={sendTo}
                 onChange={(e) => setSendTo(e.target.value === '' ? '' : +e.target.value)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
                 required
               >
-                <option value="">Pick a player</option>
+                <option value="">{t('Pick a player')}</option>
                 {room?.players
                   .filter((p) => p.userId !== userId)
                   .map((p) => (
@@ -312,7 +309,7 @@ export function BankControls({
               </select>
             </label>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-500">Amount</span>
+              <span className="mb-1 block text-slate-500">{t('Amount')}</span>
               <Input
                 type="number"
                 min={1}
@@ -321,21 +318,21 @@ export function BankControls({
               />
             </label>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-500">Note (optional)</span>
+              <span className="mb-1 block text-slate-500">{t('Note (optional)')}</span>
               <Input
                 value={sendNote}
                 onChange={(e) => setSendNote(e.target.value)}
-                placeholder="loan until next buy-in"
+                placeholder={t('loan until next buy-in')}
               />
             </label>
             <Button type="submit" className="w-full" disabled={sendTo === '' || sendGuard.busy}>
-              {sendGuard.busy ? 'Sending…' : `Send ${fmt(sendAmount)}`}
+              {sendGuard.busy ? t('Sending…') : t('Send {n}', { n: fmt(sendAmount) })}
             </Button>
           </form>
         )}
       </Dialog>
 
-      <Dialog open={inboxOpen} onClose={() => setInboxOpen(false)} title="Pending purchases">
+      <Dialog open={inboxOpen} onClose={() => setInboxOpen(false)} title={t('Pending purchases')}>
         {isBanker && (
           <label className="mb-4 flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
             <input
@@ -344,15 +341,13 @@ export function BankControls({
               onChange={(e) =>
                 void api
                   .setAutoApproveBuys(roomId, e.target.checked)
-                  .catch((err) => pushError(err instanceof Error ? err.message : 'update failed'))
+                  .catch((err) =>
+                    pushError(err instanceof Error ? err.message : t('update failed')),
+                  )
               }
               className="mt-0.5"
             />
-            <span>
-              Auto-approve buys: credit every purchase request instantly, in your name, instead of
-              waiting for you to review it. Everything still lands on the ledger and stays
-              revertable.
-            </span>
+            <span>{t('Auto-approve buys: credit every purchase request instantly, in your name, instead of waiting for you to review it. Everything still lands on the ledger and stays revertable.')}</span>
           </label>
         )}
         {isBanker && (
@@ -363,14 +358,14 @@ export function BankControls({
               onChange={(e) =>
                 void api
                   .setTvReplays(roomId, e.target.checked)
-                  .catch((err) => pushError(err instanceof Error ? err.message : 'update failed'))
+                  .catch((err) =>
+                    pushError(err instanceof Error ? err.message : t('update failed')),
+                  )
               }
               className="mt-0.5"
             />
             <span>
-              TV replays: after every hand each player&apos;s hand key is saved, so replays show ALL
-              hole cards - broadcast style, ready to cut a video from. Folded cards stop being
-              secret from this table&apos;s replays.
+              {t("TV replays: after every hand each player's hand key is saved, so replays show ALL hole cards - broadcast style, ready to cut a video from. Folded cards stop being secret from this table's replays.")}
             </span>
           </label>
         )}
@@ -378,7 +373,7 @@ export function BankControls({
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1 block text-slate-500">
-                Hands required before winnings count (0–30; 0 = everyone counts)
+                {t('Hands required before winnings count (0–30; 0 = everyone counts)')}
               </span>
               <Input
                 type="number"
@@ -397,7 +392,7 @@ export function BankControls({
                       pushError(
                         err instanceof Error
                           ? err.message
-                          : 'Could not update the hand requirement.',
+                          : t('Could not update the hand requirement.'),
                       ),
                     );
                 }}
@@ -405,8 +400,7 @@ export function BankControls({
             </label>
             <label className="block text-sm">
               <span className="mb-1 block text-slate-500">
-                7-2 offsuit bounty per player (0 = off). Winning with 7-2 offsuit collects this from
-                everyone; fold-winners claim it by showing their cards.
+                {t('7-2 offsuit bounty per player (0 = off). Winning with 7-2 offsuit collects this from everyone; fold-winners claim it by showing their cards.')}
               </span>
               <Input
                 type="number"
@@ -423,7 +417,7 @@ export function BankControls({
         {isMainBanker && (
           <label className="mb-4 block text-sm">
             <span className="mb-1 block text-slate-500">
-              Backup banker (same powers, so the bank keeps working when you are away)
+              {t('Backup banker (same powers, so the bank keeps working when you are away)')}
             </span>
             <select
               value={room?.room.coBankerId ?? ''}
@@ -432,7 +426,7 @@ export function BankControls({
               }
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
             >
-              <option value="">None</option>
+              <option value="">{t('None')}</option>
               {room?.players
                 .filter((p) => p.userId !== userId)
                 .map((p) => (
@@ -444,7 +438,7 @@ export function BankControls({
           </label>
         )}
         {requests.length === 0 ? (
-          <p className="text-sm text-slate-500">Nothing waiting for approval.</p>
+          <p className="text-sm text-slate-500">{t('Nothing waiting for approval.')}</p>
         ) : (
           <div className="space-y-3">
             {requests.map((r) => (
@@ -463,18 +457,20 @@ export function BankControls({
                   disabled={deciding.has(r.id)}
                   onClick={() => void decide(r.id, false)}
                 >
-                  Reject
+                  {t('Reject')}
                 </Button>
                 <Button
                   variant="success"
                   disabled={deciding.has(r.id)}
                   onClick={() => void decide(r.id, true)}
                 >
-                  Approve
+                  {t('Approve')}
                 </Button>
               </div>
             ))}
-            <Badge tone="slate">Approved points land on the player's stack between hands</Badge>
+            <Badge tone="slate">
+              {t("Approved points land on the player's stack between hands")}
+            </Badge>
           </div>
         )}
       </Dialog>

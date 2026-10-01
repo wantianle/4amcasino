@@ -4,6 +4,7 @@ import { verifyHandTranscript, type TranscriptEntry } from '@4am/mental-poker';
 import { api } from '../../shared/api.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
 
 interface HandRef {
   handId: string;
@@ -84,7 +85,7 @@ export function HandsPage() {
   if (!hands) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Spinner label="Loading hands…" />
+        <Spinner label={t('Loading hands…')} />
       </div>
     );
   }
@@ -93,33 +94,34 @@ export function HandsPage() {
     <div className="mx-auto max-w-[1600px] space-y-6 p-4 md:p-6">
       <header className="flex items-center gap-3">
         <Link to={`/room/${roomId}`} className="text-sm text-slate-500 hover:text-slate-800">
-          ← Back to table
+          {t('← Back to table')}
         </Link>
-        <h1 className="font-display text-xl font-bold">Hand history</h1>
+        <h1 className="font-display text-xl font-bold">{t('Hand history')}</h1>
       </header>
       <p className="text-sm text-slate-500">
-        Every completed hand stores its full signed transcript with your result on it. Download one
-        to audit the shuffle, every unmask proof, and every action offline.
+        {t(
+          'Every completed hand stores its full signed transcript with your result on it. Download one to audit the shuffle, every unmask proof, and every action offline.',
+        )}
       </p>
 
       {totals.played > 0 && (
         <Panel className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
-            <div className="text-xs text-slate-500">Your net · {totals.played} hands</div>
+            <div className="text-xs text-slate-500">{t('Your net · {n} hands', { n: totals.played })}</div>
             <div className={cn('font-display text-lg font-bold', netTone(totals.net))}>
               {netLabel(totals.net)}
             </div>
           </div>
           <div>
-            <div className="text-xs text-slate-500">Hands won</div>
+            <div className="text-xs text-slate-500">{t('Hands won')}</div>
             <div className="font-display text-lg font-bold">{totals.won}</div>
           </div>
           <div>
-            <div className="text-xs text-slate-500">Folds</div>
+            <div className="text-xs text-slate-500">{t('Folds')}</div>
             <div className="font-display text-lg font-bold">{totals.folds}</div>
           </div>
           <div>
-            <div className="text-xs text-slate-500">Paid to fold (blinds and bets)</div>
+            <div className="text-xs text-slate-500">{t('Paid to fold (blinds and bets)')}</div>
             <div className={cn('font-display text-lg font-bold', netTone(totals.foldBleed))}>
               {netLabel(totals.foldBleed)}
             </div>
@@ -139,13 +141,13 @@ export function HandsPage() {
                 : 'bg-white text-slate-500 ring-1 ring-slate-200/70 hover:text-slate-700 dark:bg-slate-900 dark:ring-slate-700/70 dark:hover:text-slate-300',
             )}
           >
-            {f}
+            {t(f)}
           </button>
         ))}
       </div>
 
       {hands.length === 0 ? (
-        <Panel className="text-sm text-slate-500">No completed hands yet.</Panel>
+        <Panel className="text-sm text-slate-500">{t('No completed hands yet.')}</Panel>
       ) : (
         <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
           {hands.filter(matchesFilter).map((h) => (
@@ -158,12 +160,14 @@ export function HandsPage() {
               )}
             >
               <div className="min-w-0">
-                <div className="font-display text-sm font-semibold">hand {h.handId.slice(0, 8)}</div>
-                <div className="text-xs text-slate-500">{new Date(h.ts).toLocaleString()}</div>
+                <div className="font-display text-sm font-semibold">
+                  {t('hand {id}', { id: h.handId.slice(0, 8) })}
+                </div>
+                <div className="text-xs text-slate-500">{new Date(h.ts).toLocaleString('zh-CN')}</div>
               </div>
               <div className="flex shrink-0 items-center gap-2.5">
-                {h.voided && <Badge tone="rose">voided</Badge>}
-                <span className="text-xs text-slate-500">{h.outcome}</span>
+                {h.voided && <Badge tone="rose">{t('voided')}</Badge>}
+                <span className="text-xs text-slate-500">{tr(h.outcome)}</span>
                 <span
                   className={cn(
                     'w-16 text-right font-display text-sm font-bold tabular-nums',
@@ -178,24 +182,33 @@ export function HandsPage() {
         </div>
       )}
 
-      <Dialog open={detail !== null} onClose={() => setDetail(null)} title="Hand transcript">
+      <Dialog open={detail !== null} onClose={() => setDetail(null)} title={t('Hand transcript')}>
         {detail && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Badge tone="slate">{detail.entries.length} entries</Badge>
+              <Badge tone="slate">{t('{n} entries', { n: detail.entries.length })}</Badge>
               {(() => {
                 const v = verifyHandTranscript(detail.handId, detail.entries, detail.head);
                 return v.ok ? (
-                  <Badge tone="emerald">✓ verified in your browser</Badge>
+                  <Badge tone="emerald">{t('✓ verified in your browser')}</Badge>
                 ) : (
-                  <Badge tone="rose">TAMPERED. {v.reason ?? 'invalid'} at entry {v.badSeq}</Badge>
+                  <Badge tone="rose">
+                    {v.badSeq === undefined
+                      ? t('TAMPERED. {reason}', { reason: tr(v.reason ?? 'invalid') })
+                      : t('TAMPERED. {reason} at entry {seq}', {
+                          reason: tr(v.reason ?? 'invalid'),
+                          seq: v.badSeq,
+                        })}
+                  </Badge>
                 );
               })()}
-              <span className="font-mono text-xs text-slate-400">head {detail.head.slice(0, 16)}…</span>
+              <span className="font-mono text-xs text-slate-400">
+                {t('head {head}…', { head: detail.head.slice(0, 16) })}
+              </span>
             </div>
             <Link to={`/room/${roomId}/replay/${detail.handId}`}>
               <Button variant="secondary" className="w-full">
-                ▶ Watch replay
+                {t('▶ Watch replay')}
               </Button>
             </Link>
             <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-3 dark:bg-slate-950/60">
@@ -208,7 +221,7 @@ export function HandsPage() {
               ))}
             </div>
             <Button className="w-full" onClick={() => download(detail)}>
-              Download JSON
+              {t('Download JSON')}
             </Button>
           </div>
         )}

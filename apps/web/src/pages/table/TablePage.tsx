@@ -52,6 +52,8 @@ import { api } from '../../shared/api.ts';
 import { voice } from '../../shared/voice.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { t, tr } from '../../shared/i18n/index.ts';
+import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { PlayerRow, YouRow, type SeatView } from '../../widgets/table/players.tsx';
@@ -354,8 +356,8 @@ export function TablePage({
       setJoinSlow(false);
       return;
     }
-    const t = setTimeout(() => setJoinSlow(true), 10_000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setJoinSlow(true), 10_000);
+    return () => clearTimeout(timer);
   }, [room]);
 
   // floating sticker reactions over the table
@@ -413,8 +415,8 @@ export function TablePage({
 
   useEffect(() => {
     if (errors.length === 0) return;
-    const t = setTimeout(dismissError, 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(dismissError, 4000);
+    return () => clearTimeout(timer);
   }, [errors, dismissError]);
 
   const mySeat = room?.players.find((p) => p.userId === auth.userId)?.seat ?? null;
@@ -545,32 +547,33 @@ export function TablePage({
         {joinError ? (
           <>
             <p className="max-w-sm text-sm text-rose-600">
-              Could not join this table: {joinError}.
+              {t('Could not join this table: {error}', { error: tr(joinError) })}
             </p>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => location.reload()}>
-                Try again
+                {t('Try again')}
               </Button>
               <Link to="/lobby">
-                <Button>Back to lobby</Button>
+                <Button>{t('Back to lobby')}</Button>
               </Link>
             </div>
           </>
         ) : (
           <>
-            <Spinner label="Joining table…" />
+            <Spinner label={t('Joining table…')} />
             {joinSlow && (
               <>
                 <p className="max-w-sm text-sm text-slate-500">
-                  Still connecting. On free hosting the server sleeps when idle and can take up to a
-                  minute to wake. Hang tight, or retry.
+                  {t(
+                    'Still connecting. On free hosting the server sleeps when idle and can take up to a minute to wake. Hang tight, or retry.',
+                  )}
                 </p>
                 <div className="flex gap-2">
                   <Button variant="secondary" onClick={() => location.reload()}>
-                    Retry
+                    {t('Retry')}
                   </Button>
                   <Link to="/lobby">
-                    <Button variant="ghost">Back to lobby</Button>
+                    <Button variant="ghost">{t('Back to lobby')}</Button>
                   </Link>
                 </div>
               </>
@@ -590,7 +593,7 @@ export function TablePage({
   const notInHand = handLive && mySeat !== null && !hand.seats.some((s) => s.seat === mySeat);
   const meSittingOut = !!room.players.find((p) => p.userId === auth.userId)?.sittingOut;
   const seatName = (seat: number) =>
-    seatViews.find((s) => s.seat === seat)?.displayName ?? `Seat ${seat + 1}`;
+    seatViews.find((s) => s.seat === seat)?.displayName ?? t('Seat {n}', { n: seat + 1 });
 
   const disconnectedInHand = handLive
     ? seatViews.filter((s) => s.inHand && !s.folded && !s.connected).map((s) => s.displayName)
@@ -598,14 +601,19 @@ export function TablePage({
   const mobileStatus = !handLive
     ? null
     : mySeat !== null && !hand.seats.some((s) => s.seat === mySeat)
-      ? 'You are not in this hand. You will be dealt in at the next deal.'
+      ? t('You are not in this hand. You will be dealt in at the next deal.')
       : disconnectedInHand.length > 0
-        ? `${disconnectedInHand.join(', ')} lost connection. Holding the hand for them to rejoin…`
+        ? t('{names} lost connection. Holding the hand for them to rejoin…', {
+            names: disconnectedInHand.join(', '),
+          })
         : hand.betting
           ? hand.betting.toAct !== null && hand.betting.toAct !== mySeat
-            ? `Waiting for ${seatViews.find((s) => s.seat === hand.betting!.toAct)?.displayName ?? 'player'}…`
+            ? t('Waiting for {name}…', {
+                name:
+                  seatViews.find((s) => s.seat === hand.betting!.toAct)?.displayName ?? t('player'),
+              })
             : null
-          : 'Shuffling the encrypted deck…';
+          : t('Shuffling the encrypted deck…');
 
   const peekAmt = Math.max(1, parseInt(peekAmtStr, 10) || room.room.bb * 5);
   const peekEligible =
@@ -625,35 +633,37 @@ export function TablePage({
       {hand.peekOffers.map((o) => (
         <div key={o.offerId} className="flex flex-wrap items-center gap-2 text-sm">
           <span>
-            <b>{o.fromName}</b> offers <b className="font-display">{fmt(o.amount)}</b> to privately
-            see the cards you just had.
+            {t(
+              '{name} offers {amount} to privately see the cards you just had.',
+              { name: o.fromName, amount: fmt(o.amount) },
+            )}
           </span>
           <Button
             variant="success"
             disabled={hand.myCardPoints.length === 0}
             onClick={() => answerPeek(o.offerId, true)}
           >
-            Accept {fmt(o.amount)}
+            {t('Accept {amount}', { amount: fmt(o.amount) })}
           </Button>
           <Button variant="secondary" onClick={() => answerPeek(o.offerId, false)}>
-            Decline
+            {t('Decline')}
           </Button>
         </div>
       ))}
       {peekReveals.map(([seat, cards]) => (
         <div key={seat} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>
-            <b>{seatName(+seat)}</b> had
-          </span>
+          <span>{t('{name} had', { name: seatName(+seat) })}</span>
           {cards.map((c) => (
             <PlayingCard key={c} card={c} size="xs" />
           ))}
-          <span className={dark ? 'text-white/50' : 'text-slate-400'}>only you can see this</span>
+          <span className={dark ? 'text-white/50' : 'text-slate-400'}>
+            {t('only you can see this')}
+          </span>
         </div>
       ))}
       {hand.result && peekEligible.length > 0 && mySeat !== null && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className={dark ? 'text-white/60' : 'text-slate-500'}>Pay to peek at</span>
+          <span className={dark ? 'text-white/60' : 'text-slate-500'}>{t('Pay to peek at')}</span>
           {peekEligible.map((v) => (
             <Button
               key={v.seat}
@@ -664,7 +674,7 @@ export function TablePage({
                 offerPeek(v.seat, peekAmt);
               }}
             >
-              {peekSent[v.seat] ? `Asked ${v.displayName}` : v.displayName}
+              {peekSent[v.seat] ? t('Asked {name}', { name: v.displayName }) : v.displayName}
             </Button>
           ))}
           <input
@@ -673,7 +683,7 @@ export function TablePage({
             value={peekAmtStr}
             placeholder={String(room.room.bb * 5)}
             onChange={(e) => setPeekAmtStr(e.target.value)}
-            aria-label="Peek offer amount"
+            aria-label={t('Peek offer amount')}
             className={cn(
               'w-24 rounded-lg border px-2.5 py-1.5 font-display text-sm',
               dark
@@ -682,7 +692,7 @@ export function TablePage({
             )}
           />
           <span className={dark ? 'text-white/60' : 'text-slate-400'}>
-            chips, paid only if they agree to show you
+            {t('chips, paid only if they agree to show you')}
           </span>
         </div>
       )}
@@ -700,12 +710,15 @@ export function TablePage({
     const nameOf = (seat: number) =>
       seatViews.find((s) => s.seat === seat)?.displayName ??
       hand.seats.find((s) => s.seat === seat)?.username ??
-      `Seat ${seat + 1}`;
+      t('Seat {n}', { n: seat + 1 });
     if (!hand.showdown) {
       const winner = hand.result.deltas.find((d) => d.delta > 0);
       if (!winner) return null;
       return {
-        headline: `${nameOf(winner.seat)} takes the pot. Everyone else folded, so no cards had to be shown.`,
+        headline: t(
+          '{name} takes the pot. Everyone else folded, so no cards had to be shown.',
+          { name: nameOf(winner.seat) },
+        ),
         winningFive: null,
       };
     }
@@ -721,8 +734,8 @@ export function TablePage({
       return {
         headline:
           w1 === w2
-            ? `They ran it twice - ${w1} took both boards.`
-            : `They ran it twice. ${w1} takes run 1, ${w2} takes run 2.`,
+            ? t('They ran it twice - {name} took both boards.', { name: w1 })
+            : t('They ran it twice. {w1} takes run 1, {w2} takes run 2.', { w1, w2 }),
         winningFive: null,
       };
     }
@@ -733,10 +746,21 @@ export function TablePage({
     const runnerUp = ranked.find((r) => r.score < top.score);
     const headline =
       tied.length > 1
-        ? `Split pot: ${tied.map((r) => nameOf(r.seat)).join(' and ')} tie with ${describeScore(top.score)}.`
+        ? t('Split pot: {names} tie with {hand}.', {
+            names: tied.map((r) => nameOf(r.seat)).join(t(' and ')),
+            hand: tScore(top.score),
+          })
         : runnerUp
-          ? `${nameOf(top.seat)} wins with ${describeScore(top.score)} against ${nameOf(runnerUp.seat)}'s ${describeScore(runnerUp.score).replace(/^a /, '')}.`
-          : `${nameOf(top.seat)} wins with ${describeScore(top.score)}.`;
+          ? t("{name} wins with {hand} against {other}'s {theirHand}.", {
+              name: nameOf(top.seat),
+              hand: tScore(top.score),
+              other: nameOf(runnerUp.seat),
+              theirHand: tScore(runnerUp.score),
+            })
+          : t('{name} wins with {hand}.', {
+              name: nameOf(top.seat),
+              hand: tScore(top.score),
+            });
     const winningFive = hand.board.length === 5 ? bestFive([...top.cards, ...hand.board]) : null;
     return { headline, winningFive };
   })();
@@ -771,21 +795,23 @@ export function TablePage({
           onClick={() => {
             setResultDismissed(true);
           }}
-          aria-label="Dismiss result"
+          aria-label={t('Dismiss result')}
           aria-keyshortcuts="Escape"
-          title="Dismiss result (Esc)"
+          title={t('Dismiss result (Esc)')}
           className="absolute right-3 top-3 rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
         >
           <X size={16} />
         </button>
         {hand.abort ? (
           <div className="text-sm">
-            <span className="font-semibold text-rose-600">Hand aborted:</span> {hand.abort.reason}
+            <span className="font-semibold text-rose-600">{t('Hand aborted:')}</span>
+            {tr(hand.abort.reason)}
             {hand.abort.blamedSeat !== null &&
-              `. ${
-                hand.seats.find((s) => s.seat === hand.abort!.blamedSeat)?.username ??
-                `Seat ${hand.abort.blamedSeat + 1}`
-              } did not come back in time; all bets were returned.`}
+              t('. {name} did not come back in time; all bets were returned.', {
+                name:
+                  hand.seats.find((s) => s.seat === hand.abort!.blamedSeat)?.username ??
+                  t('Seat {n}', { n: hand.abort.blamedSeat + 1 }),
+              })}
           </div>
         ) : (
           <motion.div
@@ -809,7 +835,7 @@ export function TablePage({
                 className="shine-once flex flex-col gap-1.5 rounded-lg py-1"
               >
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-500">
-                  The winning five
+                  {t('The winning five')}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {reasoning.winningFive.map((c) => (
@@ -828,7 +854,7 @@ export function TablePage({
             {!hand.showdown?.runTwice && hand.board.length > 0 && (
               <motion.div variants={revealItem} className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                  The table
+                  {t('The table')}
                 </span>
                 {hand.board.map((c) => (
                   <PlayingCard key={c} card={c} size="sm" deal className="shrink-0" />
@@ -848,12 +874,14 @@ export function TablePage({
             )}
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <motion.span variants={revealItem} className="font-display font-semibold">
-                {hand.showdown ? 'Showdown' : 'Everyone folded'}
+                {hand.showdown ? t('Showdown') : t('Everyone folded')}
               </motion.span>
               {(hand.result?.commission ?? 0) > 0 && (
                 <motion.span variants={revealItem} className="text-xs text-slate-500">
-                  {commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps)}{' '}
-                  table commission · {fmt(hand.result!.commission!)} to the house
+                  {t('{rate} table commission · {amount} to the house', {
+                    rate: commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps),
+                    amount: fmt(hand.result!.commission!),
+                  })}
                 </motion.span>
               )}
               {!hand.showdown &&
@@ -876,7 +904,7 @@ export function TablePage({
               {shareData && (
                 <motion.span variants={revealItem}>
                   <Button variant="ghost" onClick={() => setShareOpen(true)}>
-                    <ShareNetwork size={16} /> Share
+                    <ShareNetwork size={16} /> {t('Share')}
                   </Button>
                 </motion.span>
               )}
@@ -890,10 +918,12 @@ export function TablePage({
   const spectatorPanel = (
     <Panel className="text-center">
       <p className="flex items-center justify-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300">
-        <Eye size={16} /> You are watching this table.
+        <Eye size={16} /> {t('You are watching this table.')}
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        You can see everything public, but not anyone's cards, the join code, or the chips.
+        {t(
+          "You can see everything public, but not anyone's cards, the join code, or the chips.",
+        )}
       </p>
       <Button
         className="mt-3"
@@ -905,18 +935,22 @@ export function TablePage({
             setAskedToJoin(false);
             useStore
               .getState()
-              .pushError(err instanceof Error ? err.message : 'Could not ask to join. Try again.');
+              .pushError(
+                err instanceof Error ? err.message : t('Could not ask to join. Try again.'),
+              );
           });
         }}
       >
-        {askedToJoin ? 'Asked. Waiting for the host to let you in.' : 'Ask to join the game'}
+        {askedToJoin ? t('Asked. Waiting for the host to let you in.') : t('Ask to join the game')}
       </Button>
     </Panel>
   );
 
   const seatPicker = (
     <Panel className="shared-seat-picker">
-      <div className="mb-3 text-sm font-medium text-slate-600 dark:text-slate-300">Pick a seat</div>
+      <div className="mb-3 text-sm font-medium text-slate-600 dark:text-slate-300">
+        {t('Pick a seat')}
+      </div>
       <div className="flex flex-wrap gap-2">
         {Array.from({ length: 9 }, (_, i) => (
           <Button
@@ -925,7 +959,7 @@ export function TablePage({
             disabled={takenSeats.has(i) || handLive}
             onClick={() => sit(i)}
           >
-            Seat {i + 1}
+            {t('Seat {n}', { n: i + 1 })}
           </Button>
         ))}
       </div>
@@ -938,18 +972,19 @@ export function TablePage({
         onClick={() => {
           setResultDismissed(true);
         }}
-        aria-label="Dismiss result"
+        aria-label={t('Dismiss result')}
         aria-keyshortcuts="Escape"
-        title="Dismiss result (Esc)"
+        title={t('Dismiss result (Esc)')}
         className="absolute right-2 top-2 rounded-md p-1 text-white/50 active:bg-white/10"
       >
         <X size={14} />
       </button>
       {hand.abort ? (
         <span>
-          <span className="font-semibold text-rose-300">Hand aborted:</span> {hand.abort.reason}
+          <span className="font-semibold text-rose-300">{t('Hand aborted:')}</span>
+          {tr(hand.abort.reason)}
           {hand.abort.blamedSeat !== null &&
-            `. Seat ${hand.abort.blamedSeat + 1}; stacks rolled back.`}
+            t('. Seat {n}; stacks rolled back.', { n: hand.abort.blamedSeat + 1 })}
         </span>
       ) : (
         <motion.div
@@ -970,7 +1005,7 @@ export function TablePage({
               className="shine-once flex items-center gap-2 rounded-lg py-0.5"
             >
               <span className="text-[0.6rem] uppercase tracking-wide text-white/60">
-                Winning five
+                {t('Winning five')}
               </span>
               <div className="flex gap-1">
                 {reasoning.winningFive.map((c) => (
@@ -988,7 +1023,9 @@ export function TablePage({
           )}
           {!hand.showdown?.runTwice && hand.board.length > 0 && (
             <motion.div variants={revealItem} className="flex items-center gap-1">
-              <span className="text-[0.6rem] uppercase tracking-wide text-white/60">Table</span>
+              <span className="text-[0.6rem] uppercase tracking-wide text-white/60">
+                {t('Table')}
+              </span>
               {hand.board.map((c) => (
                 <PlayingCard key={c} card={c} size="xs" deal />
               ))}
@@ -1007,12 +1044,14 @@ export function TablePage({
           )}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             <span className="font-display font-semibold">
-              {hand.showdown ? 'Showdown' : 'Everyone folded'}
+              {hand.showdown ? t('Showdown') : t('Everyone folded')}
             </span>
             {(hand.result?.commission ?? 0) > 0 && (
               <span className="text-[0.65rem] text-white/50">
-                {commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps)}{' '}
-                commission · {fmt(hand.result!.commission!)} to the house
+                {t('{rate} commission · {amount} to the house', {
+                  rate: commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps),
+                  amount: fmt(hand.result!.commission!),
+                })}
               </span>
             )}
             {!hand.showdown &&
@@ -1035,7 +1074,7 @@ export function TablePage({
                 onClick={() => setShareOpen(true)}
                 className="flex items-center gap-1 rounded-full border border-white/25 px-2.5 py-1 text-xs font-semibold text-white/80"
               >
-                <ShareNetwork size={13} /> Share
+                <ShareNetwork size={13} /> {t('Share')}
               </button>
             )}
           </div>
@@ -1047,8 +1086,7 @@ export function TablePage({
   const mobileSeatPicker = (
     <div className="rounded-2xl bg-white/5 p-3.5">
       <div className="mb-2.5 text-sm text-white/70">
-        Pick a seat. Friends join with code{' '}
-        <span className="font-display font-bold text-white">{room.room.joinCode}</span>
+        {t('Pick a seat. Friends join with code {code}', { code: room.room.joinCode })}
       </div>
       <div className="grid grid-cols-3 gap-2">
         {Array.from({ length: 9 }, (_, i) => (
@@ -1058,7 +1096,7 @@ export function TablePage({
             onClick={() => sit(i)}
             className="rounded-full bg-white/10 py-2 text-sm font-semibold text-white active:scale-[0.98] disabled:opacity-30"
           >
-            Seat {i + 1}
+            {t('Seat {n}', { n: i + 1 })}
           </button>
         ))}
       </div>
@@ -1066,10 +1104,10 @@ export function TablePage({
   );
 
   const utilityGroupLabels: Record<TableUtilityGroupId, string> = {
-    people: 'People',
-    records: 'Records',
-    table: 'Table',
-    preferences: 'Preferences',
+    people: t('People'),
+    records: t('Records'),
+    table: t('Table'),
+    preferences: t('Preferences'),
   };
   const utilityItemClass =
     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white';
@@ -1078,7 +1116,9 @@ export function TablePage({
     useStore
       .getState()
       .pushError(
-        error instanceof Error ? error.message : 'That change did not go through. Try again.',
+        error instanceof Error
+          ? error.message
+          : t('That change did not go through. Try again.'),
       );
   const closeUtilityMenu = () => setMenuOpen(false);
   const utilityAction = (action: TableUtilityAction) => {
@@ -1094,9 +1134,9 @@ export function TablePage({
               setAutoDealOpen(true);
             }}
           >
-            <Play size={18} /> Auto-deal
+            <Play size={18} /> {t('Auto-deal')}
             <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
-              {room.room.autoDeal === false ? 'Off' : 'On'}
+              {room.room.autoDeal === false ? t('Off') : t('On')}
             </span>
           </button>
         );
@@ -1111,7 +1151,7 @@ export function TablePage({
               setInviteOpen(true);
             }}
           >
-            <UserPlus size={18} /> Invite friends
+            <UserPlus size={18} /> {t('Invite friends')}
           </button>
         );
       case 'watch':
@@ -1125,7 +1165,7 @@ export function TablePage({
               setWatchOpen(true);
             }}
           >
-            <Eye size={18} /> Watch-only link
+            <Eye size={18} /> {t('Watch-only link')}
           </button>
         );
       case 'video':
@@ -1138,7 +1178,7 @@ export function TablePage({
             className={utilityItemClass}
             onClick={closeUtilityMenu}
           >
-            <VideoCamera size={18} /> Open video call
+            <VideoCamera size={18} /> {t('Open video call')}
           </a>
         );
       case 'standings':
@@ -1152,7 +1192,7 @@ export function TablePage({
               setStandingsOpen(true);
             }}
           >
-            <Trophy size={18} /> Standings
+            <Trophy size={18} /> {t('Standings')}
           </button>
         );
       case 'ledger':
@@ -1163,7 +1203,7 @@ export function TablePage({
             className={utilityItemClass}
             onClick={closeUtilityMenu}
           >
-            <Receipt size={18} /> Ledger
+            <Receipt size={18} /> {t('Ledger')}
           </Link>
         );
       case 'hands':
@@ -1174,7 +1214,7 @@ export function TablePage({
             className={utilityItemClass}
             onClick={closeUtilityMenu}
           >
-            <CardsThree size={18} /> Hand history
+            <CardsThree size={18} /> {t('Hand history')}
           </Link>
         );
       case 'sit-out':
@@ -1188,30 +1228,31 @@ export function TablePage({
               closeUtilityMenu();
             }}
           >
-            <PauseCircle size={18} /> {meSittingOut ? 'Deal me back in' : 'Sit out next hand'}
+            <PauseCircle size={18} />{' '}
+            {meSittingOut ? t('Deal me back in') : t('Sit out next hand')}
           </button>
         );
       case 'timer':
         return (
           <label className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
             <Timer size={18} />
-            <span className="flex-1">Turn timer</span>
+            <span className="flex-1">{t('Turn timer')}</span>
             <select
-              aria-label="Turn timer"
+              aria-label={t('Turn timer')}
               value={room.room.actionSecs ?? 45}
               disabled={handLive}
               onChange={(event) =>
                 void api.roomSettings(roomId!, +event.target.value).catch(reportError)
               }
               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 dark:border-slate-700 dark:bg-slate-800"
-              title={handLive ? 'Applies from the next hand' : undefined}
+              title={handLive ? t('Applies from the next hand') : undefined}
             >
               {[15, 30, 45, 60, 90, 120].map((seconds) => (
                 <option key={seconds} value={seconds}>
-                  {seconds}s
+                  {t('{n}s', { n: seconds })}
                 </option>
               ))}
-              <option value={0}>No limit</option>
+              <option value={0}>{t('No limit')}</option>
             </select>
           </label>
         );
@@ -1225,7 +1266,8 @@ export function TablePage({
             className={utilityItemClass}
             onClick={closeUtilityMenu}
           >
-            <GearSix size={18} /> Settings <span className="sr-only">(opens in a new tab)</span>
+            <GearSix size={18} /> {t('Settings')}{' '}
+            <span className="sr-only">{t('(opens in a new tab)')}</span>
           </Link>
         );
     }
@@ -1234,7 +1276,9 @@ export function TablePage({
   const runTwice = hand.ritOffer && (
     <div className="z-20 flex flex-col items-center gap-2 rounded-2xl bg-fuchsia-600/95 px-5 py-3 text-white shadow-[0_18px_50px_rgba(192,38,211,0.35)]">
       <span className="font-display text-lg font-bold">
-        🔁 Run it twice? · {Math.max(0, Math.ceil((hand.ritOffer.deadlineTs - now) / 1000))}s
+        {t('🔁 Run it twice? · {n}s', {
+          n: Math.max(0, Math.ceil((hand.ritOffer.deadlineTs - now) / 1000)),
+        })}
       </span>
       {mySeat !== null && hand.ritOffer.voters.includes(mySeat) && !hand.ritOffer.voted ? (
         <div className="flex gap-2">
@@ -1243,19 +1287,19 @@ export function TablePage({
             className="border-0 bg-white! text-fuchsia-700! hover:bg-fuchsia-50!"
             onClick={() => ritVote(true)}
           >
-            Twice 🔁
+            {t('Twice 🔁')}
           </Button>
           <Button
             variant="secondary"
             className="border-0 bg-white/20! text-white! hover:bg-white/30!"
             onClick={() => ritVote(false)}
           >
-            Once
+            {t('Once')}
           </Button>
         </div>
       ) : (
         <span className="text-xs text-fuchsia-100">
-          Everyone is all-in - the rest of the board deals twice if all agree.
+          {t('Everyone is all-in - the rest of the board deals twice if all agree.')}
         </span>
       )}
     </div>
@@ -1272,7 +1316,7 @@ export function TablePage({
       <Dialog
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
-        title="Invite friends to this table"
+        title={t('Invite friends to this table')}
       >
         <div className="space-y-5">
           {room.room.joinCode !== '' && (
@@ -1280,7 +1324,7 @@ export function TablePage({
           )}
           <div className="border-t border-slate-200/70 pt-4 dark:border-slate-700/70">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Or invite a friend directly
+              {t('Or invite a friend directly')}
             </p>
             <InviteFriendsDialogBody
               roomId={roomId!}
@@ -1289,7 +1333,11 @@ export function TablePage({
           </div>
         </div>
       </Dialog>
-      <Dialog open={watchOpen} onClose={() => setWatchOpen(false)} title="Watch-only share link">
+      <Dialog
+        open={watchOpen}
+        onClose={() => setWatchOpen(false)}
+        title={t('Watch-only share link')}
+      >
         <div className="space-y-4">
           <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
             <input
@@ -1304,8 +1352,9 @@ export function TablePage({
               className="mt-0.5"
             />
             <span>
-              Let anyone with the link watch this table. Viewers see the public game only: no hole
-              cards, no join code, no chips of their own.
+              {t(
+                'Let anyone with the link watch this table. Viewers see the public game only: no hole cards, no join code, no chips of their own.',
+              )}
             </span>
           </label>
           {watchInfo && (
@@ -1319,14 +1368,14 @@ export function TablePage({
                   void navigator.clipboard.writeText(`${location.origin}/watch/${watchInfo.token}`)
                 }
               >
-                Copy
+                {t('Copy')}
               </Button>
             </div>
           )}
           {joinReqs.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Watchers asking to play
+                {t('Watchers asking to play')}
               </p>
               {joinReqs.map((r) => (
                 <div
@@ -1345,7 +1394,7 @@ export function TablePage({
                         .catch(reportError)
                     }
                   >
-                    Let them in
+                    {t('Let them in')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -1356,7 +1405,7 @@ export function TablePage({
                         .catch(reportError)
                     }
                   >
-                    No
+                    {t('No')}
                   </Button>
                 </div>
               ))}
@@ -1367,13 +1416,13 @@ export function TablePage({
       <Dialog
         open={standingsOpen}
         onClose={() => setStandingsOpen(false)}
-        title="Room standings"
+        title={t('Room standings')}
         size="lg"
       >
         {standings === null ? (
-          <Spinner label="Counting the chips…" />
+          <Spinner label={t('Counting the chips…')} />
         ) : standings.length === 0 ? (
-          <p className="text-sm text-slate-500">No completed hands yet. Deal one and check back.</p>
+          <p className="text-sm text-slate-500">{t('No completed hands yet. Deal one and check back.')}</p>
         ) : (
           <LeaderboardTable rows={standings} minHands={room.room.minSettleHands} />
         )}
@@ -1382,7 +1431,7 @@ export function TablePage({
       {/* connection state */}
       {room && !wsConnected && (
         <div className="fixed left-1/2 top-3 z-50 -translate-x-1/2 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-semibold text-white shadow-lg">
-          Connection lost. Reconnecting…
+          {t('Connection lost. Reconnecting…')}
         </div>
       )}
 
@@ -1403,7 +1452,7 @@ export function TablePage({
         .catch((err) =>
           useStore
             .getState()
-            .pushError(err instanceof Error ? err.message : 'Could not stand them up'),
+            .pushError(err instanceof Error ? err.message : tr('Could not stand them up')),
         );
     };
     return (
@@ -1415,7 +1464,7 @@ export function TablePage({
           setChatOpen,
           unreadChat,
           utilities: (
-            <div role="menu" aria-label="Table controls">
+            <div role="menu" aria-label={t('Table controls')}>
               {utilityGroups.map((group) => (
                 <section
                   key={group.id}
@@ -1437,9 +1486,9 @@ export function TablePage({
               label={
                 voiceState.joined
                   ? voiceState.muted
-                    ? 'Unmute voice'
-                    : 'Mute voice'
-                  : 'Join voice'
+                    ? t('Unmute voice')
+                    : t('Mute voice')
+                  : t('Join voice')
               }
               onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
               active={voiceState.joined && !voiceState.muted}
@@ -1453,13 +1502,13 @@ export function TablePage({
           ),
           fullscreenControl: (
             <DesktopIconButton
-              label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+              label={isFullscreen ? t('Exit full screen') : t('Full screen')}
               onClick={() => {
                 const change = document.fullscreenElement
                   ? document.exitFullscreen()
                   : document.documentElement.requestFullscreen();
                 void change.catch(() =>
-                  useStore.getState().pushError('Full screen is unavailable in this browser.'),
+                  useStore.getState().pushError(t('Full screen is unavailable in this browser.')),
                 );
               }}
               active={isFullscreen}
@@ -1482,13 +1531,13 @@ export function TablePage({
           },
         })}
         {sharedDialogs}
-        <Dialog open={chatOpen} onClose={() => setChatOpen(false)} title="Table chat">
+        <Dialog open={chatOpen} onClose={() => setChatOpen(false)} title={t('Table chat')}>
           <fieldset disabled={!wsConnected} className="h-[min(60dvh,36rem)] min-h-0">
             <ChatPanel chrome={false} />
           </fieldset>
         </Dialog>
         {showResult && (
-          <div className="lounge-result-overlay" role="region" aria-label="Hand result">
+          <div className="lounge-result-overlay" role="region" aria-label={t('Hand result')}>
             <div className="lounge-result-content">{resultBanner}</div>
           </div>
         )}
@@ -1516,7 +1565,7 @@ export function TablePage({
         <div className="flex items-center gap-2 px-4 pt-3">
           <Link
             to="/lobby"
-            aria-label="Leave table"
+            aria-label={t('Leave table')}
             className="-ml-1.5 rounded-full p-1.5 text-white/70 active:bg-white/10"
           >
             <ArrowLeft size={20} weight="bold" />
@@ -1543,7 +1592,11 @@ export function TablePage({
             <button
               onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
               aria-label={
-                voiceState.joined ? (voiceState.muted ? 'Unmute' : 'Mute') : 'Join voice chat'
+                voiceState.joined
+                  ? voiceState.muted
+                    ? t('Unmute')
+                    : t('Mute')
+                  : t('Join voice chat')
               }
               className={cn(
                 'flex h-9 w-9 items-center justify-center rounded-full bg-white/10 active:scale-95',
@@ -1559,14 +1612,14 @@ export function TablePage({
             </button>
             <button
               onClick={() => setChatOpen(true)}
-              aria-label="Open chat"
+              aria-label={t('Open chat')}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 active:scale-95"
             >
               <ChatCircle size={17} />
             </button>
             <button
               onClick={() => setMenuOpen(true)}
-              aria-label="Table menu"
+              aria-label={t('Table menu')}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 active:scale-95"
             >
               <DotsThreeVertical size={19} weight="bold" />
@@ -1595,7 +1648,7 @@ export function TablePage({
           <div className="space-y-3 px-4 pb-6">
             {showResult && (
               <section
-                aria-label="Hand result"
+                aria-label={t('Hand result')}
                 tabIndex={0}
                 className="max-h-[60dvh] overflow-y-auto overscroll-contain rounded-2xl"
               >
@@ -1624,12 +1677,12 @@ export function TablePage({
               <div className="flex gap-2">
                 <Link to={`/room/${roomId}/ledger`} className="flex-1">
                   <Button variant="secondary" className="w-full">
-                    Ledger
+                    {t('Ledger')}
                   </Button>
                 </Link>
                 <Link to={`/room/${roomId}/hands`} className="flex-1">
                   <Button variant="secondary" className="w-full">
-                    Hands
+                    {t('Hands')}
                   </Button>
                 </Link>
               </div>
@@ -1640,7 +1693,7 @@ export function TablePage({
                     className="flex-1"
                     onClick={() => setSitOut(!meSittingOut)}
                   >
-                    {meSittingOut ? 'Deal me back in' : 'Sit out next hands'}
+                    {meSittingOut ? t('Deal me back in') : t('Sit out next hands')}
                   </Button>
                 )}
                 <Link
@@ -1649,8 +1702,8 @@ export function TablePage({
                   rel="noreferrer"
                   className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-background-secondary-default p-2 text-sm text-text-primary"
                 >
-                  <GearSix size={16} /> Settings{' '}
-                  <span className="sr-only">(opens in a new tab)</span>
+                  <GearSix size={16} /> {t('Settings')}{' '}
+                  <span className="sr-only">{t('(opens in a new tab)')}</span>
                 </Link>
               </div>
               <div className="flex gap-2">
@@ -1662,7 +1715,7 @@ export function TablePage({
                     setStandingsOpen(true);
                   }}
                 >
-                  <Trophy size={16} /> Standings
+                  <Trophy size={16} /> {t('Standings')}
                 </Button>
                 <Button
                   variant="secondary"
@@ -1672,13 +1725,13 @@ export function TablePage({
                     setInviteOpen(true);
                   }}
                 >
-                  Invite friends
+                  {t('Invite friends')}
                 </Button>
               </div>
               {room.room.meetLink && (
                 <a href={room.room.meetLink} target="_blank" rel="noreferrer" className="block">
                   <Button variant="secondary" className="w-full">
-                    <VideoCamera size={16} /> Join the video call
+                    <VideoCamera size={16} /> {t('Join the video call')}
                   </Button>
                 </a>
               )}
@@ -1691,7 +1744,7 @@ export function TablePage({
                     setWatchOpen(true);
                   }}
                 >
-                  <Eye size={16} /> Watch-only share link
+                  <Eye size={16} /> {t('Watch-only share link')}
                 </Button>
               )}
               {!amSpectator && (
@@ -1703,12 +1756,14 @@ export function TablePage({
                     setAutoDealOpen(true);
                   }}
                 >
-                  <Play size={16} /> Auto-deal · {room.room.autoDeal === false ? 'Off' : 'On'}
+                  <Play size={16} /> {t('Auto-deal')} ·{' '}
+                  {room.room.autoDeal === false ? t('Off') : t('On')}
                 </Button>
               )}
               {isHost && (
                 <label className="flex items-center justify-between text-sm text-white/70">
-                  Turn timer{handLive && ' (next hand)'}
+                  {t('Turn timer')}
+                  {handLive ? t('(next hand)') : null}
                   <select
                     value={room.room.actionSecs ?? 45}
                     disabled={handLive}
@@ -1717,12 +1772,12 @@ export function TablePage({
                     }
                     className="rounded-lg border border-white/20 bg-slate-800 px-2.5 py-1.5 text-white"
                   >
-                    {[15, 30, 45, 60, 90, 120].map((t) => (
-                      <option key={t} value={t}>
-                        {t}s
+                    {[15, 30, 45, 60, 90, 120].map((seconds) => (
+                      <option key={seconds} value={seconds}>
+                        {t('{n}s', { n: seconds })}
                       </option>
                     ))}
-                    <option value={0}>No limit</option>
+                    <option value={0}>{t('No limit')}</option>
                   </select>
                 </label>
               )}
@@ -1737,7 +1792,7 @@ export function TablePage({
           >
             <div className="mb-2 flex justify-end">
               <Button variant="secondary" onClick={() => setChatOpen(false)}>
-                <X size={16} /> Close
+                <X size={16} /> {t('Close')}
               </Button>
             </div>
             <div className="min-h-0 flex-1">
@@ -1753,8 +1808,8 @@ export function TablePage({
           <Link
             to="/lobby"
             className={desktopIconClass}
-            aria-label="Leave table"
-            title="Leave table"
+            aria-label={t('Leave table')}
+            title={t('Leave table')}
           >
             <ArrowLeft size={19} weight="bold" />
           </Link>
@@ -1767,26 +1822,24 @@ export function TablePage({
                 <button
                   type="button"
                   onClick={() => setInviteOpen(true)}
-                  title="Copy or share this table's invite link"
+                  title={t("Copy or share this table's invite link")}
                   className="font-display font-semibold tracking-[0.16em] text-indigo-600 hover:underline dark:text-indigo-300"
                 >
                   {room.room.joinCode}
                 </button>
               )}
-              <span>
-                blinds {room.room.sb}/{room.room.bb}
-              </span>
-              <span className="flex items-center gap-1" title="Seated players / in this hand">
+              <span>{t('blinds {sb}/{bb}', { sb: room.room.sb, bb: room.room.bb })}</span>
+              <span className="flex items-center gap-1" title={t('Seated players / in this hand')}>
                 <UsersThree size={13} /> {seatViews.length}
-                {handLive ? ` · ${hand.seats.length} in hand` : ''}
+                {handLive ? ` · ${t('{n} in hand', { n: hand.seats.length })}` : ''}
               </span>
             </div>
           </div>
 
-          {room.room.auditMode === 'strict-audit' && <Badge tone="amber">strict audit</Badge>}
+          {room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
           {room.room.voided && (
-            <span title="The banker voided this table: results do not count anywhere">
-              <Badge tone="rose">void table</Badge>
+            <span title={t('The banker voided this table: results do not count anywhere')}>
+              <Badge tone="rose">{t('void table')}</Badge>
             </span>
           )}
           {handLive && secs !== null && (
@@ -1806,9 +1859,9 @@ export function TablePage({
               label={
                 voiceState.joined
                   ? voiceState.muted
-                    ? 'Unmute voice'
-                    : 'Mute voice'
-                  : 'Join voice'
+                    ? t('Unmute voice')
+                    : t('Mute voice')
+                  : t('Join voice')
               }
               onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
               className={cn(
@@ -1827,7 +1880,11 @@ export function TablePage({
               )}
             </DesktopIconButton>
             <DesktopIconButton
-              label={unreadChat > 0 ? `Toggle chat, ${unreadChat} unread messages` : 'Toggle chat'}
+              label={
+                unreadChat > 0
+                  ? t('Toggle chat, {n} unread messages', { n: unreadChat })
+                  : t('Toggle chat')
+              }
               onClick={() => setChatOpen((open) => !open)}
               active={chatOpen}
               badge={unreadChat}
@@ -1839,13 +1896,13 @@ export function TablePage({
             <Link
               to={`/room/${roomId}/3d`}
               className={desktopIconClass}
-              aria-label="3D table"
-              title="3D table"
+              aria-label={t('3D table')}
+              title={t('3D table')}
             >
               <Cube size={19} />
             </Link>
             <DesktopIconButton
-              label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+              label={isFullscreen ? t('Exit full screen') : t('Full screen')}
               onClick={() => {
                 if (document.fullscreenElement) void document.exitFullscreen();
                 else void document.documentElement.requestFullscreen().catch(() => {});
@@ -1857,7 +1914,7 @@ export function TablePage({
 
             <div className="relative">
               <DesktopIconButton
-                label="More table controls"
+                label={t('More table controls')}
                 onClick={() => setMenuOpen((open) => !open)}
                 active={menuOpen}
                 hasPopup
@@ -1870,13 +1927,13 @@ export function TablePage({
                 <>
                   <button
                     className="fixed inset-0 z-20 cursor-default"
-                    aria-label="Close table controls"
+                     aria-label={t('Close table controls')}
                     onClick={() => setMenuOpen(false)}
                   />
                   <div
                     ref={desktopMenuRef}
                     role="menu"
-                    aria-label="Table controls"
+                    aria-label={t('Table controls')}
                     className="absolute right-0 top-12 z-30 w-72 rounded-2xl bg-white p-2 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
                   >
                     {utilityGroups.map((group, index) => (
@@ -1908,7 +1965,7 @@ export function TablePage({
         <div className="flex flex-1 items-start gap-4">
           <main className="flex min-w-0 flex-1 flex-col gap-4">
             <section
-              aria-label="Poker board"
+              aria-label={t('Poker board')}
               className={cn(
                 'relative flex min-h-[clamp(32rem,64vh,54rem)] flex-col gap-3 overflow-hidden rounded-[2rem] bg-slate-200/50 px-2 pb-2 pt-4 ring-1 ring-slate-200 dark:bg-slate-900/60 dark:ring-slate-800 sm:px-4 lg:px-6',
                 notInHand && 'opacity-60 saturate-50',
@@ -1942,12 +1999,14 @@ export function TablePage({
                 onKick={(userId) =>
                   void api
                     .standUp(roomId!, userId)
-                    .catch((err) =>
-                      useStore
-                        .getState()
-                        .pushError(err instanceof Error ? err.message : 'could not stand them up'),
-                    )
-                }
+                     .catch((err) =>
+                       useStore
+                         .getState()
+                         .pushError(
+                           err instanceof Error ? err.message : tr('could not stand them up'),
+                         ),
+                     )
+                 }
                 bankerId={room.room.bankerId}
                 hostId={room.room.hostId}
                 coBankerId={room.room.coBankerId}
@@ -1968,7 +2027,7 @@ export function TablePage({
                     aria-hidden="true"
                   />
                   <div className="relative px-5 py-2.5 font-display text-lg font-semibold text-white">
-                    POT <NumberFlow value={pot} />
+                    {t('POT')} <NumberFlow value={pot} />
                   </div>
                 </div>
                 {pot > 0 && (
@@ -1982,7 +2041,7 @@ export function TablePage({
                       <div className="flex items-center justify-center gap-2.5 lg:gap-3">
                         {hand.board2.length > 0 && (
                           <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                            Run 1
+                            {t('Run 1')}
                           </span>
                         )}
                         {[0, 1, 2, 3, 4].map((index) =>
@@ -2001,7 +2060,7 @@ export function TablePage({
                               key={index}
                               className="h-36 w-24 rounded-2xl border-2 border-dashed border-slate-300/80 dark:border-slate-700"
                               role="img"
-                              aria-label={`Empty community card ${index + 1}`}
+                              aria-label={t('Empty community card {n}', { n: index + 1 })}
                             />
                           ),
                         )}
@@ -2010,7 +2069,7 @@ export function TablePage({
                       {hand.board2.length > 0 && (
                         <div className="flex items-center justify-center gap-2">
                           <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                            Run 2
+                            {t('Run 2')}
                           </span>
                           {[0, 1, 2, 3, 4].map((index) =>
                             hand.board2[index] !== undefined ? (
@@ -2024,7 +2083,7 @@ export function TablePage({
                               <div
                                 key={`r2-${index}`}
                                 className="h-20 w-14 rounded-lg border-2 border-dashed border-fuchsia-400/30 md:h-32 md:w-[5.6rem] md:rounded-2xl"
-                                aria-label={`Empty run 2 card ${index + 1}`}
+                                aria-label={t('Empty run 2 card {n}', { n: index + 1 })}
                               />
                             ),
                           )}
@@ -2035,21 +2094,21 @@ export function TablePage({
                       <div className="text-center">
                         <p className="text-sm text-slate-500">
                           {mySeat === null
-                            ? 'Pick a seat.'
+                            ? t('Pick a seat.')
                             : opponents.length === 0
-                              ? 'Invite a friend to deal.'
-                              : 'Ready.'}
+                              ? t('Invite a friend to deal.')
+                              : t('Ready.')}
                         </p>
                         {mySeat !== null && isHost && opponents.length > 0 && (
                           <Button className="mt-5 h-11 rounded-xl px-5" onClick={startHand}>
-                            <Play size={17} weight="fill" /> Deal hand
+                            <Play size={17} weight="fill" /> {t('Deal hand')}
                           </Button>
                         )}
                       </div>
                     )}
                     {notInHand && (
                       <p className="rounded-xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm dark:bg-slate-800/90 dark:text-slate-300">
-                        You're in the next hand.
+                        {t("You're in the next hand.")}
                       </p>
                     )}
                     {!handLive && opponents.length === 0 && !amSpectator && (
@@ -2058,7 +2117,7 @@ export function TablePage({
                         onClick={() => setInviteOpen(true)}
                         className="flex items-center gap-2 rounded-full bg-white/80 px-4 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200/70 hover:text-slate-900 dark:bg-slate-900/80 dark:text-slate-300 dark:ring-slate-700/70 dark:hover:text-slate-100"
                       >
-                        <UserPlus size={15} /> Invite friends · code{' '}
+                        <UserPlus size={15} /> {t('Invite friends')} · {t('code')}{' '}
                         <span className="font-display text-indigo-600 dark:text-indigo-300">
                           {room.room.joinCode}
                         </span>
@@ -2085,7 +2144,7 @@ export function TablePage({
 
             {showResult && (
               <section
-                aria-label="Hand result"
+                aria-label={t('Hand result')}
                 tabIndex={0}
                 className="max-h-[60dvh] overflow-y-auto overscroll-contain rounded-2xl"
               >
@@ -2111,7 +2170,7 @@ export function TablePage({
           {/* chat rides beside the table as a real column, never an overlay */}
           {chatOpen && (
             <aside
-              aria-label="Table chat"
+              aria-label={t('Table chat')}
               className="sticky top-4 hidden max-h-[calc(100dvh-2rem)] min-h-[30rem] w-80 shrink-0 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 md:flex dark:bg-slate-900 dark:ring-slate-700/70"
             >
               {/* Standings ride above the chat in the same rail, so who is up and
@@ -2129,7 +2188,7 @@ export function TablePage({
                   aria-expanded={standingsDockOpen}
                   className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60"
                 >
-                  <h2 className="font-display text-sm font-semibold">Standings</h2>
+                  <h2 className="font-display text-sm font-semibold">{t('Standings')}</h2>
                   <CaretDown
                     size={14}
                     weight="bold"
@@ -2142,7 +2201,7 @@ export function TablePage({
                 {standingsDockOpen && (
                   <div className="max-h-[38vh] overflow-y-auto px-2.5 pb-2.5">
                     {standings === null ? (
-                      <p className="px-1.5 py-2 text-xs text-slate-400">Counting chips…</p>
+                      <p className="px-1.5 py-2 text-xs text-slate-400">{t('Counting chips…')}</p>
                     ) : (
                       <LeaderboardTable rows={standings} minHands={room.room.minSettleHands} />
                     )}
@@ -2150,11 +2209,11 @@ export function TablePage({
                 )}
               </div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
-                <h2 className="font-display text-sm font-semibold">Table chat</h2>
+                <h2 className="font-display text-sm font-semibold">{t('Table chat')}</h2>
                 <button
                   type="button"
                   onClick={() => setChatOpen(false)}
-                  aria-label="Close chat"
+                  aria-label={t('Close chat')}
                   className="rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   <X size={16} />

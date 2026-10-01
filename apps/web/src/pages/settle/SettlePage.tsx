@@ -9,6 +9,7 @@ import { api } from '../../shared/api.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Button, Dialog, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
 
 /** Settling up, in one place (requested by notpritam, docs/FEATURES.md).
  *
@@ -87,7 +88,7 @@ function ProofFields({
   return (
     <>
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">Remark</span>
+        <span className="mb-1 block text-slate-500">{t('Remark')}</span>
         <Input
           value={note}
           onChange={(e) => setNote(e.target.value)}
@@ -96,7 +97,7 @@ function ProofFields({
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">Photo of the transfer (optional)</span>
+        <span className="mb-1 block text-slate-500">{t('Photo of the transfer (optional)')}</span>
         <input
           type="file"
           accept="image/*"
@@ -125,11 +126,11 @@ export function SettlePage() {
   }, []);
   useEffect(load, [load]);
 
-  if (error) return <p className="p-6 text-sm text-rose-600">{error}</p>;
+  if (error) return <p className="p-6 text-sm text-rose-600">{tr(error)}</p>;
   if (!view) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Spinner label="Working out who owes whom…" />
+        <Spinner label={t('Working out who owes whom…')} />
       </div>
     );
   }
@@ -138,9 +139,9 @@ export function SettlePage() {
     return (
       <div className="mx-auto max-w-5xl p-4 sm:p-6">
         <header className="mb-6">
-          <h1 className="font-display text-2xl font-bold">Settle up</h1>
+          <h1 className="font-display text-2xl font-bold">{t('Settle up')}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Platform commission due from users, with recorded payments and room details.
+            {t('Platform commission due from users, with recorded payments and room details.')}
           </p>
         </header>
         <PlatformDues initialReport={view.platformHouse} />
@@ -153,33 +154,34 @@ export function SettlePage() {
   return (
     <div className="mx-auto max-w-5xl p-6">
       <header className="mb-6">
-        <h1 className="font-display text-2xl font-bold">Settle up</h1>
+        <h1 className="font-display text-2xl font-bold">{t('Settle up')}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Every room you have played, netted down to one number per person.
+          {t('Every room you have played, netted down to one number per person.')}
         </p>
       </header>
       <TournamentEarnings />
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <Panel className="p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-400">Players owe you</div>
+          <div className="text-xs uppercase tracking-wide text-slate-400">{t('Players owe you')}</div>
           <Money value={totals.owedToMe} className="text-2xl" />
         </Panel>
         <Panel className="p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-400">You owe players</div>
+          <div className="text-xs uppercase tracking-wide text-slate-400">{t('You owe players')}</div>
           <Money value={-totals.iOwe} className="text-2xl" />
         </Panel>
         <Panel className="p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-400">Player balance</div>
+          <div className="text-xs uppercase tracking-wide text-slate-400">{t('Player balance')}</div>
           <Money value={totals.net} className="text-2xl" />
         </Panel>
       </div>
 
       {view.redirects.length > 0 && (
         <Panel className="mb-6 border border-indigo-200 dark:border-indigo-900">
-          <h2 className="font-display text-base font-semibold">Close two debts with one payment</h2>
+          <h2 className="font-display text-base font-semibold">{t('Close two debts with one payment')}</h2>
           <p className="mb-3 mt-0.5 text-xs text-slate-500">
-            Money owed to you can go straight to someone you owe — it never has to pass through your
-            hands. Send them this and both debts clear at once.
+            {t(
+              'Money owed to you can go straight to someone you owe — it never has to pass through your hands. Send them this and both debts clear at once.',
+            )}
           </p>
           <ul className="space-y-2">
             {view.redirects.map((r, i) => (
@@ -188,7 +190,7 @@ export function SettlePage() {
                 className="flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50/70 px-3 py-2.5 text-sm dark:bg-indigo-950/40"
               >
                 <span className="font-semibold">{r.payerName}</span>
-                <span className="text-slate-400">pays</span>
+                <span className="text-slate-400">{t('pays')}</span>
                 <span className="font-semibold">{r.payeeName}</span>
                 <span className="font-display font-bold tabular-nums text-indigo-600 dark:text-indigo-300">
                   {fmt(r.amount)}
@@ -197,12 +199,16 @@ export function SettlePage() {
                   type="button"
                   onClick={() =>
                     void navigator.clipboard.writeText(
-                      `${r.payerName} → ${r.payeeName}: ${fmt(r.amount)} (settling up through me on 4AM Casino)`,
+                      t('{payer} → {payee}: {amount} (settling up through me on 4AM Casino)', {
+                        payer: r.payerName,
+                        payee: r.payeeName,
+                        amount: fmt(r.amount),
+                      }),
                     )
                   }
                   className="ml-auto rounded-lg px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:text-indigo-300 dark:hover:bg-indigo-900"
                 >
-                  Copy
+                  {t('Copy')}
                 </button>
               </li>
             ))}
@@ -213,47 +219,54 @@ export function SettlePage() {
       <Panel className="mb-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-base font-semibold">Your platform dues</h2>
+            <h2 className="font-display text-base font-semibold">{t('Your platform dues')}</h2>
             <p className="mt-0.5 max-w-md text-xs leading-relaxed text-slate-500">
-              Your share of the platform commission deducted from pots you won. New rooms charge{' '}
-              {commission.settings
-                ? commissionRateLabel(commission.settings.commissionBps)
-                : 'the current platform rate'}
-              . Each hand uses its room’s rate when dealt. This total reflects the actual
-              deductions.
+              {t(
+                'Your share of the platform commission deducted from pots you won. New rooms charge {rate}. Each hand uses its room’s rate when dealt. This total reflects the actual deductions.',
+                {
+                  rate: commission.settings
+                    ? commissionRateLabel(commission.settings.commissionBps)
+                    : t('the current platform rate'),
+                },
+              )}
             </p>
           </div>
           <div className="text-right">
-            <div className="text-xs uppercase tracking-wide text-slate-400">Outstanding</div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">{t('Outstanding')}</div>
             <span className="font-display text-2xl font-bold tabular-nums">
               {fmt(house.outstanding)}
             </span>
             <div className="text-xs text-slate-400">
-              {fmt(house.accrued)} accrued · {fmt(house.paid)} recorded payments
+              {t('{accrued} accrued · {paid} recorded payments', {
+                accrued: fmt(house.accrued),
+                paid: fmt(house.paid),
+              })}
             </div>
           </div>
         </div>
         {(house.rooms?.length ?? 0) > 0 && (
           <details className="mt-4 text-sm">
             <summary className="w-fit cursor-pointer text-indigo-600 hover:underline dark:text-indigo-300">
-              Commission by room
+              {t('Commission by room')}
             </summary>
             <HouseRooms rooms={house.rooms} />
           </details>
         )}
         {house.credit > 0 && (
-          <p className="mt-3 text-sm text-slate-500">Recorded credit: {fmt(house.credit)}</p>
+          <p className="mt-3 text-sm text-slate-500">
+            {t('Recorded credit: {credit}', { credit: fmt(house.credit) })}
+          </p>
         )}
         <Button className="mt-3" variant="secondary" onClick={() => setHouseOpen(true)}>
-          Record a payment
+          {t('Record a payment')}
         </Button>
       </Panel>
 
-      <h2 className="mb-3 font-display font-semibold">Per person</h2>
+      <h2 className="mb-3 font-display font-semibold">{t('Per person')}</h2>
       {view.people.length === 0 ? (
         <Panel>
           <p className="text-sm text-slate-500">
-            No outstanding payments between players. Your platform dues are shown above.
+            {t('No outstanding payments between players. Your platform dues are shown above.')}
           </p>
         </Panel>
       ) : (
@@ -266,12 +279,12 @@ export function SettlePage() {
                   {p.otherName}
                 </Link>
                 <span className="text-xs text-slate-400">
-                  {p.net > 0 ? 'owes you' : 'you owe'} · across {p.rooms.length} room
-                  {p.rooms.length === 1 ? '' : 's'}
+                  {p.net > 0 ? t('owes you') : t('you owe')} ·{' '}
+                  {t('across {n} rooms', { n: p.rooms.length })}
                 </span>
                 <Money value={p.net} className="ml-auto text-lg" />
                 <Button variant="secondary" onClick={() => setOpen(p)}>
-                  Mark settled
+                  {t('Mark settled')}
                 </Button>
               </div>
               <button
@@ -279,7 +292,7 @@ export function SettlePage() {
                 onClick={() => setExpanded(expanded === p.otherUserId ? null : p.otherUserId)}
                 className="mt-2 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
               >
-                {expanded === p.otherUserId ? 'Hide' : 'Show'} the rooms behind this
+                {expanded === p.otherUserId ? t('Hide the rooms behind this') : t('Show the rooms behind this')}
               </button>
               {expanded === p.otherUserId && (
                 <ul className="mt-2 space-y-1 border-t border-slate-200/70 pt-2 text-xs dark:border-slate-700/70">
@@ -339,8 +352,8 @@ function SettleDialog({
       }
       setMsg(
         anySettled
-          ? 'Settled — both of you have confirmed.'
-          : `Marked. It clears once ${line.otherName} confirms too.`,
+          ? t('Settled — both of you have confirmed.')
+          : t('Marked. It clears once {name} confirms too.', { name: line.otherName }),
       );
       onDone();
       setTimeout(onClose, 1600);
@@ -352,36 +365,36 @@ function SettleDialog({
   }
 
   return (
-    <Dialog open onClose={onClose} title={`Settle with ${line.otherName}`}>
+    <Dialog open onClose={onClose} title={t('Settle with {name}', { name: line.otherName })}>
       <div className="space-y-3">
         <p className="text-sm text-slate-600 dark:text-slate-300">
           {line.net > 0 ? (
             <>
-              <span className="font-semibold">{line.otherName}</span> owes you{' '}
-              <span className="font-semibold">{fmt(line.net)}</span>.
+              <span className="font-semibold">{line.otherName}</span> {t('owes you')}{' '}
+              <span className="font-semibold">{fmt(line.net)}</span>
             </>
           ) : (
             <>
-              You owe <span className="font-semibold">{line.otherName}</span>{' '}
-              <span className="font-semibold">{fmt(-line.net)}</span>.
+              {t('You owe')} <span className="font-semibold">{line.otherName}</span>{' '}
+              <span className="font-semibold">{fmt(-line.net)}</span>
             </>
-          )}{' '}
-          Both of you have to confirm before it clears on the platform.
+          )}
+          {t('. Both of you have to confirm before it clears on the platform.')}
         </p>
         <ProofFields
           note={note}
           setNote={setNote}
           fileName={fileName}
-          placeholder="paid on UPI, 9:40pm"
+          placeholder={t('paid on UPI, 9:40pm')}
           onPick={(f) => {
             if (!f) return;
             setFileName(f.name);
             void toProofDataUrl(f).then(setProof);
           }}
         />
-        {msg && <p className="text-sm text-emerald-600">{msg}</p>}
+        {msg && <p className="text-sm text-emerald-600">{tr(msg)}</p>}
         <Button onClick={() => void submit()} disabled={busy} className="w-full">
-          {busy ? <Spinner label="Recording…" /> : 'Mark settled'}
+          {busy ? <Spinner label={t('Recording…')} /> : t('Mark settled')}
         </Button>
       </div>
     </Dialog>
@@ -397,14 +410,15 @@ function HousePayDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [msg, setMsg] = useState<string | null>(null);
 
   return (
-    <Dialog open onClose={onClose} title="Record a payment to the house">
+    <Dialog open onClose={onClose} title={t('Record a payment to the house')}>
       <div className="space-y-3">
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          This keeps 4AM Casino online. Record what you sent and it comes off your outstanding
-          balance.
+          {t(
+            'This keeps 4AM Casino online. Record what you sent and it comes off your outstanding balance.',
+          )}
         </p>
         <label className="block text-sm">
-          <span className="mb-1 block text-slate-500">Amount</span>
+          <span className="mb-1 block text-slate-500">{t('Amount')}</span>
           <Input
             type="number"
             min={1}
@@ -417,14 +431,14 @@ function HousePayDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
           note={note}
           setNote={setNote}
           fileName={fileName}
-          placeholder="UPI to notpritam@…"
+          placeholder={t('UPI to notpritam@…')}
           onPick={(f) => {
             if (!f) return;
             setFileName(f.name);
             void toProofDataUrl(f).then(setProof);
           }}
         />
-        {msg && <p className="text-sm text-rose-600">{msg}</p>}
+        {msg && <p className="text-sm text-rose-600">{tr(msg)}</p>}
         <Button
           className="w-full"
           disabled={busy || !(Number(amount) > 0)}
@@ -441,7 +455,7 @@ function HousePayDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
               .finally(() => setBusy(false));
           }}
         >
-          {busy ? <Spinner label="Recording…" /> : 'Record payment'}
+          {busy ? <Spinner label={t('Recording…')} /> : t('Record payment')}
         </Button>
       </div>
     </Dialog>

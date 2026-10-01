@@ -5,6 +5,7 @@ import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Panel, Spinner } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 export interface LeaderboardRow {
   userId: number;
@@ -19,13 +20,13 @@ export interface LeaderboardRow {
 export function LeaderboardTable({ rows, minHands = 0 }: { rows: LeaderboardRow[]; minHands?: number }) {
   const myUserId = useStore((s) => s.auth.userId);
   if (rows.length === 0) {
-    return <p className="text-sm text-slate-500">No settled hands yet. Deal one and come back.</p>;
+    return <p className="text-sm text-slate-500">{t('No settled hands yet. Deal one and come back.')}</p>;
   }
   return (
     <div className="space-y-2">
       {minHands > 0 && (
         <p className="text-xs text-slate-400">
-          Winnings count in settle-up after {minHands} hand{minHands === 1 ? '' : 's'} played.
+          {t('Winnings count in settle-up after {n} hands played.', { n: minHands })}
         </p>
       )}
       {/* Container queries, not viewport ones. These cards also render inside
@@ -81,17 +82,17 @@ export function LeaderboardTable({ rows, minHands = 0 }: { rows: LeaderboardRow[
               </span>
               {r.userId === myUserId && (
                 <span className="shrink-0 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-white">
-                  You
+                  {t('You')}
                 </span>
               )}
             </span>
             <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">
-              {r.handsPlayed} hand{r.handsPlayed === 1 ? '' : 's'}
-              {r.biggestWin > 0 && <> · best +{fmt(r.biggestWin)}</>}
+              {t('{n} hands', { n: r.handsPlayed })}
+              {r.biggestWin > 0 && <> · {t('best')} +{fmt(r.biggestWin)}</>}
             </span>
             {minHands > 0 && r.handsPlayed < minHands && (
               <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[0.65rem] font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                {minHands - r.handsPlayed} more to qualify
+                {t('{n} more to qualify', { n: minHands - r.handsPlayed })}
               </span>
             )}
           </span>
@@ -122,14 +123,14 @@ export function LeaderboardPage() {
   return (
     <div className="mx-auto max-w-[1500px] space-y-6 p-4 md:p-6">
       <header>
-        <h1 className="font-display text-xl font-bold">Leaderboard</h1>
+        <h1 className="font-display text-xl font-bold">{t('Leaderboard')}</h1>
       </header>
       <p className="text-sm text-slate-500">
-        All-time net points from settled hands, across every room on this server.
+        {t('All-time net points from settled hands, across every room on this server.')}
       </p>
       {rows === null ? (
         <Panel>
-          <Spinner label="Loading standings…" />
+          <Spinner label={t('Loading standings…')} />
         </Panel>
       ) : (
         <LeaderboardTable rows={rows} />

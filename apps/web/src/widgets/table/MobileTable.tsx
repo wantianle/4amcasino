@@ -16,6 +16,8 @@ import { Crown } from '@phosphor-icons/react';
 import { act, imReady, ritVote, showMyCards, startHand } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
+import { tHandCategory } from '../../shared/i18n/pokerLabels.ts';
 import { preActionOptions, togglePreAction } from '../../features/table/preActions.ts';
 import { useSettling } from '../../features/table/useSettling.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
@@ -39,6 +41,15 @@ function strengthLabel(myCards: CardId[], board: CardId[]): string | null {
       best = Math.max(best, evaluate5(all.filter((_, i) => i !== skip)));
   return HAND_CATEGORY_NAMES[handCategory(best)] ?? null;
 }
+
+/** Badge verbs for the last action of an opponent column. */
+const ACTION_VERB_KEYS: Record<'fold' | 'check' | 'call' | 'bet' | 'raise', string> = {
+  fold: 'Fold',
+  check: 'Check',
+  call: 'Call',
+  bet: 'Bet',
+  raise: 'Raise',
+};
 
 function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
   const engineCommitted = useStore(
@@ -73,7 +84,7 @@ function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
         )}
         {p.isLeader && (
           <span
-            title="Chip leader"
+            title={t('Chip leader')}
             className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-white"
           >
             <Crown size={9} weight="fill" />
@@ -81,7 +92,7 @@ function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
         )}
         {p.lastAction && (
           <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/90 px-2 py-0.5 text-[0.6rem] font-semibold capitalize text-white ring-1 ring-white/20">
-            {p.lastAction.type}
+            {t(ACTION_VERB_KEYS[p.lastAction.type])}
           </span>
         )}
         {p.inHand && p.revealed && (
@@ -101,12 +112,12 @@ function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
       <div className="h-6">
         {p.sittingOut && !p.broke && (
           <span className="rounded-full bg-white/10 px-1.5 py-px text-[0.55rem] font-bold uppercase text-white/50">
-            away
+            {t('away')}
           </span>
         )}
         {p.broke && (
           <span className="rounded-full bg-rose-500/20 px-1.5 py-px text-[0.55rem] font-bold uppercase text-rose-300">
-            out
+            {t('out')}
           </span>
         )}
         {engineCommitted > 0 && (
@@ -160,11 +171,11 @@ function MobileActions({
   useEffect(() => {
     if (sentAtSeq === null) return;
     const sentHand = hand.handId;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setSentAtSeq(null);
       if (sentHand) actionLatch.current.release(sentHand, sentAtSeq);
     }, 6000);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [sentAtSeq, hand.handId]);
   const send = (a: Parameters<typeof act>[0]) => {
     if (
@@ -185,7 +196,7 @@ function MobileActions({
       setSentAtSeq(null);
       useStore
         .getState()
-        .pushError(error instanceof Error ? error.message : 'Could not send your action.');
+        .pushError(error instanceof Error ? error.message : t('Could not send your action.'));
     }
   };
 
@@ -246,7 +257,7 @@ function MobileActions({
       }}
       className="mx-auto block rounded-full border border-white/25 px-4 py-1.5 text-xs font-semibold text-white/80 active:scale-[0.98] disabled:opacity-50"
     >
-      Show cards
+      {t('Show cards')}
     </button>
   ) : null;
 
@@ -254,19 +265,19 @@ function MobileActions({
   if (rit && mySeat !== null && rit.voters.includes(mySeat) && !rit.voted) {
     return (
       <div className="space-y-2">
-        <p className="text-center text-sm font-semibold text-fuchsia-300">🔁 Run it twice?</p>
+        <p className="text-center text-sm font-semibold text-fuchsia-300">{t('🔁 Run it twice?')}</p>
         <div className="flex gap-2">
           <button
             onClick={() => ritVote(true)}
             className="flex-1 rounded-full bg-fuchsia-500 py-3 text-sm font-bold text-white active:scale-[0.98]"
           >
-            Twice 🔁
+            {t('Twice 🔁')}
           </button>
           <button
             onClick={() => ritVote(false)}
             className="flex-1 rounded-full border border-white/25 py-3 text-sm font-semibold text-white active:scale-[0.98]"
           >
-            Once
+            {t('Once')}
           </button>
         </div>
       </div>
@@ -283,36 +294,39 @@ function MobileActions({
               onClick={imReady}
               className="w-full animate-pulse rounded-full bg-emerald-500 py-3 text-sm font-bold text-white active:scale-[0.98]"
             >
-              ✋ I&apos;m ready · {rc.ready.length}/{rc.eligible.length}
+              {t("✋ I'm ready · {a}/{b}", { a: rc.ready.length, b: rc.eligible.length })}
             </button>
           ) : (
             <p className="py-2 text-center text-sm text-emerald-300">
-              {amReady ? '✓ You are ready' : 'Ready check'} · {rc.ready.length}/{rc.eligible.length}{' '}
-              — dealing without the rest shortly
+              {t(amReady ? '✓ You are ready' : 'Ready check')} ·{' '}
+              {t('{a}/{b} — dealing without the rest shortly', {
+                a: rc.ready.length,
+                b: rc.eligible.length,
+              })}
             </p>
           )
         ) : mySeat !== null && myStack === 0 ? (
           <p className="py-2 text-center text-sm font-semibold text-rose-300">
-            You are out of chips. Buy points from the bank (menu, top right).
+            {t('You are out of chips. Buy points from the bank (menu, top right).')}
           </p>
         ) : hand.autoDealAt && hand.autoDealAt > Date.now() ? (
           <p className="py-2 text-center text-sm text-white/50">
-            Automatic ready check soon. Menu → sit out if you need a break.
+            {t('Automatic ready check soon. Menu → sit out if you need a break.')}
           </p>
         ) : isHost ? (
           <button
             onClick={startHand}
             className="w-full rounded-full bg-white py-3 text-sm font-bold text-slate-900 active:scale-[0.98]"
           >
-            Start hand
+            {t('Start hand')}
           </button>
         ) : (
           <p className="py-2 text-center text-sm text-white/50">
             {room?.autoDealPaused
-              ? 'Auto-deal paused. Table menu → Auto-deal.'
+              ? t('Auto-deal paused. Table menu → Auto-deal.')
               : room?.room.autoDeal
-                ? 'Waiting for two online players with chips.'
-                : 'Waiting for the host to deal.'}
+                ? t('Waiting for two online players with chips.')
+                : t('Waiting for the host to deal.')}
           </p>
         )}
       </div>
@@ -343,7 +357,7 @@ function MobileActions({
             ))}
           </div>
         )}
-        <p className="py-2 text-center text-sm text-white/50">{statusText ?? 'Waiting…'}</p>
+        <p className="py-2 text-center text-sm text-white/50">{statusText ?? t('Waiting…')}</p>
       </div>
     );
   }
@@ -359,10 +373,10 @@ function MobileActions({
         <div className="space-y-2.5 rounded-2xl bg-white/5 p-3">
           <div className="flex gap-1.5">
             {[
-              { label: 'Min', value: la.minRaiseTo },
-              { label: '½ pot', value: potRaise(0.5) },
-              { label: 'Pot', value: potRaise(1) },
-              { label: 'All-in', value: la.maxRaiseTo },
+              { label: t('Min'), value: la.minRaiseTo },
+              { label: t('½ pot'), value: potRaise(0.5) },
+              { label: t('Pot'), value: potRaise(1) },
+              { label: t('All-in'), value: la.maxRaiseTo },
             ].map((q) => (
               <button
                 key={q.label}
@@ -381,7 +395,7 @@ function MobileActions({
             ))}
           </div>
           <label className="flex flex-wrap items-center gap-2 text-xs text-white">
-            Amount
+            {t('Amount')}
             <input
               ref={amountRef}
               type="number"
@@ -391,17 +405,20 @@ function MobileActions({
               step={1}
               value={Number.isNaN(raiseTo) ? '' : raiseTo}
               disabled={pending || settling}
-              aria-label="Bet or raise amount"
+              aria-label={t('Bet or raise amount')}
               aria-keyshortcuts={binding('raise')}
               {...amountInput}
               onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : +e.target.value)}
               className="min-h-10 w-28 rounded-lg border border-white/25 bg-white/10 px-2 text-sm"
             />
-            <span>Enter to confirm</span>
+            <span>{t('Enter to confirm')}</span>
           </label>
           {!amountValid && (
             <p role="status" className="text-xs text-white/70">
-              Enter a whole-chip amount from {fmt(la.minRaiseTo)} to {fmt(la.maxRaiseTo)}.
+              {t('Enter a whole-chip amount from {min} to {max}.', {
+                min: fmt(la.minRaiseTo),
+                max: fmt(la.maxRaiseTo),
+              })}
             </p>
           )}
           <input
@@ -412,21 +429,23 @@ function MobileActions({
             value={raiseTo}
             onChange={(e) => setRaiseTo(+e.target.value)}
             className="w-full accent-white"
-            aria-label="Raise amount"
+            aria-label={t('Raise amount')}
           />
           <button
             disabled={pending || settling || !amountValid}
             onClick={submitRaise}
             className="w-full rounded-full bg-white py-2.5 text-sm font-bold text-slate-900 active:scale-[0.98] disabled:opacity-50"
           >
-            {st.currentBet === 0 ? `Bet ${fmt(raiseTo)}` : `Raise to ${fmt(raiseTo)}`}
+            {st.currentBet === 0
+              ? t('Bet {n}', { n: fmt(raiseTo) })
+              : t('Raise to {n}', { n: fmt(raiseTo) })}
           </button>
         </div>
       )}
       {pending && (
         <p className="flex items-center justify-center gap-1.5 text-xs text-white/60">
           <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/25 border-t-white" />
-          Sending…
+          {t('Sending…')}
         </p>
       )}
       <div className={cn('flex gap-2', (pending || settling) && 'pointer-events-none opacity-50')}>
@@ -436,7 +455,7 @@ function MobileActions({
           aria-keyshortcuts={binding('fold')}
           className={cn(ghost, 'border-rose-500/40 text-rose-300')}
         >
-          Fold
+          {t('Fold')}
         </button>
         <button
           onClick={() => send(la.canCheck ? { type: 'check' } : { type: 'call' })}
@@ -444,14 +463,14 @@ function MobileActions({
           aria-keyshortcuts={binding(la.canCheck ? 'check' : 'call')}
           className={ghost}
         >
-          {la.canCheck ? 'Check' : `Call ${fmt(la.callAmount)}`}
+          {la.canCheck ? t('Check') : t('Call {n}', { n: fmt(la.callAmount) })}
         </button>
         {la.canRaise && (
           <button
             onClick={() => setRaiseOpen((v) => !v)}
             className={cn(ghost, raiseOpen && 'border-white bg-white/10')}
           >
-            Raise
+            {t('Raise')}
           </button>
         )}
       </div>
@@ -497,7 +516,7 @@ export function MobileTable({
       {/* opponents */}
       <div className="flex justify-center gap-2 overflow-x-auto pb-1">
         {opponents.length === 0 ? (
-          <p className="py-3 text-sm text-white/50">Waiting for friends to sit down…</p>
+          <p className="py-3 text-sm text-white/50">{t('Waiting for friends to sit down…')}</p>
         ) : (
           opponents.map((p) => <OpponentColumn key={p.seat} p={p} urgent={urgent} />)
         )}
@@ -528,7 +547,7 @@ export function MobileTable({
         {board2.length > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="rounded-full bg-fuchsia-500/20 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase text-fuchsia-300">
-              Run 2
+              {t('Run {n}', { n: 2 })}
             </span>
             {board2.map((c) => (
               <PlayingCard key={`r2-${c}`} card={c} size="sm" deal />
@@ -536,7 +555,7 @@ export function MobileTable({
           </div>
         )}
         <div className="flex w-full items-baseline justify-end gap-2 pr-2">
-          <span className="text-xs uppercase tracking-wide text-white/60">pot</span>
+          <span className="text-xs uppercase tracking-wide text-white/60">{t('pot')}</span>
           <span className="font-display text-3xl font-bold">
             <NumberFlow value={pot} />
           </span>
@@ -592,7 +611,9 @@ export function MobileTable({
               me.won && 'animate-winner',
             )}
           >
-            {strength && <span className="text-xs font-semibold text-white/80">{strength}</span>}
+            {strength && (
+              <span className="text-xs font-semibold text-white/80">{tHandCategory(strength)}</span>
+            )}
             <span className="relative">
               <Avatar
                 userId={me.userId}
@@ -612,7 +633,7 @@ export function MobileTable({
             </span>
             {bought > 0 && (
               <span className="text-[0.6rem] text-white/50">
-                in {fmt(bought)} ·{' '}
+                {t('in {n}', { n: fmt(bought) })} ·{' '}
                 <span className={net >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
                   {net >= 0 ? `+${fmt(net)}` : `-${fmt(-net)}`}
                 </span>

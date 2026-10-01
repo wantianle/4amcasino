@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sendChat } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { Smiley } from '@phosphor-icons/react';
 import { Avatar } from '../../entities/user/Avatar.tsx';
@@ -49,12 +50,12 @@ export function ChatPanel({ chrome = true }: { chrome?: boolean }) {
     >
       {chrome && (
         <div className="border-b border-slate-100 px-4 py-3 font-display font-semibold dark:border-slate-800">
-          Chat
+          {t('Chat')}
         </div>
       )}
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {chat.length === 0 && (
-          <p className="text-sm text-slate-400">Say hi. Messages are not saved.</p>
+          <p className="text-sm text-slate-400">{t('Say hi. Messages are not saved.')}</p>
         )}
         {chat.map((m, i) => {
           const mine = m.userId === myId;
@@ -97,10 +98,10 @@ export function ChatPanel({ chrome = true }: { chrome?: boolean }) {
           {phrases.map((p) => (
             <button
               key={p}
-              onClick={() => sendChat(p, 'phrase')}
+              onClick={() => sendChat(t(p), 'phrase')}
               className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-800 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
             >
-              {p}
+              {t(p)}
             </button>
           ))}
         </div>
@@ -114,7 +115,7 @@ export function ChatPanel({ chrome = true }: { chrome?: boolean }) {
                   setStickersOpen(false);
                 }}
                 className="rounded-lg p-1.5 text-2xl hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label={`send ${s} sticker`}
+                aria-label={t('send {s} sticker', { s })}
               >
                 {s}
               </button>
@@ -126,19 +127,19 @@ export function ChatPanel({ chrome = true }: { chrome?: boolean }) {
             type="button"
             onClick={() => setStickersOpen((v) => !v)}
             className="rounded-lg px-2 text-xl hover:bg-slate-100 dark:hover:bg-slate-800"
-            aria-label="stickers"
+            aria-label={t('stickers')}
           >
             <Smiley size={22} />
           </button>
           <Input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            aria-label="Message…"
-            placeholder="Message…"
+            aria-label={t('Message…')}
+            placeholder={t('Message…')}
             maxLength={500}
           />
           <Button type="submit" variant="secondary" disabled={!text.trim()}>
-            Send
+            {t('Send')}
           </Button>
         </form>
       </div>

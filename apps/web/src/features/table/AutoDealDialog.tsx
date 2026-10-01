@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Button, Dialog } from '../../shared/ui/index.tsx';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 export function AutoDealDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const room = useStore((s) => s.room);
@@ -28,14 +29,15 @@ export function AutoDealDialog({ open, onClose }: { open: boolean; onClose: () =
   const activeCount = room.players.filter(
     (p) => p.connected && p.seat !== null && !p.sittingOut && p.stack > 0,
   ).length;
-  let status = 'Waiting for two seated, online players with chips.';
-  if (!connected) status = 'Reconnecting to the table…';
-  else if (!enabled) status = 'Off. The host starts each hand manually.';
-  else if (room.handActive || handActive) status = 'The next ready check starts after this hand.';
-  else if (ready) status = `${ready.ready.length} of ${ready.eligible.length} players ready.`;
-  else if (room.autoDealPaused) status = 'Paused because fewer than two players were ready.';
-  else if (nextAt) status = `Ready check in ${Math.max(0, Math.ceil((nextAt - now) / 1000))}s.`;
-  else if (activeCount >= 2) status = 'Waiting for the next ready check.';
+  let status = t('Waiting for two seated, online players with chips.');
+  if (!connected) status = t('Reconnecting to the table…');
+  else if (!enabled) status = t('Off. The host starts each hand manually.');
+  else if (room.handActive || handActive) status = t('The next ready check starts after this hand.');
+  else if (ready) status = t('{a} of {b} players ready.', { a: ready.ready.length, b: ready.eligible.length });
+  else if (room.autoDealPaused) status = t('Paused because fewer than two players were ready.');
+  else if (nextAt)
+    status = t('Ready check in {n}s.', { n: Math.max(0, Math.ceil((nextAt - now) / 1000)) });
+  else if (activeCount >= 2) status = t('Waiting for the next ready check.');
   async function save(value: boolean) {
     if (!room || !connected || saving || !isHost) return;
     setSaving(true);
@@ -43,28 +45,28 @@ export function AutoDealDialog({ open, onClose }: { open: boolean; onClose: () =
     try {
       await api.setAutoDeal(room.room.id, value);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save auto-deal. Try again.');
+      setError(err instanceof Error ? err.message : t('Could not save auto-deal. Try again.'));
     } finally {
       setSaving(false);
     }
   }
   return createPortal(
-    <Dialog open={open} onClose={onClose} title="Auto-deal">
+    <Dialog open={open} onClose={onClose} title={t('Auto-deal')}>
       <div className="space-y-5 text-sm text-slate-700 dark:text-slate-200">
         <label className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
           <span>
             <span className="block font-semibold text-slate-950 dark:text-white">
-              Enable auto-deal
+              {t('Enable auto-deal')}
             </span>
             <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
-              Keep the table moving between hands.
+              {t('Keep the table moving between hands.')}
             </span>
           </span>
           <span className="relative inline-flex shrink-0">
             <input
               type="checkbox"
               role="switch"
-              aria-label="Enable auto-deal"
+              aria-label={t('Enable auto-deal')}
               checked={enabled}
               disabled={!isHost || !connected || saving}
               onChange={(e) => void save(e.target.checked)}
@@ -81,12 +83,15 @@ export function AutoDealDialog({ open, onClose }: { open: boolean; onClose: () =
           </span>
         </label>
         <div className="space-y-2" aria-live="polite">
-          <p className="font-medium">{saving ? 'Saving…' : status}</p>
+          <p className="font-medium">{saving ? t('Saving…') : status}</p>
           {enabled && dealer && connected && (
             <p>
-              Automatic dealer: <strong>{dealer.displayName}</strong>
+              {t('Automatic dealer:')}
+              <strong>{dealer.displayName}</strong>
               {dealer.userId !== room.room.hostId && (
-                <span className="ml-2 text-xs text-indigo-600 dark:text-indigo-300">Fallback</span>
+                <span className="ml-2 text-xs text-indigo-600 dark:text-indigo-300">
+                  {t('Fallback')}
+                </span>
               )}
             </p>
           )}
@@ -96,22 +101,18 @@ export function AutoDealDialog({ open, onClose }: { open: boolean; onClose: () =
             </p>
           )}
         </div>
-        <p>
-          The seated, online host is preferred. If they leave, sit out or run out of chips, another
-          seated, online player takes over automatically.
-        </p>
+        <p>{t('The seated, online host is preferred. If they leave, sit out or run out of chips, another seated, online player takes over automatically.')}</p>
         <p className="text-slate-500 dark:text-slate-400">
-          After a 15-second break, everyone gets up to 20 seconds to choose “I’m ready”. Your “Auto
-          ready” preference still applies. At least two ready players are needed.
+          {t('After a 15-second break, everyone gets up to 20 seconds to choose “I’m ready”. Your “Auto ready” preference still applies. At least two ready players are needed.')}
         </p>
         {!isHost && (
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Only the host can change this room setting.
+            {t('Only the host can change this room setting.')}
           </p>
         )}
         {isHost && enabled && room.autoDealPaused && (
           <Button type="button" disabled={saving || !connected} onClick={() => void save(true)}>
-            Try ready check again
+            {t('Try ready check again')}
           </Button>
         )}
       </div>

@@ -3,6 +3,7 @@ import NumberFlow from '@number-flow/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { Badge } from '../../shared/ui/index.tsx';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { Crown, MicrophoneSlash } from '@phosphor-icons/react';
@@ -40,15 +41,15 @@ function actionChip(a: PlayerAction & { auto?: boolean }) {
   const label =
     a.type === 'fold'
       ? a.auto
-        ? 'TIMED OUT'
-        : 'FOLD'
+        ? t('Timed out')
+        : t('Fold')
       : a.type === 'check'
-        ? 'CHECK'
+        ? t('Check')
         : a.type === 'call'
-          ? 'CALL'
+          ? t('Call')
           : a.type === 'bet'
-            ? `BET ${fmt(a.amount ?? 0)}`
-            : `RAISE ${fmt(a.amount ?? 0)}`;
+            ? t('Bet {n}', { n: fmt(a.amount ?? 0) })
+            : t('Raise to {n}', { n: fmt(a.amount ?? 0) });
   const tone = a.type === 'fold' ? 'rose' : a.type === 'raise' || a.type === 'bet' ? 'amber' : 'slate';
   return <Badge tone={tone}>{label}</Badge>;
 }
@@ -57,7 +58,7 @@ function LeaderCrown({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <span
-      title="Chip leader"
+      title={t('Chip leader')}
       className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-white ring-2 ring-white dark:ring-slate-900"
     >
       <Crown size={11} weight="fill" />
@@ -69,7 +70,7 @@ function VoiceDot({ muted }: { muted: boolean }) {
   if (!muted) return null;
   return (
     <span
-      title="muted"
+      title={t('muted')}
       className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 text-[0.6rem] text-white ring-2 ring-white dark:ring-slate-900"
     >
       <MicrophoneSlash size={11} weight="fill" />
@@ -92,14 +93,17 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
     >
       {p.isToAct && <TurnProgress />}
       <div className="relative">
-        <Link to={`/players/${p.userId}`} aria-label={`${p.displayName}'s profile`}>
+        <Link
+          to={`/players/${p.userId}`}
+          aria-label={t("{name}'s profile", { name: p.displayName })}
+        >
           <Avatar userId={p.userId} name={p.displayName} version={p.avatarVersion} speaking={p.speaking} />
         </Link>
         <VoiceDot muted={p.voiceMuted} />
         <LeaderCrown show={p.isLeader} />
         {p.isButton && (
           <span
-            title="Dealer button"
+            title={t('Dealer button')}
             className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-slate-800 text-[0.6rem] font-bold text-white ring-2 ring-white dark:ring-slate-900"
           >
             D
@@ -121,13 +125,13 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
       </div>
       <div className="flex flex-col items-end gap-1">
         {p.broke ? (
-          <Badge tone="rose">OUT OF CHIPS</Badge>
+          <Badge tone="rose">{t('Out of chips')}</Badge>
         ) : p.sittingOut ? (
-          <Badge tone="slate">SITTING OUT</Badge>
+          <Badge tone="slate">{t('Sitting out')}</Badge>
         ) : p.lastAction ? (
           actionChip(p.lastAction)
         ) : p.allIn ? (
-          <Badge tone="indigo">ALL-IN</Badge>
+          <Badge tone="indigo">{t('All-in')}</Badge>
         ) : null}
       </div>
       {p.inHand && (!p.folded || p.revealed) && (
@@ -166,7 +170,8 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
       </div>
       <div>
         <div className="text-sm font-semibold">
-          You{p.isButton && <span className="ml-2 text-xs text-slate-400">(dealer)</span>}
+          {t('You')}
+          {p.isButton && <span className="ml-2 text-xs text-slate-400">{t('(dealer)')}</span>}
         </div>
         <div
           className={cn(
@@ -179,9 +184,9 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
       </div>
       <div className="ml-2">
         {p.broke ? (
-          <Badge tone="rose">OUT OF CHIPS</Badge>
+          <Badge tone="rose">{t('Out of chips')}</Badge>
         ) : p.sittingOut ? (
-          <Badge tone="slate">SITTING OUT</Badge>
+          <Badge tone="slate">{t('Sitting out')}</Badge>
         ) : (
           p.lastAction && actionChip(p.lastAction)
         )}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 /**
  * Draining time bar for the seat currently facing action.
@@ -37,7 +38,7 @@ export function TurnProgress({ className }: { className?: string }) {
         className,
       )}
       role="progressbar"
-      aria-label="time remaining to act"
+      aria-label={t('time remaining to act')}
     >
       <div ref={barRef} className="h-full rounded-full bg-indigo-500 transition-colors" />
     </div>

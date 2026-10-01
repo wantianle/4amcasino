@@ -6,6 +6,7 @@ import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
 
 interface SessionPlayer {
   userId: number;
@@ -34,7 +35,7 @@ interface SessionReport {
 function fmtDur(ms: number): string {
   const m = Math.max(1, Math.round(ms / 60_000));
   const h = Math.floor(m / 60);
-  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+  return h > 0 ? t('{h}h {m}m', { h, m: m % 60 }) : t('{m}m', { m });
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {
@@ -105,7 +106,7 @@ export function LedgerPage() {
   if (!entries) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Spinner label="Loading ledger…" />
+        <Spinner label={t('Loading ledger…')} />
       </div>
     );
   }
@@ -165,39 +166,40 @@ export function LedgerPage() {
     <div className="mx-auto max-w-[1600px] space-y-6 p-4 md:p-6">
       <header className="flex items-center gap-3">
         <Link to={`/room/${roomId}`} className="text-sm text-slate-500 hover:text-slate-800">
-          ← Back to table
+          {t('← Back to table')}
         </Link>
-        <h1 className="font-display text-xl font-bold">Bank ledger</h1>
+        <h1 className="font-display text-xl font-bold">{t('Bank ledger')}</h1>
         {verified &&
           (verified.ok ? (
-            <Badge tone="emerald">chain verified</Badge>
+            <Badge tone="emerald">{t('chain verified')}</Badge>
           ) : (
-            <Badge tone="rose">TAMPERED: hashes do not match</Badge>
+            <Badge tone="rose">{t('TAMPERED: hashes do not match')}</Badge>
           ))}
       </header>
 
       {session && session.hands > 0 && (
         <Panel>
-          <h2 className="mb-4 font-display font-semibold">Session report</h2>
+          <h2 className="mb-4 font-display font-semibold">{t('Session report')}</h2>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile
-              label="Time played"
+              label={t('Time played')}
               value={session.firstTs && session.lastTs ? fmtDur(session.lastTs - session.firstTs) : '\u2014'}
             />
-            <StatTile label="Hands dealt" value={String(session.hands)} />
-            <StatTile label="Biggest pot" value={fmt(session.biggestPot)} />
+            <StatTile label={t('Hands dealt')} value={String(session.hands)} />
+            <StatTile label={t('Biggest pot')} value={fmt(session.biggestPot)} />
             <StatTile
-              label="Chips on the table"
+              label={t('Chips on the table')}
               value={fmt(session.players.reduce((sum, p) => sum + p.stack, 0))}
             />
           </div>
 
           <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Who is winning
+            {t('Who is winning')}
           </h3>
           <p className="mb-3 text-xs text-slate-400">
-            Net chips won at the table. Bars to the right of the line are winnings, to the left are
-            losses.
+            {t(
+              'Net chips won at the table. Bars to the right of the line are winnings, to the left are losses.',
+            )}
           </p>
           <div className="space-y-2">
             {(() => {
@@ -238,14 +240,14 @@ export function LedgerPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400 dark:border-slate-800">
-                  <th className="py-2 pr-3">Player</th>
-                  <th className="px-3 py-2 text-right">Hands</th>
-                  <th className="px-3 py-2 text-right">Won</th>
-                  <th className="px-3 py-2 text-right">Best pot</th>
-                  <th className="px-3 py-2 text-right">Worst hit</th>
-                  <th className="px-3 py-2 text-right">Bought</th>
-                  <th className="px-3 py-2 text-right">Stack now</th>
-                  <th className="py-2 pl-3 text-right">Net</th>
+                  <th className="py-2 pr-3">{t('Player')}</th>
+                  <th className="px-3 py-2 text-right">{t('Hands played')}</th>
+                  <th className="px-3 py-2 text-right">{t('Won')}</th>
+                  <th className="px-3 py-2 text-right">{t('Best pot')}</th>
+                  <th className="px-3 py-2 text-right">{t('Worst hit')}</th>
+                  <th className="px-3 py-2 text-right">{t('Bought')}</th>
+                  <th className="px-3 py-2 text-right">{t('Stack now')}</th>
+                  <th className="py-2 pl-3 text-right">{t('Net')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -255,12 +257,12 @@ export function LedgerPage() {
                       <span className="font-medium">{p.displayName}</span>
                       {p.hidden && (
                         <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[0.65rem] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                          private
+                          {t('private')}
                         </span>
                       )}
                       {minSettleHands > 0 && p.handsPlayed < minSettleHands && (
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[0.65rem] font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                          {minSettleHands - p.handsPlayed} more to qualify
+                          {t('{n} more to qualify', { n: minSettleHands - p.handsPlayed })}
                         </span>
                       )}
                     </td>
@@ -293,9 +295,9 @@ export function LedgerPage() {
       <div className="grid items-start gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
       <div className="space-y-5">
       <Panel>
-        <h2 className="mb-3 font-display font-semibold">Bought from the bank (to settle up)</h2>
+        <h2 className="mb-3 font-display font-semibold">{t('Bought from the bank (to settle up)')}</h2>
         {totals.size === 0 ? (
-          <p className="text-sm text-slate-500">No purchases yet.</p>
+          <p className="text-sm text-slate-500">{t('No purchases yet.')}</p>
         ) : (
           <div className="space-y-1">
             {[...totals.entries()].map(([name, total]) => (
@@ -310,64 +312,67 @@ export function LedgerPage() {
 
       {voided && (
         <div className="rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
-          The banker voided this table. Nothing here counts toward leaderboards, profiles, or who
-          owes whom.
+          {t(
+            'The banker voided this table. Nothing here counts toward leaderboards, profiles, or who owes whom.',
+          )}
         </div>
       )}
       {amBanker && (
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => void api.voidRoom(roomId!, !voided).then(load)}>
-            {voided ? 'Restore this table (results count again)' : 'Void this table (results stop counting)'}
+            {voided ? t('Restore this table (results count again)') : t('Void this table (results stop counting)')}
           </Button>
           {/* archiving and deleting both queue for platform approval now: history
               survives and so does anything still owed until that happens
               (requested by notpritam) */}
           {archiveRequested ? (
-            <Badge tone="indigo">Archive requested, waiting on the platform</Badge>
+            <Badge tone="indigo">{t('Archive requested, waiting on the platform')}</Badge>
           ) : (
             <Button
               variant="secondary"
-              title="Retires the table: it leaves your room list and stops counting towards stats. Nothing is deleted and debts stay owed. A platform admin approves this before it takes effect."
+              title={t(
+                'Retires the table: it leaves your room list and stops counting towards stats. Nothing is deleted and debts stay owed. A platform admin approves this before it takes effect.',
+              )}
               disabled={archiveBusy}
               onClick={() => void requestArchive()}
             >
-              {archiveBusy ? <Spinner label="Requesting…" /> : 'Request archive'}
+              {archiveBusy ? <Spinner label={t('Requesting…')} /> : t('Request archive')}
             </Button>
           )}
           {deleteRequested ? (
-            <Badge tone="rose">Delete requested, waiting on the platform</Badge>
+            <Badge tone="rose">{t('Delete requested, waiting on the platform')}</Badge>
           ) : (
             <Button variant="danger" disabled={deleteBusy} onClick={() => setDeleteConfirmOpen(true)}>
-              Request delete
+              {t('Request delete')}
             </Button>
           )}
         </div>
       )}
-      {revertErr && <p className="text-sm text-rose-600">Could not revert: {revertErr}</p>}
-      {requestErr && <p className="text-sm text-rose-600">{requestErr}</p>}
+      {revertErr && <p className="text-sm text-rose-600">{t('Could not revert: {error}', { error: tr(revertErr) })}</p>}
+      {requestErr && <p className="text-sm text-rose-600">{tr(requestErr)}</p>}
       </div>
       <Panel className="min-w-0 overflow-x-auto p-0">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400 dark:border-slate-800">
-              <th className="px-4 py-3">When</th>
-              <th className="px-4 py-3">Player</th>
-              <th className="px-4 py-3">Kind</th>
-              <th className="px-4 py-3 text-right">Delta</th>
-              <th className="px-4 py-3">Note / ref</th>
-              <th className="px-4 py-3">Hash</th>
-              {amBanker && <th className="px-4 py-3" />}
-            </tr>
+              <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                <th className="px-4 py-3">{t('When')}</th>
+                <th className="px-4 py-3">{t('Player')}</th>
+                <th className="px-4 py-3">{t('Kind')}</th>
+                <th className="px-4 py-3 text-right">{t('Delta')}</th>
+                <th className="px-4 py-3">{t('Note / ref')}</th>
+                <th className="px-4 py-3">{t('Hash')}</th>
+                {amBanker && <th className="px-4 py-3" />}
+              </tr>
           </thead>
           <tbody>
             {entries.map((e) => (
               <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800">
                 <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">
-                  {new Date(e.ts).toLocaleString()}
+                  {new Date(e.ts).toLocaleString('zh-CN')}
                 </td>
                 <td className="px-4 py-2.5 font-medium">{e.username}</td>
                 <td className="px-4 py-2.5">
-                  <Badge tone={e.kind === 'purchase' ? 'indigo' : 'slate'}>{e.kind}</Badge>
+                  <Badge tone={e.kind === 'purchase' ? 'indigo' : 'slate'}>{tr(e.kind)}</Badge>
                 </td>
                 <td
                   className={cn(
@@ -379,31 +384,31 @@ export function LedgerPage() {
                   {fmt(e.delta)}
                 </td>
                 <td className="max-w-40 truncate px-4 py-2.5 text-slate-500">
-                  {e.note ?? (e.ref ? `hand ${e.ref.slice(0, 8)}` : '')}
+                  {e.note !== null ? tr(e.note) : e.ref ? t('hand {id}', { id: e.ref.slice(0, 8) }) : ''}
                 </td>
                 <td className="px-4 py-2.5 font-mono text-xs text-slate-400">
                   {e.entryHash.slice(0, 10)}
                 </td>
                 {amBanker && (
                   <td className="px-4 py-2.5 text-right">
-                    {e.kind === 'purchase' &&
-                      (revertedHashes.has(e.entryHash) ? (
-                        <Badge tone="slate">reverted</Badge>
-                      ) : (
-                        <Button variant="ghost" onClick={() => void revert(e.id)}>
-                          Revert
-                        </Button>
-                      ))}
-                    {e.kind === 'hand-settlement' &&
-                      e.ref &&
-                      firstOfHand.get(e.ref) === e.id &&
-                      (voidedHands.has(e.ref) ? (
-                        <Badge tone="slate">voided</Badge>
-                      ) : (
-                        <Button variant="ghost" onClick={() => void voidHand(e.ref!)}>
-                          Void hand
-                        </Button>
-                      ))}
+                  {e.kind === 'purchase' &&
+                    (revertedHashes.has(e.entryHash) ? (
+                      <Badge tone="slate">{t('reverted')}</Badge>
+                    ) : (
+                      <Button variant="ghost" onClick={() => void revert(e.id)}>
+                        {t('Revert')}
+                      </Button>
+                    ))}
+                  {e.kind === 'hand-settlement' &&
+                    e.ref &&
+                    firstOfHand.get(e.ref) === e.id &&
+                    (voidedHands.has(e.ref) ? (
+                      <Badge tone="slate">{t('voided')}</Badge>
+                    ) : (
+                      <Button variant="ghost" onClick={() => void voidHand(e.ref!)}>
+                        {t('Void hand')}
+                      </Button>
+                    ))}
                   </td>
                 )}
               </tr>
@@ -411,7 +416,7 @@ export function LedgerPage() {
             {entries.length === 0 && (
               <tr>
                 <td colSpan={amBanker ? 7 : 6} className="px-4 py-6 text-center text-slate-400">
-                  The ledger is empty. Buy points to start.
+                  {t('The ledger is empty. Buy points to start.')}
                 </td>
               </tr>
             )}
@@ -420,17 +425,18 @@ export function LedgerPage() {
       </Panel>
       </div>
 
-      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} title="Request delete?">
+      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} title={t('Request delete?')}>
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          This asks the platform to permanently remove this table, its ledger, and its hand
-          history. A platform admin reviews it before anything happens.
+          {t(
+            'This asks the platform to permanently remove this table, its ledger, and its hand history. A platform admin reviews it before anything happens.',
+          )}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setDeleteConfirmOpen(false)} disabled={deleteBusy}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button variant="danger" onClick={() => void requestDelete()} disabled={deleteBusy}>
-            {deleteBusy ? <Spinner label="Requesting…" /> : 'Request delete'}
+            {deleteBusy ? <Spinner label={t('Requesting…')} /> : t('Request delete')}
           </Button>
         </div>
       </Dialog>

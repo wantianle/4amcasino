@@ -10,6 +10,7 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { useStore } from '../../shared/store.ts';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
 import type { SeatView } from '../../widgets/table/players.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 interface RoomPlayer {
   userId: number;
@@ -73,7 +74,7 @@ export function ReplayPage() {
       // the GIF downloads; the intent opens with the words - attach and post
       window.open(
         `https://twitter.com/intent/tweet?text=${encodeURIComponent(
-          'This hand at 4AM Casino ♠ provably fair poker with friends - 4amcasino.com',
+          t('This hand at 4AM Casino ♠ provably fair poker with friends - 4amcasino.com'),
         )}`,
         '_blank',
       );
@@ -128,7 +129,7 @@ export function ReplayPage() {
         seat: s.seat,
         userId: s.userId,
         username: info?.username ?? `seat${s.seat + 1}`,
-        displayName: info?.displayName ?? `Seat ${s.seat + 1}`,
+        displayName: info?.displayName ?? t('Seat {n}', { n: s.seat + 1 }),
         avatarVersion: info?.avatarVersion ?? 0,
         stack: es ? es.stack : s.stack,
         isButton: replay.buttonSeat === s.seat,
@@ -169,7 +170,7 @@ export function ReplayPage() {
   if (!replay || !step) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Spinner label="Rebuilding hand from its transcript…" />
+        <Spinner label={t('Rebuilding hand from its transcript…')} />
       </div>
     );
   }
@@ -181,33 +182,37 @@ export function ReplayPage() {
           to={`/room/${roomId}/hands`}
           className="text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
         >
-          ← Hands
+          {t('← Hands')}
         </Link>
-        <h1 className="font-display text-xl font-bold">Replay</h1>
+        <h1 className="font-display text-xl font-bold">{t('Replay')}</h1>
         <span className="font-mono text-xs text-slate-400">{handId?.slice(0, 8)}</span>
         <Badge tone="slate">
-          blinds {replay.sb}/{replay.bb}
+          {t('blinds {sb}/{bb}', { sb: replay.sb, bb: replay.bb })}
         </Badge>
-        {replay.tv && <Badge tone="amber">TV replay</Badge>}
+        {replay.tv && <Badge tone="amber">{t('TV replay')}</Badge>}
         <Button
           variant="secondary"
           className="ml-auto"
           onClick={() => void shareGif()}
           disabled={!!gifBusy}
-          title="Renders the whole hand as a GIF, downloads it, and opens a tweet - attach the GIF and post"
+          title={t('Renders the whole hand as a GIF, downloads it, and opens a tweet - attach the GIF and post')}
         >
           <FilmSlate size={15} weight="bold" className="mr-1 inline" />
-          {gifBusy ? `GIF ${gifBusy}…` : 'GIF for Twitter'}
+          {gifBusy ? t('GIF {progress}…', { progress: gifBusy }) : t('GIF for Twitter')}
         </Button>
         <Button variant="secondary" onClick={saveRecord} disabled={!record}>
           <DownloadSimple size={15} weight="bold" className="mr-1 inline" />
-          Save hand
+          {t('Save hand')}
         </Button>
       </header>
       <p className="text-sm text-slate-500">
         {replay.tv
-          ? 'Everyone revealed their hand key after this hand, so every hole card is visible - broadcast style.'
-          : 'Rebuilt from the signed transcript, showing only what was public. Folded cards stay secret forever.'}
+          ? t(
+              'Everyone revealed their hand key after this hand, so every hole card is visible - broadcast style.',
+            )
+          : t(
+              'Rebuilt from the signed transcript, showing only what was public. Folded cards stay secret forever.',
+            )}
       </p>
 
       {/* The felt itself. Same widget the live table uses, fed from the
@@ -232,7 +237,7 @@ export function ReplayPage() {
           bb={replay.bb}
         >
           <div className="rounded-xl bg-indigo-600 px-5 py-1.5 font-display text-lg font-bold text-white shadow-lg">
-            POT {fmt(pot)}
+            {t('POT {n}', { n: fmt(pot) })}
           </div>
           <div className="flex gap-1.5 md:gap-2">
             {[0, 1, 2, 3, 4].map((i) =>
@@ -255,7 +260,7 @@ export function ReplayPage() {
           {step.board2.length > 0 && (
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                Run 2
+                {t('Run 2')}
               </span>
               {step.board2.map((c) => (
                 <PlayingCard key={`r2-${c}`} card={c} size="sm" deal />
@@ -270,25 +275,25 @@ export function ReplayPage() {
 
       {/* controls */}
       <Panel className="flex flex-wrap items-center gap-2.5">
-        <Button variant="secondary" onClick={() => setIdx(0)} aria-label="restart">
+        <Button variant="secondary" onClick={() => setIdx(0)} aria-label={t('restart')}>
           <SkipBack size={16} weight="fill" />
         </Button>
         <Button
           variant="secondary"
           onClick={() => setIdx((i) => Math.max(0, i - 1))}
-          aria-label="back"
+          aria-label={t('back')}
         >
           <CaretLeft size={16} weight="bold" />
         </Button>
         <Button
           onClick={() => (idx >= last ? (setIdx(0), setPlaying(true)) : setPlaying((p) => !p))}
         >
-          {playing ? 'Pause' : 'Play'}
+          {playing ? t('Pause') : t('Play')}
         </Button>
         <Button
           variant="secondary"
           onClick={() => setIdx((i) => Math.min(last, i + 1))}
-          aria-label="forward"
+          aria-label={t('forward')}
         >
           <CaretRight size={16} weight="bold" />
         </Button>
@@ -299,7 +304,7 @@ export function ReplayPage() {
           value={idx}
           onChange={(e) => setIdx(+e.target.value)}
           className="min-w-32 flex-1 accent-indigo-600"
-          aria-label="replay position"
+          aria-label={t('replay position')}
         />
         <span className="w-16 text-right text-xs text-slate-400">
           {idx + 1} / {last + 1}
