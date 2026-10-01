@@ -17,13 +17,25 @@ export interface ChatMsg {
   ts: number;
 }
 
+/** The card-back colorways, in picker order. Single source of truth shared by
+ *  the profile picker, the store shape, and the server round-trip sanitizer.
+ *  Each id maps 1:1 to a `.card-back-<id>` rule in app/index.css. */
+export const CARD_BACKS = ['indigo', 'crimson', 'emerald', 'slate'] as const;
+export type CardBack = (typeof CARD_BACKS)[number];
+
+/** Guards server/persisted payloads: a foreign value must never reach the
+ *  `card-back-${value}` class template or the picker's selected-state compare. */
+export function isCardBack(value: unknown): value is CardBack {
+  return typeof value === 'string' && (CARD_BACKS as readonly string[]).includes(value);
+}
+
 export interface Prefs {
   pokerHotkeys: PokerHotkeys;
   displayName: string;
   bio: string;
   hasAvatar: boolean;
   avatarVersion: number;
-  cardBack: 'indigo' | 'crimson' | 'emerald' | 'slate';
+  cardBack: CardBack;
   fourColor: boolean;
   quickPhrases: string[];
   /** Hide my winnings from other players (leaderboards, session report, crown). */

@@ -4,8 +4,8 @@
 // peek → 买看、seat N → N 号位、盲注结构 `10/20` 不加空格。
 // Style: 一律「你」，按钮/徽章不加句号，长句加；省略号用「…」；WASD / Esc /
 // MP4 / 4AM 等键名与品牌原样透传。LOUNGE_DESTINATIONS 的英文 label 只在显示
-// 处 t()，packages/shared 不动。画布文本（3D 铭牌 / 酒廊电视 / 桌布标语）按
-// §6.2-3 同走 t()；system-ui / sans-serif 字体栈自带 CJK 回退。
+// 处 t()，packages/shared 不动。画布文本（3D 铭牌 / 酒廊电视）按 §6.2-3 同走
+// t()；system-ui / sans-serif 字体栈自带 CJK 回退。
 // Reused keys owned elsewhere (do NOT redeclare): 'Table' / 'POT' / 'Seat {n}'
 // / '{n}s' / 'Open chat' / 'More table controls' / 'Table controls' /
 // 'Leave table' / 'player' / 'Run {n}' / 'Run 1' / 'Run 2' /
@@ -289,15 +289,16 @@ const table3d: Record<string, string> = {
   'Preview wave': '预览挥手',
   'Preview dance': '预览跳舞',
 
-  // ── 画布文本（3D 铭牌 / 电视直播画面 / 桌布标语）────────────────────────
-  'In the lounge': '酒廊中',
-  'POW!': '砰！',
+  // ── 画布文本（3D 铭牌 / 酒廊电视 / 3D HUD 徽章）─────────────────────────
+  // 桌布与直播画面下方标语已移除（TASK 2/3），此处只留仍在绘制的面。
   '4AM  /  TABLE LIVE': '4AM 现场直播',
   '{pot} in the pot': '底池 {pot}',
   '{name} is playing': '{name} 正在行动',
   'The next hand is coming': '下一手马上开始',
-  'Good company. One more hand.': '朋友在，牌就还能再打一手。',
-  'A SEAT AT YOUR TABLE': '这桌给你留了位子',
+  // 位置徽章：庄位纽扣沿用全球通用的 D（与 2D 一致，不译）；盲注按 §2.1 短译。
+  D: 'D',
+  SB: '小盲',
+  BB: '大盲',
 };
 
 export default table3d;

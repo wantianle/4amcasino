@@ -1,4 +1,4 @@
-import { RiUser3Line, RiPokerClubsLine } from '@remixicon/react';
+import { RiCheckLine, RiUser3Line, RiPokerClubsLine } from '@remixicon/react';
 import { useRef, useState } from 'react';
 import { api } from '../../shared/api.ts';
 import {
@@ -8,7 +8,7 @@ import {
   soundVolume,
   soundsEnabled,
 } from '../../shared/sounds.ts';
-import { useStore, type Prefs } from '../../shared/store.ts';
+import { CARD_BACKS, useStore, type Prefs } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
@@ -17,7 +17,7 @@ import { SettingsCard } from '../settings/SettingsCard.tsx';
 import { cardFromName } from '@4am/shared';
 import { t } from '../../shared/i18n/index.ts';
 
-const BACKS: Prefs['cardBack'][] = ['indigo', 'crimson', 'emerald', 'slate'];
+const BACKS = CARD_BACKS;
 
 /** Downscale + center-crop the chosen file to a 256px JPEG data URL. */
 async function toAvatarDataUrl(file: File): Promise<string> {
@@ -184,6 +184,17 @@ export function ProfileEditor({
     </>
   );
 
+  /** Deck style must survive the next `loadPrefs()` account re-sync (app start
+   *  and every /settings mount pull the server's copy). The sticky bar
+   *  promises "Deck and sound apply instantly", so a pick writes the store —
+   *  every surface renders card backs and 4-color suits from it — and quietly
+   *  syncs the server in the background. Offline, the local pick still applies
+   *  and the next explicit save re-sends it. */
+  function applyDeckStyle(patch: Partial<Prefs>) {
+    setPrefs(patch);
+    void api.updateProfile(patch).catch(() => {});
+  }
+
   const tableStyle = (
     <>
       <div className="text-sm">
@@ -192,24 +203,43 @@ export function ProfileEditor({
           {BACKS.map((b) => (
             <button
               key={b}
-              onClick={() => setPrefs({ cardBack: b })}
+              type="button"
+              onClick={() => applyDeckStyle({ cardBack: b })}
               aria-label={t(`${b} card back`)}
+              aria-pressed={prefs.cardBack === b}
               className={cn(
-                'rounded-lg p-0.5 ring-2 ring-transparent',
-                prefs.cardBack === b && 'ring-indigo-500',
+                // Exactly ONE ring-color utility at a time. `ring-transparent`
+                // and `ring-indigo-500` both set --tw-ring-color, and the
+                // compiled CSS emits transparent after indigo — with both on
+                // the button the selection ring was always invisible and the
+                // picker looked dead no matter what you clicked.
+                'relative rounded-lg p-0.5 ring-2 transition-shadow',
+                prefs.cardBack === b ? 'ring-indigo-500' : 'ring-transparent',
               )}
             >
               <div className={cn('card-back h-14 w-10 rounded-lg', `card-back-${b}`)} />
+              {prefs.cardBack === b && (
+                // locale-proof confirmation: a check badge on the chosen swatch
+                <span
+                  className="absolute -bottom-1 -right-1 grid size-4.5 place-items-center rounded-full bg-indigo-500 text-white shadow-sm"
+                  aria-hidden
+                >
+                  <RiCheckLine className="size-3" />
+                </span>
+              )}
             </button>
           ))}
           <label className="ml-2 flex items-center gap-2 text-slate-600 dark:text-slate-300">
             <input
               type="checkbox"
               checked={prefs.fourColor}
-              onChange={(e) => setPrefs({ fourColor: e.target.checked })}
+              onChange={(e) => applyDeckStyle({ fourColor: e.target.checked })}
             />
             {t('4-color deck')}
           </label>
+          {/* live feedback for both deck toggles: the back follows the swatch
+              pick, the face-up card follows the 4-color checkbox */}
+          <PlayingCard faceDown size="sm" />
           <PlayingCard card={cardFromName('Td')} size="sm" />
         </div>
       </div>

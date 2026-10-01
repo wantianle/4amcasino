@@ -96,6 +96,9 @@ const tCameraView = (view: CameraView) => t(view === 'Close' ? 'Close-up' : view
 
 const FELT_TOP = 1.025;
 
+/** Default head-height lift for every floating nameplate. */
+const LABEL_LIFT = new THREE.Vector3(0, 2.65, 0);
+
 function cardTexture(id: CardId | null): THREE.CanvasTexture {
   const W = 256;
   const H = 356;
@@ -135,7 +138,9 @@ function cardTexture(id: CardId | null): THREE.CanvasTexture {
   return t;
 }
 
-function labelTexture(name: string, sub: string, accent: string): THREE.CanvasTexture {
+/** Seat nameplate: the name on top, and the stack a player needs to read riding
+ *  a gold pill underneath (mirrors the stack line in the 2D seat pod). */
+function labelTexture(name: string, stack: string, accent: string): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 96;
@@ -148,14 +153,52 @@ function labelTexture(name: string, sub: string, accent: string): THREE.CanvasTe
   x.lineWidth = 3;
   x.stroke();
   x.fillStyle = '#f5f3ff';
-  x.font = '700 30px system-ui';
   x.textAlign = 'center';
-  x.fillText(name.slice(0, 13), 128, 42);
-  x.fillStyle = accent;
-  x.font = '600 26px ui-monospace, monospace';
-  x.fillText(sub, 128, 76);
+  if (stack === '') {
+    // wanderers outside the hand carry their name and nothing else
+    x.font = '700 30px system-ui';
+    x.fillText(name.slice(0, 13), 128, 56);
+  } else {
+    x.font = '700 24px system-ui';
+    x.fillText(name.slice(0, 13), 128, 34);
+    x.font = '800 30px ui-monospace, monospace';
+    const w = Math.min(224, Math.max(78, x.measureText(stack).width + 36));
+    x.fillStyle = '#fbbf24';
+    x.beginPath();
+    x.roundRect(128 - w / 2, 46, w, 40, 20);
+    x.fill();
+    x.fillStyle = '#451a03';
+    x.fillText(stack, 128, 73);
+  }
   const t = new THREE.CanvasTexture(c);
   return t;
+}
+
+/** Floating poker-position disc (D / SB / BB), styled after the 2D table's
+ *  avatar-corner badges: white dealer button, sky small blind, amber big blind. */
+function discTexture(text: string, bg: string, fg: string, ring: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d')!;
+  x.beginPath();
+  x.arc(64, 64, 54, 0, Math.PI * 2);
+  x.fillStyle = bg;
+  x.shadowColor = 'rgba(0,0,0,0.55)';
+  x.shadowBlur = 18;
+  x.fill();
+  x.shadowBlur = 0;
+  x.lineWidth = 7;
+  x.strokeStyle = ring;
+  x.stroke();
+  x.fillStyle = fg;
+  x.textAlign = 'center';
+  x.textBaseline = 'middle';
+  x.font = '800 52px system-ui';
+  if (x.measureText(text).width > 78) x.font = '800 38px system-ui';
+  x.fillText(text, 64, 68);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /** A card resting on the felt: the tilt raises the pivot just enough that
@@ -741,9 +784,6 @@ function Table3DView({ table }: { table: TablePresentation }) {
         ink.font = '54px serif';
         ink.fillText(SUIT_GLYPHS[suit]!, x + 31, 401);
       });
-      ink.fillStyle = '#bad4ca';
-      ink.font = '400 22px Onest, sans-serif';
-      ink.fillText(t('Good company. One more hand.'), 48, 491);
       liveTexture.needsUpdate = true;
     };
     drawLiveTV();
@@ -776,7 +816,8 @@ function Table3DView({ table }: { table: TablePresentation }) {
     leg.castShadow = true;
     scene.add(leg);
 
-    // A tailored felt surface: double inlay, a quiet brand mark, and a padded rail.
+    // A tailored felt surface: double inlay and a padded rail. No text is drawn
+    // on the felt itself — the table stays clean for the cards and chips.
     const feltCanvas = document.createElement('canvas');
     feltCanvas.width = feltCanvas.height = 1024;
     const feltInk = feltCanvas.getContext('2d')!;
@@ -789,13 +830,6 @@ function Table3DView({ table }: { table: TablePresentation }) {
       feltInk.lineWidth = 2;
       feltInk.stroke();
     }
-    feltInk.textAlign = 'center';
-    feltInk.fillStyle = '#73928a';
-    feltInk.font = '600 48px sans-serif';
-    feltInk.fillText('4 A M', 512, 700);
-    feltInk.font = '500 17px sans-serif';
-    feltInk.fillStyle = '#8ca79b';
-    feltInk.fillText(t('A SEAT AT YOUR TABLE'), 512, 734);
     const feltMap = new THREE.CanvasTexture(feltCanvas);
     feltMap.colorSpace = THREE.SRGBColorSpace;
     feltMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -909,22 +943,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
       particles.push({ pts, vel, t0: performance.now(), dur: 1500 });
     };
 
-    const powSprite = (at: THREE.Vector3) => {
-      const sp = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: labelTexture(t('POW!'), '', '#fbbf24'), transparent: true }),
-      );
-      sp.scale.set(1.3, 0.5, 1);
-      sp.position.copy(at).add(new THREE.Vector3(0, 1.9, 0));
-      scene.add(sp);
+    // A poke/shove/slap lands with a gold spark burst instead of a drawn word:
+    // contact still reads in the reduced-motion fallback, but nothing prints text
+    // over the table.
+    const impactBurst = (at: THREE.Vector3) => {
+      burst(at.clone().setY(at.y + 1.9), 0xfbbf24, 34, 2.4, 2.6);
       renderRequested = true;
-      const timeout = setTimeout(() => {
-        timeouts.delete(timeout);
-        scene.remove(sp);
-        renderRequested = true;
-        sp.material.map?.dispose();
-        sp.material.dispose();
-      }, 900);
-      timeouts.add(timeout);
     };
 
     const onPoke = (e: Event) => {
@@ -1000,7 +1024,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
         const from = d.fromSeat === null ? undefined : homeBySeat.get(d.fromSeat);
         if (!home || !from || d.fromSeat === d.targetSeat) return;
         if (motion.matches) {
-          powSprite(home);
+          impactBurst(home);
           play(ATTACKS[d.kind]!.sound);
           return;
         }
@@ -1182,6 +1206,19 @@ function Table3DView({ table }: { table: TablePresentation }) {
       const betting = h.betting;
       const myId = st.auth.userId;
 
+      // small and big blind seats, derived exactly like the 2D table: heads-up
+      // the button IS the small blind, otherwise SB is next after the button.
+      const buttonSeat = h.buttonSeat;
+      let sbSeat: number | null = null;
+      let bbSeat: number | null = null;
+      if (buttonSeat !== null && h.seats.length >= 2) {
+        const seatOrder = [...h.seats.map((s) => s.seat)].sort((a, b) => a - b);
+        const after = (seat: number) =>
+          seatOrder[(seatOrder.indexOf(seat) + 1) % seatOrder.length]!;
+        sbSeat = h.seats.length === 2 ? buttonSeat : after(buttonSeat);
+        bbSeat = after(sbSeat);
+      }
+
       const order = r.players.filter((p) => p.seat !== null || p.connected);
       const oldOwners = new Map([...charBySeat].map(([key, char]) => [key, char.userData.userId]));
       const oldCharacters = new Map(
@@ -1259,9 +1296,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
           dynamic.add(chair);
         }
         if (p.seat === null) {
+          // Wanderers carry a bare nameplate: no "In the lounge" status text,
+          // nothing decorative printed over the room.
           const label = new THREE.Sprite(
             new THREE.SpriteMaterial({
-              map: labelTexture(p.displayName, t('In the lounge'), '#bed6d0'),
+              map: labelTexture(p.displayName, '', '#bed6d0'),
               transparent: true,
             }),
           );
@@ -1323,25 +1362,57 @@ function Table3DView({ table }: { table: TablePresentation }) {
         if (!betting || betting.toAct === null || h.result || h.abort) turnArrow.visible = false;
 
         const stackShown = engine && !h.result ? engine.stack : p.stack;
-        if (p.userId !== myId) {
-          const label = new THREE.Sprite(
-            new THREE.SpriteMaterial({
-              map: labelTexture(
-                p.userId === myId ? t('You') : p.displayName,
-                String(stackShown),
-                isToAct ? '#eccf88' : '#bed6d0',
-              ),
-              transparent: true,
-            }),
-          );
-          label.userData.hideOverhead = true;
-          label.userData.screenLabel = true;
-          label.userData.pokeSeat = key;
-          label.userData.followActor = key;
-          label.userData.pokeName = p.displayName;
-          label.scale.set(1.35, 0.51, 1);
-          label.position.set(px, 2.65, pz);
-          dynamic.add(label);
+        const isMe = p.userId === myId;
+        // HUD nameplate above every seat, yours included: the name on top and a
+        // gold stack pill under it, mirroring the stack line in the 2D seat pods.
+        const label = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: labelTexture(
+              isMe ? t('You') : p.displayName,
+              fmt(stackShown),
+              isToAct ? '#eccf88' : isMe ? '#a5b4fc' : '#bed6d0',
+            ),
+            transparent: true,
+          }),
+        );
+        label.userData.hideOverhead = true;
+        label.userData.screenLabel = true;
+        if (!isMe) label.userData.pokeSeat = key;
+        label.userData.followActor = key;
+        label.userData.pokeName = p.displayName;
+        label.scale.set(1.35, 0.51, 1);
+        label.position.set(px, 2.65, pz);
+        dynamic.add(label);
+
+        // Position discs (D / SB / BB), derived exactly like the 2D pods:
+        // they float just in front of each seat, angled toward the pot so the
+        // character's head never clips them, and stack downward when one seat
+        // carries two (heads-up: the button is also the small blind).
+        const isButton = inHand && buttonSeat === p.seat;
+        const isSmall = inHand && sbSeat === p.seat;
+        const isBig = inHand && bbSeat === p.seat;
+        if (isButton || isSmall || isBig) {
+          const inward = new THREE.Vector3(-px, 0, -pz).normalize().multiplyScalar(0.55);
+          const slots: { text: string; bg: string; fg: string; ring: string }[] = [];
+          if (isButton)
+            slots.push({ text: t('D'), bg: '#f8fafc', fg: '#0f172a', ring: 'rgba(15,23,42,0.35)' });
+          if (isSmall) slots.push({ text: t('SB'), bg: '#0ea5e9', fg: '#f8fafc', ring: '#7dd3fc' });
+          if (isBig) slots.push({ text: t('BB'), bg: '#f59e0b', fg: '#451a03', ring: '#fcd34d' });
+          slots.forEach((slot, i) => {
+            const lift = i === 0 ? 2.12 : 1.66;
+            const disc = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: discTexture(slot.text, slot.bg, slot.fg, slot.ring),
+                transparent: true,
+              }),
+            );
+            disc.userData.screenBadge = true;
+            disc.userData.followActor = key;
+            disc.userData.followOffset = new THREE.Vector3(inward.x, lift, inward.z);
+            disc.scale.set(0.42, 0.42, 1);
+            disc.position.set(px + inward.x, lift, pz + inward.z);
+            dynamic.add(disc);
+          });
         }
 
         // this street's chips slide toward the middle
@@ -1431,23 +1502,13 @@ function Table3DView({ table }: { table: TablePresentation }) {
         dynamic.add(pair);
       }
 
-      /* the pot as a pile */
+      /* the pot as a pile; the amount itself lives in the readout HUD, not on the table */
       const pot = betting ? betting.seats.reduce((sum, x) => sum + x.total, 0) : 0;
       if (pot > 0) {
         const pile = buildChips(pot, r.room.bb);
         pile.position.set(2.26, 1.03, 0);
         pile.scale.setScalar(0.6);
         dynamic.add(pile);
-        const potLabel = new THREE.Sprite(
-          new THREE.SpriteMaterial({
-            map: labelTexture(t('POT'), String(pot), '#e879f9'),
-            transparent: true,
-          }),
-        );
-        potLabel.userData.hideOverhead = true;
-        potLabel.scale.set(1.5, 0.56, 1);
-        potLabel.position.set(2.26, 1.85, 0);
-        dynamic.add(potLabel);
       }
       dynamic.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
@@ -1628,7 +1689,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           nowMs - anim.t0 >= CONTACT_MS
         ) {
           anim.fired = true;
-          powSprite(home);
+          impactBurst(home);
           play(ATTACKS[anim.kind]?.sound ?? 'thwack');
         }
       }
@@ -1673,9 +1734,21 @@ function Table3DView({ table }: { table: TablePresentation }) {
       dynamic.traverse((object) => {
         if (object.userData.followActor !== undefined) {
           const actor = charBySeat.get(object.userData.followActor);
-          if (actor) object.position.copy(actor.position).add(new THREE.Vector3(0, 2.65, 0));
+          if (actor)
+            object.position
+              .copy(actor.position)
+              .add(object.userData.followOffset ?? LABEL_LIFT);
         }
         if (object.userData.hideOverhead) object.visible = !overhead;
+        if (object.userData.screenBadge) {
+          const worldPerPixel =
+            (2 *
+              object.position.distanceTo(camera.position) *
+              Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) /
+            mount.clientHeight;
+          const size = Math.min(0.42, worldPerPixel * 44);
+          object.scale.set(size, size, 1);
+        }
         if (object.userData.screenLabel) {
           const worldPerPixel =
             (2 *

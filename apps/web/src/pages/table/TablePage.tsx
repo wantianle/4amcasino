@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AutoDealDialog } from '../../features/table/AutoDealDialog.tsx';
 import { pokerOverlayOpen } from '../../features/table/pokerHotkeys.ts';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   ArrowLeft,
   CaretDown,
@@ -20,7 +20,6 @@ import {
   PauseCircle,
   Play,
   Receipt,
-  ShareNetwork,
   Timer,
   Trophy,
   UserPlus,
@@ -30,12 +29,9 @@ import {
 import NumberFlow from '@number-flow/react';
 import confetti from 'canvas-confetti';
 import {
-  HAND_CATEGORY_NAMES,
   bestFive,
   describeScore,
   evaluate7,
-  handCategory,
-  commissionRateLabel,
 } from '@4am/shared';
 import {
   answerPeek,
@@ -65,8 +61,9 @@ import { RoundTable } from '../../widgets/table/RoundTable.tsx';
 import { FloatingCards } from '../../widgets/table/FloatingCards.tsx';
 import { ChipStack } from '../../widgets/table/ChipStack.tsx';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
-import { RitBoards, ShowdownCards } from '../../widgets/table/ShowdownCards.tsx';
 import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
+import { ResultFlash } from '../../widgets/table/ResultFlash.tsx';
+import { TableQuickControls } from '../../widgets/table/TableQuickControls.tsx';
 import { BrokeBuyInDialog } from '../../features/bank/BrokeBuyInDialog.tsx';
 import { InviteFriendsDialogBody } from '../../features/friends/FriendsPanel.tsx';
 import { LeaderboardTable, type LeaderboardRow } from '../leaderboard/LeaderboardPage.tsx';
@@ -228,7 +225,6 @@ export function TablePage({
   const desktopMenuRef = useRef<HTMLDivElement>(null);
   const desktopMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const now = useNow();
-  const reduceMotion = useReducedMotion();
   // lightning on every showdown reveal; keyed so back-to-back hands re-flash
   const [thunderKey, setThunderKey] = useState(0);
   useEffect(() => {
@@ -302,38 +298,6 @@ export function TablePage({
     };
   }, [menuOpen]);
 
-  // winner-reveal choreography: parent staggers, items spring in, cards drop in
-  const revealParent = {
-    hidden: {},
-    show: {
-      transition: {
-        staggerChildren: reduceMotion ? 0 : 0.09,
-        delayChildren: reduceMotion ? 0 : 0.12,
-      },
-    },
-  };
-  const revealItem = reduceMotion
-    ? { hidden: { opacity: 1 }, show: { opacity: 1 } }
-    : {
-        hidden: { opacity: 0, y: 12, scale: 0.94 },
-        show: {
-          opacity: 1,
-          y: 0,
-          scale: 1,
-          transition: { type: 'spring', stiffness: 380, damping: 24 } as const,
-        },
-      };
-  const revealCard = reduceMotion
-    ? revealItem
-    : {
-        hidden: { opacity: 0, y: -20, rotate: -8 },
-        show: {
-          opacity: 1,
-          y: 0,
-          rotate: 0,
-          transition: { type: 'spring', stiffness: 300, damping: 17 } as const,
-        },
-      };
 
   useEffect(() => {
     let alive = true;
@@ -376,6 +340,14 @@ export function TablePage({
   useEffect(() => {
     if (hand.result || hand.abort) setResultDismissed(false);
   }, [hand.result, hand.abort]);
+
+  // the flash is a glance, not a fixture: it steps aside on its own so the
+  // felt is uncluttered between hands; Esc or the X still clear it sooner
+  useEffect(() => {
+    if (!showResult) return;
+    const timer = setTimeout(() => setResultDismissed(true), 2400);
+    return () => clearTimeout(timer);
+  }, [showResult, hand.result, hand.abort]);
 
   useEffect(() => {
     if (!showResult || !room) return;
@@ -789,132 +761,47 @@ export function TablePage({
         }
       : null;
 
-  const resultBanner = showResult && (
-    <motion.div initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
-      <Panel className="relative">
-        <button
-          onClick={() => {
-            setResultDismissed(true);
-          }}
-          aria-label={t('Dismiss result')}
-          aria-keyshortcuts="Escape"
-          title={t('Dismiss result (Esc)')}
-          className="absolute right-3 top-3 rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-        >
-          <X size={16} />
-        </button>
-        {hand.abort ? (
-          <div className="text-sm">
-            <span className="font-semibold text-rose-600">{t('Hand aborted:')}</span>
-            {tr(hand.abort.reason)}
-            {hand.abort.blamedSeat !== null &&
-              t('. {name} did not come back in time; all bets were returned.', {
-                name:
-                  hand.seats.find((s) => s.seat === hand.abort!.blamedSeat)?.username ??
-                  t('Seat {n}', { n: hand.abort.blamedSeat + 1 }),
-              })}
-          </div>
-        ) : (
-          <motion.div
-            key={hand.handId ?? 'result'}
-            variants={revealParent}
-            initial="hidden"
-            animate="show"
-            className="space-y-2"
-          >
-            {reasoning && (
-              <motion.p
-                variants={revealItem}
-                className="font-display text-xl font-bold leading-snug sm:text-2xl"
-              >
-                {reasoning.headline}
-              </motion.p>
-            )}
-            {reasoning?.winningFive && (
-              <motion.div
-                variants={revealItem}
-                className="shine-once flex flex-col gap-1.5 rounded-lg py-1"
-              >
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-500">
-                  {t('The winning five')}
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {reasoning.winningFive.map((c) => (
-                    <motion.span key={c} variants={revealCard} className="shrink-0">
-                      <PlayingCard card={c} size="md" />
-                    </motion.span>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-            {hand.showdown?.runTwice && (
-              <motion.div variants={revealItem}>
-                <RitBoards rt={hand.showdown.runTwice} nameOf={seatName} light={false} />
-              </motion.div>
-            )}
-            {!hand.showdown?.runTwice && hand.board.length > 0 && (
-              <motion.div variants={revealItem} className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                  {t('The table')}
-                </span>
-                {hand.board.map((c) => (
-                  <PlayingCard key={c} card={c} size="sm" deal className="shrink-0" />
-                ))}
-              </motion.div>
-            )}
-            {hand.showdown && (
-              <motion.div variants={revealItem}>
-                <ShowdownCards
-                  reveals={hand.showdown.reveals}
-                  shown={hand.shown}
-                  deltas={hand.result?.deltas ?? []}
-                  nameOf={seatName}
-                  light={false}
-                />
-              </motion.div>
-            )}
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-              <motion.span variants={revealItem} className="font-display font-semibold">
-                {hand.showdown ? t('Showdown') : t('Everyone folded')}
-              </motion.span>
-              {(hand.result?.commission ?? 0) > 0 && (
-                <motion.span variants={revealItem} className="text-xs text-slate-500">
-                  {t('{rate} table commission · {amount} to the house', {
-                    rate: commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps),
-                    amount: fmt(hand.result!.commission!),
-                  })}
-                </motion.span>
-              )}
-              {!hand.showdown &&
-                hand.result?.deltas
-                  .filter((d) => d.delta !== 0)
-                  .map((d) => (
-                    <motion.span
-                      key={d.seat}
-                      variants={revealItem}
-                      className={cn(
-                        'font-display text-sm font-bold',
-                        d.delta > 0 ? 'text-emerald-600' : 'text-rose-600',
-                      )}
-                    >
-                      {seatViews.find((s) => s.seat === d.seat)?.displayName}{' '}
-                      {d.delta > 0 ? '+' : ''}
-                      {fmt(d.delta)}
-                    </motion.span>
-                  ))}
-              {shareData && (
-                <motion.span variants={revealItem}>
-                  <Button variant="ghost" onClick={() => setShareOpen(true)}>
-                    <ShareNetwork size={16} /> {t('Share')}
-                  </Button>
-                </motion.span>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </Panel>
-    </motion.div>
-  );
+  // The recap panel is gone: a two-second flash of who took what, then the
+  // table stays the table. The full story lives in the last-hand strip and
+  // in hand history (出牌记录), where every hand now expands into its detail.
+  const renderFlash = (dark: boolean) => {
+    if (!showResult) return null;
+    const dismiss = () => setResultDismissed(true);
+    if (hand.abort) {
+      return (
+        <ResultFlash
+          dark={dark}
+          aborted
+          headline={t('Hand aborted')}
+          detail={tr(hand.abort.reason)}
+          onDismiss={dismiss}
+        />
+      );
+    }
+    const winners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
+    const top = hand.showdown
+      ? [...hand.showdown.reveals].sort((a, b) => b.score - a.score)[0]
+      : undefined;
+    const label = hand.showdown?.runTwice
+      ? t('ran it twice')
+      : top
+        ? tScore(top.score)
+        : t('everyone folded');
+    const commission = hand.result?.commission ?? 0;
+    return (
+      <ResultFlash
+        dark={dark}
+        headline={
+          winners.length
+            ? winners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
+            : t('chips stayed put')
+        }
+        detail={commission > 0 ? `${label} · ${t('Rake')} ${fmt(commission)}` : label}
+        onDismiss={dismiss}
+        onShare={shareData ? () => setShareOpen(true) : undefined}
+      />
+    );
+  };
 
   const spectatorPanel = (
     <Panel className="text-center">
@@ -967,123 +854,6 @@ export function TablePage({
     </Panel>
   );
 
-  const mobileResult = showResult && (
-    <div className="relative rounded-2xl bg-white/10 p-3.5 pr-9 text-sm text-white">
-      <button
-        onClick={() => {
-          setResultDismissed(true);
-        }}
-        aria-label={t('Dismiss result')}
-        aria-keyshortcuts="Escape"
-        title={t('Dismiss result (Esc)')}
-        className="absolute right-2 top-2 rounded-md p-1 text-white/50 active:bg-white/10"
-      >
-        <X size={14} />
-      </button>
-      {hand.abort ? (
-        <span>
-          <span className="font-semibold text-rose-300">{t('Hand aborted:')}</span>
-          {tr(hand.abort.reason)}
-          {hand.abort.blamedSeat !== null &&
-            t('. Seat {n}; stacks rolled back.', { n: hand.abort.blamedSeat + 1 })}
-        </span>
-      ) : (
-        <motion.div
-          key={hand.handId ?? 'result'}
-          variants={revealParent}
-          initial="hidden"
-          animate="show"
-          className="space-y-2"
-        >
-          {reasoning && (
-            <motion.p variants={revealItem} className="font-medium">
-              {reasoning.headline}
-            </motion.p>
-          )}
-          {reasoning?.winningFive && (
-            <motion.div
-              variants={revealItem}
-              className="shine-once flex items-center gap-2 rounded-lg py-0.5"
-            >
-              <span className="text-[0.6rem] uppercase tracking-wide text-white/60">
-                {t('Winning five')}
-              </span>
-              <div className="flex gap-1">
-                {reasoning.winningFive.map((c) => (
-                  <motion.span key={c} variants={revealCard}>
-                    <PlayingCard card={c} size="xs" />
-                  </motion.span>
-                ))}
-              </div>
-            </motion.div>
-          )}
-          {hand.showdown?.runTwice && (
-            <motion.div variants={revealItem}>
-              <RitBoards rt={hand.showdown.runTwice} nameOf={seatName} light />
-            </motion.div>
-          )}
-          {!hand.showdown?.runTwice && hand.board.length > 0 && (
-            <motion.div variants={revealItem} className="flex items-center gap-1">
-              <span className="text-[0.6rem] uppercase tracking-wide text-white/60">
-                {t('Table')}
-              </span>
-              {hand.board.map((c) => (
-                <PlayingCard key={c} card={c} size="xs" deal />
-              ))}
-            </motion.div>
-          )}
-          {hand.showdown && (
-            <motion.div variants={revealItem}>
-              <ShowdownCards
-                reveals={hand.showdown.reveals}
-                shown={hand.shown}
-                deltas={hand.result?.deltas ?? []}
-                nameOf={seatName}
-                light
-              />
-            </motion.div>
-          )}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            <span className="font-display font-semibold">
-              {hand.showdown ? t('Showdown') : t('Everyone folded')}
-            </span>
-            {(hand.result?.commission ?? 0) > 0 && (
-              <span className="text-[0.65rem] text-white/50">
-                {t('{rate} commission · {amount} to the house', {
-                  rate: commissionRateLabel(hand.result?.commissionBps ?? room?.room.commissionBps),
-                  amount: fmt(hand.result!.commission!),
-                })}
-              </span>
-            )}
-            {!hand.showdown &&
-              hand.result?.deltas
-                .filter((d) => d.delta !== 0)
-                .map((d) => (
-                  <span
-                    key={d.seat}
-                    className={cn(
-                      'font-display text-xs font-bold',
-                      d.delta > 0 ? 'text-emerald-300' : 'text-rose-300',
-                    )}
-                  >
-                    {seatViews.find((x) => x.seat === d.seat)?.displayName} {d.delta > 0 ? '+' : ''}
-                    {fmt(d.delta)}
-                  </span>
-                ))}
-            {shareData && (
-              <button
-                onClick={() => setShareOpen(true)}
-                className="flex items-center gap-1 rounded-full border border-white/25 px-2.5 py-1 text-xs font-semibold text-white/80"
-              >
-                <ShareNetwork size={13} /> {t('Share')}
-              </button>
-            )}
-          </div>
-        </motion.div>
-      )}
-    </div>
-  );
-
   const mobileSeatPicker = (
     <div className="rounded-2xl bg-white/5 p-3.5">
       <div className="mb-2.5 text-sm text-white/70">
@@ -1112,6 +882,16 @@ export function TablePage({
     table: t('Table'),
     preferences: t('Preferences'),
   };
+  // The switches you touch every hand now live on the top bar itself
+  // (TableQuickControls), so the 2D ⋮ menu keeps only the secondary items.
+  // The 3D lounge chrome - which has no such row - still gets the full set.
+  const inlineSurfaced: TableUtilityAction[] = ['auto-deal', 'sit-out', 'timer', 'preferences'];
+  const desktopMenuGroups = utilityGroups
+    .map((group) => ({
+      ...group,
+      actions: group.actions.filter((action) => !inlineSurfaced.includes(action)),
+    }))
+    .filter((group) => group.actions.length > 0);
   const utilityItemClass =
     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white';
 
@@ -1541,7 +1321,7 @@ export function TablePage({
         </Dialog>
         {showResult && (
           <div className="lounge-result-overlay" role="region" aria-label={t('Hand result')}>
-            <div className="lounge-result-content">{resultBanner}</div>
+            {renderFlash(true)}
           </div>
         )}
         {bigCards && hand.myCards.length > 0 && !notInHand && (
@@ -1643,21 +1423,19 @@ export function TablePage({
           dimBoard={notInHand}
         />
 
+        {/* the result is a passing flash over the felt, never a second page */}
+        {showResult && (
+          <div className="pointer-events-none fixed inset-x-0 top-[4.5rem] z-40 flex justify-center px-4">
+            {renderFlash(true)}
+          </div>
+        )}
+
         <div className="px-4 pb-2">
           <LastHandStrip roomId={roomId!} light />
         </div>
 
-        {(showResult || !me || hasPeekContent) && (
+        {(!me || hasPeekContent) && (
           <div className="space-y-3 px-4 pb-6">
-            {showResult && (
-              <section
-                aria-label={t('Hand result')}
-                tabIndex={0}
-                className="max-h-[60dvh] overflow-y-auto overscroll-contain rounded-2xl"
-              >
-                {mobileResult}
-              </section>
-            )}
             {mobilePeekPanel}
             {!me && (amSpectator ? spectatorPanel : mobileSeatPicker)}
           </div>
@@ -1858,6 +1636,27 @@ export function TablePage({
 
           <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <BankControls roomId={roomId!} mode="hub" />
+            <TableQuickControls
+              isHost={!!isHost}
+              autoDeal={room.room.autoDeal !== false}
+              autoDealPaused={!!room.autoDealPaused}
+              hasSeat={mySeat !== null}
+              sittingOut={meSittingOut}
+              sitOutDisabled={!wsConnected}
+              actionSecs={room.room.actionSecs ?? 45}
+              timerDisabled={handLive}
+              amSpectator={amSpectator}
+              onChangeAutoDeal={(value) =>
+                void api.setAutoDeal(roomId!, value).catch(reportError)
+              }
+              onOpenAutoDealDialog={() => setAutoDealOpen(true)}
+              onToggleSitOut={() => {
+                if (wsConnected) setSitOut(!meSittingOut);
+              }}
+              onChangeActionSecs={(seconds) =>
+                void api.roomSettings(roomId!, seconds).catch(reportError)
+              }
+            />
             <DesktopIconButton
               label={
                 voiceState.joined
@@ -1939,7 +1738,7 @@ export function TablePage({
                     aria-label={t('Table controls')}
                     className="absolute right-0 top-12 z-30 w-72 rounded-2xl bg-white p-2 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
                   >
-                    {utilityGroups.map((group, index) => (
+                    {desktopMenuGroups.map((group, index) => (
                       <div
                         key={group.id}
                         role="group"
@@ -1976,6 +1775,15 @@ export function TablePage({
             >
               {thunderKey > 0 && (
                 <div key={thunderKey} className="thunder-flash" aria-hidden="true" />
+              )}
+              {showResult && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-4"
+                  role="region"
+                  aria-label={t('Hand result')}
+                >
+                  {renderFlash(false)}
+                </div>
               )}
               {floats.map((reaction) => (
                 <span
@@ -2036,9 +1844,8 @@ export function TablePage({
                 {pot > 0 && (
                   <ChipStack amount={pot} bb={room.room.bb} size="lg" className="justify-center" />
                 )}
-                {/* Results sit above the table so they clear the positioned seat pods. */}
-                {showResult ? null : (
-                  <>
+                {/* the felt keeps its layout while a result flashes over it */}
+                <>
                     {runTwice}
                     <div className="flex flex-col items-center gap-2">
                       <div className="flex items-center justify-center gap-2.5 lg:gap-3">
@@ -2127,16 +1934,12 @@ export function TablePage({
                       </button>
                     )}
                   </>
-                )}
               </RoundTable>
             </section>
 
             {/* the control strip sits under the table so the oval keeps its space */}
             {amSpectator && spectatorPanel}
-            <fieldset
-              disabled={!wsConnected}
-              className={cn('min-w-0', showResult && 'sticky bottom-4 top-4 z-20')}
-            >
+            <fieldset disabled={!wsConnected} className="min-w-0">
               <ActionBar
                 mySeat={mySeat}
                 isHost={!!isHost}
@@ -2144,16 +1947,6 @@ export function TablePage({
                 hideIdleStart={!showResult}
               />
             </fieldset>
-
-            {showResult && (
-              <section
-                aria-label={t('Hand result')}
-                tabIndex={0}
-                className="max-h-[60dvh] overflow-y-auto overscroll-contain rounded-2xl"
-              >
-                {resultBanner}
-              </section>
-            )}
 
             <LastHandStrip roomId={roomId!} />
 

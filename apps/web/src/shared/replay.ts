@@ -5,9 +5,11 @@ import {
   type BettingState,
   type CardId,
   type PlayerAction,
+  type Street,
 } from '@4am/shared';
 import type { TranscriptEntry } from '@4am/mental-poker';
 import { t, tr } from './i18n/index.ts';
+import { fmt } from './lib/cn.ts';
 
 export interface ReplaySeatInfo {
   seat: number;
@@ -199,4 +201,188 @@ export function buildReplay(entries: TranscriptEntry[]): Replay | null {
     }
   }
   return { seats: sp.seats, buttonSeat: sp.buttonSeat, sb: sp.sb, bb: sp.bb, steps, tv };
+}
+
+// ── Hand summaries for the hand-history page ────────────────────────────────
+// The same signed transcript a replay steps through, folded into a static
+// per-street recap: who did what with how much, what the board ran, which
+// hole cards went public, the final pot and the rake. No betting engine
+// needed - the transcript's `street` markers tell us where each action lands.
+
+export interface HandSummaryAction {
+  seat: number;
+  action: PlayerAction;
+  /** Set when the fold was the timer's, not the player's. */
+  timedOut: boolean;
+}
+
+export interface HandSummaryStreet {
+  street: Street;
+  actions: HandSummaryAction[];
+}
+
+export interface HandSummary {
+  seats: { seat: number; userId: number; stack: number }[];
+  buttonSeat: number;
+  sb: number;
+  bb: number;
+  /** One bucket per street that actually saw action. */
+  streets: HandSummaryStreet[];
+  board: CardId[];
+  board2: CardId[];
+  /** Hole cards that became public: showdown reveals, voluntary shows and
+   *  TV-mode key releases. Anything not in here stayed secret. */
+  revealed: Record<number, CardId[]>;
+  awards: { seat: number; amount: number }[];
+  deltas: { seat: number; delta: number }[];
+  /** Chips won + rake: everything the betting contributed. */
+  pot: number;
+  commission: number;
+  ranItTwice: boolean;
+  aborted: boolean;
+  /** Persisted server prose, raw - translate at the display boundary with tr(). */
+  abortReason: string | null;
+}
+
+/** English source for one summary action line, keyed by a player's name rather
+ *  than the seat number - the history page reads like a story, not a log. */
+const SUMMARY_ACTION_KEYS: Record<PlayerAction['type'], { withAmount: string; plain: string }> = {
+  fold: { withAmount: '{name} folds', plain: '{name} folds' },
+  check: { withAmount: '{name} checks', plain: '{name} checks' },
+  call: { withAmount: '{name} calls {amount}', plain: '{name} calls' },
+  bet: { withAmount: '{name} bets {amount}', plain: '{name} bets' },
+  raise: { withAmount: '{name} raises to {amount}', plain: '{name} raises' },
+};
+
+/** One player action as a readable line in the current UI language. */
+export function summaryActionLabel(name: string, entry: HandSummaryAction): string {
+  if (entry.timedOut) return t('{name} timed out', { name });
+  const keys = SUMMARY_ACTION_KEYS[entry.action.type];
+  return entry.action.amount !== undefined
+    ? t(keys.withAmount, { name, amount: fmt(entry.action.amount) })
+    : t(keys.plain, { name });
+}
+
+/** Fold a stored transcript into a static per-hand recap, or null when the
+ *  hand never started. Amounts are the street totals the players declared,
+ *  exactly as the replay engine sees them. */
+export function summarizeHand(entries: TranscriptEntry[]): HandSummary | null {
+  const start = entries.find((e) => e.type === 'hand_start');
+  if (!start) return null;
+  const sp = start.payload as {
+    seats: { seat: number; userId: number; stack: number }[];
+    buttonSeat: number;
+    sb: number;
+    bb: number;
+  };
+
+  const streets: HandSummaryStreet[] = [];
+  const board: CardId[] = [];
+  const board2: CardId[] = [];
+  const revealed: Record<number, CardId[]> = {};
+  let awards: HandSummary['awards'] = [];
+  let deltas: HandSummary['deltas'] = [];
+  let commission = 0;
+  let ranItTwice = false;
+  let aborted = false;
+  let abortReason: string | null = null;
+
+  // actions belong to the street most recently opened by betting_start/street;
+  // an action before either marker (a transcript that skips them) still lands
+  // in preflop rather than vanishing
+  const currentStreet = (): HandSummaryStreet => {
+    let bucket = streets[streets.length - 1];
+    if (!bucket) {
+      bucket = { street: 'preflop', actions: [] };
+      streets.push(bucket);
+    }
+    return bucket;
+  };
+
+  for (const e of entries) {
+    const p = e.payload as Record<string, unknown>;
+    switch (e.type) {
+      case 'betting_start': {
+        // open the preflop bucket even if the hand never reaches an action
+        if (!streets.some((s) => s.street === 'preflop')) streets.push({ street: 'preflop', actions: [] });
+        break;
+      }
+      case 'street': {
+        // the server marks a street when betting RESUMES on it, so payload.street
+        // is the bucket the following actions belong to
+        const street = p.street as Street;
+        if (!streets.some((s) => s.street === street)) streets.push({ street, actions: [] });
+        break;
+      }
+      case 'action': {
+        currentStreet().actions.push({
+          seat: p.seat as number,
+          action: p.action as PlayerAction,
+          timedOut: false,
+        });
+        break;
+      }
+      case 'timeout_fold': {
+        currentStreet().actions.push({
+          seat: p.seat as number,
+          action: { type: 'fold' },
+          timedOut: true,
+        });
+        break;
+      }
+      case 'board_open': {
+        if (p.run === 2) board2.push(p.card as CardId);
+        else board.push(p.card as CardId);
+        break;
+      }
+      case 'rit_result': {
+        ranItTwice = Boolean(p.runTwice);
+        break;
+      }
+      case 'hole_cards': {
+        const h = p as { seat: number; cards: CardId[] };
+        revealed[h.seat] = h.cards;
+        break;
+      }
+      case 'settlement': {
+        commission = (p.commission as number) ?? 0;
+        awards = (p.awards as { seat: number; amount: number }[]) ?? [];
+        deltas = (p.deltas as { seat: number; delta: number }[]) ?? [];
+        for (const r of (p.reveals as { seat: number; cards: CardId[] }[]) ?? []) {
+          revealed[r.seat] = r.cards;
+        }
+        const sb = p.board as CardId[] | undefined;
+        const sb2 = p.board2 as CardId[] | undefined;
+        if (sb) board.push(...sb.filter((c) => !board.includes(c)));
+        if (sb2) board2.push(...sb2.filter((c) => !board2.includes(c)));
+        break;
+      }
+      case 'hand_abort': {
+        aborted = true;
+        abortReason = String(p.reason ?? '');
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  const pot = awards.reduce((sum, a) => sum + a.amount, 0) + commission;
+  return {
+    seats: sp.seats,
+    buttonSeat: sp.buttonSeat,
+    sb: sp.sb,
+    bb: sp.bb,
+    streets,
+    board,
+    board2,
+    revealed,
+    awards,
+    deltas,
+    pot,
+    commission,
+    ranItTwice,
+    aborted,
+    abortReason,
+  };
 }

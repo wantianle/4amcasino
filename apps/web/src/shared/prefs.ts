@@ -1,6 +1,6 @@
 import { parsePokerHotkeys, type PokerHotkeys } from '@4am/shared';
 import { api } from './api.ts';
-import { useStore } from './store.ts';
+import { isCardBack, useStore } from './store.ts';
 
 export function applyAppearance(): void {
   // Appearance is a device preference; a profile refresh must not reset it.
@@ -35,7 +35,10 @@ export async function loadPrefs({
       bio: p.bio,
       hasAvatar: p.hasAvatar,
       avatarVersion: p.avatarVersion,
-      cardBack: p.cardBack,
+      // A missing or foreign server value must never clobber the live pick with
+      // `undefined` — that class template (`card-back-${value}`) would render a
+      // dead picker and invisible backs until the next rehydrate.
+      cardBack: isCardBack(p.cardBack) ? p.cardBack : useStore.getState().prefs.cardBack,
       fourColor: p.fourColor,
       quickPhrases: p.quickPhrases ?? [],
       privateMode: !!p.privateMode,
