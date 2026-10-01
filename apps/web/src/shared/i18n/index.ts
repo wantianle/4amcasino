@@ -1,4 +1,5 @@
 import dict from './dict/index.ts';
+import { getLocale } from './locale.ts';
 
 type Vars = Record<string, string | number>;
 
@@ -129,21 +130,37 @@ function translate(source: string, vars: Vars | undefined, normalize: boolean): 
 /**
  * Translate an English source string to Chinese, interpolating `{name}` tokens.
  * Falls back to the source unchanged when no translation matches.
+ * In `en` mode the source is returned as-is (English = original copy).
  */
 export function t(source: string, vars?: Vars): string {
+  if (getLocale() === 'en') return source;
   return translate(source, vars, false);
 }
 
 /**
  * Translate server-provided prose. Same lookup as `t()` but with light
  * normalization: the input is trimmed and the first character is matched
- * case-insensitively.
+ * case-insensitively. In `en` mode the source is returned as-is.
  */
 export function tr(source: string, vars?: Vars): string {
+  if (getLocale() === 'en') return source;
   return translate(source, vars, true);
 }
 
-/** Whether a translation exists for the given source string. */
+/**
+ * Raw dictionary lookup WITHOUT locale gating: exact key first, then the
+ * trimmed / first-char-case-insensitive variants that `tr()` uses. Returns the
+ * stored value (which may still contain `{placeholder}` tokens) or null.
+ * For building rich-text helpers over dictionary values; UI copy should go
+ * through `t()` / `tr()`.
+ */
+export function lookup(source: string): string | null {
+  if (typeof source !== 'string' || source.length === 0) return null;
+  const trimmed = source.trim();
+  return exact.get(source) ?? exact.get(trimmed) ?? normalized.get(normalizeKey(trimmed)) ?? null;
+}
+
+/** Whether a translation exists for the given source string. Locale-independent. */
 export function hasTranslation(source: string): boolean {
   if (typeof source !== 'string' || source.length === 0) return false;
   const trimmed = source.trim();

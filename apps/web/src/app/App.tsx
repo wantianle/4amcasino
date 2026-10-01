@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { Fragment, lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { useStore } from '../shared/store.ts';
 import { applyAppearance, loadPrefs } from '../shared/prefs.ts';
 import { peekPendingJoin } from '../shared/pendingJoin.ts';
@@ -7,6 +7,7 @@ import { api } from '../shared/api.ts';
 import { authDestination } from '../shared/authDestination.ts';
 import { adminDestination, isAdminSite } from '../shared/adminSite.ts';
 import { t } from '../shared/i18n/index.ts';
+import { useLocaleStore } from '../shared/i18n/locale.ts';
 import { LandingPage } from '../pages/landing/LandingPage.tsx';
 
 const LoginPage = lazy(() =>
@@ -118,9 +119,13 @@ export function App() {
   const token = useStore((s) => s.auth.token);
   const isPlatform = useStore((s) => s.auth.isPlatform);
   const setAuth = useStore((s) => s.setAuth);
+  const locale = useLocaleStore((s) => s.locale);
   useEffect(() => {
     applyAppearance();
   }, []);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
   useEffect(() => {
     if (!token) return;
     void loadPrefs();
@@ -158,187 +163,192 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <Suspense fallback={<RouteFallback />}>
-        {isAdminSite() ? (
-          <Routes>
-            <Route
-              path="/login"
-              element={
-                <RedirectIfAuthed>
-                  <LoginPage />
-                </RedirectIfAuthed>
-              }
-            />
-            <Route
-              path="*"
-              element={
-                <RequireAuth>
-                  <AdminPage />
-                </RequireAuth>
-              }
-            />
-          </Routes>
-        ) : (
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route
-              path="/watch/:token"
-              element={
-                <RequireAuth>
-                  <WatchPage />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/login"
-              element={
-                <RedirectIfAuthed>
-                  <LoginPage />
-                </RedirectIfAuthed>
-              }
-            />
-            <Route
-              path="/lobby"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <LobbyPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/room/:id"
-              element={
-                <RequireAuth>
-                  {/* the rail is here too, but every link opens a new tab: leaving
+      {/* Keying the routed tree by locale remounts it on a language switch, so
+        every t()/fmt()/datetime() call re-evaluates even in memoized or
+        stateful pages. Behavior is otherwise unchanged. */}
+      <Fragment key={locale}>
+        <Suspense fallback={<RouteFallback />}>
+          {isAdminSite() ? (
+            <Routes>
+              <Route
+                path="/login"
+                element={
+                  <RedirectIfAuthed>
+                    <LoginPage />
+                  </RedirectIfAuthed>
+                }
+              />
+              <Route
+                path="*"
+                element={
+                  <RequireAuth>
+                    <AdminPage />
+                  </RequireAuth>
+                }
+              />
+            </Routes>
+          ) : (
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route
+                path="/watch/:token"
+                element={
+                  <RequireAuth>
+                    <WatchPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/login"
+                element={
+                  <RedirectIfAuthed>
+                    <LoginPage />
+                  </RedirectIfAuthed>
+                }
+              />
+              <Route
+                path="/lobby"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <LobbyPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/room/:id"
+                element={
+                  <RequireAuth>
+                    {/* the rail is here too, but every link opens a new tab: leaving
                     the page mid-hand would fold you by timeout */}
-                  <AppShell newTab>
-                    <TablePage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/room/:id/3d"
-              element={
-                <RequireAuth>
-                  <Table3DPage />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/room/:id/ledger"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <LedgerPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/room/:id/hands"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <HandsPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/room/:id/replay/:handId"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <ReplayPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <SettingsPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/tournaments"
-              element={
-                <TournamentShell>
-                  <TournamentsPage />
-                </TournamentShell>
-              }
-            />
-            <Route
-              path="/tournaments/:id"
-              element={
-                <TournamentShell>
-                  <TournamentsPage />
-                </TournamentShell>
-              }
-            />
-            <Route path="/tournaments/:id/watch" element={<TournamentWatchPage />} />
-            <Route
-              path="/agents"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <AgentsPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/settle"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <SettlePage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/leaderboard"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <LeaderboardPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/players/:id"
-              element={
-                <RequireAuth>
-                  <AppShell>
-                    <PlayerPage />
-                  </AppShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/*"
-              element={
-                <RequireAuth>
-                  <AdminPage />
-                </RequireAuth>
-              }
-            />
-            <Route path="/fair" element={<FairPage />} />
-            {/* share link: works logged out, joins the table on the way back in */}
-            <Route path="/j/:code" element={<JoinPage />} />
-            <Route path="*" element={<Navigate to="/lobby" replace />} />
-          </Routes>
-        )}
-      </Suspense>
+                    <AppShell newTab>
+                      <TablePage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/room/:id/3d"
+                element={
+                  <RequireAuth>
+                    <Table3DPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/room/:id/ledger"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <LedgerPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/room/:id/hands"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <HandsPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/room/:id/replay/:handId"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <ReplayPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <SettingsPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/tournaments"
+                element={
+                  <TournamentShell>
+                    <TournamentsPage />
+                  </TournamentShell>
+                }
+              />
+              <Route
+                path="/tournaments/:id"
+                element={
+                  <TournamentShell>
+                    <TournamentsPage />
+                  </TournamentShell>
+                }
+              />
+              <Route path="/tournaments/:id/watch" element={<TournamentWatchPage />} />
+              <Route
+                path="/agents"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <AgentsPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/settle"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <SettlePage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/leaderboard"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <LeaderboardPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/players/:id"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <PlayerPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/admin/*"
+                element={
+                  <RequireAuth>
+                    <AdminPage />
+                  </RequireAuth>
+                }
+              />
+              <Route path="/fair" element={<FairPage />} />
+              {/* share link: works logged out, joins the table on the way back in */}
+              <Route path="/j/:code" element={<JoinPage />} />
+              <Route path="*" element={<Navigate to="/lobby" replace />} />
+            </Routes>
+          )}
+        </Suspense>
+      </Fragment>
     </BrowserRouter>
   );
 }

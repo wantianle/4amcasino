@@ -29,6 +29,12 @@ const settings: Record<string, string> = {
     '退出会清空这个浏览器里的密钥，用同一个密码重新登录就能找回。',
   'Sign out': '退出登录',
 
+  // Language control (Appearance card). Option labels are endonyms and never
+  // go through the dictionary: 中文 stays 中文, English stays English.
+  Language: '界面语言',
+  'Choose the language of menus and messages. It is saved on this device.':
+    '菜单和提示用什么语言，只记在这台设备上。',
+
   // Merge accounts form (§5a)
   'Moves everything the first account owns to the second, then retires the first. Use this when the same person ended up with two accounts. A platform admin reviews every request before anything happens.':
     '把第一个账号的东西全部转给第二个，然后注销第一个。同一个人不小心有了两个账号时用它。所有申请都要平台管理员过目才会生效。',

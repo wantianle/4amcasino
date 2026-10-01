@@ -20,6 +20,7 @@ import { KeyboardShortcuts } from '../../features/settings/KeyboardShortcuts.tsx
 import { SettingsCard } from '../../features/settings/SettingsCard.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { t } from '../../shared/i18n/index.ts';
+import { LOCALES, useLocaleStore } from '../../shared/i18n/locale.ts';
 
 /** Profile and preferences as a real page: linkable, refreshable, back-button
  *  friendly - and laid out as titled sections with a rail instead of one long
@@ -119,6 +120,48 @@ function MergeAccountsForm() {
         {busy ? <Spinner label={t('Sending…')} /> : t('Send merge request')}
       </Button>
     </form>
+  );
+}
+
+/** UI language switcher. Device-level (localStorage via useLocaleStore), not
+ *  an account pref - mirrors the theme control above it. App.tsx remounts the
+ *  routed tree on change so every t() re-evaluates. */
+function LanguagePicker() {
+  const locale = useLocaleStore((s) => s.locale);
+  const setLocale = useLocaleStore((s) => s.setLocale);
+
+  return (
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border-button-default pt-5 dark:border-slate-700/70">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('Language')}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+          {t('Choose the language of menus and messages. It is saved on this device.')}
+        </p>
+      </div>
+      <div
+        role="radiogroup"
+        aria-label={t('Language')}
+        className="inline-flex shrink-0 rounded-lg border border-border-button-default bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800"
+      >
+        {LOCALES.map((l) => (
+          <button
+            key={l.value}
+            type="button"
+            role="radio"
+            aria-checked={locale === l.value}
+            onClick={() => setLocale(l.value)}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-sm transition-colors',
+              locale === l.value
+                ? 'bg-white font-semibold text-indigo-700 shadow-sm dark:bg-indigo-950/60 dark:text-indigo-300'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200',
+            )}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -239,6 +282,7 @@ export function SettingsPage() {
             desc={t('Choose light or dark. Your preference is saved on this device.')}
           >
             <AppearanceToggle />
+            <LanguagePicker />
           </SettingsCard>
 
           <SettingsCard
