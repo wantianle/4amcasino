@@ -1,4 +1,5 @@
 import type { RoomStatePlayer } from '@4am/shared';
+import { t } from './i18n/index.ts';
 import { useStore } from './store.ts';
 import { wsClient } from './ws.ts';
 
@@ -36,7 +37,7 @@ class VoiceManager {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      useStore.getState().pushError('Microphone blocked. Voice chat stays off.');
+      useStore.getState().pushError(t('Microphone blocked. Voice chat stays off.'));
       return false;
     }
     useStore.getState().patchVoice({ joined: true, muted: false });

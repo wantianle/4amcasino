@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.ts';
+import { t } from './i18n/index.ts';
 
 export function useCommissionSettings(enabled = true) {
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof api.platformSettings>> | null>(
@@ -11,7 +12,7 @@ export function useCommissionSettings(enabled = true) {
       setSettings(await api.platformSettings());
       setError('');
     } catch {
-      setError('Could not load the current house cut. Try again.');
+      setError(t('Could not load the current house cut. Try again.'));
     }
   }, []);
   useEffect(() => {

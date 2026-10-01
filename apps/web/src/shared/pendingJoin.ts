@@ -7,6 +7,8 @@
  *  route param so a reload, a tab restore, or a bounce through /login?expired=1
  *  cannot lose it - and so it never outlives the tab. */
 
+import { t } from './i18n/index.ts';
+
 const KEY = '4am-pending-join';
 
 export function setPendingJoin(code: string): void {
@@ -43,5 +45,9 @@ export function shareLinkFor(joinCode: string): string {
 
 /** Ready-made message for WhatsApp / iMessage / wherever the group lives. */
 export function shareMessageFor(roomName: string, joinCode: string): string {
-  return `Join my poker table "${roomName}" on 4AM Casino.\nCode: ${joinCode}\n${shareLinkFor(joinCode)}`;
+  return t('Join my poker table "{roomName}" on 4AM Casino.\nCode: {joinCode}\n{link}', {
+    roomName,
+    joinCode,
+    link: shareLinkFor(joinCode),
+  });
 }

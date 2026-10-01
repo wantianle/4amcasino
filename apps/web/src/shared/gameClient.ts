@@ -463,9 +463,9 @@ function handle(msg: ServerMsg): void {
         `Seat ${msg.seat + 1}`;
       play('win');
       store.pushChat({
-        from: 'House rule',
+        from: t('House rule'),
         userId: 0,
-        text: `7-2 offsuit! ${name} collects ${msg.amount} in bounties.`,
+        text: t('7-2 offsuit! {name} collects {amount} in bounties.', { name, amount: msg.amount }),
         kind: 'phrase',
         ts: Date.now(),
       });
