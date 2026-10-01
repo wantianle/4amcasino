@@ -1,4 +1,6 @@
 import { RANKS, rankOf, suitOf, type CardId } from '@4am/shared';
+import { t } from '../../shared/i18n/index.ts';
+import { fmt } from '../../shared/lib/cn.ts';
 
 /** Everything the shareable result image needs; all of it is public info. */
 export interface ShareRow {
@@ -19,6 +21,54 @@ export interface ShareData {
 const SUIT_GLYPHS = ['♣', '♦', '♥', '♠'] as const;
 const SUIT_COLORS = ['#1e293b', '#e11d48', '#e11d48', '#1e293b'] as const;
 const ACCENT = '#2563eb';
+
+/**
+ * Canvas font stacks. Per-glyph fallback walks the list in order, so the Han
+ * faces have to be named explicitly: a stack that ends at `system-ui` /
+ * `sans-serif` draws Chinese as tofu boxes on a machine whose default sans
+ * carries no Han glyphs (docs/zh-i18n.md §6.2.3 rule ②).
+ */
+const CJK_FACES = '"Noto Sans SC", "PingFang SC", "Microsoft YaHei"';
+/** Card faces, names, deltas, footer: Inter for Latin, Han faces before the generic. */
+export const SANS_FONT = `"Inter", system-ui, ${CJK_FACES}, sans-serif`;
+/** Replay header + pot: the display face, same Han fallback. */
+export const DISPLAY_FONT = `"Unbounded", system-ui, ${CJK_FACES}, sans-serif`;
+/** Step labels and seat rows: Latin stays monospaced (`monospace` resolves
+ *  before the Han faces, so digits keep their column alignment). */
+export const MONO_FONT = `"JetBrains Mono", monospace, ${CJK_FACES}, sans-serif`;
+/** Suit pips only — they come from the system glyph font. */
+export const PIP_FONT = `system-ui, ${CJK_FACES}, sans-serif`;
+
+/** Every weight the canvases actually draw with, as `document.fonts` shorthands. */
+const FONT_REQUESTS: readonly string[] = [
+  ...['400', '500', '600', '700'].map((w) => `${w} 20px ${SANS_FONT}`),
+  ...['500', '600', '700'].map((w) => `${w} 16px ${MONO_FONT}`),
+  '700 20px ' + DISPLAY_FONT,
+];
+
+let fontsWarmed = false;
+let warming: Promise<void> | null = null;
+
+/**
+ * Resolve once every face the canvas draws with is ready, so the first exported
+ * PNG/GIF is never tofu. The work happens once per page load; later calls reuse
+ * the same promise (or the settled flag).
+ */
+export function warmCanvasFonts(): Promise<void> {
+  if (fontsWarmed) return Promise.resolve();
+  if (typeof document === 'undefined' || !document.fonts?.load) {
+    fontsWarmed = true;
+    return Promise.resolve();
+  }
+  warming ??= Promise.all(
+    FONT_REQUESTS.map((f) => document.fonts.load(f).catch(() => undefined)),
+  )
+    .then(() => document.fonts.ready)
+    .then(() => {
+      fontsWarmed = true;
+    });
+  return warming;
+}
 
 function rankLabel(id: CardId): string {
   const r = RANKS[rankOf(id)]!;
@@ -77,10 +127,10 @@ export function drawCardFace(
     ctx.fillStyle = color;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.font = `700 ${w * 0.34}px "Inter", system-ui, sans-serif`;
+    ctx.font = `700 ${w * 0.34}px ${SANS_FONT}`;
     ctx.fillText(rankLabel(id), x + w * 0.11, y + w * 0.42);
     ctx.textAlign = 'center';
-    ctx.font = `${w * 0.52}px system-ui, sans-serif`;
+    ctx.font = `${w * 0.52}px ${PIP_FONT}`;
     ctx.fillText(SUIT_GLYPHS[suitOf(id)]!, x + w / 2, y + h * 0.82);
     ctx.restore();
   }
@@ -92,15 +142,39 @@ export function drawCardFace(
   }
 }
 
+/**
+ * Break text into wrap units. Latin text wraps on spaces; Chinese has none, so
+ * a unit wider than the box is broken into single code points instead of
+ * overflowing the card.
+ */
+function wrapUnits(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): { unit: string; glue: boolean }[] {
+  const out: { unit: string; glue: boolean }[] = [];
+  for (const word of text.split(' ')) {
+    if (word.length === 0) continue;
+    if (ctx.measureText(word).width > maxWidth) {
+      // No space to break on: fall back to code points (CJK-safe, no split pairs).
+      Array.from(word).forEach((ch) => out.push({ unit: ch, glue: true }));
+    } else {
+      out.push({ unit: word, glue: false });
+    }
+  }
+  return out;
+}
+
+/** Measure after the font is set — callers always assign `ctx.font` first. */
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  const words = text.split(' ');
   const lines: string[] = [];
   let line = '';
-  for (const word of words) {
-    const probe = line ? `${line} ${word}` : word;
+  for (const { unit, glue } of wrapUnits(ctx, text, maxWidth)) {
+    // `glue` units (Han characters) join without inserting a space.
+    const probe = line ? (glue ? line + unit : `${line} ${unit}`) : unit;
     if (ctx.measureText(probe).width > maxWidth && line) {
       lines.push(line);
-      line = word;
+      line = unit;
     } else {
       line = probe;
     }
@@ -109,13 +183,23 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines.slice(0, 3);
 }
 
-const fmtChips = (n: number) => new Intl.NumberFormat('en-US').format(n);
+/** Code-point-safe truncation: `slice` counts UTF-16 units and would split an
+ *  extension-plane Han character or an emoji in half. */
+export function clipCodePoints(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : chars.slice(0, max).join('');
+}
 
+/** Shrink to fit with a trailing …, one code point at a time. */
 function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (ctx.measureText(text).width <= maxWidth) return text;
-  let t = text;
-  while (t.length > 1 && ctx.measureText(`${t}\u2026`).width > maxWidth) t = t.slice(0, -1);
-  return `${t}\u2026`;
+  const chars = Array.from(text);
+  while (chars.length > 1) {
+    chars.pop();
+    const probe = `${chars.join('')}\u2026`;
+    if (ctx.measureText(probe).width <= maxWidth) return probe;
+  }
+  return '\u2026';
 }
 
 /** Subtle film grain over the finished card. */
@@ -157,10 +241,12 @@ function drawColumn(
   ctx.fill();
   ctx.fillStyle = winner ? '#ffffff' : '#171717';
   ctx.textAlign = 'center';
-  ctx.font = '700 26px "Inter", system-ui, sans-serif';
-  ctx.fillText(row.name.slice(0, 1).toUpperCase(), cx, 188);
+  ctx.font = `700 26px ${SANS_FONT}`;
+  // First code point of the display name: `slice(0, 1)` would halve a name that
+  // starts with an extension-plane character.
+  ctx.fillText((Array.from(row.name)[0] ?? '').toUpperCase(), cx, 188);
   // name
-  ctx.font = '600 27px "Inter", system-ui, sans-serif';
+  ctx.font = `600 27px ${SANS_FONT}`;
   ctx.fillText(ellipsize(ctx, row.name, 320), cx, 243);
   // cards
   const cw = 96;
@@ -178,17 +264,17 @@ function drawColumn(
   // hand label
   ctx.textAlign = 'center';
   ctx.fillStyle = '#666666';
-  ctx.font = '21px "Inter", system-ui, sans-serif';
-  ctx.fillText(row.label ?? (row.cards ? '' : 'never shown'), cx, 428);
+  ctx.font = `21px ${SANS_FONT}`;
+  ctx.fillText(row.label ?? (row.cards ? '' : t('never shown')), cx, 428);
   // hero delta
   ctx.fillStyle = winner ? '#2563eb' : '#be123c';
-  ctx.font = '700 54px "Inter", system-ui, sans-serif';
-  ctx.fillText(`${winner ? '+' : '\u2212'}${fmtChips(Math.abs(row.delta))}`, cx, 492);
+  ctx.font = `700 54px ${SANS_FONT}`;
+  ctx.fillText(`${winner ? '+' : '\u2212'}${fmt(Math.abs(row.delta))}`, cx, 492);
   ctx.restore();
 }
 
-/** Renders the 1200x630 shareable hand card onto the canvas. */
-export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
+/** Paint the 1200x630 shareable hand card. `drawHandCard` is the public entry. */
+function paintHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
   const W = 1200;
   const H = 630;
   canvas.width = W;
@@ -211,16 +297,18 @@ export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
   ctx.fill();
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
-  ctx.font = '20px system-ui, sans-serif';
+  ctx.font = `20px ${PIP_FONT}`;
   ctx.fillText('\u2660', 65, 62);
   ctx.textAlign = 'left';
-  ctx.font = '700 19px "Inter", system-ui, sans-serif';
+  ctx.font = `700 19px ${SANS_FONT}`;
   try {
     (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '4px';
   } catch {
     /* older browsers */
   }
   ctx.fillStyle = '#171717';
+  // Brand: 「4AM CASINO」 never translates (docs/zh-i18n.md §4.3). The 4px
+  // tracking is safe here because the string stays Latin.
   ctx.fillText('4AM CASINO', 96, 61);
   try {
     (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '0px';
@@ -229,13 +317,14 @@ export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
   }
   ctx.textAlign = 'right';
   ctx.fillStyle = '#737373';
-  ctx.font = '18px "Inter", system-ui, sans-serif';
+  ctx.font = `18px ${SANS_FONT}`;
+  // Room names are user data: measured and trimmed, never translated.
   ctx.fillText(ellipsize(ctx, data.roomName, 360), W - 48, 61);
 
-  // headline, one quiet line
+  // headline, one quiet line (already localized by the caller)
   ctx.textAlign = 'center';
   ctx.fillStyle = '#525252';
-  ctx.font = '500 23px "Inter", system-ui, sans-serif';
+  ctx.font = `500 23px ${SANS_FONT}`;
   ctx.fillText(ellipsize(ctx, data.headline, W - 140), W / 2, 112);
 
   // the duel: winner vs the biggest loser
@@ -258,8 +347,8 @@ export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
     ctx.stroke();
     ctx.fillStyle = '#666666';
     ctx.textAlign = 'center';
-    ctx.font = '600 19px "Inter", system-ui, sans-serif';
-    ctx.fillText('vs', W / 2, 327);
+    ctx.font = `600 19px ${SANS_FONT}`;
+    ctx.fillText(t('vs'), W / 2, 327);
     drawColumn(ctx, W * 0.27, winnerRow, five, false);
     drawColumn(ctx, W * 0.73, loserRow, five, true);
   } else if (winnerRow) {
@@ -289,15 +378,41 @@ export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
   const others = rows.slice(1, -1);
   ctx.textAlign = 'left';
   ctx.fillStyle = '#737373';
-  ctx.font = '15px "Inter", system-ui, sans-serif';
+  ctx.font = `15px ${SANS_FONT}`;
   if (others.length > 0) {
     const line = others
-      .map((o) => `${o.name} ${o.delta > 0 ? '+' : '\u2212'}${fmtChips(Math.abs(o.delta))}`)
+      .map((o) => `${o.name} ${o.delta > 0 ? '+' : '\u2212'}${fmt(Math.abs(o.delta))}`)
       .join('  \u00b7  ');
-    ctx.fillText(ellipsize(ctx, `also in the pot: ${line}`, 560), 48, H - 20);
+    ctx.fillText(ellipsize(ctx, t('also in the pot: {others}', { others: line }), 560), 48, H - 20);
   }
   ctx.textAlign = 'right';
-  ctx.fillText('provably fair \u00b7 nobody sees your cards, not even the house', W - 48, H - 20);
+  ctx.fillText(t('provably fair · nobody sees your cards, not even the house'), W - 48, H - 20);
 
   grain(ctx, W, H);
+}
+
+/** Canvases still on screen when the fonts finally land, with the data to redraw. */
+const repaintQueue = new Map<HTMLCanvasElement, ShareData>();
+let repaintScheduled = false;
+
+/**
+ * Renders the 1200x630 shareable hand card onto the canvas. Synchronous so the
+ * preview and the PNG export stay one call, but self-healing: if the webfonts
+ * (Inter, and any Han face that has to be fetched) are not ready yet, the card
+ * is painted once, then painted again from the same data the moment they are —
+ * so a first export never ships tofu.
+ */
+export function drawHandCard(canvas: HTMLCanvasElement, data: ShareData): void {
+  paintHandCard(canvas, data);
+  if (fontsWarmed) return;
+  repaintQueue.set(canvas, data);
+  if (repaintScheduled) return;
+  repaintScheduled = true;
+  void warmCanvasFonts().then(() => {
+    repaintScheduled = false;
+    for (const [c, d] of repaintQueue) {
+      if (c.isConnected) paintHandCard(c, d);
+    }
+    repaintQueue.clear();
+  });
 }

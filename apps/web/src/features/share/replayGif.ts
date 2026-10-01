@@ -1,7 +1,14 @@
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import type { Replay, ReplayStep } from '../../shared/replay.ts';
-import { drawCardFace } from './shareCard.ts';
+import {
+  clipCodePoints,
+  DISPLAY_FONT,
+  MONO_FONT,
+  warmCanvasFonts,
+  drawCardFace,
+} from './shareCard.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 
 /** Render a whole replay into an animated GIF - one frame per step, the
  *  result held longer at the end - ready to drop into a tweet
@@ -24,20 +31,24 @@ function drawStep(
 
   // header: the room and what just happened
   ctx.fillStyle = '#5cff72';
-  ctx.font = '700 20px "Unbounded", system-ui, sans-serif';
+  ctx.font = `700 20px ${DISPLAY_FONT}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`♠ 4AM · ${roomName}`.slice(0, 40), 24, 38);
+  // `♠ 4AM` is brand and stays; the room label is data, so it is looked up as a
+  // whole key only: the canned 「the 4AM table」 translates, a real room name
+  // matches nothing and comes back character-for-character untouched.
+  ctx.fillText(clipCodePoints(`♠ 4AM · ${t(roomName)}`, 40), 24, 38);
   ctx.fillStyle = '#e2e8f0';
-  ctx.font = '600 16px "JetBrains Mono", monospace';
-  ctx.fillText(step.label.slice(0, 60), 24, 66);
+  ctx.font = `600 16px ${MONO_FONT}`;
+  // Step labels are already localized by shared/replay.ts; clip by code point.
+  ctx.fillText(clipCodePoints(step.label, 60), 24, 66);
 
   // pot
   const pot = step.betting ? step.betting.seats.reduce((s, x) => s + x.total, 0) : 0;
   ctx.fillStyle = '#94a3b8';
   ctx.textAlign = 'right';
-  ctx.font = '700 18px "Unbounded", system-ui, sans-serif';
-  ctx.fillText(`POT ${fmt(pot)}`, W - 24, 38);
+  ctx.font = `700 18px ${DISPLAY_FONT}`;
+  ctx.fillText(t('POT {n}', { n: fmt(pot) }), W - 24, 38);
 
   // board (and the second runout when the table ran it twice)
   const cw = 64;
@@ -56,9 +67,9 @@ function drawStep(
   }
   if (step.board2.length > 0) {
     ctx.fillStyle = '#e879f9';
-    ctx.font = '700 11px "JetBrains Mono", monospace';
+    ctx.font = `700 11px ${MONO_FONT}`;
     ctx.textAlign = 'left';
-    ctx.fillText('RUN 2', bx + 5 * (cw + 10) + 6, by + 20);
+    ctx.fillText(t('RUN 2'), bx + 5 * (cw + 10) + 6, by + 20);
     step.board2.forEach((c, i) => {
       drawCardFace(ctx, bx + i * (cw * 0.62 + 8), by + ch + 10, cw * 0.62, ch * 0.62, c, false);
     });
@@ -80,18 +91,21 @@ function drawStep(
     }
     ctx.textAlign = 'left';
     ctx.fillStyle = folded ? '#475569' : '#f1f5f9';
-    ctx.font = '600 15px "JetBrains Mono", monospace';
-    ctx.fillText(
-      `${nameOf(s.seat)}${replay.buttonSeat === s.seat ? ' (D)' : ''}${folded ? ' · folded' : ''}`.slice(0, 30),
-      24,
-      y + 18,
-    );
+    ctx.font = `600 15px ${MONO_FONT}`;
+    // Seat name is user data; `(D)` is the dealer marker and the `·` separator
+    // keep their source positions (docs/zh-i18n.md §4.4). `folded` reuses
+    // dict/hands.ts (弃牌).
+    const seatLine = `${nameOf(s.seat)}${replay.buttonSeat === s.seat ? ' (D)' : ''}${
+      folded ? ` · ${t('folded')}` : ''
+    }`;
+    ctx.fillText(clipCodePoints(seatLine, 30), 24, y + 18);
     ctx.fillStyle = '#64748b';
-    ctx.font = '500 13px "JetBrains Mono", monospace';
+    ctx.font = `500 13px ${MONO_FONT}`;
     ctx.fillText(fmt(es ? es.stack : s.stack), 24, y + 36);
     if (es && es.committed > 0) {
       ctx.fillStyle = '#fbbf24';
-      ctx.fillText(`bet ${fmt(es.committed)}`, 120, y + 36);
+      // 'Bet {n}' is the shared form from dict/table.ts — 下注 {n}.
+      ctx.fillText(t('Bet {n}', { n: fmt(es.committed) }), 120, y + 36);
     }
     const revealed = step.reveals[s.seat];
     if (revealed) {
@@ -105,16 +119,16 @@ function drawStep(
     if (award && award.amount > 0) {
       ctx.fillStyle = '#5cff72';
       ctx.textAlign = 'right';
-      ctx.font = '700 17px "Unbounded", system-ui, sans-serif';
+      ctx.font = `700 17px ${DISPLAY_FONT}`;
       ctx.fillText(`+${fmt(award.amount)}`, W - 24, y + 26);
     }
   });
 
-  // footer
+  // footer: the brand stays, the promise is the canvas short form
   ctx.fillStyle = '#475569';
   ctx.textAlign = 'right';
-  ctx.font = '500 11px "JetBrains Mono", monospace';
-  ctx.fillText('4amcasino.com · provably fair', W - 24, H - 12);
+  ctx.font = `500 11px ${MONO_FONT}`;
+  ctx.fillText(t('4amcasino.com · provably fair'), W - 24, H - 12);
 }
 
 export async function renderReplayGif(
@@ -127,6 +141,10 @@ export async function renderReplayGif(
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  // Wait for every face in the stacks above before frame 1, otherwise the GIF
+  // frames bake tofu (docs/zh-i18n.md §6.2.3). Resolves fast when the fonts
+  // are already loaded or come from the system.
+  await warmCanvasFonts();
   const gif = GIFEncoder();
   const steps = replay.steps;
   for (let i = 0; i < steps.length; i++) {

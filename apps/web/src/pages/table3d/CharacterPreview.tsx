@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ArrowsClockwise, HandWaving, PersonSimpleRun } from '@phosphor-icons/react';
+import { t } from '../../shared/i18n/index.ts';
 import { buildCharacter, disposeObject, idleCharacter } from './character.ts';
 import { EMOTES, type EmoteKind } from './emotes.ts';
 import type { Avatar3D } from './avatar.ts';
@@ -125,27 +126,28 @@ export function CharacterPreview({ cfg }: { cfg: Avatar3D }) {
         ref={mountRef}
         className="character-preview-canvas"
         role="img"
-        aria-label={`Live ${cfg.head} character preview with ${cfg.hat === 'none' ? 'no hat' : cfg.hat}. Drag to rotate.`}
+        aria-label={t('{head} character preview with {hat}. Drag to rotate.', {
+          head: t(cfg.head),
+          hat: cfg.hat === 'none' ? t('no hat') : t(cfg.hat),
+        })}
       />
       {failed && (
-        <p className="preview-fallback">
-          3D preview is unavailable on this device. You can still customize and save.
-        </p>
+        <p className="preview-fallback">{t('3D preview is unavailable on this device. You can still customize and save.')}</p>
       )}
       <div className="preview-controls">
         <button
           type="button"
-          aria-label="Rotate preview"
+          aria-label={t('Rotate preview')}
           aria-pressed={rotate}
           onClick={() => setRotate(!rotate)}
         >
           <ArrowsClockwise size={17} />
         </button>
-        <span>Drag to explore</span>
+        <span>{t('Drag to explore')}</span>
         <button
           type="button"
-          title="Preview wave"
-          aria-label="Preview wave"
+          title={t('Preview wave')}
+          aria-label={t('Preview wave')}
           onClick={() => {
             poseRef.current = { kind: 'wave', start: performance.now() };
           }}
@@ -154,8 +156,8 @@ export function CharacterPreview({ cfg }: { cfg: Avatar3D }) {
         </button>
         <button
           type="button"
-          title="Preview dance"
-          aria-label="Preview dance"
+          title={t('Preview dance')}
+          aria-label={t('Preview dance')}
           onClick={() => {
             poseRef.current = { kind: 'dance', start: performance.now() };
           }}

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Check, Shuffle, X } from '@phosphor-icons/react';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
+import { t, tr } from '../../shared/i18n/index.ts';
 import { CharacterPreview } from './CharacterPreview.tsx';
 import { COLORS, FX, HATS, HEADS, PRESETS, parseAvatar, type Avatar3D } from './avatar.ts';
 
@@ -37,9 +38,9 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
           ),
         });
       setSaved(draft);
-      setMessage('Saved. Your character is ready for the table.');
+      setMessage(t('Saved. Your character is ready for the table.'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save. Please try again.');
+      setError(err instanceof Error ? tr(err.message) : t('Could not save. Please try again.'));
     } finally {
       saving.current = false;
       setBusy(false);
@@ -56,16 +57,16 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
     });
   };
   return (
-    <section className="lounge-panel wardrobe" aria-label="Character studio">
+    <section className="lounge-panel wardrobe" aria-label={t('Character studio')}>
       <div className="panel-heading">
         <div>
-          <h2>Your character</h2>
-          <p>A little more you at the table.</p>
+          <h2>{t('Your character')}</h2>
+          <p>{t('A little more you at the table.')}</p>
         </div>
         <button
           autoFocus
           className="lounge-icon"
-          aria-label="Close character studio"
+          aria-label={t('Close character studio')}
           onClick={onClose}
         >
           <X size={20} />
@@ -75,9 +76,9 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
       <div className="wardrobe-scroll">
         <div className="wardrobe-section">
           <div className="field-heading">
-            <h3>Make it yours</h3>
+            <h3>{t('Make it yours')}</h3>
             <button className="text-button" onClick={shuffle} disabled={busy}>
-              <Shuffle size={14} /> Shuffle
+              <Shuffle size={14} /> {t('Shuffle')}
             </button>
           </div>
           <div className="preset-grid">
@@ -92,21 +93,21 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
                   <i style={{ background: preset.cfg.c }} />
                   <i style={{ background: preset.cfg.t }} />
                 </span>
-                {preset.name}
+                {t(preset.name)}
               </button>
             ))}
           </div>
         </div>
         {(['c', 't'] as const).map((field) => (
           <fieldset key={field} className="wardrobe-section" disabled={busy}>
-            <legend>{field === 'c' ? 'Suit color' : 'Light color'}</legend>
+            <legend>{t(field === 'c' ? 'Suit color' : 'Light color')}</legend>
             <div className="swatches">
               {COLORS.map(({ value, name }) => (
                 <button
                   key={value}
                   className="color-swatch"
-                  title={name}
-                  aria-label={`${field === 'c' ? 'Suit' : 'Light'} color ${name}`}
+                  title={t(name)}
+                  aria-label={`${t(field === 'c' ? 'Suit color' : 'Light color')} · ${t(name)}`}
                   aria-pressed={draft[field] === value}
                   style={{ background: value }}
                   onClick={() => update({ ...draft, [field]: value })}
@@ -118,7 +119,7 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
           </fieldset>
         ))}
         <fieldset className="wardrobe-section" disabled={busy}>
-          <legend>Silhouette</legend>
+          <legend>{t('Silhouette')}</legend>
           <div className="segment-control">
             {HEADS.map((head) => (
               <button
@@ -126,13 +127,13 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
                 aria-pressed={draft.head === head}
                 onClick={() => update({ ...draft, head })}
               >
-                {{ round: 'Orbit', cube: 'Block', cone: 'Comet' }[head]}
+                {t({ round: 'Orbit', cube: 'Block', cone: 'Comet' }[head])}
               </button>
             ))}
           </div>
         </fieldset>
         <fieldset className="wardrobe-section" disabled={busy}>
-          <legend>Headwear</legend>
+          <legend>{t('Headwear')}</legend>
           <div className="segment-control">
             {HATS.map((hat) => (
               <button
@@ -140,13 +141,13 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
                 aria-pressed={draft.hat === hat}
                 onClick={() => update({ ...draft, hat })}
               >
-                {hat === 'none' ? 'None' : hat}
+                {t(hat === 'none' ? 'None' : hat)}
               </button>
             ))}
           </div>
         </fieldset>
         <fieldset className="wardrobe-section" disabled={busy}>
-          <legend>Exit effect</legend>
+          <legend>{t('Exit effect')}</legend>
           <div className="segment-control">
             {FX.map((fx) => (
               <button
@@ -154,17 +155,17 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
                 aria-pressed={draft.fx === fx}
                 onClick={() => update({ ...draft, fx })}
               >
-                {fx}
+                {t(fx)}
               </button>
             ))}
           </div>
-          <p className="field-hint">Your send-off when your stack reaches zero.</p>
+          <p className="field-hint">{t('Your send-off when your stack reaches zero.')}</p>
         </fieldset>
       </div>
       <div className="wardrobe-footer">
         {error && (
           <p className="lounge-error" role="alert">
-            Couldn’t save: {error} Try again.
+            {t('Couldn’t save: {error} Try again.', { error })}
           </p>
         )}
         {message && (
@@ -179,20 +180,20 @@ export function Wardrobe({ initial, onClose }: { initial: Avatar3D; onClose(): v
             disabled={!dirty || busy}
             onClick={() => update(parseAvatar(JSON.stringify(saved)))}
           >
-            Reset
+            {t('Reset')}
           </button>
           <button
             className="lounge-button primary"
             disabled={!dirty || busy}
             onClick={() => void save()}
           >
-            {busy ? 'Saving…' : message ? 'Saved' : 'Save character'}
+            {busy ? t('Saving…') : message ? t('Saved') : t('Save character')}
           </button>
         </div>
         <p className="field-hint">
           {dirty
-            ? 'Unsaved changes. Save to wear this at the table.'
-            : 'Seen by everyone at your table.'}
+            ? t('Unsaved changes. Save to wear this at the table.')
+            : t('Seen by everyone at your table.')}
         </p>
       </div>
     </section>

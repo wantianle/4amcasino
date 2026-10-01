@@ -21,6 +21,7 @@ import { wsClient } from '../../shared/ws.ts';
 import { useStore } from '../../shared/store.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { ActionBar } from '../../widgets/table/ActionBar.tsx';
 import { ATTACKS, EMOTES, type EmoteKind } from './emotes.ts';
 
@@ -88,6 +89,10 @@ import './glass-widgets.css';
 /* ── canvas textures: cards and name tags ───────────────────────────────── */
 
 const SUIT_GLYPHS = ['♣', '♦', '♥', '♠'];
+
+/** Camera view label → text. 'Close' would collide with the global 'Close'
+ *  (关闭) dictionary key, so that one view maps through the 'Close-up' key. */
+const tCameraView = (view: CameraView) => t(view === 'Close' ? 'Close-up' : view);
 
 const FELT_TOP = 1.025;
 
@@ -407,7 +412,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
   const requestWalk = (point: LoungePoint) => {
     if (!connected || !me) return;
     if (!isLoungeWalkable(point)) {
-      setReaction('Choose a clear spot inside the lounge.');
+      setReaction(t('Choose a clear spot inside the lounge.'));
       clearTimeout(reactionTimer.current);
       reactionTimer.current = setTimeout(() => setReaction(''), 2200);
       return;
@@ -504,7 +509,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
       renderer = new THREE.WebGLRenderer({ antialias: true });
     } catch {
       setSceneError(
-        'Your device could not start the 3D view. You can keep playing at the 2D table.',
+        t('Your device could not start the 3D view. You can keep playing at the 2D table.'),
       );
       return;
     }
@@ -522,7 +527,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
     };
     const onContextLost = (event: Event) => {
       event.preventDefault();
-      setSceneError('The 3D view paused. Reload to restore it, or continue at the 2D table.');
+      setSceneError(t('The 3D view paused. Reload to restore it, or continue at the 2D table.'));
     };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.innerWidth < 700 ? 1.5 : 1.75));
@@ -543,7 +548,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
     renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute(
       'aria-label',
-      'Lounge world. After taking a break, use W A S D or arrow keys to walk. Drag to look around.',
+      t(
+        'Lounge world. After taking a break, use W A S D or arrow keys to walk. Drag to look around.',
+      ),
     );
     renderer.domElement.setAttribute(
       'aria-keyshortcuts',
@@ -704,20 +711,20 @@ function Table3DView({ table }: { table: TablePresentation }) {
       ink.fillRect(0, 0, 960, 540);
       ink.fillStyle = '#bfa376';
       ink.font = '500 28px Onest, sans-serif';
-      ink.fillText('4AM  /  TABLE LIVE', 48, 60);
+      ink.fillText(t('4AM  /  TABLE LIVE'), 48, 60);
       const pot = current.betting?.seats.reduce((sum, seat) => sum + seat.total, 0) ?? 0;
       ink.fillStyle = '#f4f0e6';
       ink.font = '600 78px Bricolage Grotesque, sans-serif';
-      ink.fillText(`${pot.toLocaleString()} in the pot`, 48, 167);
+      ink.fillText(t('{pot} in the pot', { pot: pot.toLocaleString() }), 48, 167);
       const name = currentRoom?.players.find((p) => p.seat === current.betting?.toAct)?.displayName;
       ink.fillStyle = '#bad4ca';
       ink.font = '400 28px Onest, sans-serif';
       ink.fillText(
         current.result
-          ? 'Hand complete'
+          ? t('Hand complete')
           : name
-            ? `${name.slice(0, 28)} is playing`
-            : 'The next hand is coming',
+            ? t('{name} is playing', { name: name.slice(0, 28) })
+            : t('The next hand is coming'),
         48,
         218,
       );
@@ -736,7 +743,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
       });
       ink.fillStyle = '#bad4ca';
       ink.font = '400 22px Onest, sans-serif';
-      ink.fillText('Good company. One more hand.', 48, 491);
+      ink.fillText(t('Good company. One more hand.'), 48, 491);
       liveTexture.needsUpdate = true;
     };
     drawLiveTV();
@@ -788,7 +795,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
     feltInk.fillText('4 A M', 512, 700);
     feltInk.font = '500 17px sans-serif';
     feltInk.fillStyle = '#8ca79b';
-    feltInk.fillText('A SEAT AT YOUR TABLE', 512, 734);
+    feltInk.fillText(t('A SEAT AT YOUR TABLE'), 512, 734);
     const feltMap = new THREE.CanvasTexture(feltCanvas);
     feltMap.colorSpace = THREE.SRGBColorSpace;
     feltMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -904,7 +911,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
 
     const powSprite = (at: THREE.Vector3) => {
       const sp = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: labelTexture('POW!', '', '#fbbf24'), transparent: true }),
+        new THREE.SpriteMaterial({ map: labelTexture(t('POW!'), '', '#fbbf24'), transparent: true }),
       );
       sp.scale.set(1.3, 0.5, 1);
       sp.position.copy(at).add(new THREE.Vector3(0, 1.9, 0));
@@ -1130,7 +1137,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           if (o.userData.pokeSeat !== undefined) {
             targetMenuRef.current({
               seat: o.userData.pokeSeat as number,
-              name: (o.userData.pokeName as string) ?? 'player',
+              name: (o.userData.pokeName as string) ?? t('player'),
               x: e.clientX,
               y: e.clientY,
             });
@@ -1254,7 +1261,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
         if (p.seat === null) {
           const label = new THREE.Sprite(
             new THREE.SpriteMaterial({
-              map: labelTexture(p.displayName, 'In the lounge', '#bed6d0'),
+              map: labelTexture(p.displayName, t('In the lounge'), '#bed6d0'),
               transparent: true,
             }),
           );
@@ -1320,7 +1327,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           const label = new THREE.Sprite(
             new THREE.SpriteMaterial({
               map: labelTexture(
-                p.userId === myId ? 'You' : p.displayName,
+                p.userId === myId ? t('You') : p.displayName,
                 String(stackShown),
                 isToAct ? '#eccf88' : '#bed6d0',
               ),
@@ -1433,7 +1440,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
         dynamic.add(pile);
         const potLabel = new THREE.Sprite(
           new THREE.SpriteMaterial({
-            map: labelTexture('POT', String(pot), '#e879f9'),
+            map: labelTexture(t('POT'), String(pot), '#e879f9'),
             transparent: true,
           }),
         );
@@ -1735,16 +1742,17 @@ function Table3DView({ table }: { table: TablePresentation }) {
     (player) => player.seat === hand.betting?.toAct,
   )?.displayName;
   const status = !connected
-    ? 'Reconnecting…'
+    ? t('Reconnecting…')
     : hand.abort
-      ? 'Hand ended'
+      ? t('Hand ended')
       : hand.result
-        ? 'Hand complete'
+        ? t('Hand complete')
         : myTurn
-          ? 'Your turn'
+          ? t('Your turn')
           : handActive
-            ? (table.status ?? `${actingName ?? 'Table'} is thinking`)
-            : 'Waiting for the next hand';
+            ? (table.status ??
+              t('{name} is thinking', { name: actingName ?? t('Table') }))
+            : t('Waiting for the next hand');
   const seconds = hand.deadline ? Math.max(0, Math.ceil((hand.deadline - now) / 1000)) : null;
   const closeStudio = () => {
     setCustomizeOpen(false);
@@ -1754,7 +1762,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
     if (!connected || !me) return;
     wsClient.send({ t: 'emote', kind });
     setEmoteOpen(false);
-    setReaction(`${EMOTES[kind]?.label ?? 'Reaction'} sent`);
+    setReaction(t('{label} sent', { label: t(EMOTES[kind]?.label ?? 'Reaction') }));
     clearTimeout(reactionTimer.current);
     reactionTimer.current = setTimeout(() => setReaction(''), 2200);
   };
@@ -1774,21 +1782,21 @@ function Table3DView({ table }: { table: TablePresentation }) {
           <Link
             to={`/room/${roomId}`}
             className="lounge-button back-to-table"
-            aria-label="2D table"
-            title="Switch to 2D table"
+            aria-label={t('2D table')}
+            title={t('Switch to 2D table')}
           >
             <ArrowLeft size={17} />
-            <span>2D table</span>
+            <span>{t('2D table')}</span>
           </Link>
           <div className="lounge-title">
-            <h1>{activeRoom?.room.name ?? 'Your table'}</h1>
+            <h1>{activeRoom?.room.name ?? t('Your table')}</h1>
             <span>
               <i className={connected ? 'connection-dot connected' : 'connection-dot'} />
-              {connected ? 'Connected' : 'Reconnecting'}
+              {connected ? t('Connected') : t('Reconnecting')}
               <b>·</b>
               {activeRoom
-                ? `${activeRoom.room.sb} / ${activeRoom.room.bb} blinds`
-                : 'Joining table'}
+                ? t('{sb} / {bb} blinds', { sb: activeRoom.room.sb, bb: activeRoom.room.bb })
+                : t('Joining table')}
             </span>
           </div>
         </div>
@@ -1798,7 +1806,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
           <button
             className="lounge-icon chat-trigger"
             aria-label={
-              table.unreadChat ? `Open chat, ${table.unreadChat} unread messages` : 'Open chat'
+              table.unreadChat
+                ? t('Open chat, {n} unread messages', { n: table.unreadChat })
+                : t('Open chat')
             }
             aria-expanded={table.chatOpen}
             onClick={() => table.setChatOpen(true)}
@@ -1812,7 +1822,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           </button>
           <button
             className="lounge-button table-controls-trigger"
-            aria-label="More table controls"
+            aria-label={t('More table controls')}
             aria-expanded={table.menuOpen}
             onClick={() => {
               table.setMenuOpen(true);
@@ -1822,11 +1832,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
             }}
           >
             <DotsThree size={22} />
-            <span>Table</span>
+            <span>{t('Table')}</span>
           </button>
           <button
             className="lounge-icon sound-toggle"
-            aria-label={soundOn ? 'Mute sound' : 'Enable sound'}
+            aria-label={soundOn ? t('Mute sound') : t('Enable sound')}
             aria-pressed={soundOn}
             onClick={() => {
               setSoundsEnabled(!soundOn);
@@ -1838,8 +1848,8 @@ function Table3DView({ table }: { table: TablePresentation }) {
           <button
             ref={characterButton}
             className="lounge-button character-trigger"
-            aria-label="Your character"
-            title="Your character"
+            aria-label={t('Your character')}
+            title={t('Your character')}
             aria-expanded={customizeOpen}
             onClick={() => {
               setCustomizeOpen(!customizeOpen);
@@ -1849,14 +1859,14 @@ function Table3DView({ table }: { table: TablePresentation }) {
             }}
           >
             <SlidersHorizontal size={18} />
-            <span>Your character</span>
+            <span>{t('Your character')}</span>
           </button>
           <button
             ref={hideControlsButton}
             className="lounge-icon hide-controls-trigger"
-            aria-label="Hide controls"
+            aria-label={t('Hide controls')}
             title={
-              needsResponse ? 'Respond before hiding controls' : 'Hide controls for a clear view'
+              needsResponse ? t('Respond before hiding controls') : t('Hide controls for a clear view')
             }
             disabled={needsResponse}
             onClick={hideControls}
@@ -1872,21 +1882,21 @@ function Table3DView({ table }: { table: TablePresentation }) {
           className="lounge-button lounge-glass restore-controls"
           onClick={restoreControls}
         >
-          <Eye size={18} /> Show controls
+          <Eye size={18} /> {t('Show controls')}
         </button>
       )}
 
-      <main className="lounge-stage" aria-label="3D poker table">
+      <main className="lounge-stage" aria-label={t('3D poker table')}>
         <div
           ref={mountRef}
           className="lounge-canvas"
-          aria-label="3D casino. Drag to orbit. Use the camera buttons to change view."
+          aria-label={t('3D casino. Drag to orbit. Use the camera buttons to change view.')}
         />
         {thunderKey > 0 && <div key={thunderKey} className="thunder-flash" aria-hidden="true" />}
         <div className="table-readout lounge-glass">
-          <span>{handActive ? (hand.betting?.street ?? 'Dealing') : 'Texas Hold’em'}</span>
+          <span>{handActive ? t(hand.betting?.street ?? 'Dealing') : t('Texas Hold’em')}</span>
           <strong>
-            {pot.toLocaleString()} <small>in the pot</small>
+            <small>{t('POT')}</small> {pot.toLocaleString()}
           </strong>
         </div>
         <div className="lounge-world-tools lounge-glass">
@@ -1900,7 +1910,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
             }}
           >
             <PersonSimpleWalk size={18} />
-            Lounge
+            {t('Lounge')}
           </button>
           <button
             className="lounge-button"
@@ -1912,47 +1922,50 @@ function Table3DView({ table }: { table: TablePresentation }) {
             }}
           >
             <Television size={18} />
-            TV
+            {t('TV')}
           </button>
           <button
             ref={cameraButton}
             className="lounge-button camera-trigger"
-            aria-label="Camera views"
+            aria-label={t('Camera views')}
             aria-expanded={cameraOpen}
             aria-controls="lounge-camera-views"
             onClick={() => setCameraOpen(!cameraOpen)}
           >
             <Camera size={18} />
-            <span>{cameraView} view</span>
+            <span>{t('{view} view', { view: tCameraView(cameraView) })}</span>
             <CaretDown size={12} />
           </button>
           {(away || breakDestination) && me && (
             <button className="lounge-button" disabled={!connected} onClick={returnToSeat}>
               <Armchair size={18} />
               {mySeat === null
-                ? 'Choose seat'
+                ? t('Choose seat')
                 : breakDestination
-                  ? 'Stay seated'
-                  : 'Return to seat'}
+                  ? t('Stay seated')
+                  : t('Return to seat')}
             </button>
           )}
         </div>
         {exploreOpen && (
-          <section className="lounge-panel lounge-explore-panel" aria-label="Explore the lounge">
+          <section
+            className="lounge-panel lounge-explore-panel"
+            aria-label={t('Explore the lounge')}
+          >
             <div className="panel-heading">
               <div>
-                <h2>Make yourself at home</h2>
+                <h2>{t('Make yourself at home')}</h2>
                 <p>
                   {breakDestination
-                    ? 'Your break starts after this hand.'
+                    ? t('Your break starts after this hand.')
                     : away
-                      ? 'Use WASD or arrow keys to walk. Drag to look around.'
-                      : 'Take a break. Your seat and chips stay yours.'}
+                      ? t('Use WASD or arrow keys to walk. Drag to look around.')
+                      : t('Take a break. Your seat and chips stay yours.')}
                 </p>
               </div>
               <button
                 className="lounge-icon"
-                aria-label="Close lounge controls"
+                aria-label={t('Close lounge controls')}
                 onClick={() => setExploreOpen(false)}
               >
                 <X size={18} />
@@ -1974,7 +1987,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                     }}
                   >
                     {key === 'tv' ? <Television size={17} /> : <PersonSimpleWalk size={17} />}
-                    {destination.label}
+                    {t(destination.label)}
                   </button>
                 ))}
             </div>
@@ -1993,7 +2006,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   <kbd>S</kbd>
                   <kbd>D</kbd>
                 </span>
-                Walk with keyboard
+                {t('Walk with keyboard')}
               </button>
             )}
             <div className="lounge-break-actions">
@@ -2003,7 +2016,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   disabled={!connected || !me}
                   onClick={() => requestWalk(LOUNGE_DESTINATIONS.entry)}
                 >
-                  {contesting ? 'Leave after this hand' : 'Get up and explore'}
+                  {contesting ? t('Leave after this hand') : t('Get up and explore')}
                 </button>
               )}
               {(away || breakDestination) && me && (
@@ -2014,10 +2027,10 @@ function Table3DView({ table }: { table: TablePresentation }) {
                 >
                   <Armchair size={17} />
                   {mySeat === null
-                    ? 'Choose a seat'
+                    ? t('Choose a seat')
                     : breakDestination
-                      ? 'Cancel break'
-                      : 'Return to seat'}
+                      ? t('Cancel break')
+                      : t('Return to seat')}
                 </button>
               )}
               {away && travelStatus === 'walking' && (
@@ -2029,7 +2042,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                     if (point && isLoungeWalkable(point)) navigationRef.current.walk(point);
                   }}
                 >
-                  Stop walking
+                  {t('Stop walking')}
                 </button>
               )}
               {away && mySeat !== null && !activeRoom?.handActive && (
@@ -2038,22 +2051,22 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   disabled={!connected}
                   onClick={() => wsClient.send({ t: 'leave_seat' })}
                 >
-                  Free my seat
+                  {t('Free my seat')}
                 </button>
               )}
             </div>
             <p className="lounge-travel-status" role="status">
               {breakDestination
-                ? 'You remain in this hand. You can still use all poker actions.'
+                ? t('You remain in this hand. You can still use all poker actions.')
                 : travelStatus === 'getting-up'
-                  ? 'Getting up from your chair…'
+                  ? t('Getting up from your chair…')
                   : travelStatus === 'walking'
-                    ? 'Walking through the lounge…'
+                    ? t('Walking through the lounge…')
                     : travelStatus === 'sitting-down'
-                      ? 'Taking your seat…'
+                      ? t('Taking your seat…')
                       : away
-                        ? 'Reactions and chat work throughout the room.'
-                        : 'Standing dances are available when you leave the chair.'}
+                        ? t('Reactions and chat work throughout the room.')
+                        : t('Standing dances are available when you leave the chair.')}
             </p>
           </section>
         )}
@@ -2066,10 +2079,10 @@ function Table3DView({ table }: { table: TablePresentation }) {
         />
         {sceneError && (
           <div className="scene-message" role="status">
-            <h2>The 3D scene is unavailable</h2>
+            <h2>{t('The 3D scene is unavailable')}</h2>
             <p>{sceneError}</p>
             <Link className="lounge-button primary" to={`/room/${roomId}`}>
-              Open 2D table
+              {t('Open 2D table')}
             </Link>
           </div>
         )}
@@ -2085,7 +2098,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           <div
             id="lounge-camera-views"
             className="camera-controls lounge-glass"
-            aria-label="Camera view"
+            aria-label={t('Camera view')}
           >
             <Camera size={16} />
             {CAMERA_VIEWS.map((label) => (
@@ -2098,30 +2111,30 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   requestAnimationFrame(() => cameraButton.current?.focus());
                 }}
               >
-                {label}
+                {tCameraView(label)}
               </button>
             ))}
           </div>
         )}
         <span className="orbit-hint">
           {away
-            ? 'WASD / arrows to walk · Tap floor to go · Drag to orbit'
-            : 'Lounge to get up · Drag to orbit · Scroll to zoom'}
+            ? t('WASD / arrows to walk · Tap floor to go · Drag to orbit')
+            : t('Lounge to get up · Drag to orbit · Scroll to zoom')}
         </span>
         {customizeOpen && <Wardrobe initial={parseAvatar(me?.avatar3d)} onClose={closeStudio} />}
         {panel === 'players' && (
-          <section className="lounge-panel players-panel" aria-label="Players at the table">
+          <section className="lounge-panel players-panel" aria-label={t('Players at the table')}>
             <div className="panel-heading">
-              <h2>At the table</h2>
+              <h2>{t('At the table')}</h2>
               <button
                 className="lounge-icon"
-                aria-label="Close player list"
+                aria-label={t('Close player list')}
                 onClick={() => setPanel(null)}
               >
                 <X size={18} />
               </button>
             </div>
-            <p className="field-hint">Profiles, seats, and table reactions.</p>
+            <p className="field-hint">{t('Profiles, seats, and table reactions.')}</p>
             {table.players.map((player) => (
               <div className="lounge-player-entry" key={player.userId}>
                 <div className="player-row">
@@ -2136,21 +2149,21 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   <span>
                     <Link to={`/players/${player.userId}`}>
                       {player.displayName}
-                      {player.userId === auth.userId ? ' · You' : ''}
+                      {player.userId === auth.userId ? ` · ${t('You')}` : ''}
                     </Link>
                     <small>
-                      Seat {player.seat + 1} ·{' '}
+                      {t('Seat {n}', { n: player.seat + 1 })} ·{' '}
                       {player.sittingOut
-                        ? 'Sitting out'
+                        ? t('Sitting out')
                         : !player.connected
-                          ? 'Reconnecting'
+                          ? t('Reconnecting')
                           : player.allIn
-                            ? 'All-in'
+                            ? t('All-in')
                             : player.folded
-                              ? 'Folded'
+                              ? t('Folded')
                               : player.isToAct
-                                ? 'Their turn'
-                                : 'At the table'}
+                                ? t('Their turn')
+                                : t('At the table')}
                     </small>
                   </span>
                   <strong>{player.stack.toLocaleString()}</strong>
@@ -2158,13 +2171,13 @@ function Table3DView({ table }: { table: TablePresentation }) {
                 <div className="player-detail-row">
                   <span>
                     {[
-                      player.isButton && 'Dealer',
-                      player.isSB && 'Small blind',
-                      player.isBB && 'Big blind',
-                      player.speaking && 'Speaking',
-                      player.voiceMuted && 'Muted',
-                      player.pendingBuy > 0 && `${player.pendingBuy} pending`,
-                      hand.readyCheck?.ready.includes(player.userId) && 'Ready',
+                      player.isButton && t('Dealer'),
+                      player.isSB && t('Small blind'),
+                      player.isBB && t('Big blind'),
+                      player.speaking && t('Speaking'),
+                      player.voiceMuted && t('Muted'),
+                      player.pendingBuy > 0 && t('{n} pending', { n: player.pendingBuy }),
+                      hand.readyCheck?.ready.includes(player.userId) && t('Ready'),
                     ]
                       .filter(Boolean)
                       .join(' · ')}
@@ -2184,7 +2197,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                           });
                         }}
                       >
-                        React
+                        {t('React')}
                       </button>
                       {table.canManagePlayers && (
                         <button
@@ -2192,8 +2205,8 @@ function Table3DView({ table }: { table: TablePresentation }) {
                           disabled={!connected}
                           aria-label={
                             kickArmed === player.userId
-                              ? `Confirm stand up ${player.displayName}`
-                              : `Stand up ${player.displayName}`
+                              ? t('Confirm stand up {name}', { name: player.displayName })
+                              : t('Stand up {name}', { name: player.displayName })
                           }
                           onClick={() => {
                             if (kickArmed === player.userId) {
@@ -2202,7 +2215,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                             } else setKickArmed(player.userId);
                           }}
                         >
-                          {kickArmed === player.userId ? 'Confirm stand up' : 'Stand up'}
+                          {kickArmed === player.userId ? t('Confirm stand up') : t('Stand up')}
                         </button>
                       )}
                     </>
@@ -2213,12 +2226,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
           </section>
         )}
         {panel === 'help' && (
-          <section className="lounge-panel help-panel" aria-label="3D table help">
+          <section className="lounge-panel help-panel" aria-label={t('3D table help')}>
             <div className="panel-heading">
-              <h2>Make yourself at home</h2>
+              <h2>{t('Make yourself at home')}</h2>
               <button
                 className="lounge-icon"
-                aria-label="Close help"
+                aria-label={t('Close help')}
                 onClick={() => setPanel(null)}
               >
                 <X size={18} />
@@ -2232,48 +2245,52 @@ function Table3DView({ table }: { table: TablePresentation }) {
               }}
             >
               {soundOn ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}
-              {soundOn ? 'Mute sound' : 'Enable sound'}
+              {soundOn ? t('Mute sound') : t('Enable sound')}
             </button>
             <p>
-              Drag to look around. Pinch or scroll to zoom. Camera presets bring you back to the
-              action.
+              {t(
+                'Drag to look around. Pinch or scroll to zoom. Camera presets bring you back to the action.',
+              )}
             </p>
             <p>
-              Take a break in Lounge, then click the world or choose Walk with keyboard. Use WASD or
-              arrow keys to steer relative to the camera. Release to stop. Chat, menus, and poker
-              decisions pause keyboard movement. Quick destinations work on every device.
+              {t(
+                'Take a break in Lounge, then click the world or choose Walk with keyboard. Use WASD or arrow keys to steer relative to the camera. Release to stop. Chat, menus, and poker decisions pause keyboard movement. Quick destinations work on every device.',
+              )}
             </p>
             <p>
-              Tap a character or open Players to send a playful nudge. Reactions are shared with the
-              table.
+              {t(
+                'Tap a character or open Players to send a playful nudge. Reactions are shared with the table.',
+              )}
             </p>
             <p>
-              Open Cards for community cards, both runouts, and public reveals. Tap your cards to
-              enlarge them. Open Table for invites, records, seats, and preferences.
+              {t(
+                'Open Cards for community cards, both runouts, and public reveals. Tap your cards to enlarge them. Open Table for invites, records, seats, and preferences.',
+              )}
             </p>
             <p>
-              Hide controls for a clear view. They return when you need to respond. Press Escape to
-              bring them back.
+              {t(
+                'Hide controls for a clear view. They return when you need to respond. Press Escape to bring them back.',
+              )}
             </p>
             <Link to={`/room/${roomId}`} className="lounge-button">
-              Switch to 2D table
+              {t('Switch to 2D table')}
             </Link>
           </section>
         )}
         {emoteOpen && (
-          <section className="lounge-panel reactions-panel" aria-label="Table reactions">
+          <section className="lounge-panel reactions-panel" aria-label={t('Table reactions')}>
             <div className="panel-heading">
               <div>
-                <h2>Say it with a move</h2>
+                <h2>{t('Say it with a move')}</h2>
                 <p>
                   {away
-                    ? 'Standing moves. Everyone sees them.'
-                    : 'Seated reactions. Explore for standing moves.'}
+                    ? t('Standing moves. Everyone sees them.')
+                    : t('Seated reactions. Explore for standing moves.')}
                 </p>
               </div>
               <button
                 className="lounge-icon"
-                aria-label="Close reactions"
+                aria-label={t('Close reactions')}
                 onClick={() => setEmoteOpen(false)}
               >
                 <X size={18} />
@@ -2285,12 +2302,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
                 .map(([kind, def]) => (
                   <button
                     key={kind}
-                    aria-label={def.label}
+                    aria-label={t(def.label)}
                     disabled={!connected || !me}
                     onClick={() => sendReaction(kind)}
                   >
                     <span aria-hidden="true">{def.emoji}</span>
-                    {def.label}
+                    {t(def.label)}
                   </button>
                 ))}
             </div>
@@ -2298,7 +2315,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
         )}
       </main>
 
-      <Dialog open={table.menuOpen} onClose={() => table.setMenuOpen(false)} title="Table controls">
+      <Dialog
+        open={table.menuOpen}
+        onClose={() => table.setMenuOpen(false)}
+        title={t('Table controls')}
+      >
         <AppearanceToggle />
         <div className="lounge-shared-controls">{table.utilities}</div>
         <div className="lounge-extra-controls">
@@ -2311,11 +2332,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
             }}
           >
             {soundOn ? <SpeakerSlash size={17} /> : <SpeakerHigh size={17} />}
-            {soundOn ? 'Mute sound' : 'Enable sound'}
+            {soundOn ? t('Mute sound') : t('Enable sound')}
           </button>
           <Link to="/lobby" className="lounge-button">
             <SignOut size={17} />
-            Leave table
+            {t('Leave table')}
           </Link>
         </div>
       </Dialog>
@@ -2324,12 +2345,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
         <>
           <button
             className="target-dismiss"
-            aria-label="Dismiss player interaction"
+            aria-label={t('Dismiss player interaction')}
             onClick={() => setTargetMenu(null)}
           />
           <section
             className="lounge-panel target-panel"
-            aria-label={`Interact with ${targetMenu.name}`}
+            aria-label={t('Interact with {name}', { name: targetMenu.name })}
             style={{
               left: Math.max(12, Math.min(targetMenu.x, window.innerWidth - 232)),
               top: Math.max(80, Math.min(targetMenu.y, window.innerHeight - 245)),
@@ -2339,7 +2360,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
               <h2>{targetMenu.name}</h2>
               <button
                 className="lounge-icon"
-                aria-label="Close player interaction"
+                aria-label={t('Close player interaction')}
                 onClick={() => setTargetMenu(null)}
               >
                 <X size={16} />
@@ -2354,7 +2375,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
               }}
             >
               <HandWaving size={17} />
-              Wave hello
+              {t('Wave hello')}
             </button>
             <button
               className="target-action"
@@ -2383,7 +2404,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
               }}
             >
               <PersonSimpleWalk size={17} />
-              Walk over
+              {t('Walk over')}
             </button>
             {(
               [
@@ -2404,14 +2425,14 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   }}
                 >
                   <HandWaving size={17} />
-                  {label}
+                  {t(label)}
                 </button>
               ))}
           </section>
         </>
       )}
 
-      <footer className="lounge-footer" ref={dockRef} aria-label="Poker widgets">
+      <footer className="lounge-footer" ref={dockRef} aria-label={t('Poker widgets')}>
         <div className="lounge-toolbar">
           <div
             className={cn(
@@ -2423,24 +2444,24 @@ function Table3DView({ table }: { table: TablePresentation }) {
           >
             <i className="status-indicator" />
             <span>{status}</span>
-            {handActive && seconds !== null && <strong>{seconds}s</strong>}
+            {handActive && seconds !== null && <strong>{t('{n}s', { n: seconds })}</strong>}
           </div>
           <div className="lounge-tools lounge-glass">
             <button
               className="lounge-button cards-trigger"
-              aria-label={cardsOpen && hasCards ? 'Hide card widget' : 'Show card widget'}
+              aria-label={cardsOpen && hasCards ? t('Hide card widget') : t('Show card widget')}
               aria-expanded={cardsOpen && hasCards}
               aria-controls="lounge-card-widget"
               disabled={!hasCards}
               onClick={() => setCardsOpen(!cardsOpen)}
-              title={hasCards ? 'Cards on the table' : 'Cards appear when a hand is dealt'}
+              title={hasCards ? t('Cards on the table') : t('Cards appear when a hand is dealt')}
             >
               <CardsThree size={18} />
-              <span>Cards</span>
+              <span>{t('Cards')}</span>
             </button>
             <button
               className="lounge-button"
-              aria-label="Players"
+              aria-label={t('Players')}
               aria-expanded={panel === 'players'}
               onClick={() => {
                 setPanel(panel === 'players' ? null : 'players');
@@ -2449,12 +2470,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
               }}
             >
               <Users size={17} />
-              <span>Players</span>
+              <span>{t('Players')}</span>
               <small>{activeRoom?.players.filter((p) => p.seat !== null).length ?? 0}</small>
             </button>
             <button
               className="lounge-button"
-              aria-label="React"
+              aria-label={t('React')}
               aria-expanded={emoteOpen}
               disabled={!me || !connected}
               onClick={() => {
@@ -2464,11 +2485,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
               }}
             >
               <ChatCircleDots size={18} />
-              <span>React</span>
+              <span>{t('React')}</span>
             </button>
             <button
               className="lounge-icon"
-              aria-label="How to use the 3D table"
+              aria-label={t('How to use the 3D table')}
               aria-expanded={panel === 'help'}
               onClick={() => {
                 setPanel(panel === 'help' ? null : 'help');
@@ -2509,7 +2530,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
             open={hand.peekOffers.length > 0 ? true : undefined}
           >
             <summary>
-              {hand.peekOffers.length > 0 ? 'Private card offer — respond' : 'Private card peeks'}
+              {hand.peekOffers.length > 0
+                ? t('Private card offer — respond')
+                : t('Private card peeks')}
             </summary>
             <fieldset disabled={!connected}>{table.peekPanel}</fieldset>
           </details>

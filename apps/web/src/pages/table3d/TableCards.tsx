@@ -1,6 +1,7 @@
 import { ArrowsOutSimple, CardsThree } from '@phosphor-icons/react';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { useStore } from '../../shared/store.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { ShowdownCards } from '../../widgets/table/ShowdownCards.tsx';
 import { publicCardsBySeat } from './publicTableCards.ts';
 
@@ -21,22 +22,22 @@ export function TableCards({
     <section
       id="lounge-card-widget"
       className="lounge-card-rail lounge-glass"
-      aria-label="Cards on the table"
+      aria-label={t('Cards on the table')}
     >
       <div className="lounge-card-line">
-        <div className="community-cards" aria-label="Community cards">
+        <div className="community-cards" aria-label={t('Community cards')}>
           <span className="card-rail-label">
-            {hand.board2.length ? 'Two runouts' : 'Community cards'}
+            {t(hand.board2.length ? 'Two runouts' : 'Community cards')}
           </span>
           {boardRows.map((board, row) => (
-            <div className="community-run" key={row} aria-label={`Run ${row + 1}`}>
+            <div className="community-run" key={row} aria-label={t('Run {n}', { n: row + 1 })}>
               {hand.board2.length > 0 && <span className="run-label">{row + 1}</span>}
               {Array.from({ length: 5 }, (_, index) =>
                 board[index] === undefined ? (
                   <span
                     key={index}
                     className="community-slot"
-                    aria-label={`Empty community card ${index + 1}`}
+                    aria-label={t('Empty community card {n}', { n: index + 1 })}
                   />
                 ) : (
                   <PlayingCard
@@ -54,10 +55,10 @@ export function TableCards({
           <button
             className="private-hand card-enlarge"
             onClick={onEnlarge}
-            aria-label="Enlarge your cards"
+            aria-label={t('Enlarge your cards')}
           >
             <span className="card-rail-label">
-              Your cards <ArrowsOutSimple size={12} />
+              {t('Your cards')} <ArrowsOutSimple size={12} />
             </span>
             <span className="private-cards">
               {hand.myCards.map((card, i) => (
@@ -69,13 +70,13 @@ export function TableCards({
         {(hand.result || hand.abort) && (
           <button className="lounge-button hand-result-trigger" onClick={onResult}>
             <CardsThree size={17} />
-            <span>Hand result</span>
+            <span>{t('Hand result')}</span>
           </button>
         )}
       </div>
       {Object.keys(publicCards).length > 0 && (
-        <div className="lounge-public-cards" aria-label="Publicly shown cards">
-          <span className="card-rail-label">Shown to everyone</span>
+        <div className="lounge-public-cards" aria-label={t('Publicly shown cards')}>
+          <span className="card-rail-label">{t('Shown to everyone')}</span>
           <ShowdownCards
             reveals={hand.showdown?.reveals ?? []}
             shown={hand.shown}
@@ -83,7 +84,7 @@ export function TableCards({
             nameOf={(seat) =>
               room?.players.find((p) => p.seat === seat)?.displayName ??
               hand.seats.find((p) => p.seat === seat)?.username ??
-              `Seat ${seat + 1}`
+              t('Seat {n}', { n: seat + 1 })
             }
             light
           />

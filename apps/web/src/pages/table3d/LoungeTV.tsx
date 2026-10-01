@@ -8,6 +8,7 @@ import {
   SpeakerSlash,
   X,
 } from '@phosphor-icons/react';
+import { t } from '../../shared/i18n/index.ts';
 
 export function LoungeTV({
   open,
@@ -45,7 +46,7 @@ export function LoungeTV({
     setError('');
     void videoRef.current
       ?.play()
-      .catch(() => setError('Playback paused. Press Play to try again.'));
+      .catch(() => setError(t('Playback paused. Press Play to try again.')));
   };
   useEffect(() => {
     const video = videoRef.current;
@@ -93,24 +94,24 @@ export function LoungeTV({
   return (
     <section
       className="lounge-panel lounge-tv-panel"
-      aria-label="Lounge TV controls"
+      aria-label={t('Lounge TV controls')}
       hidden={!open}
     >
       <div className="panel-heading">
         <div>
-          <h2>Lounge TV</h2>
-          <p>Your playback on this device.</p>
+          <h2>{t('Lounge TV')}</h2>
+          <p>{t('Your playback on this device.')}</p>
         </div>
-        <button className="lounge-icon" aria-label="Close TV controls" onClick={onClose}>
+        <button className="lounge-icon" aria-label={t('Close TV controls')} onClick={onClose}>
           <X size={18} />
         </button>
       </div>
-      <div className="tv-channels" aria-label="TV channel">
+      <div className="tv-channels" aria-label={t('TV channel')}>
         <button aria-pressed={channel === 'film'} onClick={() => onChannel('film')}>
-          Video
+          {t('Video')}
         </button>
         <button aria-pressed={channel === 'table'} onClick={() => onChannel('table')}>
-          Table live
+          {t('Table live')}
         </button>
       </div>
       <video
@@ -123,7 +124,7 @@ export function LoungeTV({
         autoPlay={!reduced.current}
         preload="metadata"
         className={channel === 'table' ? 'tv-video-hidden' : ''}
-        aria-label={title}
+        aria-label={t(title)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onLoadedMetadata={(event) => {
@@ -134,22 +135,22 @@ export function LoungeTV({
           video.volume = volume;
         }}
         onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
-        onError={() =>
-          setError('This video could not play. Try an MP4 or restore the lounge film.')
-        }
+        onError={() => setError(t('This video could not play. Try an MP4 or restore the lounge film.'))}
       />
       {channel === 'table' ? (
         <p className="tv-description">
-          The screen shows the current pot, board, and whose turn it is. Private cards stay private.
+          {t(
+            'The screen shows the current pot, board, and whose turn it is. Private cards stay private.',
+          )}
         </p>
       ) : (
         <>
           <div className="tv-track">
-            <strong>{title}</strong>
-            <span>{fileUrl.current ? 'Local file' : 'Silent ambient loop'}</span>
+            <strong>{t(title)}</strong>
+            <span>{fileUrl.current ? t('Local file') : t('Silent ambient loop')}</span>
           </div>
           <label className="tv-seek">
-            <span className="sr-only">Video position</span>
+            <span className="sr-only">{t('Video position')}</span>
             <input
               type="range"
               min={0}
@@ -170,22 +171,22 @@ export function LoungeTV({
           <div className="tv-playback">
             <button
               className="lounge-button"
-              aria-label={playing ? 'Pause TV' : 'Play TV'}
+              aria-label={playing ? t('Pause TV') : t('Play TV')}
               onClick={() => (playing ? videoRef.current?.pause() : playVideo())}
             >
               {playing ? <Pause size={18} /> : <Play size={18} />}
-              {playing ? 'Pause' : 'Play'}
+              {playing ? t('Pause') : t('Play')}
             </button>
             <button
               className="lounge-icon"
-              aria-label={muted ? 'Unmute TV' : 'Mute TV'}
+              aria-label={muted ? t('Unmute TV') : t('Mute TV')}
               onClick={() => setMuted(!muted)}
             >
               {muted ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}
             </button>
             <input
               type="range"
-              aria-label="TV volume"
+              aria-label={t('TV volume')}
               min={0}
               max={1}
               step={0.05}
@@ -199,11 +200,11 @@ export function LoungeTV({
             />
             <button
               className="lounge-icon"
-              aria-label="Fullscreen video"
+              aria-label={t('Fullscreen video')}
               onClick={() => {
                 void videoRef.current
                   ?.requestFullscreen?.()
-                  .catch(() => setError('Fullscreen is unavailable in this browser.'));
+                  .catch(() => setError(t('Fullscreen is unavailable in this browser.')));
               }}
             >
               <ArrowsOutSimple size={18} />
@@ -222,7 +223,7 @@ export function LoungeTV({
           type="file"
           accept="video/*"
           className="sr-only"
-          aria-label="Choose a local video"
+          aria-label={t('Choose a local video')}
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (!file) return;
@@ -240,7 +241,7 @@ export function LoungeTV({
         />
         <button className="lounge-button" onClick={() => fileRef.current?.click()}>
           <FolderOpen size={17} />
-          Open video
+          {t('Open video')}
         </button>
         <button
           className="lounge-button"
@@ -255,12 +256,13 @@ export function LoungeTV({
             videoRef.current?.load();
           }}
         >
-          Lounge film
+          {t('Lounge film')}
         </button>
       </div>
       <p className="tv-description">
-        Local videos stay on your device. Opening this panel keeps the table and your game controls
-        available.
+        {t(
+          'Local videos stay on your device. Opening this panel keeps the table and your game controls available.',
+        )}
       </p>
     </section>
   );
