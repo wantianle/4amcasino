@@ -9,6 +9,7 @@ import {
 } from '../../shared/crypto.ts';
 import { takePendingJoin } from '../../shared/pendingJoin.ts';
 import { useStore } from '../../shared/store.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Button, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { cardFromName } from '@4am/shared';
@@ -70,9 +71,9 @@ export function LoginPage() {
     e.preventDefault();
     setError(null);
     if (mode === 'recover') {
-      if (password !== confirm) return setError('the new passwords do not match');
+      if (password !== confirm) return setError(t('the new passwords do not match'));
       if (normalizeRecoveryCode(recoveryCode).length < 20) {
-        return setError('that recovery code looks too short');
+        return setError(t('that recovery code looks too short'));
       }
     }
     setPhase('deriving');
@@ -98,14 +99,21 @@ export function LoginPage() {
       if (admin) nav(adminNext, { replace: true });
       else onwardTimer.current = setTimeout(() => void goOnwards(), 650);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not sign in. Try again.';
-      setError(message === 'bad credentials' ? 'Username or password is incorrect.' : message);
+      const message = err instanceof Error ? err.message : t('Could not sign in. Try again.');
+      // shared/api.ts may translate err.message; `raw` keeps the original server
+      // prose so the 'bad credentials' check works either way.
+      const raw = err instanceof Error ? ((err as { raw?: string }).raw ?? err.message) : message;
+      setError(
+        raw === 'bad credentials' || message === 'bad credentials'
+          ? t('Username or password is incorrect.')
+          : message,
+      );
       setPhase('idle');
     }
   }
 
   const cta =
-    mode === 'login' ? 'Log in' : mode === 'register' ? 'Create account' : 'Reset my password';
+    mode === 'login' ? t('Log in') : mode === 'register' ? t('Create account') : t('Reset my password');
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-20">
@@ -124,22 +132,24 @@ export function LoginPage() {
           ))}
         </div>
         <h1 className="mb-1 text-center font-display text-2xl font-bold">
-          {admin ? 'Platform sign in' : '4AM Casino'}
+          {admin ? t('Platform sign in') : '4AM Casino'}
         </h1>
         <p className="mb-6 text-center text-sm text-slate-500">
           {admin
-            ? 'Use your 4AM Casino platform account to manage the casino.'
-            : "Hold'em with friends. Nobody sees your cards. Not even the house."}
+            ? t('Use your 4AM Casino platform account to manage the casino.')
+            : t("Hold'em with friends. Nobody sees your cards. Not even the house.")}
         </p>
         {joinCode && !admin && (
           <div className="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">
-            You were invited to a table (<span className="font-mono font-bold">{joinCode}</span>).
-            Log in or create an account and we'll seat you straight away.
+            {t(
+              "You were invited to a table ({code}). Log in or create an account and we'll seat you straight away.",
+              { code: joinCode },
+            )}
           </div>
         )}
         {expired && (
           <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-            Your session has expired. Sign in again to continue.
+            {t('Your session has expired. Sign in again to continue.')}
           </div>
         )}
         <Panel>
@@ -158,7 +168,7 @@ export function LoginPage() {
                       : 'text-slate-500'
                   }`}
                 >
-                  {m === 'login' ? 'Log in' : 'Register'}
+                  {m === 'login' ? t('Log in') : t('Register')}
                 </button>
               ))}
             </div>
@@ -166,15 +176,16 @@ export function LoginPage() {
 
           {mode === 'recover' && (
             <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-              Enter the recovery code you saved when you set up the account. It works once, and it
-              issues you a brand-new signing key — your old hands stay verifiable either way.
+              {t(
+                'Enter the recovery code you saved when you set up the account. It works once, and it issues you a brand-new signing key — your old hands stay verifiable either way.',
+              )}
             </div>
           )}
 
           <form onSubmit={submit} className="space-y-3">
             <Input
-              aria-label="Username"
-              placeholder="Username"
+              aria-label={t('Username')}
+              placeholder={t('Username')}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
@@ -185,8 +196,8 @@ export function LoginPage() {
             />
             {mode === 'recover' && (
               <Input
-                aria-label="Recovery code (XXXXXX-XXXXXX-…)"
-                placeholder="Recovery code (XXXXXX-XXXXXX-…)"
+                aria-label={t('Recovery code (XXXXXX-XXXXXX-…)')}
+                placeholder={t('Recovery code (XXXXXX-XXXXXX-…)')}
                 value={recoveryCode}
                 onChange={(e) => setRecoveryCode(e.target.value)}
                 disabled={busy}
@@ -195,8 +206,8 @@ export function LoginPage() {
               />
             )}
             <Input
-              aria-label={mode === 'recover' ? 'New password' : 'Password'}
-              placeholder={mode === 'recover' ? 'New password' : 'Password'}
+              aria-label={mode === 'recover' ? t('New password') : t('Password')}
+              placeholder={mode === 'recover' ? t('New password') : t('Password')}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -207,8 +218,8 @@ export function LoginPage() {
             />
             {mode === 'recover' && (
               <Input
-                aria-label="Repeat new password"
-                placeholder="Repeat new password"
+                aria-label={t('Repeat new password')}
+                placeholder={t('Repeat new password')}
                 type="password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
@@ -231,26 +242,26 @@ export function LoginPage() {
               disabled={busy}
             >
               {phase === 'deriving' ? (
-                <Spinner label="Deriving your keys…" />
+                <Spinner label={t('Deriving your keys…')} />
               ) : phase === 'submitting' ? (
                 <Spinner
                   label={
                     mode === 'register'
-                      ? 'Creating account…'
+                      ? t('Creating account…')
                       : mode === 'recover'
-                        ? 'Recovering…'
-                        : 'Signing in…'
+                        ? t('Recovering…')
+                        : t('Signing in…')
                   }
                 />
               ) : phase === 'success' ? (
                 admin ? (
-                  '✓ Signed in. Opening dashboard…'
+                  t('✓ Signed in. Opening dashboard…')
                 ) : joinCode ? (
-                  '✓ Seating you at the table…'
+                  t('✓ Seating you at the table…')
                 ) : mode === 'register' ? (
-                  '✓ Account created. Dealing you in…'
+                  t('✓ Account created. Dealing you in…')
                 ) : (
-                  '✓ Signed in. Dealing you in…'
+                  t('✓ Signed in. Dealing you in…')
                 )
               ) : (
                 cta
@@ -268,12 +279,13 @@ export function LoginPage() {
             }}
             className="mt-3 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
           >
-            {mode === 'recover' ? '← Back to log in' : 'Forgot your password?'}
+            {mode === 'recover' ? t('← Back to log in') : t('Forgot your password?')}
           </button>
 
           <p className="mt-3 text-xs leading-relaxed text-slate-400">
-            Your password also derives your card-signing key in this browser. It is never sent to
-            the server.
+            {t(
+              'Your password also derives your card-signing key in this browser. It is never sent to the server.',
+            )}
           </p>
         </Panel>
         <Link
@@ -281,8 +293,8 @@ export function LoginPage() {
           className="mt-4 block text-center text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
         >
           {admin
-            ? 'Back to 4AM Casino'
-            : 'How can an online deck be fair? Watch the 60-second explainer'}
+            ? t('Back to 4AM Casino')
+            : t('How can an online deck be fair? Watch the 60-second explainer')}
         </Link>
       </div>
     </div>

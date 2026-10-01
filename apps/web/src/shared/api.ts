@@ -1,4 +1,5 @@
 import { useStore } from './store.ts';
+import { tr } from './i18n/index.ts';
 import type { AdminOverview, CommissionScope, CommissionSettings } from '@4am/shared';
 import type {
   TournamentState,
@@ -36,6 +37,21 @@ async function send(path: string, method: string, body?: unknown): Promise<Respo
   }
 }
 
+/** An HTTP failure from the API. `message` is display-ready Chinese prose
+ *  (`tr()` of the server's English, falling back to English when a phrase has
+ *  no dictionary entry — better raw English than wrong Chinese). `raw` keeps
+ *  the canonical English for logs, tests and agents; `.status` is unchanged. */
+export class ApiError extends Error {
+  readonly raw: string;
+  readonly status: number;
+  constructor(raw: string, status: number) {
+    super(tr(raw));
+    this.name = 'ApiError';
+    this.raw = raw;
+    this.status = status;
+  }
+}
+
 async function req(path: string, body?: unknown, method?: string): Promise<any> {
   const token = useStore.getState().auth.token;
   const res = await send(path, method ?? (body === undefined ? 'GET' : 'POST'), body);
@@ -54,12 +70,9 @@ async function req(path: string, body?: unknown, method?: string): Promise<any> 
       location.assign(
         `/login?expired=1${admin ? `&admin=1&next=${encodeURIComponent(next)}` : ''}`,
       );
-    throw new Error('session expired');
+    throw new ApiError('session expired', 401);
   }
-  if (!res.ok)
-    throw Object.assign(new Error(json.error ?? `request failed (${res.status})`), {
-      status: res.status,
-    });
+  if (!res.ok) throw new ApiError(json.error ?? `request failed (${res.status})`, res.status);
   return json;
 }
 

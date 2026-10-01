@@ -13,6 +13,7 @@ import {
   signContent,
 } from '@4am/mental-poker';
 import { legalActions, type PlayerAction, type ServerMsg } from '@4am/shared';
+import { t, tr } from './i18n/index.ts';
 import { useStore } from './store.ts';
 import { wsClient } from './ws.ts';
 import { voice } from './voice.ts';
@@ -235,7 +236,9 @@ function handle(msg: ServerMsg): void {
       return;
     }
     case 'error':
-      store.pushError(msg.message);
+      // server prose crosses into the toast store here: translate at the
+      // boundary, exact/template match only — unknown phrases pass through
+      store.pushError(tr(msg.message));
       return;
 
     case 'hand_start': {
@@ -302,7 +305,7 @@ function handle(msg: ServerMsg): void {
       const mine = mySeatIn(h0.seats);
       const isMyCard = h0.myCardPoints.some((c) => c.deckIndex === msg.deckIndex);
       if (msg.purpose !== 'showdown' && (isMyCard || (mine !== null && msg.forSeat === mine))) {
-        store.pushError('Refused an unmask request for a card dealt to me.');
+        store.pushError(t('Refused an unmask request for a card dealt to me.'));
         return;
       }
       const k = handKeyFor(msg.handId);
@@ -326,7 +329,7 @@ function handle(msg: ServerMsg): void {
       const plain = mulPoint(pointFromHex(msg.point), invScalar(k));
       const card = recoverCard(plain, lookup);
       if (card === null) {
-        store.pushError('Could not decode a dealt card. The hand will abort.');
+        store.pushError(t('Could not decode a dealt card. The hand will abort.'));
         return;
       }
       play('deal');
@@ -530,7 +533,7 @@ function handle(msg: ServerMsg): void {
         play('flip');
         store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: msg.cards } });
       } else {
-        store.pushError('Your peek offer was declined.');
+        store.pushError(t('Your peek offer was declined.'));
       }
       return;
     }

@@ -4,6 +4,7 @@ import { MAX_QUALIFYING_HANDS, commissionRateLabel } from '@4am/shared';
 import { useCommissionSettings } from '../../shared/useCommissionSettings.ts';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Badge, Button, Dialog, Input, Panel } from '../../shared/ui/index.tsx';
 import { FriendsPanel, InvitesPanel } from '../../features/friends/FriendsPanel.tsx';
 import { NetAreaChart } from '../../features/stats/charts.tsx';
@@ -103,7 +104,7 @@ export function LobbyPage() {
       nav(`/room/${room.id}`);
     } catch (err) {
       void commission.refresh();
-      setError(err instanceof Error ? err.message : 'could not create room');
+      setError(err instanceof Error ? err.message : t('could not create room'));
     }
   }
 
@@ -114,7 +115,7 @@ export function LobbyPage() {
       const room = await api.joinRoom(joinCode.trim());
       nav(`/room/${room.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'could not join');
+      setError(err instanceof Error ? err.message : t('could not join'));
     }
   }
 
@@ -134,26 +135,26 @@ export function LobbyPage() {
     <div className="mx-auto max-w-[1600px] p-4 md:p-6">
       <div className="mb-6">
         <h1 className="font-display text-2xl font-bold">
-          Your lobby, {prefs.displayName || username}
+          {t('Your lobby, {name}', { name: prefs.displayName || username || '' })}
         </h1>
-        <p className="mt-1 text-sm text-slate-500">Start a table or join one with a code.</p>
+        <p className="mt-1 text-sm text-slate-500">{t('Start a table or join one with a code.')}</p>
       </div>
 
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
           <Panel>
-            <h2 className="mb-1 font-display font-semibold">Start a table</h2>
-            <p className="mb-4 text-sm text-slate-500">You become host and banker.</p>
+            <h2 className="mb-1 font-display font-semibold">{t('Start a table')}</h2>
+            <p className="mb-4 text-sm text-slate-500">{t('You become host and banker.')}</p>
             <Button className="w-full" onClick={() => setCreateOpen(true)}>
-              Create room
+              {t('Create room')}
             </Button>
           </Panel>
           <Panel>
-            <h2 className="mb-1 font-display font-semibold">Join a table</h2>
-            <p className="mb-4 text-sm text-slate-500">Ask the host for the 6-letter code.</p>
+            <h2 className="mb-1 font-display font-semibold">{t('Join a table')}</h2>
+            <p className="mb-4 text-sm text-slate-500">{t('Ask the host for the 6-letter code.')}</p>
             <form onSubmit={join} className="flex gap-2">
               <Input
-                aria-label="Room code"
+                aria-label={t('Room code')}
                 placeholder="ABC123"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
@@ -161,7 +162,7 @@ export function LobbyPage() {
                 className="font-display uppercase tracking-widest"
               />
               <Button type="submit" variant="secondary" disabled={joinCode.length !== 6}>
-                Join
+                {t('Join')}
               </Button>
             </form>
           </Panel>
@@ -172,9 +173,9 @@ export function LobbyPage() {
           <NetAreaChart points={timeline} hands={myStats?.handsPlayed} />
 
           <div>
-            <h2 className="mb-3 font-display font-semibold">Your rooms</h2>
+            <h2 className="mb-3 font-display font-semibold">{t('Your rooms')}</h2>
             {rooms.length === 0 ? (
-              <p className="text-sm text-slate-500">No rooms yet. Create one and share the code.</p>
+              <p className="text-sm text-slate-500">{t('No rooms yet. Create one and share the code.')}</p>
             ) : (
               <div className="grid gap-2 xl:grid-cols-2">
                 {rooms
@@ -189,17 +190,21 @@ export function LobbyPage() {
                       <Link
                         to={`/room/${r.id}`}
                         className="absolute inset-0 rounded-xl"
-                        aria-label={`Open ${r.name}`}
+                        aria-label={t('Open {name}', { name: r.name })}
                       />
                       <div className="min-w-0">
                         <div className="font-medium">{r.name}</div>
                         <div className="text-xs text-slate-500">
-                          Blinds {r.sb}/{r.bb} · Code {r.joinCode}
+                          {t('Blinds {sb}/{bb} · Code {code}', {
+                            sb: r.sb,
+                            bb: r.bb,
+                            code: r.joinCode,
+                          })}
                         </div>
                       </div>
                       <div className="relative z-10 flex items-center gap-2">
                         <CopyInvite joinCode={r.joinCode} roomName={r.name} />
-                        <Badge tone="indigo">{r.playerCount} players</Badge>
+                        <Badge tone="indigo">{t('{n} players', { n: r.playerCount })}</Badge>
                       </div>
                     </div>
                   ))}
@@ -208,11 +213,12 @@ export function LobbyPage() {
             {rooms.some((r) => r.archived) && (
               <details className="mt-6">
                 <summary className="cursor-pointer text-sm font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
-                  Archived tables ({rooms.filter((r) => r.archived).length})
+                  {t('Archived tables ({n})', { n: rooms.filter((r) => r.archived).length })}
                 </summary>
                 <p className="mt-1.5 text-xs text-slate-400">
-                  Retired, not deleted. The ledger and every hand stay readable, and anything still
-                  owed is still owed — they just stop counting towards your stats.
+                  {t(
+                    'Retired, not deleted. The ledger and every hand stay readable, and anything still owed is still owed — they just stop counting towards your stats.',
+                  )}
                 </p>
                 <div className="mt-2 space-y-1.5">
                   {rooms
@@ -230,7 +236,7 @@ export function LobbyPage() {
                         </Link>
                         {restorePending.has(r.id) ? (
                           <span className="px-2 py-1 text-xs font-medium text-slate-400">
-                            Restore requested
+                            {t('Restore requested')}
                           </span>
                         ) : (
                           <button
@@ -238,7 +244,7 @@ export function LobbyPage() {
                             onClick={() => void requestRestore(r.id)}
                             className="rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950"
                           >
-                            Request restore
+                            {t('Request restore')}
                           </button>
                         )}
                       </div>
@@ -248,7 +254,7 @@ export function LobbyPage() {
             )}
             {publicRooms.length > 0 && (
               <>
-                <h2 className="mb-3 mt-8 font-display font-semibold">Public tables</h2>
+                <h2 className="mb-3 mt-8 font-display font-semibold">{t('Public tables')}</h2>
                 <div className="space-y-2">
                   {publicRooms.map((r) => (
                     <div
@@ -258,7 +264,12 @@ export function LobbyPage() {
                       <div className="min-w-0">
                         <div className="truncate font-medium">{r.name}</div>
                         <div className="text-xs text-slate-500">
-                          Hosted by {r.hostName} · Blinds {r.sb}/{r.bb} · {r.playerCount} players
+                          {t('Hosted by {host} · Blinds {sb}/{bb} · {n} players', {
+                            host: r.hostName,
+                            sb: r.sb,
+                            bb: r.bb,
+                            n: r.playerCount,
+                          })}
                         </div>
                       </div>
                       {r.meetLink && (
@@ -268,14 +279,14 @@ export function LobbyPage() {
                           rel="noreferrer"
                           className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
                         >
-                          Join call
+                          {t('Join call')}
                         </a>
                       )}
                       <Button
                         variant="secondary"
                         onClick={() => void api.joinPublic(r.id).then(() => nav(`/room/${r.id}`))}
                       >
-                        Join
+                        {t('Join')}
                       </Button>
                     </div>
                   ))}
@@ -291,27 +302,27 @@ export function LobbyPage() {
         </div>
       </div>
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create room">
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title={t('Create room')}>
         <form onSubmit={create} className="space-y-3">
           <Input
-            aria-label="Room name"
-            placeholder="Room name"
+            aria-label={t('Room name')}
+            placeholder={t('Room name')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
           />
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm">
-              <span className="mb-1 block text-slate-500">Small blind</span>
+              <span className="mb-1 block text-slate-500">{t('Small blind')}</span>
               <Input type="number" min={1} value={sb} onChange={(e) => setSb(+e.target.value)} />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-slate-500">Big blind</span>
+              <span className="mb-1 block text-slate-500">{t('Big blind')}</span>
               <Input type="number" min={1} value={bb} onChange={(e) => setBb(+e.target.value)} />
             </label>
           </div>
           <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">Turn timer</span>
+            <span className="mb-1 block text-slate-500">{t('Turn timer')}</span>
             <select
               value={actionSecs}
               onChange={(e) => setActionSecs(+e.target.value)}
@@ -319,15 +330,15 @@ export function LobbyPage() {
             >
               {[15, 30, 45, 60, 90, 120].map((s) => (
                 <option key={s} value={s}>
-                  {s} seconds per decision
+                  {t('{s} seconds per decision', { s })}
                 </option>
               ))}
-              <option value={0}>No limit</option>
+              <option value={0}>{t('No limit')}</option>
             </select>
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-500">
-              Video call link (Meet or Zoom, optional)
+              {t('Video call link (Meet or Zoom, optional)')}
             </span>
             <Input
               placeholder="https://meet.google.com/..."
@@ -336,19 +347,19 @@ export function LobbyPage() {
             />
           </label>
           <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">Who can find this table</span>
+            <span className="mb-1 block text-slate-500">{t('Who can find this table')}</span>
             <select
               value={visibility}
               onChange={(e) => setVisibility(e.target.value as 'private' | 'public')}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
             >
-              <option value="private">Private: join with the 6-letter code only</option>
-              <option value="public">Public: listed in every lobby, anyone can join</option>
+              <option value="private">{t('Private: join with the 6-letter code only')}</option>
+              <option value="public">{t('Public: listed in every lobby, anyone can join')}</option>
             </select>
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-500">
-              Hands required before winnings count in settle-up
+              {t('Hands required before winnings count in settle-up')}
             </span>
             <Input
               type="number"
@@ -358,7 +369,7 @@ export function LobbyPage() {
               onChange={(e) => setMinSettleHands(Math.max(0, +e.target.value))}
             />
             <span className="mt-1 block text-xs text-slate-400">
-              0 means everyone counts right away. Maximum 30 hands.
+              {t('0 means everyone counts right away. Maximum 30 hands.')}
             </span>
           </label>
           <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -369,21 +380,24 @@ export function LobbyPage() {
               className="mt-0.5"
             />
             <span>
-              Strict audit: everyone's cards become checkable after each hand (folded cards
-              included)
+              {t(
+                "Strict audit: everyone's cards become checkable after each hand (folded cards included)",
+              )}
             </span>
           </label>
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <p className="text-xs leading-relaxed text-slate-500">
             {commission.settings
-              ? `House cut: ${commissionRateLabel(commission.settings.commissionBps)} per pot, rounded down to whole chips.`
-              : 'Loading the current house cut…'}
+              ? t('House cut: {rate} per pot, rounded down to whole chips.', {
+                  rate: commissionRateLabel(commission.settings.commissionBps),
+                })
+              : t('Loading the current house cut…')}
           </p>
           {commission.error && (
             <p role="alert" className="text-sm text-rose-600">
               {commission.error}{' '}
               <button type="button" className="underline" onClick={() => void commission.refresh()}>
-                Retry
+                {t('Retry')}
               </button>
             </p>
           )}
@@ -392,7 +406,7 @@ export function LobbyPage() {
             className="w-full"
             disabled={!commission.settings || !!commission.error}
           >
-            Create
+            {t('Create')}
           </Button>
         </form>
       </Dialog>
