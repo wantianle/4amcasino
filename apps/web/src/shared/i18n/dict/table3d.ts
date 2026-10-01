@@ -6,7 +6,8 @@
 // MP4 / 4AM 等键名与品牌原样透传。LOUNGE_DESTINATIONS 的英文 label 只在显示
 // 处 t()，packages/shared 不动。画布文本（3D 铭牌 / 酒廊电视）按 §6.2-3 同走
 // t()；system-ui / sans-serif 字体栈自带 CJK 回退。
-// Reused keys owned elsewhere (do NOT redeclare): 'Table' / 'POT' / 'Seat {n}'
+// Reused keys owned elsewhere (do NOT redeclare): 'Table' / 'POT' / 'WIN'
+// / 'Seat {n}'
 // / '{n}s' / 'Open chat' / 'More table controls' / 'Table controls' /
 // 'Leave table' / 'player' / 'Run {n}' / 'Run 1' / 'Run 2' /
 // 'Empty community card {n}' / 'Hand result' (dict/table-page.ts),
@@ -63,8 +64,7 @@ const table3d: Record<string, string> = {
   'Close-up': '特写',
   'WASD / arrows to walk · Tap floor to go · Drag to orbit':
     'WASD / 方向键走动 · 点地面过去 · 拖拽转视角',
-  'Lounge to get up · Drag to orbit · Scroll to zoom':
-    '点酒廊即可起身 · 拖拽转视角 · 滚轮缩放',
+  'Lounge to get up · Drag to orbit · Scroll to zoom': '点酒廊即可起身 · 拖拽转视角 · 滚轮缩放',
 
   // ── 酒廊目的地（LOUNGE_DESTINATIONS，显示处 t()）───────────────────────
   'Lounge entrance': '酒廊入口',
@@ -78,8 +78,7 @@ const table3d: Record<string, string> = {
   'Explore the lounge': '逛逛酒廊',
   'Make yourself at home': '就当自己家',
   'Your break starts after this hand.': '这手打完就开始休息。',
-  'Use WASD or arrow keys to walk. Drag to look around.':
-    '用 WASD 或方向键走动，拖拽环顾四周。',
+  'Use WASD or arrow keys to walk. Drag to look around.': '用 WASD 或方向键走动，拖拽环顾四周。',
   'Take a break. Your seat and chips stay yours.': '去歇会儿，位置和筹码都给你留着。',
   'Choose a clear spot inside the lounge.': '在酒廊里找个空旷的位置。',
   'Close lounge controls': '关闭酒廊控制',
@@ -146,8 +145,7 @@ const table3d: Record<string, string> = {
   'Close reactions': '关闭互动面板',
   'Say it with a move': '用动作说话',
   'Standing moves. Everyone sees them.': '站着的动作，全桌都看得到。',
-  'Seated reactions. Explore for standing moves.':
-    '坐着能做的小动作。去「酒廊」面板解锁站立动作。',
+  'Seated reactions. Explore for standing moves.': '坐着能做的小动作。去「酒廊」面板解锁站立动作。',
   Reaction: '互动',
   '{label} sent': '已发出：{label}',
   Wave: '挥手',
@@ -273,11 +271,9 @@ const table3d: Record<string, string> = {
   Reset: '重置',
   Saved: '已保存',
   'Save character': '保存角色',
-  'Unsaved changes. Save to wear this at the table.':
-    '还有没保存的改动，保存后牌桌上就是这身。',
+  'Unsaved changes. Save to wear this at the table.': '还有没保存的改动，保存后牌桌上就是这身。',
   'Seen by everyone at your table.': '同桌所有人都看得到。',
-  '{head} character preview with {hat}. Drag to rotate.':
-    '当前形象：{head}、{hat}。拖拽可旋转。',
+  '{head} character preview with {hat}. Drag to rotate.': '当前形象：{head}、{hat}。拖拽可旋转。',
   round: '圆头',
   cube: '方块头',
   cone: '尖头',
@@ -295,6 +291,7 @@ const table3d: Record<string, string> = {
   '{pot} in the pot': '底池 {pot}',
   '{name} is playing': '{name} 正在行动',
   'The next hand is coming': '下一手马上开始',
+  // ClubGG 式结算徽章 WIN 沿用 dict/table.ts 的既定键（保留英文，不重declare）。
   // 位置徽章：庄位纽扣沿用全球通用的 D（与 2D 一致，不译）；盲注按 §2.1 短译。
   D: 'D',
   SB: '小盲',

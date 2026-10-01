@@ -139,8 +139,14 @@ function cardTexture(id: CardId | null): THREE.CanvasTexture {
 }
 
 /** Seat nameplate: the name on top, and the stack a player needs to read riding
- *  a gold pill underneath (mirrors the stack line in the 2D seat pod). */
-function labelTexture(name: string, stack: string, accent: string): THREE.CanvasTexture {
+ *  a gold pill underneath (mirrors the stack line in the 2D seat pod). When a
+ *  hand ends, the winner's plate carries a ClubGG-style WIN badge. */
+function labelTexture(
+  name: string,
+  stack: string,
+  accent: string,
+  win = false,
+): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 96;
@@ -152,6 +158,12 @@ function labelTexture(name: string, stack: string, accent: string): THREE.Canvas
   x.strokeStyle = accent;
   x.lineWidth = 3;
   x.stroke();
+  if (win) {
+    // a soft emerald halo so the winning plate reads before anyone hunts for it
+    x.strokeStyle = 'rgba(74,222,128,0.5)';
+    x.lineWidth = 8;
+    x.stroke();
+  }
   x.fillStyle = '#f5f3ff';
   x.textAlign = 'center';
   if (stack === '') {
@@ -160,7 +172,7 @@ function labelTexture(name: string, stack: string, accent: string): THREE.Canvas
     x.fillText(name.slice(0, 13), 128, 56);
   } else {
     x.font = '700 24px system-ui';
-    x.fillText(name.slice(0, 13), 128, 34);
+    x.fillText(name.slice(0, win ? 10 : 13), win ? 114 : 128, 34);
     x.font = '800 30px ui-monospace, monospace';
     const w = Math.min(224, Math.max(78, x.measureText(stack).width + 36));
     x.fillStyle = '#fbbf24';
@@ -170,8 +182,53 @@ function labelTexture(name: string, stack: string, accent: string): THREE.Canvas
     x.fillStyle = '#451a03';
     x.fillText(stack, 128, 73);
   }
-  const t = new THREE.CanvasTexture(c);
-  return t;
+  if (win) {
+    // the WIN badge: an emerald coin with a cream ring riding the plate corner
+    x.beginPath();
+    x.arc(220, 24, 20, 0, Math.PI * 2);
+    x.fillStyle = '#16a34a';
+    x.fill();
+    x.lineWidth = 3;
+    x.strokeStyle = '#dcfce7';
+    x.stroke();
+    x.fillStyle = '#f0fdf4';
+    x.font = '800 15px ui-monospace, monospace';
+    x.fillText(t('WIN'), 220, 30);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+
+/** The pot readout, floating over the pot pile instead of crowding the top of
+ *  the screen: a glass pill with the street on top and 底池 + amount in a gold
+ *  pill below - the same pairing the seat nameplates use for the stack. */
+function potReadoutTexture(street: string, potText: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 320;
+  c.height = 112;
+  const x = c.getContext('2d')!;
+  x.fillStyle = 'rgba(13,31,34,0.92)';
+  x.beginPath();
+  x.roundRect(4, 4, 312, 104, 22);
+  x.fill();
+  x.strokeStyle = '#eccf88';
+  x.lineWidth = 3;
+  x.stroke();
+  x.textAlign = 'center';
+  x.fillStyle = '#d3c4e2';
+  x.font = '700 24px system-ui';
+  x.fillText(street, 160, 40);
+  x.font = '800 34px ui-monospace, monospace';
+  const w = Math.min(292, x.measureText(potText).width + 44);
+  x.fillStyle = '#fbbf24';
+  x.beginPath();
+  x.roundRect(160 - w / 2, 52, w, 44, 22);
+  x.fill();
+  x.fillStyle = '#451a03';
+  x.fillText(potText, 160, 84);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /** Floating poker-position disc (D / SB / BB), styled after the 2D table's
@@ -889,6 +946,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
     const startMotion = (anim: CharacterMotion) => motions.start(anim, charBySeat.get(anim.seat));
     const charBySeat = new Map<number, THREE.Group>();
     const homeBySeat = new Map<number, THREE.Vector3>();
+    const labelBySeat = new Map<number, THREE.Sprite>();
     const seen = new Set<string>();
     // Keep deal start times across room/bet updates, so an in-flight card never snaps.
     const dealStarts = new Map<string, number>();
@@ -949,6 +1007,58 @@ function Table3DView({ table }: { table: TablePresentation }) {
     const impactBurst = (at: THREE.Vector3) => {
       burst(at.clone().setY(at.y + 1.9), 0xfbbf24, 34, 2.4, 2.6);
       renderRequested = true;
+    };
+
+    /* ClubGG-style payout - the 3D table's whole result treatment: the
+     * winner's nameplate carries the WIN badge (drawn in labelTexture), a
+     * short hop of gold chips flies from the pot pile to their side of the
+     * felt, and the stack pill bumps when the last chip lands. ~2s end to
+     * end; the full recap lives in the last-hand strip and 出牌记录. */
+    const launchChipFlight = (seatKey: number, seat: number, delayMs: number) => {
+      if (motion.matches) return;
+      const from = new THREE.Vector3(2.26, 1.3, 0);
+      const place = committedChipPlacement(seat);
+      const to = new THREE.Vector3(place.x, 1.16, place.z);
+      const chips = 6;
+      let landed = 0;
+      for (let i = 0; i < chips; i++) {
+        const chip = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.11, 0.11, 0.05, 18),
+          new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.5, roughness: 0.3 }),
+        );
+        chip.visible = false;
+        scene.add(chip);
+        const t0 = performance.now() + delayMs + i * 85;
+        const step = () => {
+          const fp = (performance.now() - t0) / 640;
+          if (fp < 0) {
+            nextFrame(step);
+            return;
+          }
+          if (fp >= 1) {
+            scene.remove(chip);
+            chip.geometry.dispose();
+            (chip.material as THREE.Material).dispose();
+            landed += 1;
+            if (landed === chips) {
+              const plate = labelBySeat.get(seatKey);
+              if (plate) plate.userData.bumpAt = performance.now();
+              burst(to.clone().setY(1.35), 0xfbbf24, 22, 1.3, 1.9);
+              play('chip');
+              renderRequested = true;
+            }
+            return;
+          }
+          chip.visible = true;
+          chip.position
+            .lerpVectors(from, to, fp)
+            .setY(from.y + (to.y - from.y) * fp + Math.sin(Math.PI * fp) * 0.85);
+          chip.rotation.x = fp * Math.PI * 3;
+          renderRequested = true;
+          nextFrame(step);
+        };
+        nextFrame(step);
+      }
     };
 
     const onPoke = (e: Event) => {
@@ -1194,6 +1304,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
       disposeDeep(dynamic);
       dynamic.clear();
       homeBySeat.clear();
+      labelBySeat.clear();
       const st = useStore.getState();
       const r = st.room;
       if (!r || r.room.id !== roomId) {
@@ -1297,13 +1408,16 @@ function Table3DView({ table }: { table: TablePresentation }) {
         }
         if (p.seat === null) {
           // Wanderers carry a bare nameplate: no "In the lounge" status text,
-          // nothing decorative printed over the room.
+          // nothing decorative printed over the room. Drawn above the world
+          // like every other plate, so no avatar can cover the name.
           const label = new THREE.Sprite(
             new THREE.SpriteMaterial({
               map: labelTexture(p.displayName, '', '#bed6d0'),
               transparent: true,
+              depthTest: false,
             }),
           );
+          label.renderOrder = 990;
           label.userData.screenLabel = true;
           label.userData.hideOverhead = true;
           label.userData.followActor = key;
@@ -1320,7 +1434,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
           seen.add(foldKey);
           startMotion({ kind: 'fold', seat: p.seat!, t0: performance.now() });
         }
-        // the winner celebrates for everyone
+        // the winner celebrates for everyone, then gets paid in flying chips
         if (h.result && h.handId) {
           const winDelta = h.result.deltas.find((x) => x.seat === p.seat)?.delta ?? 0;
           const winKey = `${h.handId}:win:${p.seat}`;
@@ -1334,6 +1448,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
             });
             play('fanfare');
             burst(new THREE.Vector3(px, 1.6, pz), 0xfbbf24, 80, 3, 4);
+            launchChipFlight(key, p.seat!, 420 + (p.seat! % 4) * 140);
           }
         }
         // busting out fires the player's chosen blast
@@ -1363,25 +1478,37 @@ function Table3DView({ table }: { table: TablePresentation }) {
 
         const stackShown = engine && !h.result ? engine.stack : p.stack;
         const isMe = p.userId === myId;
+        const isWinner =
+          !!h.result && (h.result.deltas.find((x) => x.seat === p.seat)?.delta ?? 0) > 0;
         // HUD nameplate above every seat, yours included: the name on top and a
         // gold stack pill under it, mirroring the stack line in the 2D seat pods.
+        // depthTest off + renderOrder: no avatar, chair or prop may ever cover
+        // a stack number; plates sit a touch outward so neighbours spread
+        // apart on screen instead of stacking at the far side of the table.
         const label = new THREE.Sprite(
           new THREE.SpriteMaterial({
             map: labelTexture(
               isMe ? t('You') : p.displayName,
               fmt(stackShown),
-              isToAct ? '#eccf88' : isMe ? '#a5b4fc' : '#bed6d0',
+              isWinner ? '#4ade80' : isToAct ? '#eccf88' : isMe ? '#a5b4fc' : '#bed6d0',
+              isWinner,
             ),
             transparent: true,
+            depthTest: false,
           }),
         );
+        label.renderOrder = 990;
         label.userData.hideOverhead = true;
         label.userData.screenLabel = true;
         if (!isMe) label.userData.pokeSeat = key;
         label.userData.followActor = key;
+        label.userData.followOffset = LABEL_LIFT.clone().add(
+          new THREE.Vector3(px, 0, pz).normalize().multiplyScalar(0.34),
+        );
         label.userData.pokeName = p.displayName;
         label.scale.set(1.35, 0.51, 1);
         label.position.set(px, 2.65, pz);
+        labelBySeat.set(key, label);
         dynamic.add(label);
 
         // Position discs (D / SB / BB), derived exactly like the 2D pods:
@@ -1404,8 +1531,10 @@ function Table3DView({ table }: { table: TablePresentation }) {
               new THREE.SpriteMaterial({
                 map: discTexture(slot.text, slot.bg, slot.fg, slot.ring),
                 transparent: true,
+                depthTest: false,
               }),
             );
+            disc.renderOrder = 988;
             disc.userData.screenBadge = true;
             disc.userData.followActor = key;
             disc.userData.followOffset = new THREE.Vector3(inward.x, lift, inward.z);
@@ -1502,13 +1631,26 @@ function Table3DView({ table }: { table: TablePresentation }) {
         dynamic.add(pair);
       }
 
-      /* the pot as a pile; the amount itself lives in the readout HUD, not on the table */
+      /* the pot as a pile; the amount rides right above it on the felt - the
+       * old top-of-screen readout used to sit on the far seat's cards and
+       * stack, and could never be told apart from them */
       const pot = betting ? betting.seats.reduce((sum, x) => sum + x.total, 0) : 0;
-      if (pot > 0) {
+      if (betting && pot > 0) {
         const pile = buildChips(pot, r.room.bb);
         pile.position.set(2.26, 1.03, 0);
         pile.scale.setScalar(0.6);
         dynamic.add(pile);
+        const readout = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: potReadoutTexture(t(betting.street ?? 'Dealing'), `${t('POT')} ${fmt(pot)}`),
+            transparent: true,
+            depthTest: false,
+          }),
+        );
+        readout.renderOrder = 992;
+        readout.userData.potReadout = true;
+        readout.position.set(2.26, 2.1, 0);
+        dynamic.add(readout);
       }
       dynamic.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
@@ -1731,13 +1873,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
       if ((cameraChanged || renderRequested) && updateCutaway(camera.position, controls.target))
         renderer.shadowMap.needsUpdate = true;
       const overhead = camera.position.clone().sub(controls.target).normalize().y > 0.9;
+      const hudPlates: THREE.Object3D[] = [];
       dynamic.traverse((object) => {
         if (object.userData.followActor !== undefined) {
           const actor = charBySeat.get(object.userData.followActor);
           if (actor)
-            object.position
-              .copy(actor.position)
-              .add(object.userData.followOffset ?? LABEL_LIFT);
+            object.position.copy(actor.position).add(object.userData.followOffset ?? LABEL_LIFT);
         }
         if (object.userData.hideOverhead) object.visible = !overhead;
         if (object.userData.screenBadge) {
@@ -1749,16 +1890,82 @@ function Table3DView({ table }: { table: TablePresentation }) {
           const size = Math.min(0.42, worldPerPixel * 44);
           object.scale.set(size, size, 1);
         }
-        if (object.userData.screenLabel) {
+        if (object.userData.screenLabel || object.userData.potReadout) {
           const worldPerPixel =
             (2 *
               object.position.distanceTo(camera.position) *
               Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) /
             mount.clientHeight;
-          const width = Math.min(1.35, worldPerPixel * 72);
-          object.scale.set(width, width * 0.38, 1);
+          let width: number;
+          let height: number;
+          if (object.userData.potReadout) {
+            width = Math.min(1.8, worldPerPixel * 104);
+            height = width * 0.35;
+          } else {
+            width = Math.min(1.35, worldPerPixel * 72);
+            // the stack pill pops once the payout chips land on the felt
+            const bumpAt = object.userData.bumpAt as number | undefined;
+            if (bumpAt !== undefined) {
+              const bump = (nowMs - bumpAt) / 460;
+              if (bump >= 1) delete object.userData.bumpAt;
+              else if (bump >= 0) width *= 1 + Math.sin(Math.PI * bump) * 0.24;
+            }
+            height = width * 0.38;
+          }
+          object.scale.set(width, height, 1);
+          if (object.visible) hudPlates.push(object);
         }
       });
+      /* Screen-space declutter: from most orbit angles the far seats stack
+       * their nameplates on each other and on the pot readout. The readout is
+       * the anchor; nameplates nearer the camera hold their spot, and each
+       * plate that collides is nudged straight up until every stack number
+       * reads clear - never painted over another plate or the pot. */
+      if (hudPlates.length > 1) {
+        const plateBox = (o: THREE.Object3D) => {
+          const v = o.position.clone().project(camera);
+          const worldPerPixel =
+            (2 *
+              o.position.distanceTo(camera.position) *
+              Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) /
+            mount.clientHeight;
+          return {
+            x: ((v.x + 1) / 2) * mount.clientWidth,
+            y: ((1 - v.y) / 2) * mount.clientHeight,
+            hw: o.scale.x / worldPerPixel / 2,
+            hh: o.scale.y / worldPerPixel / 2,
+            worldPerPixel,
+            onScreen: v.z <= 1,
+          };
+        };
+        const placed = hudPlates
+          .filter((o) => o.userData.potReadout)
+          .map(plateBox)
+          .filter((b) => b.onScreen);
+        const hudLift = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        const movers = hudPlates
+          .filter((o) => !o.userData.potReadout)
+          .sort(
+            (a, b) =>
+              a.position.distanceTo(camera.position) - b.position.distanceTo(camera.position),
+          );
+        for (const plate of movers) {
+          let box = plateBox(plate);
+          if (!box.onScreen) continue;
+          for (let pass = 0; pass < 4; pass++) {
+            let rise = 0;
+            for (const other of placed) {
+              if (Math.abs(box.x - other.x) > box.hw + other.hw + 3) continue;
+              if (Math.abs(box.y - other.y) > box.hh + other.hh + 3) continue;
+              rise = Math.max(rise, box.hh + other.hh + 4 - (other.y - box.y));
+            }
+            if (rise <= 0) break;
+            plate.position.addScaledVector(hudLift, rise * box.worldPerPixel);
+            box = plateBox(plate);
+          }
+          placed.push(box);
+        }
+      }
       turnArrow.visible = !!turnArrow.userData.active && !overhead;
       if (
         !motion.matches ||
@@ -1823,8 +2030,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
         : myTurn
           ? t('Your turn')
           : handActive
-            ? (table.status ??
-              t('{name} is thinking', { name: actingName ?? t('Table') }))
+            ? (table.status ?? t('{name} is thinking', { name: actingName ?? t('Table') }))
             : t('Waiting for the next hand');
   const seconds = hand.deadline ? Math.max(0, Math.ceil((hand.deadline - now) / 1000)) : null;
   const closeStudio = () => {
@@ -1848,6 +2054,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
         hand.myCards.length > 0 && mySeat !== null && 'has-private-hand',
         hudHidden && 'hud-hidden',
         hasCards && cardsOpen && 'cards-open',
+        // when a hand is won, the 3D payout (WIN plate + chip flight) replaces
+        // the shared result flash; a voided hand keeps it (no winner to show)
+        !!hand.result && !hand.abort && 'result-paid-in-3d',
       )}
     >
       <header className="lounge-header">
@@ -1939,7 +2148,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
             className="lounge-icon hide-controls-trigger"
             aria-label={t('Hide controls')}
             title={
-              needsResponse ? t('Respond before hiding controls') : t('Hide controls for a clear view')
+              needsResponse
+                ? t('Respond before hiding controls')
+                : t('Hide controls for a clear view')
             }
             disabled={needsResponse}
             onClick={hideControls}
@@ -1966,12 +2177,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
           aria-label={t('3D casino. Drag to orbit. Use the camera buttons to change view.')}
         />
         {thunderKey > 0 && <div key={thunderKey} className="thunder-flash" aria-hidden="true" />}
-        <div className="table-readout lounge-glass">
-          <span>{handActive ? t(hand.betting?.street ?? 'Dealing') : t('Texas Hold’em')}</span>
-          <strong>
-            <small>{t('POT')}</small> {fmt(pot)}
-          </strong>
-        </div>
+        {/* The pot readout is a 3D pill over the pot pile on the felt now; the
+            screen reader keeps an off-screen live version of the same facts. */}
+        <p className="table-readout-sr" role="status">
+          {handActive ? t(hand.betting?.street ?? 'Dealing') : t('Texas Hold’em')} · {t('POT')}{' '}
+          {fmt(pot)}
+        </p>
         <div className="lounge-world-tools lounge-glass">
           <button
             className="lounge-button"

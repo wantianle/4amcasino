@@ -20,6 +20,7 @@ import {
   PauseCircle,
   Play,
   Receipt,
+  ShareNetwork,
   Timer,
   Trophy,
   UserPlus,
@@ -483,8 +484,8 @@ export function TablePage({
         const inHand =
           hand.handId !== null && !hand.abort && hand.seats.some((s) => s.seat === p.seat);
         const reveal = hand.showdown?.reveals.find((r) => r.seat === p.seat);
-        const won =
-          !!hand.result && (hand.result.deltas.find((d) => d.seat === p.seat)?.delta ?? 0) > 0;
+        const delta = hand.result?.deltas.find((d) => d.seat === p.seat)?.delta ?? 0;
+        const won = !!hand.result && delta > 0;
         const stackShown = engineSeat && handLive ? engineSeat.stack : p.stack;
         return {
           seat: p.seat!,
@@ -509,6 +510,7 @@ export function TablePage({
           voiceMuted: !!voiceState.mutedByUser[p.userId],
           revealed: reveal?.cards ?? hand.shown[p.seat!],
           won,
+          wonAmount: won ? delta : 0,
           lastAction: hand.lastActions[p.seat!],
         };
       });
@@ -761,9 +763,15 @@ export function TablePage({
         }
       : null;
 
-  // The recap panel is gone: a two-second flash of who took what, then the
-  // table stays the table. The full story lives in the last-hand strip and
-  // in hand history (出牌记录), where every hand now expands into its detail.
+  // The recap panel is gone: on the 2D table the payoff is told by the cards
+  // themselves - a WIN tag on the winner's pod while chips fly off the pot
+  // (see WinnerFx, RoundTable, MobileTable). This pill remains for voided
+  // hands and for the 3D lounge, whose chrome has no pods of its own. The
+  // full story lives in the last-hand strip and in hand history (出牌记录).
+  const resultWinners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
+  const winnersLine = resultWinners.length
+    ? resultWinners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
+    : t('chips stayed put');
   const renderFlash = (dark: boolean) => {
     if (!showResult) return null;
     const dismiss = () => setResultDismissed(true);
@@ -791,11 +799,7 @@ export function TablePage({
     return (
       <ResultFlash
         dark={dark}
-        headline={
-          winners.length
-            ? winners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
-            : t('chips stayed put')
-        }
+        headline={winners.length ? winnersLine : t('chips stayed put')}
         detail={commission > 0 ? `${label} · ${t('Rake')} ${fmt(commission)}` : label}
         onDismiss={dismiss}
         onShare={shareData ? () => setShareOpen(true) : undefined}
@@ -882,10 +886,19 @@ export function TablePage({
     table: t('Table'),
     preferences: t('Preferences'),
   };
-  // The switches you touch every hand now live on the top bar itself
-  // (TableQuickControls), so the 2D ⋮ menu keeps only the secondary items.
-  // The 3D lounge chrome - which has no such row - still gets the full set.
-  const inlineSurfaced: TableUtilityAction[] = ['auto-deal', 'sit-out', 'timer', 'preferences'];
+  // The switches you touch every hand - and the two record pages (出牌记录,
+  // 账本) - now live on the top bar itself (TableQuickControls), so the 2D ⋮
+  // menu keeps only the remaining secondary items (invite, watch link,
+  // standings...). The 3D lounge chrome - which has no such row - still gets
+  // the full set.
+  const inlineSurfaced: TableUtilityAction[] = [
+    'auto-deal',
+    'sit-out',
+    'timer',
+    'preferences',
+    'hands',
+    'ledger',
+  ];
   const desktopMenuGroups = utilityGroups
     .map((group) => ({
       ...group,
@@ -1400,6 +1413,21 @@ export function TablePage({
             >
               <ChatCircle size={17} />
             </button>
+            {/* 出牌记录 and 账本 surfaced out of the sheet, like on desktop */}
+            <Link
+              to={`/room/${roomId}/hands`}
+              aria-label={t('Hand history')}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 active:scale-95"
+            >
+              <CardsThree size={17} />
+            </Link>
+            <Link
+              to={`/room/${roomId}/ledger`}
+              aria-label={t('Ledger')}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 active:scale-95"
+            >
+              <Receipt size={17} />
+            </Link>
             <button
               onClick={() => setMenuOpen(true)}
               aria-label={t('Table menu')}
@@ -1423,11 +1451,17 @@ export function TablePage({
           dimBoard={notInHand}
         />
 
-        {/* the result is a passing flash over the felt, never a second page */}
-        {showResult && (
+        {/* a voided hand still gets its flash; a won hand tells the story on
+            the cards themselves, plus a live-region line for screen readers */}
+        {showResult && hand.abort && (
           <div className="pointer-events-none fixed inset-x-0 top-[4.5rem] z-40 flex justify-center px-4">
             {renderFlash(true)}
           </div>
+        )}
+        {showResult && !hand.abort && hand.result && (
+          <p className="sr-only" role="status" aria-live="polite">
+            {winnersLine}
+          </p>
         )}
 
         <div className="px-4 pb-2">
@@ -1467,6 +1501,21 @@ export function TablePage({
                   </Button>
                 </Link>
               </div>
+              {/* the win pill left the felt, so the share card it carried
+                  moves into the sheet: it stays buildable while the settled
+                  hand is still the last thing the table remembers */}
+              {shareData && (
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setShareOpen(true);
+                  }}
+                >
+                  <ShareNetwork size={16} /> {t('Share this hand')}
+                </Button>
+              )}
               <div className="flex gap-2">
                 {mySeat !== null && (
                   <Button
@@ -1637,6 +1686,7 @@ export function TablePage({
           <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <BankControls roomId={roomId!} mode="hub" />
             <TableQuickControls
+              roomId={roomId!}
               isHost={!!isHost}
               autoDeal={room.room.autoDeal !== false}
               autoDealPaused={!!room.autoDealPaused}
@@ -1776,7 +1826,7 @@ export function TablePage({
               {thunderKey > 0 && (
                 <div key={thunderKey} className="thunder-flash" aria-hidden="true" />
               )}
-              {showResult && (
+              {showResult && hand.abort && (
                 <div
                   className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-4"
                   role="region"
@@ -1784,6 +1834,11 @@ export function TablePage({
                 >
                   {renderFlash(false)}
                 </div>
+              )}
+              {showResult && !hand.abort && hand.result && (
+                <p className="sr-only" role="status" aria-live="polite">
+                  {winnersLine}
+                </p>
               )}
               {floats.map((reaction) => (
                 <span
@@ -1827,6 +1882,7 @@ export function TablePage({
                   setBigCards(true);
                 }}
                 readyCheck={!handLive ? hand.readyCheck : null}
+                onShareHand={shareData ? () => setShareOpen(true) : undefined}
               >
                 <div className="relative">
                   <motion.div

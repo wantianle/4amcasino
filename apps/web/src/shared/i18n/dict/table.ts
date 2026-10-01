@@ -27,6 +27,11 @@ const table: Record<string, string> = {
   '½ pot': '½ 池',
   '¾ pot': '¾ 池',
 
+  // ── Win moment (WinnerFx) ────────────────────────────────────────────────
+  // The WIN tag stays in English on purpose: it is a poker-table glyph, like
+  // `gg` in §3.3 -圈内通用, and the badge is too small to read 「胜」 cleanly.
+  WIN: 'WIN',
+
   // ── Action bar status lines (§5d) ────────────────────────────────────────
   'Your turn.': '轮到你了。',
   'Out of chips. Chips menu → Buy points.': '筹码打光了。打开「筹码」菜单 → 买点数。',

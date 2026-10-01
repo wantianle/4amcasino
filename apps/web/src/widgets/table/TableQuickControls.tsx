@@ -1,12 +1,13 @@
-import { GearSix, PauseCircle, Play, Timer } from '@phosphor-icons/react';
+import { CardsThree, GearSix, PauseCircle, Play, Receipt, Timer } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
 
 /** The switches you actually touch between hands, moved out of the ⋮ menu and
  *  onto the top bar: auto-deal on/off, sit out for the next hand, the turn
- *  timer and a gear straight to Settings. Rendered on the desktop header
- *  only - the mobile sheet keeps its compact list variant of the same. */
+ *  timer, the two record pages you always reach for (出牌记录 and 账本) and a
+ *  gear straight to Settings. Rendered on the desktop header only - the mobile
+ *  sheet keeps its compact list variant of the same. */
 
 const chipClass =
   'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-semibold text-slate-600 transition-[color,background-color,transform] duration-200 hover:bg-slate-200/70 hover:text-slate-900 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white';
@@ -33,6 +34,7 @@ function MiniSwitch({ on }: { on: boolean }) {
 }
 
 export function TableQuickControls({
+  roomId,
   isHost,
   autoDeal,
   autoDealPaused,
@@ -47,6 +49,8 @@ export function TableQuickControls({
   onToggleSitOut,
   onChangeActionSecs,
 }: {
+  /** Same room the ⋮ menu's record links point at - they live here now. */
+  roomId: string;
   isHost: boolean;
   autoDeal: boolean;
   /** The engine paused auto-deal (too few ready players) though it is on. */
@@ -129,6 +133,26 @@ export function TableQuickControls({
           </select>
         </label>
       )}
+
+      {/* the two records you actually check between hands: 出牌记录 and 账本 */}
+      <Link
+        to={`/room/${roomId}/hands`}
+        className={chipClass}
+        title={t('Hand history')}
+        aria-label={t('Hand history')}
+      >
+        <CardsThree size={15} />
+        <span>{t('Hand history')}</span>
+      </Link>
+      <Link
+        to={`/room/${roomId}/ledger`}
+        className={chipClass}
+        title={t('Ledger')}
+        aria-label={t('Ledger')}
+      >
+        <Receipt size={15} />
+        <span>{t('Ledger')}</span>
+      </Link>
 
       <Link to="/settings" target="_blank" rel="noreferrer" className={chipClass} title={t('Settings')}>
         <GearSix size={15} />

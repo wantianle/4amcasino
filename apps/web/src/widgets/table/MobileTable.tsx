@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, type RefObject } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePokerHotkeys } from '../../features/table/usePokerHotkeys.ts';
 import { pokerActionLatch } from '../../features/table/pokerHotkeys.ts';
 import { PokerShortcutButton } from '../../features/settings/PokerShortcutButton.tsx';
@@ -23,6 +24,7 @@ import { useSettling } from '../../features/table/useSettling.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import type { SeatView } from './players.tsx';
+import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
 
 /** Offsuit-style phone table: flat dark canvas, opponents in a top row,
  *  huge board cards, bare pot number, ghost-pill actions, giant hole cards. */
@@ -51,12 +53,21 @@ const ACTION_VERB_KEYS: Record<'fold' | 'check' | 'call' | 'bet' | 'raise', stri
   raise: 'Raise',
 };
 
-function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
+function OpponentColumn({
+  p,
+  urgent,
+  tileRef,
+}: {
+  p: SeatView;
+  urgent: boolean;
+  tileRef: (el: HTMLDivElement | null) => void;
+}) {
   const engineCommitted = useStore(
     (s) => s.hand.betting?.seats.find((x) => x.seat === p.seat)?.committed ?? 0,
   );
   return (
     <div
+      ref={tileRef}
       className={cn(
         'flex w-16 shrink-0 flex-col items-center gap-1 rounded-2xl px-1 pt-1.5',
         p.isToAct && 'turn-stripes-dark bg-indigo-500/10 ring-1 ring-indigo-400/50',
@@ -90,10 +101,17 @@ function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
             <Crown size={9} weight="fill" />
           </span>
         )}
-        {p.lastAction && (
-          <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/90 px-2 py-0.5 text-[0.6rem] font-semibold capitalize text-white ring-1 ring-white/20">
-            {t(ACTION_VERB_KEYS[p.lastAction.type])}
+        {/* the WIN tag takes the action pill's spot the moment the hand lands */}
+        {p.won ? (
+          <span className="absolute -top-2 left-1/2 z-20 -translate-x-1/2">
+            <WinBadge amount={p.wonAmount ?? 0} />
           </span>
+        ) : (
+          p.lastAction && (
+            <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/90 px-2 py-0.5 text-[0.6rem] font-semibold capitalize text-white ring-1 ring-white/20">
+              {t(ACTION_VERB_KEYS[p.lastAction.type])}
+            </span>
+          )
         )}
         {p.inHand && p.revealed && (
           <div className="absolute -right-3 -top-2 flex gap-0.5">
@@ -107,7 +125,7 @@ function OpponentColumn({ p, urgent }: { p: SeatView; urgent: boolean }) {
       <div
         className={cn('font-display text-sm font-bold', p.broke ? 'text-rose-400' : 'text-white')}
       >
-        <NumberFlow value={p.stack} />
+        <StackValue stack={p.stack} won={p.won} />
       </div>
       <div className="h-6">
         {p.sittingOut && !p.broke && (
@@ -134,10 +152,12 @@ function MobileActions({
   rootRef,
   mySeat,
   isHost,
+  urgent,
   statusText,
 }: {
   mySeat: number | null;
   isHost: boolean;
+  urgent: boolean;
   statusText: string | null;
   rootRef: RefObject<HTMLDivElement>;
 }) {
@@ -448,31 +468,50 @@ function MobileActions({
           {t('Sending…')}
         </p>
       )}
-      <div className={cn('flex gap-2', (pending || settling) && 'pointer-events-none opacity-50')}>
-        <button
-          onClick={() => send({ type: 'fold' })}
-          disabled={pending || settling}
-          aria-keyshortcuts={binding('fold')}
-          className={cn(ghost, 'border-rose-500/40 text-rose-300')}
+      {/* your turn, unmistakably: the whole row breathes inside a hot ring and
+          the button you most likely want is the bright one */}
+      <div className="relative rounded-full p-1">
+        <span
+          aria-hidden
+          className={cn(
+            'pointer-events-none absolute inset-0 rounded-3xl ring-2 animate-pulse motion-reduce:animate-none',
+            urgent ? 'bg-rose-500/10 ring-rose-400/90' : 'bg-indigo-500/10 ring-indigo-300/90',
+          )}
+        />
+        <div
+          className={cn(
+            'relative flex gap-2',
+            (pending || settling) && 'pointer-events-none opacity-50',
+          )}
         >
-          {t('Fold')}
-        </button>
-        <button
-          onClick={() => send(la.canCheck ? { type: 'check' } : { type: 'call' })}
-          disabled={pending || settling}
-          aria-keyshortcuts={binding(la.canCheck ? 'check' : 'call')}
-          className={ghost}
-        >
-          {la.canCheck ? t('Check') : t('Call {n}', { n: fmt(la.callAmount) })}
-        </button>
-        {la.canRaise && (
           <button
-            onClick={() => setRaiseOpen((v) => !v)}
-            className={cn(ghost, raiseOpen && 'border-white bg-white/10')}
+            onClick={() => send({ type: 'fold' })}
+            disabled={pending || settling}
+            aria-keyshortcuts={binding('fold')}
+            className={cn(ghost, 'border-rose-500/40 text-rose-300')}
           >
-            {t('Raise')}
+            {t('Fold')}
           </button>
-        )}
+          <button
+            onClick={() => send(la.canCheck ? { type: 'check' } : { type: 'call' })}
+            disabled={pending || settling}
+            aria-keyshortcuts={binding(la.canCheck ? 'check' : 'call')}
+            className={cn(
+              ghost,
+              'border-indigo-300/80 bg-indigo-500/35 font-bold shadow-[0_0_18px_rgba(99,102,241,0.35)]',
+            )}
+          >
+            {la.canCheck ? t('Check') : t('Call {n}', { n: fmt(la.callAmount) })}
+          </button>
+          {la.canRaise && (
+            <button
+              onClick={() => setRaiseOpen((v) => !v)}
+              className={cn(ghost, 'border-amber-300/70 text-amber-200', raiseOpen && 'border-white bg-white/10')}
+            >
+              {t('Raise')}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -511,14 +550,82 @@ export function MobileTable({
   const board2 = useStore((s) => s.hand.board2);
   const strength = me && me.inHand ? strengthLabel(myCards, board) : null;
 
+  // ── (A) your turn, on a phone: the game client already pings the turn
+  // sound, so the cue here is visual + haptic: a banner that holds until you
+  // act (toAct moves = banner goes), a hot ring around the action row, and a
+  // buzz pattern on devices that support vibration.
+  const turnHandId = useStore((s) => s.hand.handId);
+  const turnActionSeq = useStore((s) => s.hand.actionSeq);
+  const myTurnNow = !!me?.isToAct;
+  const [turnCue, setTurnCue] = useState(false);
+  const buzzedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!myTurnNow) {
+      setTurnCue(false);
+      buzzedFor.current = null;
+      return;
+    }
+    setTurnCue(true);
+    const key = `${turnHandId}:${turnActionSeq}`;
+    if (buzzedFor.current !== key) {
+      buzzedFor.current = key;
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate([90, 60, 90]);
+        }
+      } catch {
+        /* haptics are best-effort; never break the table for them */
+      }
+    }
+  }, [myTurnNow, turnHandId, turnActionSeq]);
+
+  // ── (B) the win moment: WIN tags live on the cards (see OpponentColumn /
+  // the identity tile); here we measure pot -> winner tiles for the chip fly.
+  const winners = [me, ...opponents].filter((p): p is SeatView => !!p && p.won);
+  const fxLit = useWinnerFx(winners.length > 0);
+  const potRef = useRef<HTMLDivElement | null>(null);
+  const seatEls = useRef<Record<number, HTMLDivElement | null>>({});
+
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3 text-white">
+      <AnimatePresence>
+        {turnCue && (
+          <motion.div
+            key="turn-cue"
+            role="status"
+            aria-live="assertive"
+            initial={{ y: -20, opacity: 0, scale: 0.92 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: -14, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 460, damping: 26 }}
+            className="fixed inset-x-0 top-[3.3rem] z-50 mx-auto flex w-max items-center gap-2.5 rounded-2xl bg-gradient-to-b from-amber-300 to-amber-400 px-5 py-2.5 text-slate-950 shadow-[0_10px_34px_rgba(251,191,36,0.5)] ring-2 ring-amber-200/80"
+          >
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-slate-900/60 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-slate-900" />
+            </span>
+            <span className="font-display text-base font-black tracking-wide">
+              {t('Your turn.')}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* opponents */}
       <div className="flex justify-center gap-2 overflow-x-auto pb-1">
         {opponents.length === 0 ? (
           <p className="py-3 text-sm text-white/50">{t('Waiting for friends to sit down…')}</p>
         ) : (
-          opponents.map((p) => <OpponentColumn key={p.seat} p={p} urgent={urgent} />)
+          opponents.map((p) => (
+            <OpponentColumn
+              key={p.seat}
+              p={p}
+              urgent={urgent}
+              tileRef={(el) => {
+                seatEls.current[p.seat] = el;
+              }}
+            />
+          ))
         )}
       </div>
 
@@ -554,7 +661,7 @@ export function MobileTable({
             ))}
           </div>
         )}
-        <div className="flex w-full items-baseline justify-end gap-2 pr-2">
+        <div ref={potRef} className="flex w-full items-baseline justify-end gap-2 pr-2">
           <span className="text-xs uppercase tracking-wide text-white/60">{t('pot')}</span>
           <span className="font-display text-3xl font-bold">
             <NumberFlow value={pot} />
@@ -572,7 +679,13 @@ export function MobileTable({
       </div>
 
       {/* actions */}
-      <MobileActions mySeat={mySeat} isHost={isHost} statusText={statusText} rootRef={rootRef} />
+      <MobileActions
+        mySeat={mySeat}
+        isHost={isHost}
+        urgent={urgent}
+        statusText={statusText}
+        rootRef={rootRef}
+      />
       <div className="mt-2 flex justify-end">
         <PokerShortcutButton className="text-white/70! hover:bg-white/10!" />
       </div>
@@ -601,8 +714,11 @@ export function MobileTable({
         </div>
         {me && (
           <div
+            ref={(el) => {
+              seatEls.current[me.seat] = el;
+            }}
             className={cn(
-              'flex min-w-28 flex-col items-center gap-1 rounded-2xl border border-white/20 px-4 py-3',
+              'relative flex min-w-28 flex-col items-center gap-1 rounded-2xl border border-white/20 px-4 py-3',
               me.isToAct && 'turn-stripes-dark border-indigo-400 bg-indigo-500/10',
               me.isToAct &&
                 urgent &&
@@ -611,6 +727,11 @@ export function MobileTable({
               me.won && 'animate-winner',
             )}
           >
+            {me.won && (
+              <span className="absolute -top-3 left-1/2 z-20 -translate-x-1/2">
+                <WinBadge amount={me.wonAmount ?? 0} />
+              </span>
+            )}
             {strength && (
               <span className="text-xs font-semibold text-white/80">{tHandCategory(strength)}</span>
             )}
@@ -629,7 +750,7 @@ export function MobileTable({
               )}
             </span>
             <span className={cn('font-display text-lg font-bold', me.broke && 'text-rose-400')}>
-              <NumberFlow value={me.stack} />
+              <StackValue stack={me.stack} won={me.won} />
             </span>
             {bought > 0 && (
               <span className="text-[0.6rem] text-white/50">
@@ -642,6 +763,19 @@ export function MobileTable({
           </div>
         )}
       </div>
+
+      {/* the payoff: chips sweep from the pot into the winner's tile, and the
+          stack number only bumps once they land (see StackValue) */}
+      {fxLit &&
+        winners.map((w) => (
+          <ChipFlight
+            key={`fly-${w.seat}`}
+            run={fxLit}
+            discs={winners.length === 1 ? 6 : 4}
+            getFrom={() => potRef.current}
+            getTo={() => seatEls.current[w.seat] ?? null}
+          />
+        ))}
     </div>
   );
 }

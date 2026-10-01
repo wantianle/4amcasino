@@ -84,28 +84,15 @@
   z-index: 60;
 }
 
-/* A result is a scrollable recap, not a scrim over the next hand's controls. */
-.lounge-result-overlay {
-  position: fixed;
-  top: max(12px, env(safe-area-inset-top));
-  bottom: calc(var(--lounge-dock-clearance, 180px) + 12px);
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  z-index: 50;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  pointer-events: none;
-}
-.lounge-result-content {
-  width: 100%;
-  max-width: 48rem;
-  max-height: 100%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-radius: 16px;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 25%);
-  pointer-events: auto;
+/* A result is no longer a scrim over the table. The 3D world plays its own
+   ClubGG-style payout instead - the WIN badge rides the winner's nameplate,
+   gold chips hop from the pot pile to their side of the felt, and the stack
+   pill bumps on landing. The full recap stays in the last-hand strip and in
+   出牌记录. A voided hand has no winner to animate, so it keeps the shared
+   flash. Sibling combinator: .lounge-result-overlay follows the lounge root
+   inside TablePage's 3D branch. */
+.table3d-lounge.result-paid-in-3d ~ .lounge-result-overlay {
+  display: none;
 }
 /* Saved card positions and resizing must respect the same control clearance
    as result recaps. The header drags; the body can scroll on short screens. */
@@ -168,23 +155,8 @@
   max-width: calc(100% - var(--hud-left) - var(--hud-right));
   overflow: visible;
 }
-.table-readout {
-  position: absolute;
-  top: var(--hud-world-top);
-  left: auto;
-  right: var(--hud-right);
-  transform: none;
-  gap: 12px;
-  padding: 12px 16px;
-}
-.table-readout > span {
-  padding-right: 12px;
-  color: var(--lounge-muted);
-  border-color: var(--hud-line);
-}
-.table-readout small {
-  color: var(--lounge-muted);
-}
+/* The pot readout lives in the 3D world now (a pill above the pot pile); the
+   JSX keeps only an off-screen copy for assistive tech. */
 .camera-controls {
   position: absolute;
   top: var(--hud-panel-top);
@@ -217,7 +189,7 @@
   z-index: 20;
 }
 .table3d-lounge.hud-hidden
-  :is(.lounge-header, .lounge-footer, .lounge-world-tools, .table-readout, .camera-controls) {
+  :is(.lounge-header, .lounge-footer, .lounge-world-tools, .camera-controls) {
   display: none;
 }
 
@@ -667,21 +639,6 @@
   }
   .camera-trigger > span {
     display: none;
-  }
-  .table-readout {
-    top: calc(var(--hud-world-top) + 56px);
-    padding: 8px 12px;
-    gap: 8px;
-  }
-  .table-readout > span {
-    font-size: 10px;
-    padding-right: 8px;
-  }
-  .table-readout strong {
-    font-size: 16px;
-  }
-  .table-readout small {
-    font-size: 10px;
   }
   .camera-controls {
     flex-wrap: wrap;

@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import NumberFlow from '@number-flow/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { Badge } from '../../shared/ui/index.tsx';
 import { cn, fmt } from '../../shared/lib/cn.ts';
@@ -8,6 +7,7 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { Crown, MicrophoneSlash } from '@phosphor-icons/react';
 import { TurnProgress } from './TurnProgress.tsx';
+import { StackValue, WinBadge } from './WinnerFx.tsx';
 
 export interface SeatView {
   seat: number;
@@ -32,6 +32,8 @@ export interface SeatView {
   voiceMuted: boolean;
   revealed?: CardId[];
   won: boolean;
+  /** Chips netted by this seat in the settled hand; only set when `won`. */
+  wonAmount?: number;
   /** Chips requested from the bank, still waiting for approval. */
   pendingBuy: number;
   lastAction?: PlayerAction & { auto?: boolean };
@@ -120,10 +122,11 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
             p.broke ? 'font-bold text-rose-500' : 'text-slate-500 dark:text-slate-400',
           )}
         >
-          <NumberFlow value={p.stack} />
+          <StackValue stack={p.stack} won={p.won} />
         </div>
       </div>
       <div className="flex flex-col items-end gap-1">
+        {p.won && <WinBadge amount={p.wonAmount ?? 0} />}
         {p.broke ? (
           <Badge tone="rose">{t('Out of chips')}</Badge>
         ) : p.sittingOut ? (
@@ -169,9 +172,12 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
         <LeaderCrown show={p.isLeader} />
       </div>
       <div>
-        <div className="text-sm font-semibold">
-          {t('You')}
-          {p.isButton && <span className="ml-2 text-xs text-slate-400">{t('(dealer)')}</span>}
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <span>
+            {t('You')}
+            {p.isButton && <span className="ml-2 text-xs text-slate-400">{t('(dealer)')}</span>}
+          </span>
+          {p.won && <WinBadge amount={p.wonAmount ?? 0} />}
         </div>
         <div
           className={cn(
@@ -179,7 +185,7 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
             p.broke ? 'font-bold text-rose-500' : 'text-slate-500 dark:text-slate-400',
           )}
         >
-          <NumberFlow value={p.stack} />
+          <StackValue stack={p.stack} won={p.won} />
         </div>
       </div>
       <div className="ml-2">

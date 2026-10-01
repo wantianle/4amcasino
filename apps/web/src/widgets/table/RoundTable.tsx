@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Link } from 'react-router-dom';
-import NumberFlow from '@number-flow/react';
 import { Crown, Coins, MicrophoneSlash, Play, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
@@ -10,6 +9,7 @@ import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import type { SeatView } from './players.tsx';
 import { ChipStack } from './ChipStack.tsx';
+import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
 
 /** A real round table: nine seat pods around an oval, your seat pinned at the
  *  bottom, everyone repositioning live as they sit, act, and fold. The banker
@@ -44,6 +44,7 @@ export function RoundTable({
   bb,
   onMyCardsClick,
   readyCheck = null,
+  onShareHand,
   children,
 }: {
   seats: SeatView[];
@@ -65,11 +66,20 @@ export function RoundTable({
   onMyCardsClick?: () => void;
   /** Pre-deal ready check: green tick on the seats that clicked I'm ready. */
   readyCheck?: { eligible: number[]; ready: number[] } | null;
+  /** Opens the share card for the settled hand; rides the top winner's badge. */
+  onShareHand?: () => void;
   children: React.ReactNode;
 }) {
   // two-tap kick: first tap arms, second confirms, so a stray click never stands anyone up
   const [kickArmed, setKickArmed] = useState<number | null>(null);
   const reduce = useReducedMotion();
+  // the win moment: chips arc from the pot into the winner's pod, so both
+  // elements need to be reachable; only the top winner carries the share icon
+  const winners = seats.filter((s) => s.won);
+  const fxLit = useWinnerFx(winners.length > 0);
+  const potRef = useRef<HTMLDivElement | null>(null);
+  const podEls = useRef<Record<number, HTMLDivElement | null>>({});
+  const shareSeat = onShareHand ? (winners[0]?.seat ?? null) : null;
   // only occupied seats show, auto-spread evenly around the oval; when seated,
   // the order rotates so YOUR seat sits bottom-center
   const occupied = [...seats].sort((a, b) => a.seat - b.seat);
@@ -134,7 +144,10 @@ export function RoundTable({
       />
 
       {/* pot, board, and status live at the center */}
-      <div className="absolute left-1/2 top-1/2 z-10 flex w-[66%] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-5">
+      <div
+        ref={potRef}
+        className="absolute left-1/2 top-1/2 z-10 flex w-[66%] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-5"
+      >
         {children}
       </div>
 
@@ -204,6 +217,9 @@ export function RoundTable({
               )}
             </AnimatePresence>
             <div
+              ref={(el) => {
+                podEls.current[seat] = el;
+              }}
               className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
               style={{ left: `${x}%`, top: `${y}%` }}
             >
@@ -231,7 +247,17 @@ export function RoundTable({
                     {t('playing')}
                   </span>
                 )}
-                {readyCheck && readyCheck.eligible.includes(p.userId) && (
+                {/* the win moment rides the card itself: a gold WIN tag with
+                    the amount, where the little recap pill used to hover */}
+                {p.won && !p.isToAct && (
+                  <span className="absolute -top-3 left-1/2 z-30 -translate-x-1/2">
+                    <WinBadge
+                      amount={p.wonAmount ?? 0}
+                      onShare={p.seat === shareSeat ? onShareHand : undefined}
+                    />
+                  </span>
+                )}
+                {readyCheck && !p.won && readyCheck.eligible.includes(p.userId) && (
                   <span
                     className={cn(
                       'absolute -top-3 left-1/2 z-30 -translate-x-1/2 rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-white shadow-md',
@@ -354,7 +380,7 @@ export function RoundTable({
                     p.broke ? 'font-bold text-rose-500' : 'text-slate-500 dark:text-slate-400',
                   )}
                 >
-                  <NumberFlow value={p.stack} />
+                  <StackValue stack={p.stack} won={p.won} />
                 </div>
                 {p.pendingBuy > 0 && (
                   <div
@@ -433,6 +459,19 @@ export function RoundTable({
           </div>
         );
       })}
+
+      {/* the payoff: chips sweep from the pot to each winner's pod, and the
+          stack number only bumps once they land (see StackValue) */}
+      {fxLit &&
+        winners.map((w) => (
+          <ChipFlight
+            key={`fly-${w.seat}`}
+            run={fxLit}
+            discs={winners.length === 1 ? 6 : 4}
+            getFrom={() => potRef.current}
+            getTo={() => podEls.current[w.seat] ?? null}
+          />
+        ))}
     </div>
   );
 }
