@@ -8,9 +8,11 @@ import {
 } from '@4am/shared';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { t } from '../../shared/i18n/index.ts';
+import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
 import './tournament-operations.css';
 
-export const chips = (n: number) => n.toLocaleString();
+export const chips = (n: number) => fmt(n);
 export const signedChips = (n: number) => `${n > 0 ? '+' : ''}${chips(n)}`;
 export const tournamentError = (e: unknown) =>
   e instanceof Error ? e.message : t('Request failed. Please try again.');
@@ -20,10 +22,12 @@ export const localDateInput = (value: number | null) =>
   value === null
     ? ''
     : new Date(value - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+// zh-CN combined form per §4.1: `10月1日 14:05` / `2026年10月1日 14:05`
+// (same shape as pages/admin/TournamentAdmin.tsx `when`).
 export const eventDate = (value: number | null) =>
   value === null
     ? t('Organizer starts when ready')
-    : new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    : `${fmtDate(value)} ${fmtTime(value)}`;
 export function safeExternalUrl(value: string): string | undefined {
   try {
     const url = new URL(value);

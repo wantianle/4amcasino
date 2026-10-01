@@ -20,7 +20,7 @@ import {
 import { wsClient } from '../../shared/ws.ts';
 import { useStore } from '../../shared/store.ts';
 import { play } from '../../shared/sounds.ts';
-import { cn } from '../../shared/lib/cn.ts';
+import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { ActionBar } from '../../widgets/table/ActionBar.tsx';
 import { ATTACKS, EMOTES, type EmoteKind } from './emotes.ts';
@@ -715,7 +715,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
       const pot = current.betting?.seats.reduce((sum, seat) => sum + seat.total, 0) ?? 0;
       ink.fillStyle = '#f4f0e6';
       ink.font = '600 78px Bricolage Grotesque, sans-serif';
-      ink.fillText(t('{pot} in the pot', { pot: pot.toLocaleString() }), 48, 167);
+      ink.fillText(t('{pot} in the pot', { pot: fmt(pot) }), 48, 167);
       const name = currentRoom?.players.find((p) => p.seat === current.betting?.toAct)?.displayName;
       ink.fillStyle = '#bad4ca';
       ink.font = '400 28px Onest, sans-serif';
@@ -1896,7 +1896,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
         <div className="table-readout lounge-glass">
           <span>{handActive ? t(hand.betting?.street ?? 'Dealing') : t('Texas Hold’em')}</span>
           <strong>
-            <small>{t('POT')}</small> {pot.toLocaleString()}
+            <small>{t('POT')}</small> {fmt(pot)}
           </strong>
         </div>
         <div className="lounge-world-tools lounge-glass">
@@ -2166,7 +2166,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                                 : t('At the table')}
                     </small>
                   </span>
-                  <strong>{player.stack.toLocaleString()}</strong>
+                  <strong>{fmt(player.stack)}</strong>
                 </div>
                 <div className="player-detail-row">
                   <span>

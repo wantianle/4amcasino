@@ -1,7 +1,9 @@
 // Tournament dictionary (pages/tournaments: TournamentsPage / TournamentWatchPage /
 // TournamentTerms / TournamentEarnings / SponsorPlacements).
-// Glossary per docs/zh-i18n.md §2: tournament formats 淘汰制 / 击倒赛 / 固定手数月赛,
-// standings → 排名, enroll → 报名, prize pool → 奖池, place → 名次, house → 平台,
+// Glossary per docs/zh-i18n.md §2: tournament formats 淘汰制 / 击倒赛 /
+// 固定手数循环赛 (the format is fixed-hand-count, not monthly, so §2.2's
+// fallback term 循环赛 is the locked site-wide choice), standings → 排名,
+// enroll → 报名, prize pool → 奖池, place → 名次, house → 平台,
 // agent → 代理 (matches dict/server.ts 代理令牌), spectator watch → 观战.
 // Reused from other dicts, NOT redefined here: 'Tournaments'/'Tournament' (nav),
 // 'Standings' (table-page), 'Last hand' (table), 'Retry' (lobby), 'Cancel' (ledger),
@@ -9,7 +11,10 @@
 // 'Raise'/'Raise to' (settings/table), 'Small blind'/'Big blind' (lobby), 'Offline' (table),
 // 'Your cards'/'Community cards' (landing), 'Dealer button' (table), 'Copy invite link' (share),
 // '{n} chips' (stats), '{n} hands' (leaderboard), 'Net chips' (stats), 'Saving…' (settings),
+// 'Sponsors' (admin — the label lists sponsor entities, so 赞助商, not 赞助),
 // 'Your sit-out budget is spent. You must play on.' (server).
+// Pagination 'Previous'/'Next' (上一页/下一页) belong to dict/admin.ts; this page's
+// replay stepper uses the distinct keys 'Previous step'/'Next step'.
 // NOTE: the standings column 'Hands' also resolves through dict/table-page.ts ('牌局记录'),
 // which owns that global key; not overridden here to keep the table-page nav button correct.
 // Tournament names, usernames/agent names, seed hashes, URLs, BB/100, payout-percentage
@@ -35,7 +40,7 @@ const tournaments: Record<string, string> = {
   // ── Tournament formats (display-site keys for shared tournamentFormatLabel) ──
   Freezeout: '淘汰制',
   Knockout: '击倒赛',
-  'Fixed-hand league': '固定手数月赛',
+  'Fixed-hand league': '固定手数循环赛',
 
   // ── List page ───────────────────────────────────────────────────────────
   'Find your next table. Read the terms, bring your agent, and play for the published prizes.':
@@ -53,7 +58,7 @@ const tournaments: Record<string, string> = {
   'Set the format, schedule, entry terms and prizes, then submit your proposal for platform review.':
     '定好赛制、赛程、报名条款和奖品，再把提案交给平台审核。',
   'Propose a fixed-hand league, knockout or freezeout to bring players together.':
-    '发起固定手数月赛、击倒赛或淘汰制，把大家凑到一张桌上。',
+    '发起固定手数循环赛、击倒赛或淘汰制，把大家凑到一张桌上。',
   'Events appear here when play begins. Check upcoming tournaments for your next seat.':
     '开赛后，赛事会出现在这里。想坐下一桌，去「即将开始」里找。',
   'Completed and cancelled tournaments stay here with their saved standings and prizes.':
@@ -205,7 +210,7 @@ const tournaments: Record<string, string> = {
   'Tournament funds': '赛事资金',
   'Available prize pool': '可发奖池',
   'Prizes allocated': '已分配奖金',
-  'House accrued': '平台已抽成',
+  'House accrued': '平台累计抽成',
   'Sponsor contributions': '赞助投入',
   'Competition-chip accounting. Recorded separately from cash and room balances.':
     '按比赛筹码记账，与真钱和房间余额分开记录。',
@@ -278,7 +283,7 @@ const tournaments: Record<string, string> = {
   'Tournament name': '赛事名称',
   'Friday Agent League': '周五代理联赛',
   Description: '描述',
-  'Fixed-hand league · equal stacks': '固定手数月赛 · 人手等量筹码',
+  'Fixed-hand league · equal stacks': '固定手数循环赛 · 人手等量筹码',
   'Knockout · last player standing': '击倒赛 · 站到最后的人赢',
   'Freezeout · entry fee is your stack': '淘汰制 · 报名费就是你的筹码',
   'Scheduled start · your local time': '预计开赛 · 按你的本地时间',
@@ -348,7 +353,7 @@ const tournaments: Record<string, string> = {
   'Browse tournaments': '浏览赛事',
 
   // ── Sponsors ─────────────────────────────────────────────────────────────
-  Sponsors: '赞助',
+  // 'Sponsors' itself is defined in dict/admin.ts (赞助商) — shared label, one value.
   'Sponsored · {name}': '内容赞助 · {name}',
   'Opens in a new tab': '在新标签页打开',
 
@@ -447,8 +452,8 @@ const tournaments: Record<string, string> = {
   'Decision replay': '决策回放',
   'Step through recorded actions. The final cards above do not change.':
     '逐条查看记录下的操作。上面的最终牌不变。',
-  Previous: '上一步',
-  Next: '下一步',
+  'Previous step': '上一步',
+  'Next step': '下一步',
   'Pause replay': '暂停回放',
   'Play again': '重新播放',
   'Play decisions': '播放决策',

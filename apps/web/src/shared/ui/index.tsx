@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { cn } from '../lib/cn.ts';
+import { t } from '../i18n/index.ts';
 import { Button as ZeusButton, InputBase } from '@zeus/ui/base';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
@@ -172,7 +173,7 @@ export function Dialog({
           <h2 className="font-display text-lg font-semibold">{title}</h2>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('Close')}
             className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
           >
             ✕

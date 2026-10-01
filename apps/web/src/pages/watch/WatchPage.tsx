@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 
 /** Resolves a watch link into spectator access and forwards to the table. */
@@ -20,13 +21,13 @@ export function WatchPage() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       {error ? (
         <>
-          <p className="max-w-sm text-sm text-rose-600">{error}</p>
+          <p className="max-w-sm text-sm text-rose-600">{t(error)}</p>
           <Link to="/lobby">
-            <Button>Back to the lobby</Button>
+            <Button>{t('Back to the lobby')}</Button>
           </Link>
         </>
       ) : (
-        <Spinner label="Opening the table\u2026" />
+        <Spinner label={t('Opening the table…')} />
       )}
     </div>
   );

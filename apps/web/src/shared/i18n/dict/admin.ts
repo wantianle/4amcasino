@@ -5,12 +5,14 @@
 // 固定手数循环赛). Usernames, room names, ids, URLs, hashes and user-written
 // notes pass through as vars, untranslated. Server error prose is already
 // handled by tr() at the api boundary; only local fallbacks are keys here.
-// Reused, NOT redefined (later modules win globally): 'Cancel' (ledger),
+// Reused, NOT redefined (owner modules win globally): 'Cancel' (ledger),
 // 'Retry' (lobby), 'Search' (nav), 'Approve'/'Reject' (bank), 'Working…'
-// (account), 'Saving…'/'Sign out'/'New password'* (settings/login — *login
-// owns the value), 'Note (optional)' (bank), 'Merge accounts' (settings),
-// 'Tournament'/'Tournaments' (nav), 'Outstanding'/'Payments recorded'
-// (settle/house), 'Refreshing…' (house).
+// 'Re-keying…'/'use at least 6 characters'* (account — *account owns the
+// value), 'Saving…'/'Sign out'/'New password' (settings/login — login owns
+// the value), 'Note (optional)' (bank), 'Merge accounts' (settings),
+// 'Tournament'/'Tournaments' (nav), 'Outstanding'/'Payments recorded'/
+// 'Recording…' (settle/house), 'Refreshing…' (house), 'Organizer starts
+// when ready' (tournaments).
 // NOTE: bare 'Record' is '录制' in dict/settings.ts (keyboard shortcuts) and
 // wins globally. The Rate/Earnings column meaning "记录" uses the trailing-
 // space key 'Record ' — rendered identically in both locales, never collides.
@@ -174,8 +176,6 @@ const admin: Record<string, string> = {
   'Reset password': '重设密码',
   'Sets a new password and signing key for @{user}. They must not be seated at a table when you do this.':
     '为 @{user} 设置新密码和签名密钥。操作时他不能坐在牌桌上。',
-  'use at least 6 characters': '至少使用 6 个字符。',
-  'Re-keying…': '正在更换密钥…',
   'Password reset for @{user}. Tell them the new password directly, they were signed out everywhere.':
     '已重设 @{user} 的密码。请把新密码直接转告本人，他已在所有设备退出登录。',
   'could not reset that password': '没能重设这个密码。',
@@ -289,7 +289,6 @@ const admin: Record<string, string> = {
   cancelled: '已取消',
   Free: '免费',
   '{n} chips': '{n} 筹码',
-  'Organizer starts when ready': '主办方就绪后开始',
   'Revision {n}': '第 {n} 版',
   Locked: '已锁定',
   Editable: '可编辑',
@@ -301,16 +300,16 @@ const admin: Record<string, string> = {
   'House accrued': '平台累计抽成',
   'Available pools': '可用奖池',
   'Prizes allocated': '已分配奖金',
-  'Recorded paid': '已记支付',
+  'Recorded paid': '已记录付款',
   'Positive outstanding is due to the entrant. Negative is due from the entrant. Play net is separate from settlement.':
-    '正数应付给参赛者，负数应向参赛者收取。对局净额与结算分开。',
+    '正数应付给参赛者，负数应向参赛者收取。实战盈亏与结算分开。',
   'Search earnings': '搜索收益',
   'Player, user ID or tournament': '玩家、用户 ID 或赛事',
   'All amounts in competition chips': '金额均为比赛筹码',
   'Entrant / tournament': '参赛者 / 赛事',
   Reward: '参赛奖',
   Prize: '奖金',
-  'Play net': '对局净额',
+  'Play net': '实战盈亏',
   'Settlement net': '结算净额',
   'Record ': '记录',
   'No earnings match this search.': '没有匹配的收益记录。',
@@ -329,7 +328,6 @@ const admin: Record<string, string> = {
   'Reference for this manual settlement': '这次人工结算的凭证号',
   'A previous record is awaiting confirmation. Retry with its retained request ID.':
     '上一条记录待确认。用保留的请求 ID 重试。',
-  'Recording…': '正在登记…',
   'Retry same settlement record': '重试同一条结算记录',
   'Record manual settlement': '登记人工结算',
 

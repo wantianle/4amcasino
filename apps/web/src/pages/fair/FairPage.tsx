@@ -20,6 +20,7 @@ import {
 import { cardFromName } from '@4am/shared';
 import { cn } from '../../shared/lib/cn.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 const PLAYERS = [
   { name: 'You', color: 'bg-indigo-500', ring: 'ring-indigo-400', text: 'text-indigo-300' },
@@ -114,14 +115,15 @@ function StepDeck() {
         transition={{ delay: 0.55 }}
         className="flex items-center gap-2 text-sm text-white/70"
       >
-        <ArrowRight size={16} className="text-white/40" /> 52 cards become 52 points on an elliptic
-        curve
+        <ArrowRight size={16} className="text-white/40" />
+        {t('52 cards become 52 points on an elliptic curve')}
       </motion.p>
       <Caption>
-        There is no physical deck and no dealer. Before every hand, each card is encoded as pure
-        math, a point on an elliptic curve. Math can be locked; paper cannot.
+        {t('There is no physical deck and no dealer. Before every hand, each card is encoded as pure math, a point on an elliptic curve. Math can be locked; paper cannot.')}
       </Caption>
-      <NerdNote>under the hood: ristretto255 group elements, hash-to-point per card</NerdNote>
+      <NerdNote>
+        {t('under the hood: ristretto255 group elements, hash-to-point per card')}
+      </NerdNote>
     </div>
   );
 }
@@ -151,7 +153,7 @@ function StepCommit() {
                   p.color,
                 )}
               >
-                {p.name[0]}
+                {t(p.name)[0]}
               </span>
               <motion.span
                 initial={false}
@@ -175,12 +177,10 @@ function StepCommit() {
         })}
       </div>
       <Caption>
-        Before anything is shuffled, every player publishes a fingerprint of their secret key for
-        this hand, pinned to the table for all to see. Nobody can quietly swap keys later: every
-        unlock must match the promise made here.
+        {t('Before anything is shuffled, every player publishes a fingerprint of their secret key for this hand, pinned to the table for all to see. Nobody can quietly swap keys later: every unlock must match the promise made here.')}
       </Caption>
       <NerdNote>
-        under the hood: hash commitments to per-hand masking keys, sent before the shuffle
+        {t('under the hood: hash commitments to per-hand masking keys, sent before the shuffle')}
       </NerdNote>
     </div>
   );
@@ -221,10 +221,10 @@ function StepShuffle() {
                 stage >= i + 1 ? p.ring : 'ring-transparent',
               )}
             >
-              {p.name[0]}
+              {t(p.name)[0]}
             </motion.div>
             <span className={cn('text-xs', stage >= i + 1 ? 'text-white/80' : 'text-white/30')}>
-              {p.name}
+              {t(p.name)}
             </span>
           </div>
         ))}
@@ -237,11 +237,11 @@ function StepShuffle() {
         ))}
       </div>
       <Caption>
-        In turn, every player scrambles the whole deck and seals every card with their own secret
-        key. Watch the locks stack up. After the last player, the order is unknown to everyone at
-        the table, and to us.
+        {t('In turn, every player scrambles the whole deck and seals every card with their own secret key. Watch the locks stack up. After the last player, the order is unknown to everyone at the table, and to us.')}
       </Caption>
-      <NerdNote>under the hood: commutative masking, so locks can come off in any order</NerdNote>
+      <NerdNote>
+        {t('under the hood: commutative masking, so locks can come off in any order')}
+      </NerdNote>
     </div>
   );
 }
@@ -258,7 +258,7 @@ function StepBlind() {
           className="flex flex-col items-center gap-3"
         >
           <span className="text-xs font-semibold uppercase tracking-wide text-indigo-300">
-            Your screen
+            {t('Your screen')}
           </span>
           <div className="flex gap-1.5">
             <PlayingCard card={cardFromName('As')} size="sm" deal />
@@ -272,7 +272,7 @@ function StepBlind() {
           className="flex flex-col items-center gap-3"
         >
           <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-white/50">
-            <EyeSlash size={14} /> The server
+            <EyeSlash size={14} /> {t('The server')}
           </span>
           <div className="flex gap-1.5">
             {['c41b9e02a7f3', '5d80cc19e4b6'].map((hex) => (
@@ -291,11 +291,10 @@ function StepBlind() {
         </motion.div>
       </div>
       <Caption>
-        The server only passes locked messages around. It never holds a single key, so even the
-        person hosting the game (or anyone who hacks the server) sees exactly this: noise.
+        {t('The server only passes locked messages around. It never holds a single key, so even the person hosting the game (or anyone who hacks the server) sees exactly this: noise.')}
       </Caption>
       <NerdNote>
-        under the hood: the server is a relay for ciphertexts; keys never leave your device
+        {t('under the hood: the server is a relay for ciphertexts; keys never leave your device')}
       </NerdNote>
     </div>
   );
@@ -334,7 +333,7 @@ function StepDeal() {
                   {isOpen ? <LockOpen size={13} weight="bold" /> : <Lock size={13} weight="bold" />}
                 </motion.span>
                 <span className={cn(isOpen ? 'text-white/85' : 'text-white/40')}>
-                  {p.name} {isOpen ? 'unlocked' : 'still locked'}
+                  {t(isOpen ? '{name} unlocked' : '{name} still locked', { name: t(p.name) })}
                 </span>
                 <AnimatePresence>
                   {isOpen && !isYou && (
@@ -344,7 +343,7 @@ function StepDeal() {
                       transition={spring}
                       className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[0.65rem] font-semibold text-emerald-300"
                     >
-                      <SealCheck size={11} weight="fill" /> proof verified
+                      <SealCheck size={11} weight="fill" /> {t('proof verified')}
                     </motion.span>
                   )}
                 </AnimatePresence>
@@ -372,12 +371,11 @@ function StepDeal() {
         </div>
       </div>
       <Caption>
-        To deal you a card, everyone else removes their lock, and each removal carries a
-        mathematical proof it was done with the exact key promised in chapter two. A faked unlock is
-        rejected instantly and the cheater is named. Your own lock comes off last, on your device,
-        so only you ever see the card.
+        {t('To deal you a card, everyone else removes their lock, and each removal carries a mathematical proof it was done with the exact key promised in chapter two. A faked unlock is rejected instantly and the cheater is named. Your own lock comes off last, on your device, so only you ever see the card.')}
       </Caption>
-      <NerdNote>under the hood: a Chaum-Pedersen DLEQ proof rides along with every unmask</NerdNote>
+      <NerdNote>
+        {t('under the hood: a Chaum-Pedersen DLEQ proof rides along with every unmask')}
+      </NerdNote>
     </div>
   );
 }
@@ -407,7 +405,7 @@ function StepBoard() {
           </motion.span>
         ))}
         <span className="ml-1 text-xs text-white/50">
-          {open ? 'all three unlocked, in public' : 'three locks on every board card'}
+          {open ? t('all three unlocked, in public') : t('three locks on every board card')}
         </span>
       </div>
       <div className="flex gap-2">
@@ -433,13 +431,10 @@ function StepBoard() {
         ))}
       </div>
       <Caption>
-        Community cards work the same way, just in the open: everyone removes their lock in front of
-        the whole table, proof attached, and the flop flips for all at once. The same machinery
-        covers showdowns, voluntary reveals, and paid peeks: a reveal is always a proven unlock,
-        never the server&apos;s word.
+        {t("Community cards work the same way, just in the open: everyone removes their lock in front of the whole table, proof attached, and the flop flips for all at once. The same machinery covers showdowns, voluntary reveals, and paid peeks: a reveal is always a proven unlock, never the server's word.")}
       </Caption>
       <NerdNote>
-        under the hood: identical DLEQ-proved unmasks, broadcast to the table instead of one player
+        {t('under the hood: identical DLEQ-proved unmasks, broadcast to the table instead of one player')}
       </NerdNote>
     </div>
   );
@@ -467,7 +462,7 @@ function StepChain() {
               )}
             >
               <span className="text-xs font-semibold text-white/85">
-                {tampered && i === 2 ? 'bet 6,000' : b}
+                {t(tampered && i === 2 ? 'bet 6,000' : b)}
               </span>
               <span
                 className={cn(
@@ -475,7 +470,7 @@ function StepChain() {
                   tampered && i >= 2 ? 'text-rose-300' : 'text-white/35',
                 )}
               >
-                {tampered && i >= 2 ? 'BROKEN' : `#${(0xa3f1 + i * 0x11d).toString(16)}`}
+                {tampered && i >= 2 ? t('BROKEN') : `#${(0xa3f1 + i * 0x11d).toString(16)}`}
               </span>
             </motion.button>
             {i < blocks.length - 1 && (
@@ -490,15 +485,12 @@ function StepChain() {
           </div>
         ))}
       </div>
-      <p className="text-xs text-white/40">tap any block to try tampering with it</p>
+      <p className="text-xs text-white/40">{t('tap any block to try tampering with it')}</p>
       <Caption>
-        Every move of every hand is signed by its player and chained by hashes. Change one bet after
-        the fact and every later link breaks, visibly, for everyone. Finished hands can be replayed
-        and re-verified in your own browser. The one thing math cannot stop: a friend showing their
-        screen to another friend. That part runs on friendship.
+        {t('Every move of every hand is signed by its player and chained by hashes. Change one bet after the fact and every later link breaks, visibly, for everyone. Finished hands can be replayed and re-verified in your own browser. The one thing math cannot stop: a friend showing their screen to another friend. That part runs on friendship.')}
       </Caption>
       <NerdNote>
-        under the hood: ed25519-signed actions in a hash chain, same scheme as the chip ledger
+        {t('under the hood: ed25519-signed actions in a hash chain, same scheme as the chip ledger')}
       </NerdNote>
     </div>
   );
@@ -524,15 +516,15 @@ export function FairPage() {
         <div className="flex items-center gap-3">
           <Link
             to="/login"
-            aria-label="Back to poker"
+            aria-label={t('Back to poker')}
             className="rounded-lg p-2 text-text-secondary hover:bg-background-secondary-default"
           >
             <CaretLeft size={18} weight="bold" />
           </Link>
-          <h1 className="font-display text-lg font-bold">How can this be fair?</h1>
+          <h1 className="font-display text-lg font-bold">{t('How can this be fair?')}</h1>
         </div>
         <p className="mt-1 pl-10 text-sm text-text-secondary">
-          Mental poker, in seven chapters. No trust in the server required.
+          {t('Mental poker, in seven chapters. No trust in the server required.')}
         </p>
 
         <div className="mt-4 flex min-h-[560px] flex-col rounded-2xl bg-slate-950 p-4 text-white sm:mt-6 sm:p-5">
@@ -541,12 +533,12 @@ export function FairPage() {
               {step + 1} / {STEPS.length}
             </span>
             <h2 className="min-w-0 flex-1 truncate text-center font-display text-sm font-bold sm:text-lg">
-              {STEPS[step]!.title}
+              {t(STEPS[step]!.title)}
             </h2>
             <button
               onClick={() => setRun((n) => n + 1)}
-              aria-label="Replay this animation"
-              title="Replay this animation"
+              aria-label={t('Replay this animation')}
+              title={t('Replay this animation')}
               className="flex w-12 justify-end rounded-full p-1.5 text-white/50 hover:text-white"
             >
               <ArrowsClockwise size={16} weight="bold" />
@@ -576,14 +568,14 @@ export function FairPage() {
               disabled={step === 0}
               className="flex items-center gap-1 rounded-full border border-white/20 px-3 py-2 text-sm font-semibold disabled:opacity-30 sm:px-4"
             >
-              <CaretLeft size={14} weight="bold" /> Back
+              <CaretLeft size={14} weight="bold" /> {t('Back')}
             </button>
             <div className="flex gap-1 sm:gap-1.5">
               {STEPS.map((s, i) => (
                 <button
                   key={s.id}
                   onClick={() => setStep(i)}
-                  aria-label={s.title}
+                  aria-label={t(s.title)}
                   className={cn(
                     'h-2 rounded-full transition-all',
                     i === step ? 'w-5 bg-indigo-400 sm:w-6' : 'w-2 bg-white/20 hover:bg-white/40',
@@ -596,14 +588,14 @@ export function FairPage() {
                 onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
                 className="flex items-center gap-1 rounded-full bg-white px-3 py-2 text-sm font-bold text-slate-900 active:scale-[0.98] sm:px-4"
               >
-                Next <CaretRight size={14} weight="bold" />
+                {t('Next step')} <CaretRight size={14} weight="bold" />
               </button>
             ) : (
               <Link
                 to="/login"
                 className="flex items-center gap-1 rounded-full bg-indigo-500 px-3 py-2 text-sm font-bold text-white active:scale-[0.98] sm:px-4"
               >
-                Deal me in <ArrowRight size={14} weight="bold" />
+                {t('Deal me in')} <ArrowRight size={14} weight="bold" />
               </Link>
             )}
           </div>

@@ -49,11 +49,11 @@ const login: Record<string, string> = {
   'Back to 4AM Casino': '返回 4AM Casino',
 
   // Server prose (§5b 配套短语库). tr() trims and ignores first-char case.
+  // dict/server.ts owns the auth phrase set — 'no such user', 'username taken',
+  // 'wrong password', 'that recovery code does not match' are defined there with
+  // 句号 endings (错误信息收尾加标点, §4.4) and win the global merge; do not
+  // restate them here.
   'bad credentials': '用户名或密码不对。',
-  'no such user': '没有这个用户名',
-  'username taken': '用户名已被占用',
-  'wrong password': '密码不对',
-  'that recovery code does not match': '恢复码不正确',
 };
 
 export default login;

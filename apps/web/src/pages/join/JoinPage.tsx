@@ -4,6 +4,7 @@ import { api } from '../../shared/api.ts';
 import { setPendingJoin, takePendingJoin } from '../../shared/pendingJoin.ts';
 import { useStore } from '../../shared/store.ts';
 import { Button, Panel, Spinner } from '../../shared/ui/index.tsx';
+import { t } from '../../shared/i18n/index.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { cardFromName } from '@4am/shared';
 
@@ -61,13 +62,13 @@ export function JoinPage() {
         <Panel>
           {error ? (
             <>
-              <h1 className="font-display text-lg font-semibold">Couldn't join</h1>
-              <p className="mt-1 text-sm text-slate-500">{error}</p>
+              <h1 className="font-display text-lg font-semibold">{t("Couldn't join")}</h1>
+              <p className="mt-1 text-sm text-slate-500">{t(error)}</p>
               <p className="mt-3 font-mono text-xs tracking-widest text-slate-400">
                 {code.toUpperCase()}
               </p>
               <div className="mt-4 flex flex-col gap-2">
-                <Button onClick={() => nav('/lobby')}>Go to the lobby</Button>
+                <Button onClick={() => nav('/lobby')}>{t('Go to the lobby')}</Button>
                 {username && (
                   <Button
                     variant="ghost"
@@ -76,14 +77,14 @@ export function JoinPage() {
                       nav(`/login?join=${code.toUpperCase()}`, { replace: true });
                     }}
                   >
-                    Signed in as {username} — use a different account
+                    {t('Signed in as {username} — use a different account', { username })}
                   </Button>
                 )}
               </div>
             </>
           ) : (
             <>
-              <Spinner label="Taking you to the table…" />
+              <Spinner label={t('Taking you to the table…')} />
               <p className="mt-3 font-mono text-xs tracking-widest text-slate-400">
                 {code.toUpperCase()}
               </p>

@@ -6,6 +6,8 @@ import { carriesStacks } from '@4am/shared';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
+import { fmt } from '../../shared/lib/cn.ts';
+import { fmtTime } from '../../shared/lib/datetime.ts';
 import { Button, Input, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import './arena.css';
@@ -20,7 +22,8 @@ import {
   safeExternalUrl,
 } from './TournamentTerms.tsx';
 
-const number = (n: number) => n.toLocaleString();
+// zh-CN grouping via shared fmt (docs/zh-i18n.md §4.1/§6.2 — no bare toLocaleString).
+const number = (n: number) => fmt(n);
 const signed = (n: number) => `${n > 0 ? '+' : ''}${number(n)}`;
 const errorText = (e: unknown) =>
   e instanceof Error ? e.message : t('Request failed. Please try again.');
@@ -665,7 +668,7 @@ function TournamentDetail({ id }: { id: string }) {
                           ? t('Your turn') +
                             (state.deadline
                               ? ` · ${t('Deadline {time}', {
-                                  time: new Date(state.deadline).toLocaleTimeString(),
+                                  time: fmtTime(state.deadline),
                                 })}`
                               : '')
                           : t('Waiting for {who}.', {

@@ -3,10 +3,18 @@ import { Link } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
+import { t, tr } from '../../shared/i18n/index.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
 import '../tournaments/arena.css';
 type Scope = { id: string; name: string; kind: 'room' | 'tournament' };
 type Grant = Awaited<ReturnType<typeof api.agentGrants>>['grants'][number];
 type Created = { id: string; token: string; expiresAt: number; scope: Scope; canPlay: boolean };
+
+/** zh-CN expiry stamp, e.g. `10月8日 14:30` (docs/zh-i18n.md §4.1). */
+function expiresText(ts: number): string {
+  return `${fmtDate(ts)} ${fmtTime(ts)}`;
+}
+
 export function AgentsPage() {
   const auth = useStore((s) => s.auth);
   const [scopes, setScopes] = useState<Scope[] | null>(null);
@@ -15,7 +23,7 @@ export function AgentsPage() {
     const p = new URLSearchParams(location.search);
     return `${p.get('kind') ?? ''}:${p.get('id') ?? ''}`;
   });
-  const [label, setLabel] = useState('My agent');
+  const [label, setLabel] = useState(t('My agent'));
   const [canPlay, setCanPlay] = useState(true);
   const [days, setDays] = useState(7);
   const [shareKey, setShareKey] = useState(false);
@@ -78,19 +86,20 @@ export function AgentsPage() {
     <main className="arena-page">
       <header className="arena-header">
         <div>
-          <h1>Agent access</h1>
+          <h1>{t('Agent access')}</h1>
           <p className="arena-muted">
-            Connect your own agent to a single table or tournament. You choose what it can do and
-            when access ends.
+            {t(
+              'Connect your own agent to a single table or tournament. You choose what it can do and when access ends.',
+            )}
           </p>
         </div>
         <Link className="arena-link" to="/tournaments">
-          Browse tournaments
+          {t('Browse tournaments')}
         </Link>
       </header>
       {error && (
         <div className="arena-error" role="alert">
-          {error}
+          {tr(error)}
         </div>
       )}
       {notice && (
@@ -101,21 +110,25 @@ export function AgentsPage() {
       <div className="arena-grid">
         <div className="arena-stack">
           <section className="arena-panel">
-            <h2>Create agent access</h2>
+            <h2>{t('Create agent access')}</h2>
             {scopes === null ? (
               error ? (
-                <Button onClick={() => void load().catch((e) => setError(e.message))}>Retry</Button>
+                <Button onClick={() => void load().catch((e) => setError(e.message))}>
+                  {t('Retry')}
+                </Button>
               ) : (
-                <Spinner label="Loading your tables…" />
+                <Spinner label={t('Loading your tables…')} />
               )
             ) : scopes.length === 0 ? (
               <div className="arena-empty">
-                <h3>Choose a table first.</h3>
+                <h3>{t('Choose a table first.')}</h3>
                 <p className="arena-muted">
-                  Join a poker room or enroll in a tournament before granting an agent access.
+                  {t(
+                    'Join a poker room or enroll in a tournament before granting an agent access.',
+                  )}
                 </p>
                 <Link className="arena-link inline-block mt-4" to="/tournaments">
-                  Find a tournament
+                  {t('Find a tournament')}
                 </Link>
               </div>
             ) : (
@@ -146,7 +159,7 @@ export function AgentsPage() {
                 }}
               >
                 <label className="arena-field">
-                  Agent label
+                  {t('Agent label')}
                   <input
                     className="arena-input"
                     value={label}
@@ -156,19 +169,19 @@ export function AgentsPage() {
                   />
                 </label>
                 <label className="arena-field">
-                  Expires in
+                  {t('Expires in')}
                   <select
                     className="arena-input"
                     value={days}
                     onChange={(e) => setDays(Number(e.target.value))}
                   >
-                    <option value={1}>1 day</option>
-                    <option value={7}>7 days</option>
-                    <option value={30}>30 days</option>
+                    <option value={1}>{t('1 day')}</option>
+                    <option value={7}>{t('7 days')}</option>
+                    <option value={30}>{t('30 days')}</option>
                   </select>
                 </label>
                 <label className="arena-field wide">
-                  Room or tournament
+                  {t('Room or tournament')}
                   <select
                     className="arena-input"
                     value={selected}
@@ -179,7 +192,7 @@ export function AgentsPage() {
                   >
                     {scopes.map((s) => (
                       <option key={`${s.kind}:${s.id}`} value={`${s.kind}:${s.id}`}>
-                        {s.name} · {s.kind}
+                        {s.name} · {t(s.kind === 'room' ? 'Room' : 'Tournament')}
                       </option>
                     ))}
                   </select>
@@ -191,10 +204,14 @@ export function AgentsPage() {
                     onChange={(e) => setCanPlay(e.target.checked)}
                   />
                   <span>
-                    <strong>Allow this agent to play as me</strong>
+                    <strong>{t('Allow this agent to play as me')}</strong>
                     {canPlay
-                      ? 'It can make poker decisions for your seat. Banking, account settings and tournament administration are excluded.'
-                      : 'Read-only: table details and public events. The agent cannot play.'}
+                      ? t(
+                          'It can make poker decisions for your seat. Banking, account settings and tournament administration are excluded.',
+                        )
+                      : t(
+                          'Read-only: table details and public events. The agent cannot play.',
+                        )}
                   </span>
                 </label>
                 {scope?.kind === 'room' && canPlay && (
@@ -205,15 +222,17 @@ export function AgentsPage() {
                       onChange={(e) => setShareKey(e.target.checked)}
                     />
                     <span>
-                      <strong>Include my local poker signing key in the download</strong>
-                      Encrypted-room play needs this key. Give the file only to your own trusted
-                      local agent. It runs the crypto on your computer; the key is not uploaded by
-                      this setup form.
+                      <strong>
+                        {t('Include my local poker signing key in the download')}
+                      </strong>
+                      {t(
+                        'Encrypted-room play needs this key. Give the file only to your own trusted local agent. It runs the crypto on your computer; the key is not uploaded by this setup form.',
+                      )}
                     </span>
                   </label>
                 )}
                 {scope?.kind === 'room' && canPlay && !auth.identity && (
-                  <p className="arena-error">Sign in again to load your poker signing key.</p>
+                  <p className="arena-error">{t('Sign in again to load your poker signing key.')}</p>
                 )}
                 <Button
                   disabled={
@@ -222,54 +241,59 @@ export function AgentsPage() {
                     (scope.kind === 'room' && canPlay && (!shareKey || !auth.identity))
                   }
                 >
-                  {busy ? 'Creating…' : 'Create access token'}
+                  {busy ? t('Creating…') : t('Create access token')}
                 </Button>
               </form>
             )}
           </section>
           {created && (
-            <section className="arena-panel" aria-label="New agent configuration">
-              <h2>Your agent is ready to connect</h2>
+            <section className="arena-panel" aria-label={t('New agent configuration')}>
+              <h2>{t('Your agent is ready to connect')}</h2>
               <p className="arena-muted">
-                Save this configuration now. The token is shown only for this setup. Replace{' '}
-                <code>/path/to/4amcasino</code> with your local checkout path.
+                {t('Save this configuration now. The token is shown only for this setup.')}{' '}
+                {t('Replace {path} with your local checkout path.', {
+                  path: '/path/to/4amcasino',
+                })}
               </p>
               <pre className="arena-code mt-4">{config(true)}</pre>
               <div className="arena-controls mt-4">
                 <Button
                   onClick={() => {
                     download('4am-agent.mcp.json', config());
-                    setNotice('Agent configuration downloaded. Keep it private.');
+                    setNotice(t('Agent configuration downloaded. Keep it private.'));
                   }}
                 >
-                  Download MCP configuration
+                  {t('Download MCP configuration')}
                 </Button>
                 <Button
                   variant="secondary"
                   onClick={() =>
                     void navigator.clipboard
                       .writeText(created.token)
-                      .then(() => setNotice('Agent token copied.'))
+                      .then(() => setNotice(t('Agent token copied.')))
                       .catch(() =>
                         setError('Clipboard unavailable. Download the configuration instead.'),
                       )
                   }
                 >
-                  Copy token
+                  {t('Copy token')}
                 </Button>
                 <Button variant="ghost" onClick={() => setCreated(null)}>
-                  Hide configuration
+                  {t('Hide configuration')}
                 </Button>
               </div>
               <p className="arena-muted mt-3">
-                Scope: {created.scope.name}. Expires {new Date(created.expiresAt).toLocaleString()}.
+                {t('Scope: {scope}. Expires {when}.', {
+                  scope: created.scope.name,
+                  when: expiresText(created.expiresAt),
+                })}
               </p>
             </section>
           )}
           <section className="arena-panel">
-            <h2>Your access tokens</h2>
+            <h2>{t('Your access tokens')}</h2>
             {!grants.length ? (
-              <p className="arena-muted">No agent tokens yet.</p>
+              <p className="arena-muted">{t('No agent tokens yet.')}</p>
             ) : (
               grants.map((g) => {
                 const active = !g.revokedAt && g.expiresAt > Date.now();
@@ -280,7 +304,7 @@ export function AgentsPage() {
                         <h3>{g.label}</h3>
                         <p className="arena-muted">
                           {scopes?.find((s) => s.id === g.scopeId)?.name ?? g.scopeId} ·{' '}
-                          {g.canPlay ? 'Can play' : 'Read-only'}
+                          {g.canPlay ? t('Can play') : t('Read-only')}
                         </p>
                       </div>
                       {active ? (
@@ -294,7 +318,7 @@ export function AgentsPage() {
                               await api.revokeAgentGrant(g.id);
                               if (created?.id === g.id) setCreated(null);
                               await load();
-                              setNotice('Agent access revoked.');
+                              setNotice(t('Agent access revoked.'));
                             } catch (e) {
                               setError(e instanceof Error ? e.message : 'Could not revoke access.');
                             } finally {
@@ -302,14 +326,16 @@ export function AgentsPage() {
                             }
                           }}
                         >
-                          Revoke
+                          {t('Revoke')}
                         </Button>
                       ) : (
-                        <span className="arena-status">{g.revokedAt ? 'Revoked' : 'Expired'}</span>
+                        <span className="arena-status">
+                          {g.revokedAt ? t('Revoked') : t('Expired')}
+                        </span>
                       )}
                     </div>
                     <p className="arena-muted mt-2">
-                      Expires {new Date(g.expiresAt).toLocaleString()}
+                      {t('Expires {when}', { when: expiresText(g.expiresAt) })}
                     </p>
                   </div>
                 );
@@ -319,44 +345,50 @@ export function AgentsPage() {
         </div>
         <aside className="arena-stack">
           <section className="arena-panel">
-            <h2>Listen, then decide</h2>
+            <h2>{t('Listen, then decide')}</h2>
             <ol className="arena-help-list arena-muted">
               <li>
-                Use <code>tournament_state</code> or <code>casino_state</code> to read your seat.
+                {t('Use {a} or {b} to read your seat.', {
+                  a: 'tournament_state',
+                  b: 'casino_state',
+                })}
               </li>
-              <li>
-                Use <code>subscribe_events</code> to wait for changes.
-              </li>
-              <li>Read fresh state, then send a legal action.</li>
+              <li>{t('Use {tool} to wait for changes.', { tool: 'subscribe_events' })}</li>
+              <li>{t('Read fresh state, then send a legal action.')}</li>
             </ol>
             <p className="arena-muted mt-4">
-              Tournament actions include a hand number, action sequence and request ID, so retries
-              cannot play a later turn.
+              {t(
+                'Tournament actions include a hand number, action sequence and request ID, so retries cannot play a later turn.',
+              )}
             </p>
           </section>
           <section className="arena-panel">
-            <h2>Webhook delivery</h2>
+            <h2>{t('Webhook delivery')}</h2>
             <p className="arena-muted">
-              Run the local webhook relay from the repository to forward your subscribed room or
-              tournament events to your agent. It signs deliveries and saves a cursor for retries.
+              {t(
+                'Run the local webhook relay from the repository to forward your subscribed room or tournament events to your agent. It signs deliveries and saves a cursor for retries.',
+              )}
             </p>
             <pre className="arena-code mt-3">npm run webhook --workspace @4am/mcp</pre>
             <p className="arena-muted mt-3">
-              Configure the receiver, scope and signing secret in your environment. Setup and
-              verification examples are in <code>docs/AGENT-ARENA.md</code>.
+              {t('Configure the receiver, scope and signing secret in your environment.')}{' '}
+              {t('Setup and verification examples are in {file}.', {
+                file: 'docs/AGENT-ARENA.md',
+              })}
             </p>
           </section>
           <section className="arena-panel">
-            <h2>Benchmark locally</h2>
+            <h2>{t('Benchmark locally')}</h2>
             <p className="arena-muted">
-              Test a policy before entering. The included baselines use the same Hold’em rules as
-              the arena.
+              {t(
+                'Test a policy before entering. The included baselines use the same Hold\u2019em rules as the arena.',
+              )}
             </p>
             <pre className="arena-code mt-3">
               npm run benchmark --workspace @4am/mcp -- --hands 10000 --out results.json
             </pre>
             <p className="arena-muted mt-3">
-              Local simulations do not count toward live tournament prizes.
+              {t('Local simulations do not count toward live tournament prizes.')}
             </p>
           </section>
         </aside>

@@ -13,6 +13,8 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { t } from '../../shared/i18n/index.ts';
+import { fmt } from '../../shared/lib/cn.ts';
+import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
 import { safeExternalUrl, SponsorPlacements } from './SponsorPlacements.tsx';
 import './broadcast.css';
 
@@ -26,12 +28,12 @@ type HandReplay = {
     ts: number;
   }[];
 };
-const number = (value: number) => value.toLocaleString();
+// zh-CN formatting via shared helpers (§4.1/§6.2 — 24-hour HH:mm, no bare toLocale*).
+const number = (value: number) => fmt(value);
 const signed = (value: number) => `${value > 0 ? '+' : ''}${number(value)}`;
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : t('Connection interrupted. Please try again.');
-const time = (value: number) =>
-  new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const time = (value: number) => fmtTime(value);
 
 class PublicRequestError extends Error {
   constructor(
@@ -287,7 +289,7 @@ function LiveTable({ state }: { state: TournamentState }) {
           <p>
             {state.policy.startsAt
               ? t('Scheduled for {date}.', {
-                  date: new Date(state.policy.startsAt).toLocaleString(),
+                  date: `${fmtDate(state.policy.startsAt)} ${fmtTime(state.policy.startsAt)}`,
                 })
               : t('Play begins when the organizer starts the tournament.')}
           </p>
@@ -741,7 +743,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setStep((value) => Math.max(0, value - 1));
                         }}
                       >
-                        {t('Previous')}
+                        {t('Previous step')}
                       </Button>
                       <Button
                         variant="secondary"
@@ -766,7 +768,7 @@ function CompletedHands({ id, state }: { id: string; state: TournamentState }) {
                           setStep((value) => Math.min(actionCount, value + 1));
                         }}
                       >
-                        {t('Next')}
+                        {t('Next step')}
                       </Button>
                       <Button
                         variant="ghost"

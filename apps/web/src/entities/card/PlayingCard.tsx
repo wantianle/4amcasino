@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from 'motion/react';
 import { RANKS, SUITS, rankOf, suitOf, type CardId } from '@4am/shared';
 import { cn } from '../../shared/lib/cn.ts';
+import { t } from '../../shared/i18n/index.ts';
 import { useStore } from '../../shared/store.ts';
 
 const SUIT_GLYPHS = ['♣', '♦', '♥', '♠'] as const;
@@ -60,7 +61,7 @@ export function PlayingCard({
         )}
         role={faceDown ? 'img' : undefined}
         aria-hidden={!faceDown || undefined}
-        aria-label={faceDown ? 'face-down card' : undefined}
+        aria-label={faceDown ? t('face-down card') : undefined}
       />
     );
   }
