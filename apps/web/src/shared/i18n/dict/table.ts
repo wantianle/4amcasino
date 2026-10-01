@@ -16,7 +16,7 @@ const table: Record<string, string> = {
   Raise: '加注',
   'Raise to {n}': '加注至 {n}',
   'Check / Fold': '过牌·弃牌',
-  'Call any': '随时跟注',
+  'Call any': '有注就跟',
   'Ahead of turn': '提前操作',
   'Arms now, acts on your turn': '先挂上，轮到你自动执行',
   'Raising unlocks on your turn': '轮到你才能加注',
@@ -29,13 +29,13 @@ const table: Record<string, string> = {
 
   // ── Action bar status lines (§5d) ────────────────────────────────────────
   'Your turn.': '轮到你了。',
-  'Out of chips. Chips menu → Buy points.': '筹码打光了。打开「筹码」菜单 → 买点数控。',
+  'Out of chips. Chips menu → Buy points.': '筹码打光了。打开「筹码」菜单 → 买点数。',
   'Automatic ready check soon…': '马上自动发起就绪确认…',
   'Auto-deal paused. Table menu → Auto-deal.': '自动发牌已暂停。去「牌桌」菜单 → 自动发牌 开启。',
-  'Deal when ready.': '随时可以开桌。',
-  'Waiting for two online players with chips…': '还差有筹码的在线玩家（满两人开桌）…',
-  'Host deals soon…': '等房主开桌…',
-  'Holding ~40s for {names}…': '{names} 掉线了，牌局等大约 40 秒…',
+  'Deal when ready.': '准备好就发牌。',
+  'Waiting for two online players with chips…': '还差一位在线且有筹码的玩家才能开牌…',
+  'Host deals soon…': '等房主发牌…',
+  'Holding ~40s for {names}…': '{names} 掉线了，这手牌等他们约 40 秒…',
   'Shuffling…': '洗牌中…',
   '{name}…': '{name}…',
   'Could not send your action.': '操作没发出去，再试一次。',
@@ -51,8 +51,8 @@ const table: Record<string, string> = {
   // ── Action bar HUD labels ────────────────────────────────────────────────
   'Your bet': '你的下注',
   'Your bet this street': '本轮已投入',
-  'Your balance': '你的余额',
-  'Your balance. Bought {n} total.': '你的余额。累计买入 {n}。',
+  'Your balance': '余额',
+  'Your balance. Bought {n} total.': '余额。累计买入 {n}。',
   'Start hand': '开一手',
   'Deal hand': '发牌',
   'Show cards': '亮牌',
@@ -100,7 +100,7 @@ const table: Record<string, string> = {
   'nice hand 👏': '这手漂亮 👏',
   'bluff! 🤨': '诈的！🤨',
   'run it again 🔁': '再来一手 🔁',
-  'ouch 💀': '哎不行 💀',
+  'ouch 💀': '这也能输 💀',
   gg: 'gg',
   'so lucky 🍀': '手气真好 🍀',
   'send {s} sticker': '发送 {s} 表情',
@@ -119,17 +119,17 @@ const table: Record<string, string> = {
   'ran it twice': '跑了两次牌',
   'everyone folded': '全部弃牌',
   'No cards were shown - the pot went to the last player standing.':
-    '没人亮牌——底池归了最后的留守者。',
+    '没人亮牌——底池归最后一个没弃牌的人。',
   'Full replay →': '完整回放 →',
   'Seat {n}': '{n} 号位',
 
   // ── Mobile table extras ──────────────────────────────────────────────────
   'You are out of chips. Buy points from the bank (menu, top right).':
-    '你的筹码打光了。向银行买点数控（右上角菜单）。',
+    '你的筹码打光了。打开右上角菜单，向银行买点数。',
   'Automatic ready check soon. Menu → sit out if you need a break.':
     '马上自动发起就绪确认。要缓口气就打开菜单 → 休息。',
-  'Waiting for two online players with chips.': '还差有筹码的在线玩家（满两人开桌）。',
-  'Waiting for the host to deal.': '等房主开桌。',
+  'Waiting for two online players with chips.': '还差一位在线且有筹码的玩家才能开牌。',
+  'Waiting for the host to deal.': '等房主发牌。',
   'Waiting…': '等待中…',
   'Waiting for friends to sit down…': '等朋友入座…',
   pot: '底池',
@@ -155,11 +155,11 @@ const table: Record<string, string> = {
   'Waiting for the next ready check.': '等下一次就绪确认。',
   'Could not save auto-deal. Try again.': '自动发牌设置没保存成功，再试一次。',
   'Enable auto-deal': '开启自动发牌',
-  'Keep the table moving between hands.': '让牌局一手接一手不停。',
+  'Keep the table moving between hands.': '让牌局一手接一手。',
   'Automatic dealer:': '自动发牌：',
   Fallback: '替补',
   'The seated, online host is preferred. If they leave, sit out or run out of chips, another seated, online player takes over automatically.':
-    '优先由已入座且在线的房主开桌。对方离席、休息或筹码打光时，自动换另一名已入座在线的玩家接手。',
+    '优先由已入座且在线的房主发牌。对方离席、休息或筹码打光时，自动换另一名已入座在线的玩家接手。',
   'After a 15-second break, everyone gets up to 20 seconds to choose “I’m ready”. Your “Auto ready” preference still applies. At least two ready players are needed.':
     '15 秒休息后，大家最多有 20 秒点「我准备好了」。你的「自动就绪」设置照常生效。至少需要两人就绪才会发牌。',
   'Only the host can change this room setting.': '只有房主能改这个房间设置。',

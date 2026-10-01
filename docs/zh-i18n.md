@@ -62,6 +62,7 @@
 | bet / raise / call / check / fold | 下注 / 加注 / 跟注 / 过牌 / 弃牌 | |
 | raise to N | 加注至 N | `Bet N` 与 `Raise to N` 必须区分：前者无人下注，后者已有注 |
 | all-in | 全下 | 不用「All in 梭哈」；按钮保留 All-in 也可（行业通用），推荐「全下」 |
+| stack | 筹码 | 绝不写「筹码堆」；金额/HUD 直接用「筹码」；starting stack → 起始筹码 |
 | showdown | 摊牌 | |
 | hole cards | 底牌 | 「Your cards stay yours」语境统一用「底牌」 |
 | community cards | 公共牌 | |
@@ -69,7 +70,7 @@
 | banker / backup banker | 账房 / 副账房 | ⚠️ 绝不译「庄家」。这里的 banker 是管点数买卖与结算的朋友，「庄家」在扑克语境=荷官/平台，会引起歧义 |
 | ledger | 账本 | 页面标题「账本」，行内「流水」可用于列表语境 |
 | settle up | 结账 | 「Bought from the bank (to settle up)」→「向银行买入（用于结账）」 |
-| buy-in / buy points | 买入 / 买点数控 | 本作是 play-money，银行卖的是点数/筹码，不要出现「充值」 |
+| buy-in / buy points | 买入 / 买点数 | 本作是 play-money，银行卖的是点数/筹码，解释性 prose 用「娱乐筹码」；不出现「充值」「点数控」 |
 | house cut / table commission | 台费 | `commission - keeps the lights on` →「台费——电费的钱」。kind 徽章统一「台费」 |
 | the house | 平台 | "Not even the house" →「连平台也不行」。不译「赌场/庄家」 |
 | bounty（7-2 offsuit） | 7-2 彩头 | `paid the 7-2 offsuit bounty` →「付了 7-2 不同花的彩头」 |
@@ -92,6 +93,7 @@
 | lobby | 大厅 | |
 | host | 房主 | 不译「主持人」 |
 | viewer / watch | 观战 | Watch 页 →「观战」；publicWatch →「允许观战」 |
+| sit out / take a break | 休息 | sit out 绝不译「旁观」；「观战/旁观」只属于 viewer；leave seat → 离座 |
 | standings | 排名 | |
 | session report | 战绩小结 | |
 | chip-leader crown | 筹码王皇冠 | |
@@ -109,14 +111,14 @@
 
 | English | 中文 | 备注 |
 |---|---|---|
-| toggle / switch | 开关（名）/ 开启、关闭（状态） | 描述行不用「切换」当动词尾巴 |
+| toggle / switch | 开关（名）/ 开启、关闭（状态） | Toggle chat →「打开或关闭聊天」；描述行不用「切换」当动词尾巴 |
 | Save / Saved. | 保存 / 已保存 | 状态词不加句号于按钮，正文说明加。 |
 | Retry | 重试 | |
 | Listening… | 按键捕捉中… | 快捷键录制态 |
 | Record | 录制 | 快捷键按钮 |
 | Restore defaults | 恢复默认 | |
 | Pre-action / "Arms now, acts on your turn" | 预操作 / 「先挂上，轮到你自动执行」 | |
-| Call any | 随时跟注 | 预操作按钮 |
+| Call any | 有注就跟 | 预操作按钮；any=任意注额自动跟，非时间含义 |
 | Sending… | 发送中… | |
 | ellipsis `…` | 用单字符「…」 | 严禁 `...` 三个点 |
 | Sign out | 退出登录 | |
@@ -145,7 +147,7 @@
 | 「A place to play. A reason to hang out.」 | 意译为「能打牌，也能待着。」 | 直译「一个游玩的场所，一个相聚的理由」即 AI 味范本——正好用作团队对照教材 |
 | meta description / og:description | **重写为 ≤ 40 字**：「和朋友开私密德州牌局，语音聊天、3D 酒廊、对局回放。纯娱乐筹码。」 | 分享文案被截断是硬约束，不是风格选择 |
 | 「Inside 4AM — an example room」 | 「4AM 实拍 —— 示例房间」 | 短、清楚 |
-| 三个步骤小标题 | 「开一桌你的场子」「把链接丢进群聊」「发牌、闲聊、再来一局」 | 动词开头、口语量词「一桌」，去掉翻译腔 |
+| 三个步骤小标题 | 「开一桌，变成你的场子」「把链接丢进群聊」「发牌，闲聊，再来一局」 | 动词开头、口语量词「一桌」，去掉翻译腔 |
 
 ### 3.3 Emoji 政策
 
@@ -259,7 +261,7 @@
 | Enable keyboard shortcuts | 启用快捷键 |
 | Shortcuts work in 2D and 3D on your turn. They pause while you type, open a menu or dialog, or wait for the server. WASD stays available for lounge movement. | 快捷键在 2D 和 3D 里轮到你时生效；输入文字、打开菜单或弹窗、等待服务器时会暂停。WASD 仍用于酒廊走位。 |
 | None | 无 |
-| Recording cancelled. | 已取消录入。 |
+| Recording cancelled. | 已取消录制。 |
 | {Action} set to {key}. Save to apply. | 「{动作}」已设为 {key}，保存后生效。 |
 | Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved. | 请选一个字母或数字，可加 Shift。WASD 和浏览器自带快捷键不可用。 |
 | Keyboard shortcuts saved to your account. | 快捷键已保存到账号。 |
@@ -277,10 +279,10 @@
 | EN | ZH |
 |---|---|
 | 4AM Casino（标题） | 4AM Casino（不译） |
-| Platform sign in | 平台管理登录 |
+| Platform sign in | 平台账号登录 |
 | Hold'em with friends. Nobody sees your cards. Not even the house. | 和朋友来一局德扑。没人看得到你的底牌——平台也不行。 |
-| Use your 4AM Casino platform account to manage the casino. | 用 4AM Casino 平台账号管理整个场子。 |
-| You were invited to a table ({code}). Log in or create an account and we'll seat you straight away. | 你收到了一张牌桌的邀请（{code}）。登录或注册后，直接带你入席。 |
+| Use your 4AM Casino platform account to manage the casino. | 用 4AM Casino 平台账号管理平台。 |
+| You were invited to a table ({code}). Log in or create an account and we'll seat you straight away. | 你收到了一张牌桌的邀请（{code}）。登录或注册后，马上入席。 |
 | Your session has expired. Sign in again to continue. | 登录状态已过期，请重新登录。 |
 | Log in / Register / Create account | 登录 / 注册 / 创建账号 |
 | Reset my password | 重设密码 |
@@ -290,7 +292,7 @@
 | Enter the recovery code you saved when you set up the account. It works once, and it issues you a brand-new signing key — your old hands stay verifiable either way. | 输入建号时保存的恢复码。它只能用一次，会为你签发一把全新的签名密钥——旧的牌局依旧可以验证。 |
 | Deriving your keys… | 正在推导你的密钥… |
 | Creating account… / Recovering… / Signing in… | 正在创建账号… / 正在恢复… / 正在登录… |
-| ✓ Account created. Dealing you in… | ✓ 账号建好了，这就拉你入桌… |
+| ✓ Account created. Dealing you in… | ✓ 账号建好了，马上发你入桌… |
 | ✓ Signed in. Dealing you in… | ✓ 登录成功，发牌了… |
 | ✓ Seating you at the table… | ✓ 正在带你入席… |
 | ✓ Signed in. Opening dashboard… | ✓ 登录成功，正在打开后台… |
@@ -315,7 +317,7 @@
 | Bio — placeholder "Tight is right." | 个性签名 —— 示例：「紧得稳，赢得狠。」 |
 | Your quick chat phrases (one per line, max 8) | 快捷聊天短语（每行一条，最多 8 条） |
 | placeholder: nice hand 👏 / bluff! 🤨 / run it again 🔁 | 示例：这手漂亮 👏 / 诈的！🤨 / 再来一手 🔁 |
-| 默认 QUICK_PHRASES: nice hand 👏 / bluff! 🤨 / run it again 🔁 / ouch 💀 / gg / so lucky 🍀 | 这手漂亮 👏 / 诈的！🤨 / 再来一手 🔁 / 哎不行 💀 / gg / 手气真好 🍀 |
+| 默认 QUICK_PHRASES: nice hand 👏 / bluff! 🤨 / run it again 🔁 / ouch 💀 / gg / so lucky 🍀 | 这手漂亮 👏 / 诈的！🤨 / 再来一手 🔁 / 这也能输 💀 / gg / 手气真好 🍀 |
 | Deck style: indigo / crimson / emerald / slate | 牌背样式：靛蓝 / 酒红 / 翠绿 / 岩灰 |
 | 4-color deck | 四色牌 |
 | Auto-join: when a friend invites me to a table, add me right away instead of asking. | 自动入桌：朋友邀请我时直接坐下，不再问我。 |
@@ -333,7 +335,7 @@
 | Your turn. | 轮到你了。 |
 | Fold / Check / Call {n} / Bet {n} / Raise to {n} / Raise | 弃牌 / 过牌 / 跟 {n} / 下注 {n} / 加注至 {n} / 加注 |
 | Check / Fold（预操作合并态） | 过牌·弃牌 |
-| Call any | 随时跟注 |
+| Call any | 有注就跟 |
 | Ahead of turn（图标 aria-label） | 提前操作 |
 | Arms now, acts on your turn | 先挂上，轮到你自动执行 |
 | Raising unlocks on your turn | 轮到你才能加注 |
@@ -344,16 +346,16 @@
 | I'm ready · {n}s | 我准备好了 · {n} 秒 |
 | ✓ You are ready / Ready check | ✓ 已就绪 / 就绪确认 |
 | {a}/{b} ready · deals in {n}s, without the rest | {a}/{b} 人就绪 · {n} 秒后发牌，不等其余 |
-| Out of chips. Chips menu → Buy points. | 筹码打光了。打开「筹码」菜单 → 买点数控。 |
+| Out of chips. Chips menu → Buy points. | 筹码打光了。打开「筹码」菜单 → 买点数。 |
 | Automatic ready check soon… | 马上自动发起就绪确认… |
 | Auto-deal paused. Table menu → Auto-deal. | 自动发牌已暂停。去「牌桌」菜单 → 自动发牌 开启。 |
-| Deal when ready. | 随时可以开桌。 |
-| Waiting for two online players with chips… | 还差有筹码的在线玩家（满两人开桌）… |
-| Host deals soon… | 等房主开桌… |
-| Holding ~40s for {names}… | {names} 掉线了，牌局等大约 40 秒… |
+| Deal when ready. | 准备好就发牌。 |
+| Waiting for two online players with chips… | 还差一位在线且有筹码的玩家才能开牌… |
+| Host deals soon… | 等房主发牌… |
+| Holding ~40s for {names}… | {names} 掉线了，这手牌等他们约 40 秒… |
 | Shuffling… | 洗牌中… |
 | Your bet / Your bet this street | 你的下注 / 本轮已投入 |
-| Your balance. Bought {n} total. | 你的余额。累计买入 {n}。 |
+| Your balance. Bought {n} total. | 余额。累计买入 {n}。 |
 | Bet amount / Raise to / Enter to confirm | 下注金额 / 加注至 / 回车确认 |
 | Enter a whole-chip amount from {min} to {max}. | 请输入 {min} 到 {max} 之间的整数筹码。 |
 | 🔁 Run it twice? · {n}s（TablePage） | 🔁 跑两次？· {n} 秒 |
@@ -367,7 +369,7 @@
 | EN | ZH |
 |---|---|
 | H1: Your people. / Your poker night. | 自己人。/ 自己的牌局。 |
-| Pull up a chair. Play a few hands. Stay for the conversation. Your favourite group chat now has a poker table. | 找个位置坐下，打几手牌，剩下的时间聊天。你最活跃的那个群，现在有牌桌了。 |
+| Pull up a chair. Play a few hands. Stay for the conversation. Your favourite group chat now has a poker table. | 找个位置坐下，打几手牌，留下来聊聊天。你最常聊的那个群，现在也有牌桌了。 |
 | Start a table / Open your lobby | 开一桌 / 去大厅 |
 | Play-money poker. / Right in your browser. | 纯娱乐筹码。/ 浏览器直接开打。 |
 | Have a room code? Join your friends → | 有房间码？进朋友的桌 → |
@@ -379,29 +381,29 @@
 
 | EN | ZH |
 |---|---|
-| The plan is simple. / Get everyone in. | 计划很简单。/ 把人凑齐。 |
+| The plan is simple. / Get everyone in. | 计划很简单。/ 先把人喊来。 |
 | No venue to book. No chips to count out. | 不用订场地，不用数筹码。 |
 | Make tonight poker night | 今晚就开牌 |
-| 1. Make it your table. — Create a private room and choose your blinds. The host gets things ready for the first hand. | ① 开一桌你的场子。—— 建个私密房间，定好盲注，房主把第一手牌张罗好。 |
+| 1. Make it your table. — Create a private room and choose your blinds. The host gets things ready for the first hand. | ① 开一桌，变成你的场子。—— 建个私密房间，定好盲注，房主把第一手牌张罗好。 |
 | 2. Drop the link in the chat. — Share the invite link or room code. Your friends sign in, join the room, and pick a seat. | ② 把链接丢进群聊。—— 邀请链接或房间码都行，朋友登录、进房、挑个位子。 |
-| 3. Deal. Talk. Run it back. — Play Texas Hold'em together. Switch views, react to a hand, or get up and explore between games. | ③ 发牌、闲聊、再来一局。—— 一起打德州扑克，随时切视图、甩表情，牌间起来在酒廊溜达一圈。 |
+| 3. Deal. Talk. Run it back. — Play Texas Hold'em together. Switch views, react to a hand, or get up and explore between games. | ③ 发牌，闲聊，再来一局。—— 一起打德州扑克，随时切换视图、甩个表情，牌局之间去酒廊溜达一圈。 |
 
 **中段与收尾**
 
 | EN | ZH |
 |---|---|
 | All the tension. / None of the stakes. | 该心跳的一样不少，/ 真钱一分没有。 |
-| The hopeful flop. The unexpected river. The friend who definitely has it this time.（末句删） | 盼翻牌，怕河牌，还有那个「这次一定有牌」的朋友。 |
+| The hopeful flop. The unexpected river. The friend who definitely has it this time.（末句删） | 盼翻牌，怕河牌，还有那个每次都说「这把有牌」的朋友。 |
 | （合并行）Keep your focus on the cards… same table. | 2D 专心打牌，3D 窝进酒廊——同一手牌，同一张桌。 |
 | Good games. / Nothing swept under the table. | 牌局要爽，/ 更要摊得开。 |
 | An encrypted deal, a record of every chip, and replays for the hands you're still talking about. | 加密发牌、每一枚筹码都有账，那些你们聊到半夜的牌局都能回放。 |
 | Read the fair-play guide | 看公平玩法说明 |
 | Your cards stay yours. — Players participate in an encrypted shuffle… | 底牌只属于你。—— 发牌由全员参与的加密洗牌完成，怎么验证请看公平玩法说明。 |
 | The night adds up. — Follow buy-ins, chip transfers, and settlement in the room ledger… | 一夜都有账。—— 买入、转账、结账都在房间账本里，打完的牌还能翻回放。 |
-| Open source. Open to a closer look. | 开源，随便查。 |
+| Open source. Open to a closer look. | 开源，欢迎细看。 |
 | Before you sit down.（FAQ 标题） | 上桌之前。 |
 | Same friends. / New favourite place. | 还是那帮人。/ 多了个新据点。 |
-| Someone has to start the group chat. Make it you. | 局总得有人攒。这回到你了。 |
+| Someone has to start the group chat. Make it you. | 总得有人攒局。这次就你来。 |
 | For the love of the game. Play-money only. | 因为爱牌。纯娱乐，无真钱。 |
 
 **FAQ**
@@ -410,7 +412,7 @@
 |---|---|
 | Is this real-money poker? — No. 4AM uses play-money chips. It does not take deposits, pay out winnings, or process real-money bets. | 这是真钱扑克吗？—— 不是。4AM 只用娱乐筹码：不收存款，不提现，不经手任何真钱。 |
 | Does everyone need to download an app? — No download is needed. Open 4AM in your browser, sign in, and join your friend's table using its invite link or room code. | 每个人都要装 App 吗？—— 谁都不用装。浏览器打开 4AM，登录，凭邀请链接或房间码进桌。 |
-| Do I have to play in 3D? — You can use the focused 2D table or the 3D lounge, and switch between them in the same room… | 必须用 3D 打吗？—— 2D 牌桌更专注，3D 酒廊更有氛围，同一个房间里随时切换，操作完全一样。 |
+| Do I have to play in 3D? — You can use the focused 2D table or the 3D lounge, and switch between them in the same room… | 必须用 3D 打吗？—— 2D 牌桌专心打，3D 酒廊坐着聊；同一个房间里随时切换，操作不变。 |
 | Can we talk while we play? — Yes. Rooms have text chat and voice controls… | 打牌时能说话吗？—— 能。房间有文字聊天和语音控制，还可以甩表情、换造型，局间去酒廊转转。 |
 | How can I check what happened in a hand? — Finished hands have replays and a recorded action history… | 想复盘某一手怎么办？—— 打完的牌局有回放和完整的操作记录，筹码流向看房间账本；加密发牌和验证的说明在公平玩法页。 |
 

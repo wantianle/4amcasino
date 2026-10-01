@@ -168,7 +168,7 @@ const admin: Record<string, string> = {
   'The house account can\'t be disabled or reset from here.': '平台账号不能在这里停用或重设密码。',
   'Disable account': '停用账号',
   'Signs them out everywhere and blocks further logins. Nothing is deleted.':
-    '会让他退出所有设备的登录，并阻止再次登录。不会删除任何数据。',
+    '会让该账号在所有设备退出登录，并阻止再次登录。不会删除任何数据。',
   'Disable @{user}': '停用 @{user}',
   'Disable @{user}?': '停用 @{user}？',
   '@{user} is disabled and signed out everywhere.': '@{user} 已停用，并在所有设备退出登录。',

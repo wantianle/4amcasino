@@ -34,7 +34,7 @@ const hands: Record<string, string> = {
 
   // ── Persisted `outcome` prose (tr()) - rooms.ts / profile.ts ───────────
   played: '参与',
-  'sat out': '旁观',
+  'sat out': '休息中',
   aborted: '本手作废',
   'folded preflop': '翻牌前弃牌',
   'folded on the flop': '翻牌后弃牌',

@@ -1,4 +1,4 @@
-// LedgerPage (银行账本). `entry.kind` badges and `entry.note` prose are
+// LedgerPage (房间账本). `entry.kind` badges and `entry.note` prose are
 // persisted server data rendered via tr() - their keys live in dict/server.ts
 // (purchase/transfer/revert/commission/hand-settlement/void-hand/peek/seven-deuce
 // + the note templates) and are NOT redefined here.
@@ -8,7 +8,7 @@
 const ledger: Record<string, string> = {
   // ── Header ──────────────────────────────────────────────────────────────
   'Loading ledger…': '正在加载账本…',
-  'Bank ledger': '银行账本',
+  'Bank ledger': '房间账本',
   'chain verified': '账链校验通过',
   'TAMPERED: hashes do not match': '记录被改动：哈希对不上',
 
@@ -25,7 +25,7 @@ const ledger: Record<string, string> = {
     '桌上的净赢筹码。中线右边是赢的，左边是输的。',
   Player: '玩家',
   Won: '赢',
-  'Best pot': '最大赢入',
+  'Best pot': '最大赢额',
   'Worst hit': '最惨一手',
   Bought: '买入',
   'Stack now': '现有筹码',
@@ -63,7 +63,7 @@ const ledger: Record<string, string> = {
   reverted: '已撤销',
   Revert: '撤销',
   'Void hand': '作废这手牌',
-  'The ledger is empty. Buy points to start.': '账本还是空的，先买点数控。',
+  'The ledger is empty. Buy points to start.': '账本还是空的，先买点数。',
 
   // ── Delete dialog ───────────────────────────────────────────────────────
   'Request delete?': '申请删除？',

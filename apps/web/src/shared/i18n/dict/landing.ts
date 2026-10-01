@@ -20,7 +20,7 @@ const landing: Record<string, string> = {
   'Your people.': '自己人。',
   'Your poker night.': '自己的牌局。',
   'Pull up a chair. Play a few hands. Stay for the conversation. Your favourite group chat now has a poker table.':
-    '找个位置坐下，打几手牌，剩下的时间聊天。你最活跃的那个群，现在有牌桌了。',
+    '找个位置坐下，打几手牌，留下来聊聊天。你最常聊的那个群，现在也有牌桌了。',
   'Play-money poker.': '纯娱乐筹码。',
   'Right in your browser.': '浏览器直接开打。',
   'Have a room code?': '有房间码？',
@@ -34,7 +34,7 @@ const landing: Record<string, string> = {
   // Join form
   'Room code': '房间码',
   'Join table': '加入牌桌',
-  'Enter the 6-letter or number code from your host.': '输入房主给你的 6 位字母或数字房间码。',
+  'Enter the 6-letter or number code from your host.': '输入房主给你的 6 位字母数字房间码。',
 
   // Room preview
   'Six colourful characters sitting around the poker table in the warmly lit 4AM lounge.':
@@ -50,7 +50,7 @@ const landing: Record<string, string> = {
   'The table': '牌桌',
 
   // Example hand widget
-  'Interactive example hand': '示例牌局互动演示',
+  'Interactive example hand': '互动示例牌局',
   'Texas Hold’em': '德州扑克',
   'Example hand': '示例牌局',
   'Before the flop': '翻牌前',
@@ -73,27 +73,27 @@ const landing: Record<string, string> = {
 
   // Setup section
   'The plan is simple.': '计划很简单。',
-  'Get everyone in.': '把人凑齐。',
+  'Get everyone in.': '先把人喊来。',
   // §3.2: 「Just a table with room for your friends.」 is marketing filler — dropped in ZH.
   'No venue to book. No chips to count out. Just a table with room for your friends.':
     '不用订场地，不用数筹码。',
   'Make tonight poker night': '今晚就开牌',
-  'Make it your table.': '开一桌你的场子。',
+  'Make it your table.': '开一桌，变成你的场子。',
   'Create a private room and choose your blinds. The host gets things ready for the first hand.':
     '建个私密房间，定好盲注，房主把第一手牌张罗好。',
   'Drop the link in the chat.': '把链接丢进群聊。',
   'Share the invite link or room code. Your friends sign in, join the room, and pick a seat.':
     '邀请链接或房间码都行，朋友登录、进房、挑个位子。',
-  'Deal. Talk. Run it back.': '发牌、闲聊、再来一局。',
+  'Deal. Talk. Run it back.': '发牌，闲聊，再来一局。',
   'Play Texas Hold’em together. Switch views, react to a hand, or get up and explore between games.':
-    '一起打德州扑克，随时切视图、甩表情，牌间起来在酒廊溜达一圈。',
+    '一起打德州扑克，随时切换视图、甩个表情，牌局之间去酒廊溜达一圈。',
 
   // Game section
   'All the tension.': '该心跳的一样不少，',
   'None of the stakes.': '真钱一分没有。',
   // §3.2: 「Real poker moments, play-money chips.」 overlaps the opener — dropped in ZH.
   'The hopeful flop. The unexpected river. The friend who definitely has it this time. Real poker moments, play-money chips.':
-    '盼翻牌，怕河牌，还有那个「这次一定有牌」的朋友。',
+    '盼翻牌，怕河牌，还有那个每次都说「这把有牌」的朋友。',
   // §3.2: two English sentences say one thing — merged in ZH.
   'Keep your focus on the cards in 2D, or settle into the lounge in 3D. It’s the same hand, with everyone at the same table.':
     '2D 专心打牌，3D 窝进酒廊——同一手牌，同一张桌。',
@@ -111,7 +111,7 @@ const landing: Record<string, string> = {
   'The night adds up.': '一夜都有账。',
   'Follow buy-ins, chip transfers, and settlement in the room ledger. Revisit finished hands in the replay viewer.':
     '买入、转账、结账都在房间账本里，打完的牌还能翻回放。',
-  'Open source. Open to a closer look.': '开源，随便查。',
+  'Open source. Open to a closer look.': '开源，欢迎细看。',
 
   // FAQ
   'Before you sit down.': '上桌之前。',
@@ -123,7 +123,7 @@ const landing: Record<string, string> = {
     '谁都不用装。浏览器打开 4AM，登录，凭邀请链接或房间码进桌。',
   'Do I have to play in 3D?': '必须用 3D 打吗？',
   'You can use the focused 2D table or the 3D lounge, and switch between them in the same room. The 3D view includes camera presets and the same game controls.':
-    '2D 牌桌更专注，3D 酒廊更有氛围，同一个房间里随时切换，操作完全一样。',
+    '2D 牌桌专心打，3D 酒廊坐着聊；同一个房间里随时切换，操作不变。',
   'Can we talk while we play?': '打牌时能说话吗？',
   'Yes. Rooms have text chat and voice controls. You can also react at the table, customise your character, and take a break to explore the lounge.':
     '能。房间有文字聊天和语音控制，还可以甩表情、换造型，局间去酒廊转转。',
@@ -134,7 +134,7 @@ const landing: Record<string, string> = {
   // Closing + footer
   'Same friends.': '还是那帮人。',
   'New favourite place.': '多了个新据点。',
-  'Someone has to start the group chat. Make it you.': '局总得有人攒。这回到你了。',
+  'Someone has to start the group chat. Make it you.': '总得有人攒局。这次就你来。',
   'For the love of the game. Play-money only.': '因为爱牌。纯娱乐，无真钱。',
   Footer: '页脚',
   'Fair play': '公平玩法',

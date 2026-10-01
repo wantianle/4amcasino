@@ -131,11 +131,11 @@ const table3d: Record<string, string> = {
   'How to use the 3D table': '3D 牌桌玩法说明',
   'Close help': '关闭帮助',
   'Drag to look around. Pinch or scroll to zoom. Camera presets bring you back to the action.':
-    '拖拽环顾四周；捏合或滚动缩放；相机预设带你回到牌局。',
+    '拖拽环顾四周；捏合或滚动缩放；点相机预设即可回到牌局。',
   'Take a break in Lounge, then click the world or choose Walk with keyboard. Use WASD or arrow keys to steer relative to the camera. Release to stop. Chat, menus, and poker decisions pause keyboard movement. Quick destinations work on every device.':
     '去「酒廊」歇会儿，然后点场景里的位置，或选「用键盘走动」。WASD 或方向键按相机朝向移动，松手即停。聊天、菜单和牌局决策会暂停键盘移动。快捷目的地在任何设备上都好用。',
   'Tap a character or open Players to send a playful nudge. Reactions are shared with the table.':
-    '点一下角色，或打开「玩家」列表，都能皮一下。互动全桌可见。',
+    '点一下角色，或打开「玩家」列表，都能逗他们一下。互动全桌可见。',
   'Open Cards for community cards, both runouts, and public reveals. Tap your cards to enlarge them. Open Table for invites, records, seats, and preferences.':
     '打开「牌面」看公共牌、两跑牌面和公开亮牌，点你的牌可放大；打开「牌桌」管邀请、记录、座位和偏好。',
   'Hide controls for a clear view. They return when you need to respond. Press Escape to bring them back.':
@@ -185,7 +185,7 @@ const table3d: Record<string, string> = {
   'Wave hello': '打个招呼',
   'Walk over': '走过去',
   Shove: '推一把',
-  'High-energy slap': '高能一巴掌',
+  'High-energy slap': '来一记大耳光',
   'Toss a chip': '丢枚筹码',
 
   // ── 底部工具条 / 牌面挂件 ───────────────────────────────────────────────
@@ -296,7 +296,7 @@ const table3d: Record<string, string> = {
   '{pot} in the pot': '底池 {pot}',
   '{name} is playing': '{name} 正在行动',
   'The next hand is coming': '下一手马上开始',
-  'Good company. One more hand.': '有好友作伴，有一手可打。',
+  'Good company. One more hand.': '朋友在，牌就还能再打一手。',
   'A SEAT AT YOUR TABLE': '这桌给你留了位子',
 };
 

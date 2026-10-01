@@ -150,7 +150,7 @@ const tournaments: Record<string, string> = {
   'No entrants yet. Share the link to fill the table.': '还没人报名。把链接发出去，凑齐一桌。',
   Place: '名次',
   Entrant: '参赛者',
-  Stack: '筹码堆',
+  Stack: '筹码',
   'Play net': '实战盈亏',
   'Prize chips': '奖金筹码',
   Timeouts: '超时',
@@ -390,7 +390,7 @@ const tournaments: Record<string, string> = {
   // ── Watch page: live table ───────────────────────────────────────────────
   'The table is assembling': '牌桌正在凑人',
   finished: '已结束',
-  'Waiting for the table': '等开桌',
+  'Waiting for the table': '等开打',
   'Scheduled for {date}.': '预计 {date} 开赛。',
   'Play begins when the organizer starts the tournament.': '主办方开赛即开打。',
   '{n} of {m} seats filled.': '{n}/{m} 个席位已入座。',

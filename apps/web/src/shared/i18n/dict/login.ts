@@ -4,13 +4,13 @@
 // `tr()` in shared/api.ts finds them via first-character-normalized matching;
 // untranslated variants fall back to English on purpose — never wrong Chinese.
 const login: Record<string, string> = {
-  'Platform sign in': '平台管理登录',
+  'Platform sign in': '平台账号登录',
   "Hold'em with friends. Nobody sees your cards. Not even the house.":
     '和朋友来一局德扑。没人看得到你的底牌——平台也不行。',
   'Use your 4AM Casino platform account to manage the casino.':
-    '用 4AM Casino 平台账号管理整个场子。',
+    '用 4AM Casino 平台账号管理平台。',
   "You were invited to a table ({code}). Log in or create an account and we'll seat you straight away.":
-    '你收到了一张牌桌的邀请（{code}）。登录或注册后，直接带你入席。',
+    '你收到了一张牌桌的邀请（{code}）。登录或注册后，马上入席。',
   'Your session has expired. Sign in again to continue.': '登录状态已过期，请重新登录。',
 
   'Log in': '登录',
@@ -32,7 +32,7 @@ const login: Record<string, string> = {
   'Creating account…': '正在创建账号…',
   'Recovering…': '正在恢复…',
   'Signing in…': '正在登录…',
-  '✓ Account created. Dealing you in…': '✓ 账号建好了，这就拉你入桌…',
+  '✓ Account created. Dealing you in…': '✓ 账号建好了，马上发你入桌…',
   '✓ Signed in. Dealing you in…': '✓ 登录成功，发牌了…',
   '✓ Seating you at the table…': '✓ 正在带你入席…',
   '✓ Signed in. Opening dashboard…': '✓ 登录成功，正在打开后台…',

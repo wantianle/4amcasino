@@ -16,10 +16,10 @@ const tablePage: Record<string, string> = {
   'Joining table…': '正在进桌…',
   'Back to lobby': '返回大厅',
   'Still connecting. On free hosting the server sleeps when idle and can take up to a minute to wake. Hang tight, or retry.':
-    '还在连接。免费托管的服务器闲置时会休眠，叫醒最多要一分钟。再等等，或者手动重试。',
+    '还在连接。免费托管的服务器闲置时会休眠，唤醒最多要一分钟。等一会儿，或手动重试。',
   'Connection lost. Reconnecting…': '连接已断开，正在重连…',
   'That change did not go through. Try again.': '改动没生效，再试一次。',
-  'Could not stand them up': '没能让他起身离座。',
+  'Could not stand them up': '没能让这名玩家起身离座。',
   'Full screen is unavailable in this browser.': '这个浏览器不支持全屏。',
 
   // ── Turn / status lines ───────────────────────────────────────────────
@@ -32,7 +32,7 @@ const tablePage: Record<string, string> = {
   'Shuffling the encrypted deck…': '正在洗加密牌堆…',
   'You are watching this table.': '你在观战这张桌。',
   "You can see everything public, but not anyone's cards, the join code, or the chips.":
-    '公开信息你都能看，但看不到任何人的底牌和房间码，也没有自己的筹码。',
+    '公开信息你都能看，但看不到任何人的底牌和房间码，也不会有自己的筹码。',
   'Ask to join the game': '申请上桌',
   'Asked. Waiting for the host to let you in.': '已申请，等房主放行。',
   'Could not ask to join. Try again.': '申请没发出去，再试一次。',
@@ -42,7 +42,7 @@ const tablePage: Record<string, string> = {
   'Pick a seat': '挑个位置',
   'Pick a seat.': '先挑个位置。',
   'Pick a seat. Friends join with code {code}': '挑个位置。朋友凭房间码 {code} 加入',
-  'Invite a friend to deal.': '拉个朋友来开桌。',
+  'Invite a friend to deal.': '邀请朋友来，人齐就发牌。',
   'Ready.': '就绪。',
   "You're in the next hand.": '下一手就有你的牌。',
   'Deal hand': '发牌',
@@ -121,7 +121,7 @@ const tablePage: Record<string, string> = {
   'Invite friends to this table': '邀请朋友来这张桌',
   'Or invite a friend directly': '也可以直接邀请好友',
   'Let anyone with the link watch this table. Viewers see the public game only: no hole cards, no join code, no chips of their own.':
-    '拿到链接的人都能观战这张桌。观战者只看得到公开牌局：没有底牌，没有房间码，也没有自己的筹码。',
+    '拿到链接的人都能观战这张桌。观战者只看得到公开牌局：没有底牌，没有房间码，也不会有自己的筹码。',
   'Watchers asking to play': '想上桌的观战者',
   'Let them in': '让 TA 上桌',
   No: '拒绝',
@@ -144,8 +144,8 @@ const tablePage: Record<string, string> = {
   'Table chat': '牌桌聊天',
   'Close chat': '关闭聊天',
   Close: '关闭',
-  'Toggle chat': '切换聊天',
-  'Toggle chat, {n} unread messages': '切换聊天，{n} 条未读',
+  'Toggle chat': '打开或关闭聊天',
+  'Toggle chat, {n} unread messages': '打开或关闭聊天，{n} 条未读',
   '3D table': '3D 牌桌',
   'Full screen': '全屏',
   'Exit full screen': '退出全屏',

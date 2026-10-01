@@ -31,7 +31,7 @@ const fair: Record<string, string> = {
   // ── Ch1 · deck ───────────────────────────────────────────────────────────
   '52 cards become 52 points on an elliptic curve': '52 张牌，变成椭圆曲线上的 52 个点',
   'There is no physical deck and no dealer. Before every hand, each card is encoded as pure math, a point on an elliptic curve. Math can be locked; paper cannot.':
-    '没有实体牌，也没有荷官。每手牌开始前，每张牌都被编码成纯粹的数学——椭圆曲线上的一个点。数学能上锁，纸不能。',
+    '没有实体牌，也没有荷官。每手牌开始前，每张牌都会编码成数学对象——椭圆曲线上的一个点。数学能上锁，纸不能。',
   'under the hood: ristretto255 group elements, hash-to-point per card':
     '底层：ristretto255 群元素，每张牌各做一次 hash-to-point',
 

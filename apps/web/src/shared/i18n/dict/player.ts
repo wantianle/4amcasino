@@ -14,14 +14,14 @@ const player: Record<string, string> = {
   'joined {date}': '{date}加入',
   House: '平台',
   '#{rank} on the leaderboard': '排行榜第 {rank} 位',
-  'The {n} account ever created on 4AM Casino': '4AM Casino 历史上第 {n} 个创建的账号。',
+  'The {n} account ever created on 4AM Casino': '4AM Casino 第 {n} 个账号。',
   'member #{n}': '第 {n} 位成员',
   'member #{n} of {total}': '第 {n} 位成员 · 共 {total} 人',
 
   // ── Stat rows ───────────────────────────────────────────────────────────
   'Net points': '净点数',
   'Hands played': '已玩手数',
-  'Biggest win': '最大赢入',
+  'Biggest win': '最大赢额',
   'Platform due': '平台欠款',
   'View platform dues in Settle up': '在结账页查看平台欠款',
 
@@ -38,7 +38,7 @@ const player: Record<string, string> = {
   '(voided)': '（作废）',
   board: '公共牌',
   'Money moves': '资金流水',
-  'No hands on record yet.': '你的牌局记录还是空的。',
+  'No hands on record yet.': '还没有牌局记录。',
   'Nothing yet.': '还没有记录。',
 
   // ── Settle up panel ─────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ const player: Record<string, string> = {
   'By player': '按人',
   'By room': '按房间',
   'Square the debt outside the app, then both of you mark it settled and it clears here too.':
-    '线下把钱结清，然后你俩都标记一下，这边的账也就清了。',
+    '先在线下结清，再由你们双方标记已结清；平台这边也会同步清账。',
   'owes you': '欠你',
   'You owe': '你欠',
   'you owe': '你欠',
@@ -87,8 +87,8 @@ const player: Record<string, string> = {
   'The rock': '岩石',
   Balanced: '攻守均衡',
   'Too early to tell': '还看不出来',
-  'Plays {vpip}% of hands, raises first in {pfr}%.': '参与 {vpip}% 的手牌，{pfr}% 先加注。',
-  'Aggression factor {af} (bets and raises per call).': '攻击系数 {af}（每次跟注对应的下注加注数）。',
+  'Plays {vpip}% of hands, raises first in {pfr}%.': '{vpip}% 的手牌主动入池，{pfr}% 的手牌率先加注。',
+  'Aggression factor {af} (bets and raises per call).': '激进度 {af}（每次跟注对应的下注或加注次数）。',
   'Reaches showdown in {sd}% of hands and wins {win}%.': '{sd}% 的手牌打到摊牌，其中赢下 {win}%。',
   '{quiet}% of wins never showed a card.': '{quiet}% 的赢牌从没摊过牌。',
 

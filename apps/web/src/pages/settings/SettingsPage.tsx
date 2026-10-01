@@ -20,6 +20,7 @@ import { KeyboardShortcuts } from '../../features/settings/KeyboardShortcuts.tsx
 import { SettingsCard } from '../../features/settings/SettingsCard.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { t } from '../../shared/i18n/index.ts';
+import { tNode } from '../../shared/i18n/trans.tsx';
 import { LOCALES, useLocaleStore } from '../../shared/i18n/locale.ts';
 
 /** Profile and preferences as a real page: linkable, refreshable, back-button
@@ -253,9 +254,15 @@ export function SettingsPage() {
       <header className="mb-6">
         <h1 className="font-display text-2xl font-bold">{t('Settings')}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {t(
+          {tNode(
             'Signed in as {name}. Who you are at the table, and how the table behaves for you.',
-            { name: auth.username ?? '' },
+            {
+              name: (
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  {auth.username}
+                </span>
+              ),
+            },
           )}
         </p>
       </header>

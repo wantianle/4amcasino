@@ -3,7 +3,7 @@
 // fmtDate in shared/lib/datetime.ts (zh-CN, 24h), so dates carry no keys here.
 // Amounts arrive pre-formatted via fmt(); per §4.1 the sign keeps U+2212 and
 // chip counts stay bare numbers. Radar axes use short poker words (§1.4:
-// 允许一点玩家黑话) : Loose/Aggressive → 松手/激进, showdown → 摊牌.
+// 允许一点玩家黑话) : Loose/Aggressive → 松/激进, showdown → 摊牌.
 const stats: Record<string, string> = {
   // Net winnings card
   'Net winnings': '净胜筹码',
@@ -29,7 +29,7 @@ const stats: Record<string, string> = {
   'Net chips': '净胜筹码',
 
   // Style radar axes (0-100 normalized)
-  Loose: '松手',
+  Loose: '松',
   Aggressive: '激进',
   Pressure: '施压',
   Showdowns: '摊牌',

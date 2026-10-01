@@ -22,6 +22,7 @@ import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { StyleRadar } from '../../features/stats/charts.tsx';
 import { t, tr } from '../../shared/i18n/index.ts';
+import { tNode } from '../../shared/i18n/trans.tsx';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 
 /** Chinese name for what the cards made, re-derived from the same score the
@@ -1030,23 +1031,27 @@ export function PlayerPage() {
                     <StyleRadar style={style} />
                     <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
                       <p>
-                        {t('Plays {vpip}% of hands, raises first in {pfr}%.', {
-                          vpip: style.vpipPct,
-                          pfr: style.pfrPct,
+                        {tNode('Plays {vpip}% of hands, raises first in {pfr}%.', {
+                          vpip: <b>{style.vpipPct}</b>,
+                          pfr: <b>{style.pfrPct}</b>,
                         })}
                       </p>
                       <p>
-                        {t('Aggression factor {af} (bets and raises per call).', {
-                          af: style.aggressionFactor,
+                        {tNode('Aggression factor {af} (bets and raises per call).', {
+                          af: <b>{style.aggressionFactor}</b>,
                         })}
                       </p>
                       <p>
-                        {t('Reaches showdown in {sd}% of hands and wins {win}%.', {
-                          sd: style.showdownPct,
-                          win: style.winPct,
+                        {tNode('Reaches showdown in {sd}% of hands and wins {win}%.', {
+                          sd: <b>{style.showdownPct}</b>,
+                          win: <b>{style.winPct}</b>,
                         })}
                       </p>
-                      <p>{t('{quiet}% of wins never showed a card.', { quiet: style.quietWinPct })}</p>
+                      <p>
+                        {tNode('{quiet}% of wins never showed a card.', {
+                          quiet: <b>{style.quietWinPct}</b>,
+                        })}
+                      </p>
                     </div>
                   </div>
                 </Panel>

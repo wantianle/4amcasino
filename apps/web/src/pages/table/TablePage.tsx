@@ -53,6 +53,7 @@ import { voice } from '../../shared/voice.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
+import { tNode } from '../../shared/i18n/trans.tsx';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
@@ -633,10 +634,10 @@ export function TablePage({
       {hand.peekOffers.map((o) => (
         <div key={o.offerId} className="flex flex-wrap items-center gap-2 text-sm">
           <span>
-            {t(
-              '{name} offers {amount} to privately see the cards you just had.',
-              { name: o.fromName, amount: fmt(o.amount) },
-            )}
+            {tNode('{name} offers {amount} to privately see the cards you just had.', {
+              name: <b>{o.fromName}</b>,
+              amount: <b className="font-display">{fmt(o.amount)}</b>,
+            })}
           </span>
           <Button
             variant="success"
@@ -652,7 +653,7 @@ export function TablePage({
       ))}
       {peekReveals.map(([seat, cards]) => (
         <div key={seat} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>{t('{name} had', { name: seatName(+seat) })}</span>
+          <span>{tNode('{name} had', { name: <b>{seatName(+seat)}</b> })}</span>
           {cards.map((c) => (
             <PlayingCard key={c} card={c} size="xs" />
           ))}
@@ -1086,7 +1087,9 @@ export function TablePage({
   const mobileSeatPicker = (
     <div className="rounded-2xl bg-white/5 p-3.5">
       <div className="mb-2.5 text-sm text-white/70">
-        {t('Pick a seat. Friends join with code {code}', { code: room.room.joinCode })}
+        {tNode('Pick a seat. Friends join with code {code}', {
+          code: <span className="font-display font-bold text-white">{room.room.joinCode}</span>,
+        })}
       </div>
       <div className="grid grid-cols-3 gap-2">
         {Array.from({ length: 9 }, (_, i) => (

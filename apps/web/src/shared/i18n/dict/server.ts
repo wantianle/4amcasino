@@ -83,11 +83,11 @@ const server: Record<string, string> = {
   'you are seated at a table - leave the seat before recovering':
     '你还坐在牌桌上，恢复账号前先起身离座。',
   'that user is seated at a table - they must stand up before a reset':
-    '这名用户正坐在牌桌上，重置前先让他起身。',
+    '这名用户正坐在牌桌上，重置前需要先起身离座。',
   'account merged': '账号已合并，请用保留的账号登录。',
   'already friends': '已经是好友了。',
-  'no such user': '没有这个用户。',
-  'no such user: {name}': '没有这个用户：{name}',
+  'no such user': '没有这个用户名。',
+  'no such user: {name}': '没有这个用户名：{name}',
   'too many attempts - try again in {n}s': '尝试次数太多，{n} 秒后再试。',
   'unauthorized': '请先登录。',
   'not found': '内容不存在。',
@@ -182,7 +182,7 @@ const server: Record<string, string> = {
   'Check the tournament settings.': '检查一下赛事设置。',
   'Big blind must cover the small blind; stack must cover at least two big blinds.':
     '大盲要能覆盖小盲，筹码至少要能覆盖两个大盲。',
-  'Starting stack must cover two big blinds.': '起手筹码要能覆盖两个大盲。',
+  'Starting stack must cover two big blinds.': '起始筹码要能覆盖两个大盲。',
   'The tournament changed. Reload before saving.': '赛事有变动，刷新后再保存。',
   'Terms are locked after the first enrollment. Create a new tournament for different rules.':
     '条款在第一个报名后就锁定了。想改规则请新建赛事。',
@@ -204,7 +204,7 @@ const server: Record<string, string> = {
     '主办方保底必须覆盖每个座位的加入奖励。',
   'A freezeout entry fee must cover two big blinds.': '淘汰制的报名费要能覆盖两个大盲。',
   'A freezeout entry fee is the starting stack and cannot exceed {n} chips.':
-    '淘汰制的报名费就是起手筹码，不能超过 {n} 筹码。',
+    '淘汰制的报名费就是起始筹码，不能超过 {n} 筹码。',
   'Payout basis points must total 10000.': '派奖基点合计必须是 10000。',
   'Payout percentages must fund an occupied place.': '派奖比例必须对应有人占据的名次。',
   'Invalid prize rank.': '奖次无效。',
@@ -326,7 +326,7 @@ const server: Record<string, string> = {
   'not enough chips for that offer': '你的筹码不够出这个价。',
   'that offer is gone': '这条报价已经没了。',
   'that offer is not yours to answer': '这条买看报价不是发给你的。',
-  'the buyer no longer has enough chips': '买入方的筹码已经不够了。',
+  'the buyer no longer has enough chips': '出价方的筹码已经不够了。',
   'that player was not in the last hand': '那名玩家不在上一手牌里。',
   'bad commit point': '提交点数据无效。',
   'not in commit phase': '现在不在承诺阶段。',

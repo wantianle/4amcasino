@@ -76,7 +76,7 @@ const settings: Record<string, string> = {
   Record: '录制',
   'Press a key for {action}. Escape cancels; Backspace clears.':
     '按下要绑定「{action}」的键。Esc 取消，Backspace 清除。',
-  'Recording cancelled.': '已取消录入。',
+  'Recording cancelled.': '已取消录制。',
   '{action} set to {key}. Save to apply.': '「{action}」已设为 {key}，保存后生效。',
   'Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved.':
     '请选一个字母或数字，可加 Shift。WASD 和浏览器自带快捷键不可用。',

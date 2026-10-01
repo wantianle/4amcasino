@@ -48,7 +48,7 @@ const settle: Record<string, string> = {
   '. Both of you have to confirm before it clears on the platform.':
     '。两人都确认后，平台这边才会清账。',
   'paid on UPI, 9:40pm': 'UPI 转的，21:40',
-  'Settled — both of you have confirmed.': '已结清 — 双方都确认了。',
+  'Settled — both of you have confirmed.': '已结清——双方都确认了。',
   'Marked. It clears once {name} confirms too.': '已标记。{name} 确认后就会清账。',
   'could not mark it': '没能标记。',
   'could not load': '没能加载。',
