@@ -5,6 +5,7 @@ import { Button, Dialog } from '../../shared/ui/index.tsx';
 import { useStore } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
 import { KeyboardShortcuts } from './KeyboardShortcuts.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 export function PokerShortcutButton({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
@@ -22,13 +23,13 @@ export function PokerShortcutButton({ className }: { className?: string }) {
           className,
         )}
         onClick={() => setOpen(true)}
-        aria-label="Edit keyboard shortcuts"
+        aria-label={t('Edit keyboard shortcuts')}
       >
         <RiKeyboardLine size={16} aria-hidden />
-        Shortcuts{!enabled && ' off'}
+        {enabled ? t('Shortcuts') : t('Shortcuts off')}
       </Button>
       {createPortal(
-        <Dialog open={open} onClose={() => setOpen(false)} title="Keyboard shortcuts" size="lg">
+        <Dialog open={open} onClose={() => setOpen(false)} title={t('Keyboard shortcuts')} size="lg">
           <KeyboardShortcuts />
         </Dialog>,
         document.body,

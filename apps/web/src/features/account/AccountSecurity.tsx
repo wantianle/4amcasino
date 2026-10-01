@@ -8,6 +8,7 @@ import {
 } from '../../shared/crypto.ts';
 import { useStore } from '../../shared/store.ts';
 import { Button, Input, Spinner } from '../../shared/ui/index.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 /** Password, username and recovery-code management (requested by notpritam,
  *  docs/FEATURES.md).
@@ -63,8 +64,8 @@ function ChangePassword() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
-    if (next !== confirm) return setMsg({ kind: 'bad', text: 'the new passwords do not match' });
-    if (next.length < 6) return setMsg({ kind: 'bad', text: 'use at least 6 characters' });
+    if (next !== confirm) return setMsg({ kind: 'bad', text: t('the new passwords do not match') });
+    if (next.length < 6) return setMsg({ kind: 'bad', text: t('use at least 6 characters') });
     const username = auth.username;
     if (!username) return;
     setBusy(true);
@@ -80,9 +81,9 @@ function ChangePassword() {
       setCurrent('');
       setNext('');
       setConfirm('');
-      setMsg({ kind: 'ok', text: 'Password changed. Other devices were signed out.' });
+      setMsg({ kind: 'ok', text: t('Password changed. Other devices were signed out.') });
     } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : 'could not change it' });
+      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not change it') });
     } finally {
       setBusy(false);
     }
@@ -90,14 +91,16 @@ function ChangePassword() {
 
   return (
     <Row
-      title="Password"
-      hint="Your password also derives the key that signs your cards. Changing it issues a new signing key and signs out every other device. Old hands stay verifiable."
+      title={t('Password')}
+      hint={t(
+        'Your password also derives the key that signs your cards. Changing it issues a new signing key and signs out every other device. Old hands stay verifiable.',
+      )}
     >
       <form onSubmit={submit} className="grid max-w-md gap-2">
         <Input
           type="password"
-          aria-label="Current password"
-          placeholder="Current password"
+          aria-label={t('Current password')}
+          placeholder={t('Current password')}
           value={current}
           onChange={(e) => setCurrent(e.target.value)}
           autoComplete="current-password"
@@ -106,8 +109,8 @@ function ChangePassword() {
         />
         <Input
           type="password"
-          aria-label="New password"
-          placeholder="New password"
+          aria-label={t('New password')}
+          placeholder={t('New password')}
           value={next}
           onChange={(e) => setNext(e.target.value)}
           autoComplete="new-password"
@@ -117,8 +120,8 @@ function ChangePassword() {
         />
         <Input
           type="password"
-          aria-label="Repeat new password"
-          placeholder="Repeat new password"
+          aria-label={t('Repeat new password')}
+          placeholder={t('Repeat new password')}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           autoComplete="new-password"
@@ -128,7 +131,7 @@ function ChangePassword() {
         />
         <div>
           <Button type="submit" disabled={busy}>
-            {busy ? <Spinner label="Re-keying…" /> : 'Change password'}
+            {busy ? <Spinner label={t('Re-keying…')} /> : t('Change password')}
           </Button>
         </div>
       </form>
@@ -150,7 +153,7 @@ function ChangeUsername() {
     setMsg(null);
     const old = auth.username;
     if (!old) return;
-    if (name === old) return setMsg({ kind: 'bad', text: 'that is already your name' });
+    if (name === old) return setMsg({ kind: 'bad', text: t('that is already your name') });
     setBusy(true);
     try {
       await yieldFrame();
@@ -161,9 +164,12 @@ function ChangeUsername() {
       await api.changeUsername(name, currentAuthKey, newAuthKey, identity.publicKey);
       setAuth({ ...auth, username: name, identity });
       setPassword('');
-      setMsg({ kind: 'ok', text: `You are now ${name}. Other devices were signed out.` });
+      setMsg({
+        kind: 'ok',
+        text: t('You are now {name}. Other devices were signed out.', { name }),
+      });
     } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : 'could not rename you' });
+      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not rename you') });
     } finally {
       setBusy(false);
     }
@@ -171,13 +177,15 @@ function ChangeUsername() {
 
   return (
     <Row
-      title="Username"
-      hint="Your name is part of how your keys are derived, so renaming also issues a new signing key. You will log in with the new name and your same password."
+      title={t('Username')}
+      hint={t(
+        'Your name is part of how your keys are derived, so renaming also issues a new signing key. You will log in with the new name and your same password.',
+      )}
     >
       <form onSubmit={submit} className="grid max-w-md gap-2">
         <Input
-          aria-label="New username"
-          placeholder="New username"
+          aria-label={t('New username')}
+          placeholder={t('New username')}
           value={name}
           onChange={(e) => setName(e.target.value)}
           minLength={2}
@@ -188,8 +196,8 @@ function ChangeUsername() {
         />
         <Input
           type="password"
-          aria-label="Your password"
-          placeholder="Your password"
+          aria-label={t('Your password')}
+          placeholder={t('Your password')}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
@@ -198,7 +206,7 @@ function ChangeUsername() {
         />
         <div>
           <Button type="submit" variant="secondary" disabled={busy}>
-            {busy ? <Spinner label="Re-keying…" /> : 'Change username'}
+            {busy ? <Spinner label={t('Re-keying…')} /> : t('Change username')}
           </Button>
         </div>
       </form>
@@ -239,7 +247,7 @@ function RecoveryCode() {
       setEnabled(true);
       setPassword('');
     } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : 'could not set it up' });
+      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not set it up') });
     } finally {
       setBusy(false);
     }
@@ -249,7 +257,7 @@ function RecoveryCode() {
     setMsg(null);
     const username = auth.username;
     if (!username || !password) {
-      return setMsg({ kind: 'bad', text: 'enter your password first' });
+      return setMsg({ kind: 'bad', text: t('enter your password first') });
     }
     setBusy(true);
     try {
@@ -258,9 +266,9 @@ function RecoveryCode() {
       setEnabled(false);
       setCode(null);
       setPassword('');
-      setMsg({ kind: 'ok', text: 'Recovery code turned off.' });
+      setMsg({ kind: 'ok', text: t('Recovery code turned off.') });
     } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : 'could not turn it off' });
+      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not turn it off') });
     } finally {
       setBusy(false);
     }
@@ -276,7 +284,9 @@ function RecoveryCode() {
 
   function download() {
     if (!code) return;
-    const body = `4AM Casino recovery code\nAccount: ${auth.username}\n\n${code}\n\nKeep this somewhere safe and private. It is the only way back into your\naccount if you forget your password, and it works exactly once.\n`;
+    const body = `${t('4AM Casino recovery code')}\n${t('Account: {name}', { name: auth.username ?? '' })}\n\n${code}\n\n${t(
+      'Keep this somewhere safe and private. It is the only way back into your account if you forget your password, and it works exactly once.',
+    )}\n`;
     const url = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
     const a = document.createElement('a');
     a.href = url;
@@ -287,26 +297,28 @@ function RecoveryCode() {
 
   return (
     <Row
-      title="Recovery code"
-      hint="Nobody can reset your password for you - your key lives only in your browser. A recovery code is the one way back in. Generate it now, store it somewhere safe, and it works exactly once."
+      title={t('Recovery code')}
+      hint={t(
+        'Nobody can reset your password for you - your key lives only in your browser. A recovery code is the one way back in. Generate it now, store it somewhere safe, and it works exactly once.',
+      )}
     >
       {code ? (
         <div className="max-w-md rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-            Save this now — you will not see it again
+            {t('Save this now — you will not see it again')}
           </p>
           <code className="mt-2 block select-all break-all rounded-lg bg-white/80 px-3 py-2 font-mono text-sm font-bold tracking-wider text-slate-900 dark:bg-slate-900/70 dark:text-slate-100">
             {code}
           </code>
           <div className="mt-3 flex gap-2">
             <Button type="button" variant="secondary" onClick={copy}>
-              {copied ? '✓ Copied' : 'Copy'}
+              {copied ? t('✓ Copied') : t('Copy')}
             </Button>
             <Button type="button" variant="secondary" onClick={download}>
-              Download
+              {t('Download')}
             </Button>
             <Button type="button" variant="ghost" onClick={() => setCode(null)}>
-              I saved it
+              {t('I saved it')}
             </Button>
           </div>
         </div>
@@ -317,18 +329,18 @@ function RecoveryCode() {
               <Spinner />
             ) : enabled ? (
               <span className="text-emerald-600 dark:text-emerald-400">
-                ✓ A recovery code is armed on this account.
+                {t('✓ A recovery code is armed on this account.')}
               </span>
             ) : (
               <span className="text-amber-600 dark:text-amber-400">
-                ⚠ No recovery code. Forget your password and the account is gone for good.
+                {t('⚠ No recovery code. Forget your password and the account is gone for good.')}
               </span>
             )}
           </p>
           <Input
             type="password"
-            aria-label="Your password"
-            placeholder="Your password"
+            aria-label={t('Your password')}
+            placeholder={t('Your password')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
@@ -338,16 +350,16 @@ function RecoveryCode() {
           <div className="flex gap-2">
             <Button type="submit" disabled={busy}>
               {busy ? (
-                <Spinner label="Working…" />
+                <Spinner label={t('Working…')} />
               ) : enabled ? (
-                'Generate a new code'
+                t('Generate a new code')
               ) : (
-                'Generate code'
+                t('Generate code')
               )}
             </Button>
             {enabled && (
               <Button type="button" variant="danger" onClick={disable} disabled={busy}>
-                Turn off
+                {t('Turn off')}
               </Button>
             )}
           </div>
@@ -363,8 +375,8 @@ function Devices() {
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <Row
-      title="Signed-in devices"
-      hint="Signs out every browser except this one. Your password and keys stay the same."
+      title={t('Signed-in devices')}
+      hint={t('Signs out every browser except this one. Your password and keys stay the same.')}
     >
       <Button
         type="button"
@@ -375,16 +387,18 @@ function Devices() {
           try {
             const r = await api.revokeOtherSessions();
             setMsg(
-              r.revoked > 0 ? `Signed out ${r.revoked} other session(s).` : 'No other sessions.',
+              r.revoked > 0
+                ? t('Signed out {n} other session(s).', { n: r.revoked })
+                : t('No other sessions.'),
             );
           } catch {
-            setMsg('could not do that');
+            setMsg(t('could not do that'));
           } finally {
             setBusy(false);
           }
         }}
       >
-        {busy ? <Spinner label="Working…" /> : 'Sign out everywhere else'}
+        {busy ? <Spinner label={t('Working…')} /> : t('Sign out everywhere else')}
       </Button>
       {msg && <Note kind="ok">{msg}</Note>}
     </Row>

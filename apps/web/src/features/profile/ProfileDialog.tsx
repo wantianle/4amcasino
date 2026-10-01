@@ -15,6 +15,7 @@ import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { SettingsCard } from '../settings/SettingsCard.tsx';
 import { cardFromName } from '@4am/shared';
+import { t } from '../../shared/i18n/index.ts';
 
 const BACKS: Prefs['cardBack'][] = ['indigo', 'crimson', 'emerald', 'slate'];
 
@@ -72,7 +73,7 @@ export function ProfileEditor({
       const res = await api.uploadAvatar(dataUrl);
       setPrefs({ hasAvatar: true, avatarVersion: res.avatarVersion });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'upload failed');
+      setError(e instanceof Error ? e.message : t('upload failed'));
     }
   }
 
@@ -105,7 +106,7 @@ export function ProfileEditor({
         setTimeout(() => setSaved(false), 2500);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not save');
+      setError(e instanceof Error ? e.message : t('could not save'));
     } finally {
       setSaving(false);
     }
@@ -129,7 +130,7 @@ export function ProfileEditor({
             onChange={(e) => void pickAvatar(e.target.files?.[0])}
           />
           <Button variant="secondary" onClick={() => fileRef.current?.click()}>
-            Change photo
+            {t('Change photo')}
           </Button>
           {prefs.hasAvatar && (
             <Button
@@ -142,14 +143,14 @@ export function ProfileEditor({
                   )
               }
             >
-              Remove
+              {t('Remove')}
             </Button>
           )}
         </div>
       </div>
 
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">Display name</span>
+        <span className="mb-1 block text-slate-500">{t('Display name')}</span>
         <Input
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
@@ -157,29 +158,27 @@ export function ProfileEditor({
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">Bio</span>
+        <span className="mb-1 block text-slate-500">{t('Bio')}</span>
         <textarea
-          aria-label="Bio"
+          aria-label={t('Bio')}
           value={bio}
           onChange={(e) => setBio(e.target.value)}
           maxLength={280}
           rows={2}
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-          placeholder="Tight is right."
+          placeholder={t('Tight is right.')}
         />
       </label>
 
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">
-          Your quick chat phrases (one per line, max 8)
-        </span>
+        <span className="mb-1 block text-slate-500">{t('Your quick chat phrases (one per line, max 8)')}</span>
         <textarea
-          aria-label="Your quick chat phrases"
+          aria-label={t('Your quick chat phrases')}
           value={phrasesText}
           onChange={(e) => setPhrasesText(e.target.value)}
           rows={3}
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-          placeholder={'nice hand 👏\nbluff! 🤨\nrun it again 🔁'}
+          placeholder={t('nice hand 👏\nbluff! 🤨\nrun it again 🔁')}
         />
       </label>
     </>
@@ -188,13 +187,13 @@ export function ProfileEditor({
   const tableStyle = (
     <>
       <div className="text-sm">
-        <span className="mb-2 block text-slate-500">Deck style</span>
+        <span className="mb-2 block text-slate-500">{t('Deck style')}</span>
         <div className="flex flex-wrap items-center gap-3">
           {BACKS.map((b) => (
             <button
               key={b}
               onClick={() => setPrefs({ cardBack: b })}
-              aria-label={`${b} card back`}
+              aria-label={t(`${b} card back`)}
               className={cn(
                 'rounded-lg p-0.5 ring-2 ring-transparent',
                 prefs.cardBack === b && 'ring-indigo-500',
@@ -209,7 +208,7 @@ export function ProfileEditor({
               checked={prefs.fourColor}
               onChange={(e) => setPrefs({ fourColor: e.target.checked })}
             />
-            4-color deck
+            {t('4-color deck')}
           </label>
           <PlayingCard card={cardFromName('Td')} size="sm" />
         </div>
@@ -222,9 +221,7 @@ export function ProfileEditor({
           onChange={(e) => setPrefs({ autoJoinInvites: e.target.checked })}
           className="mt-0.5"
         />
-        <span>
-          Auto-join: when a friend invites me to a table, add me right away instead of asking.
-        </span>
+        <span>{t('Auto-join: when a friend invites me to a table, add me right away instead of asking.')}</span>
       </label>
 
       <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -235,8 +232,9 @@ export function ProfileEditor({
           className="mt-0.5"
         />
         <span>
-          Auto ready: deal me into every hand without asking. Skips the "I'm ready" check — turn it
-          off if you want a beat to step away between hands.
+          {t(
+            `Auto ready: deal me into every hand without asking. Skips the "I'm ready" check — turn it off if you want a beat to step away between hands.`,
+          )}
         </span>
       </label>
 
@@ -248,8 +246,9 @@ export function ProfileEditor({
           className="mt-0.5"
         />
         <span>
-          Private mode: hide my winnings from other players. Leaderboards, the session report, and
-          the chip-leader crown skip you; bankers still see everything so the group can settle up.
+          {t(
+            'Private mode: hide my winnings from other players. Leaderboards, the session report, and the chip-leader crown skip you; bankers still see everything so the group can settle up.',
+          )}
         </span>
       </label>
 
@@ -264,13 +263,13 @@ export function ProfileEditor({
               if (e.target.checked) play('chip');
             }}
           />
-          Game sounds
+          {t('Game sounds')}
         </label>
       </div>
 
       {sounds && (
         <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
-          <span className="text-slate-500">Volume</span>
+          <span className="text-slate-500">{t('Volume')}</span>
           <input
             type="range"
             min={0.05}
@@ -284,10 +283,10 @@ export function ProfileEditor({
             }}
             onPointerUp={() => play('chip')}
             className="flex-1 accent-indigo-600"
-            aria-label="Sound volume"
+            aria-label={t('Sound volume')}
           />
           <Button variant="ghost" onClick={() => play('win')}>
-            Test
+            {t('Test')}
           </Button>
         </div>
       )}
@@ -299,18 +298,20 @@ export function ProfileEditor({
       <div className="space-y-6">
         <SettingsCard
           id="profile"
-          title="Profile"
+          title={t('Profile')}
           icon={<RiUser3Line className="size-4" aria-hidden />}
-          desc="Your face and name at the table, and the phrases you can fire into chat in one tap."
+          desc={t(
+            'Your face and name at the table, and the phrases you can fire into chat in one tap.',
+          )}
         >
           <div className="space-y-4">{identity}</div>
         </SettingsCard>
 
         <SettingsCard
           id="table"
-          title="Table & play"
+          title={t('Table & play')}
           icon={<RiPokerClubsLine className="size-4" aria-hidden />}
-          desc="How the felt looks and sounds for you, and what other players get to see."
+          desc={t('How the felt looks and sounds for you, and what other players get to see.')}
         >
           <div className="space-y-4">{tableStyle}</div>
         </SettingsCard>
@@ -319,12 +320,12 @@ export function ProfileEditor({
             stranded behind a scroll */}
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/90 px-4 py-3 shadow-lg backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/90">
           <Button onClick={() => void save()} disabled={saving}>
-            {saving ? 'Saving…' : 'Save profile'}
+            {saving ? t('Saving…') : t('Save profile')}
           </Button>
           {error && <p className="text-sm text-rose-600">{error}</p>}
-          {saved && <p className="text-sm text-emerald-600">✓ Saved.</p>}
+          {saved && <p className="text-sm text-emerald-600">{t('✓ Saved.')}</p>}
           {!error && !saved && (
-            <p className="text-xs text-slate-400">Deck and sound apply instantly.</p>
+            <p className="text-xs text-slate-400">{t('Deck and sound apply instantly.')}</p>
           )}
         </div>
       </div>
@@ -337,13 +338,13 @@ export function ProfileEditor({
       <div className="space-y-4">{tableStyle}</div>
       <div className={cn('space-y-3', wide && 'md:col-span-2')}>
         {error && <p className="text-sm text-rose-600">{error}</p>}
-        {saved && <p className="text-sm text-emerald-600">Saved.</p>}
+        {saved && <p className="text-sm text-emerald-600">{t('Saved.')}</p>}
         <Button
           className={wide ? 'w-full sm:w-auto' : 'w-full'}
           onClick={() => void save()}
           disabled={saving}
         >
-          {saving ? 'Saving…' : 'Save profile'}
+          {saving ? t('Saving…') : t('Save profile')}
         </Button>
       </div>
     </div>

@@ -19,6 +19,7 @@ import { AccountSecurity } from '../../features/account/AccountSecurity.tsx';
 import { KeyboardShortcuts } from '../../features/settings/KeyboardShortcuts.tsx';
 import { SettingsCard } from '../../features/settings/SettingsCard.tsx';
 import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
+import { t } from '../../shared/i18n/index.ts';
 
 /** Profile and preferences as a real page: linkable, refreshable, back-button
  *  friendly - and laid out as titled sections with a rail instead of one long
@@ -47,20 +48,20 @@ function MergeAccountsForm() {
     e.preventDefault();
     setMsg(null);
     if (!fromUsername.trim() || !intoUsername.trim()) {
-      setMsg({ kind: 'bad', text: 'Enter both usernames.' });
+      setMsg({ kind: 'bad', text: t('Enter both usernames.') });
       return;
     }
     setBusy(true);
     try {
       await api.mergeRequest(fromUsername.trim(), intoUsername.trim(), note.trim() || undefined);
-      setMsg({ kind: 'ok', text: 'Request sent to the platform for approval.' });
+      setMsg({ kind: 'ok', text: t('Request sent to the platform for approval.') });
       setFromUsername('');
       setIntoUsername('');
       setNote('');
     } catch (err) {
       setMsg({
         kind: 'bad',
-        text: err instanceof Error ? err.message : 'Could not send that request.',
+        text: err instanceof Error ? err.message : t('Could not send that request.'),
       });
     } finally {
       setBusy(false);
@@ -70,24 +71,24 @@ function MergeAccountsForm() {
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-3">
       <p className="text-sm text-slate-500">
-        Moves everything the first account owns to the second, then retires the first. Use this when
-        the same person ended up with two accounts. A platform admin reviews every request before
-        anything happens.
+        {t(
+          'Moves everything the first account owns to the second, then retires the first. Use this when the same person ended up with two accounts. A platform admin reviews every request before anything happens.',
+        )}
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          <span className="mb-1 block text-slate-500">Username to retire</span>
+          <span className="mb-1 block text-slate-500">{t('Username to retire')}</span>
           <Input
-            placeholder="username"
+            placeholder={t('username')}
             value={fromUsername}
             onChange={(e) => setFromUsername(e.target.value)}
             disabled={busy}
           />
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-slate-500">Username to keep</span>
+          <span className="mb-1 block text-slate-500">{t('Username to keep')}</span>
           <Input
-            placeholder="username"
+            placeholder={t('username')}
             value={intoUsername}
             onChange={(e) => setIntoUsername(e.target.value)}
             disabled={busy}
@@ -95,9 +96,9 @@ function MergeAccountsForm() {
         </label>
       </div>
       <label className="block text-sm">
-        <span className="mb-1 block text-slate-500">Note for the platform (optional)</span>
+        <span className="mb-1 block text-slate-500">{t('Note for the platform (optional)')}</span>
         <Input
-          placeholder="Why these are the same person"
+          placeholder={t('Why these are the same person')}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           disabled={busy}
@@ -115,7 +116,7 @@ function MergeAccountsForm() {
         </p>
       )}
       <Button type="submit" disabled={busy}>
-        {busy ? <Spinner label="Sending…" /> : 'Send merge request'}
+        {busy ? <Spinner label={t('Sending…')} /> : t('Send merge request')}
       </Button>
     </form>
   );
@@ -143,7 +144,7 @@ function SectionRail() {
   }, []);
 
   return (
-    <nav className="sticky top-6 hidden w-52 shrink-0 lg:block" aria-label="Settings sections">
+    <nav className="sticky top-6 hidden w-52 shrink-0 lg:block" aria-label={t('Settings sections')}>
       <ul className="space-y-0.5">
         {SECTIONS.map((s) => (
           <li key={s.id}>
@@ -165,7 +166,7 @@ function SectionRail() {
               )}
             >
               <s.icon className="size-4" aria-hidden />
-              {s.label}
+              {t(s.label)}
             </a>
           </li>
         ))}
@@ -199,7 +200,7 @@ export function SettingsPage() {
   if (!ready) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Spinner label="Loading your profile…" />
+        <Spinner label={t('Loading your profile…')} />
       </div>
     );
   }
@@ -207,11 +208,12 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-5xl p-6">
       <header className="mb-6">
-        <h1 className="font-display text-2xl font-bold">Settings</h1>
+        <h1 className="font-display text-2xl font-bold">{t('Settings')}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Signed in as{' '}
-          <span className="font-medium text-slate-700 dark:text-slate-300">{auth.username}</span>.
-          Who you are at the table, and how the table behaves for you.
+          {t(
+            'Signed in as {name}. Who you are at the table, and how the table behaves for you.',
+            { name: auth.username ?? '' },
+          )}
         </p>
       </header>
 
@@ -221,42 +223,53 @@ export function SettingsPage() {
         <div className="min-w-0 flex-1 space-y-6">
           <ProfileEditor sectioned />
 
-          <SettingsCard id="shortcuts" title="Keyboard shortcuts" icon={<RiKeyboardLine className="size-4" aria-hidden />} desc="Your quick actions, saved to your account.">
+          <SettingsCard
+            id="shortcuts"
+            title={t('Keyboard shortcuts')}
+            icon={<RiKeyboardLine className="size-4" aria-hidden />}
+            desc={t('Your quick actions, saved to your account.')}
+          >
             <KeyboardShortcuts />
           </SettingsCard>
 
           <SettingsCard
             id="appearance"
-            title="Appearance"
+            title={t('Appearance')}
             icon={<RiSunLine className="size-4" aria-hidden />}
-            desc="Choose light or dark. Your preference is saved on this device."
+            desc={t('Choose light or dark. Your preference is saved on this device.')}
           >
             <AppearanceToggle />
           </SettingsCard>
 
           <SettingsCard
             id="account"
-            title="Account & security"
+            title={t('Account & security')}
             icon={<RiShieldKeyholeLine className="size-4" aria-hidden />}
-            desc="Your password derives the key that signs your cards, right here in this browser. Nothing on this card is ever sent to the server in the clear."
+            desc={t(
+              'Your password derives the key that signs your cards, right here in this browser. Nothing on this card is ever sent to the server in the clear.',
+            )}
           >
             <AccountSecurity />
           </SettingsCard>
 
           <SettingsCard
             id="merge"
-            title="Merge accounts"
+            title={t('Merge accounts')}
             icon={<RiLinksLine className="size-4" aria-hidden />}
-            desc="Combine two accounts that belong to the same person. Once a platform admin approves it, everything moves to the account you keep."
+            desc={t(
+              'Combine two accounts that belong to the same person. Once a platform admin approves it, everything moves to the account you keep.',
+            )}
           >
             <MergeAccountsForm />
           </SettingsCard>
 
           <SettingsCard
             id="session"
-            title="Session"
+            title={t('Session')}
             icon={<RiLogoutBoxLine className="size-4" aria-hidden />}
-            desc="Signing out clears your keys from this browser. You get them back by logging in again with the same password."
+            desc={t(
+              'Signing out clears your keys from this browser. You get them back by logging in again with the same password.',
+            )}
           >
             <Button
               variant="danger"
@@ -272,7 +285,7 @@ export function SettingsPage() {
                   });
               }}
             >
-              Sign out
+              {t('Sign out')}
             </Button>
           </SettingsCard>
         </div>
