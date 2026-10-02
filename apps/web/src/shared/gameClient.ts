@@ -592,6 +592,24 @@ function handle(msg: ServerMsg): void {
     case 'multi_run_result': {
       if (msg.reason === 'agreed') play('chip');
       store.patchHand({ multiRunOffer: null, multiRunResult: msg });
+      // A 2-3 run result can land just before or just after hand_end. If the
+      // recap for this hand already exists, refresh it so it carries every run
+      // (multi_run_result itself only names the shared board). Purely additive:
+      // a later hand_end overwrites with the showdown-authoritative boards.
+      const state = useStore.getState();
+      const last = state.lastHand;
+      if (last && last.handId === msg.handId) {
+        const h = state.hand;
+        const showdownMultiRun = h.showdown?.multiRun ?? null;
+        const showdownTwice = h.showdown?.runTwice ?? null;
+        const boards = showdownMultiRun?.boards ?? showdownTwice?.boards ?? last.boards ?? h.boards;
+        const awards = showdownMultiRun?.awards ?? showdownTwice?.awards ?? last.multiRun?.awards;
+        state.setLastHand({
+          ...last,
+          boards,
+          multiRun: boards.length > 1 ? { boards, ...(awards ? { awards } : {}) } : last.multiRun,
+        });
+      }
       return;
     }
 
@@ -667,15 +685,28 @@ function handle(msg: ServerMsg): void {
       const h = state.hand;
       const nameOf = (seat: number) =>
         state.room?.players.find((p) => p.seat === seat)?.displayName ?? `Seat ${seat + 1}`;
+      // Freeze every run's board, not just the first two: a 3-run hand only
+      // reaches the recap through `boards`. showdown.multiRun (2-3 runs) is
+      // authoritative, then the legacy runTwice pair, then the live boards.
+      const showdownMultiRun = h.showdown?.multiRun ?? null;
+      const showdownTwice = h.showdown?.runTwice ?? null;
+      const boards = showdownMultiRun?.boards ?? showdownTwice?.boards ?? h.boards;
+      const multiRun = showdownMultiRun
+        ? { boards: showdownMultiRun.boards, awards: showdownMultiRun.awards }
+        : showdownTwice
+          ? { boards: showdownTwice.boards, awards: showdownTwice.awards }
+          : null;
       store.setLastHand({
         handId: msg.handId,
         ts: Date.now(),
-        board: h.board,
-        board2: h.board2,
+        board: boards[0] ?? h.board,
+        board2: boards[1] ?? h.board2,
+        boards,
+        multiRun,
         reveals: h.showdown?.reveals ?? [],
         shown: h.shown,
         deltas: msg.deltas,
-        runTwice: h.showdown?.runTwice ?? null,
+        runTwice: showdownTwice,
         names: Object.fromEntries(h.seats.map((s) => [s.seat, nameOf(s.seat)])),
       });
       store.patchHand({

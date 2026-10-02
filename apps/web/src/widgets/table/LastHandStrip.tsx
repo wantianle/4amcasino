@@ -6,7 +6,7 @@ import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
-import { RitBoards, ShowdownCards } from './ShowdownCards.tsx';
+import { ShowdownCards } from './ShowdownCards.tsx';
 
 /** The previous hand, one click away at the bottom of the table: who won,
  *  with what, and everyone's revealed cards - open it when you want the
@@ -26,20 +26,29 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
   const nameOf = (seat: number) => last.names[seat] ?? t('Seat {n}', { n: seat + 1 });
   const winners = last.deltas.filter((d) => d.delta > 0);
   const top = [...last.reveals].sort((a, b) => b.score - a.score)[0];
-  // P2 B4: the recap snapshot froze run 1 in `board` and (from Lane C's
-  // store adapter) run 2 in `board2`. The legacy run-twice vote still rides
-  // `runTwice` with its per-run awards; new multi-run hands surface at
-  // least the two board rows they froze.
-  const ranTwice = !!last.runTwice || last.board2.length > 0;
+  // Every run the snapshot froze. New snapshots carry the canonical `boards`
+  // (1-3 runs); older persisted recaps only have the legacy board/board2 pair.
+  const runs =
+    last.boards && last.boards.length > 0
+      ? last.boards
+      : last.board2.length > 0
+        ? [last.board, last.board2]
+        : last.board.length > 0
+          ? [last.board]
+          : [];
+  const runAwards = last.multiRun?.awards ?? last.runTwice?.awards ?? [];
+  const runCount = runs.length;
   const headline =
     winners.length === 0
       ? t('chips stayed put')
       : `${winners.map((w) => `${nameOf(w.seat)} +${fmt(w.delta)}`).join(' & ')} · ${
-          ranTwice
-            ? t('ran it twice')
-            : top
-              ? tScore(top.score)
-              : t('everyone folded')
+          runCount > 2
+            ? t('ran it {n} times', { n: runCount })
+            : runCount === 2
+              ? t('ran it twice')
+              : top
+                ? tScore(top.score)
+                : t('everyone folded')
         }`;
 
   return (
@@ -73,31 +82,35 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
       </button>
       {open && (
         <div className="space-y-2.5">
-          {last.runTwice ? (
-            <RitBoards rt={last.runTwice} nameOf={nameOf} light={light} />
-          ) : (
-            <>
-              {last.board.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  {last.board.map((c) => (
-                    <PlayingCard key={c} card={c} size="xs" />
-                  ))}
-                </div>
-              )}
-              {/* a multi-run hand froze its second board in `board2` - recap
-                  it under its own small label (docs/p2-gameplay-design.md B4) */}
-              {last.board2.length > 0 && (
-                <div className="flex items-center gap-1.5">
+          {runs.map((cards, k) => {
+            const awards = runAwards[k] ?? [];
+            return (
+              <div key={k} className="flex flex-wrap items-center gap-1.5">
+                {/* a single-run hand needs no label; 2-3 runs get 第 N 跑 */}
+                {runCount > 1 && (
                   <span className="w-11 shrink-0 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                    {t('Run {n}', { n: 2 })}
+                    {t('Run {n}', { n: k + 1 })}
                   </span>
-                  {last.board2.map((c) => (
-                    <PlayingCard key={`r2-${c}`} card={c} size="xs" />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+                )}
+                {cards.map((c) => (
+                  <PlayingCard key={`r${k}-${c}`} card={c} size="xs" />
+                ))}
+                {awards.filter((a) => a.amount > 0).length > 0 && (
+                  <span
+                    className={cn(
+                      'ml-1 text-xs font-semibold',
+                      light ? 'text-emerald-300' : 'text-emerald-600 dark:text-emerald-400',
+                    )}
+                  >
+                    {awards
+                      .filter((a) => a.amount > 0)
+                      .map((a) => `${nameOf(a.seat)} +${fmt(a.amount)}`)
+                      .join(' & ')}
+                  </span>
+                )}
+              </div>
+            );
+          })}
           <ShowdownCards
             reveals={last.reveals}
             shown={last.shown}

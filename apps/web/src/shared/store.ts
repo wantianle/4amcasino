@@ -161,6 +161,16 @@ export interface LastHandSnap {
   ts: number;
   board: CardId[];
   board2: CardId[];
+  /** Canonical per-run boards of the finished hand (index 0 = run 1). Carries
+   *  every run (1-3) even though `board`/`board2` only reach the first two.
+   *  Optional so recaps frozen before multi-run existed still load. */
+  boards?: CardId[][];
+  /** Multi-run outcome, when the hand ran 2-3 times. `awards` is per run and
+   *  only present when the server froze it (showdown). */
+  multiRun?: {
+    boards: CardId[][];
+    awards?: { seat: number; amount: number }[][];
+  } | null;
   reveals: { seat: number; cards: CardId[]; score: number }[];
   shown: Record<number, CardId[]>;
   deltas: { seat: number; delta: number }[];
