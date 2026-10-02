@@ -1,3 +1,4 @@
+import { createContext, memo, useContext, useMemo } from 'react';
 import { cn } from '../../shared/lib/cn.ts';
 import {
   CHIP_PALETTES,
@@ -10,33 +11,63 @@ import {
 /** Chips that look like chips: an amount breaks into SB-based denominations
  *  (shared math + palette in shared/lib/chips.ts — white 1 / red 5 / green 25 /
  *  blue 100 / purple 500 SB) and every stack renders as a small cylinder:
- *  shaded side slices with a striped, glossy face chip capping the pile. The
- *  same widget draws each player's committed stack on the felt and the center
- *  pot, so both share one design language.
+ *  dashed-edge slices with a glossy, ringed face chip capping the pile, plus a
+ *  soft ground shadow so the pile sits ON the felt instead of floating.
+ *
+ *  The same widget draws the three money spots the user asked to keep apart
+ *  (clarified chip semantics), told apart by `variant`:
+ *    stack  each player's FULL bank, riding on their seat plate (xs chips,
+ *           tightest cap - big stacks must stay compact),
+ *    bet    the chips pushed out this street, between seat and pot (sm chips
+ *           with the indigo amount pill),
+ *    pot    the center pot - the widest gaps and tallest cap, and the only
+ *           pile that gets a warm under-glow.
  *
  *  Requested by notpritam (docs/FEATURES.md); the dimensional redesign is user
- *  feedback on the P1 table ("nicer, smaller, color denominations"). */
+ *  feedback on the P1 table ("nicer, smaller, color denominations, and never
+ *  overlap"). */
 
-/** A taller tier is drawn truncated with a ×n tail marker so a big pot never
- *  grows into the board. The number beside the pile stays exact. */
-const MAX_CHIPS_SHOWN = 5;
+export type ChipVariant = 'stack' | 'bet' | 'pot';
 
-/** face Ø / per-chip slice height in px - deliberately tiny; the value label
- *  carries precision, the pile only needs to read as "chips". */
+/** The felt's center column (RoundTable's `children`) is where the pot lives,
+ *  and the page composes that column as opaque children. Rather than make
+ *  every caller pass the variant by hand, RoundTable wraps the column in this
+ *  provider and any pile that doesn't state its own variant inside it IS the
+ *  pot. An explicit `variant` prop always wins over the context. */
+export const ChipVariantContext = createContext<ChipVariant | null>(null);
+
+/** face Ø / per-chip slice height in design-px. Deliberately tiny - the value
+ *  label beside each pile carries precision; the pile only needs to read as
+ *  "chips of these colors". `xs` is the seat-plate bank. */
 const DIMS = {
-  sm: { face: 14, step: 3 },
-  lg: { face: 20, step: 5 },
+  xs: { face: 11, step: 3 },
+  sm: { face: 14, step: 3.5 },
+  lg: { face: 19, step: 5 },
 } as const;
 
+/** How many chips of ONE tier get drawn before the pile truncates into a ×n
+ *  tail. Lower for the seat bank (nine of them live on the felt at once),
+ *  higher for the single pot pile. Performance stays sane on huge stacks. */
+const MAX_SHOWN: Record<ChipVariant, number> = {
+  stack: 3,
+  bet: 4,
+  pot: 5,
+};
+
+/** Deterministic side-to-side sway per slice (px, × face/14) so a pile reads
+ *  as hand-stacked chips, not a perfect render. */
+const WOBBLE = [0, 0.05, -0.06, 0.035, -0.045];
+
 function sideStyle(p: ChipPalette, face: number): React.CSSProperties {
-  const dash = Math.max(2, Math.round(face / 6));
+  const dash = Math.max(2, Math.round(face / 5));
   return {
     width: face,
     height: face,
     borderRadius: '50%',
-    // dashes (chip edge markings) over a top-lit cylinder slice
-    backgroundImage: `repeating-linear-gradient(90deg, rgba(255,255,255,0.45) 0 ${dash}px, rgba(255,255,255,0) ${dash}px ${dash * 3}px), linear-gradient(to bottom, ${p.light} 0%, ${p.base} 40%, ${p.dark} 100%)`,
-    boxShadow: 'inset 0 -1px 2px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.4)',
+    // edge dashes over a top-lit cylinder slice (only the bottom crescent shows)
+    backgroundImage: `repeating-linear-gradient(90deg, rgba(255,255,255,0.5) 0 ${dash}px, rgba(255,255,255,0) ${dash}px ${dash * 2.6}px), linear-gradient(to bottom, ${p.light} 0%, ${p.base} 34%, ${p.dark} 100%)`,
+    boxShadow:
+      'inset 0 -1px 2px rgba(0,0,0,0.38), inset 0 1px 1px rgba(255,255,255,0.35)',
   };
 }
 
@@ -45,33 +76,46 @@ function faceStyle(p: ChipPalette, face: number): React.CSSProperties {
     width: face,
     height: face,
     borderRadius: '50%',
-    backgroundImage: `radial-gradient(circle at 32% 26%, rgba(255,255,255,0.75), rgba(255,255,255,0) 46%),
-      radial-gradient(circle at 50% 50%, ${p.base} 0 50%, rgba(0,0,0,0.18) 51% 55%, rgba(0,0,0,0) 56%),
-      repeating-conic-gradient(from 18deg, ${p.edge} 0 16deg, ${p.dark} 16deg 45deg)`,
-    boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.28), 0 2px 4px rgba(0,0,0,0.35)',
+    // bottom-up: solid body → dashed rim ring (shows only outside the inner
+    // disc) → inner disc with a dark separation ring → specular gloss
+    backgroundImage: `radial-gradient(circle at 30% 24%, rgba(255,255,255,0.62), rgba(255,255,255,0) 46%),
+      radial-gradient(circle at 50% 52%, ${p.light} 0 20%, ${p.base} 21% 52%, ${p.dark} 53% 58%, rgba(0,0,0,0) 59%),
+      repeating-conic-gradient(from 12deg, ${p.edge} 0 14deg, rgba(0,0,0,0.16) 14deg 45deg),
+      linear-gradient(${p.base}, ${p.base})`,
+    boxShadow:
+      'inset 0 0 0 1px rgba(0,0,0,0.32), inset 0 -2px 3px rgba(0,0,0,0.28), inset 0 1.5px 2px rgba(255,255,255,0.4), 0 1px 2px rgba(0,0,0,0.35)',
   };
 }
 
-/** One vertical stack: side slices, glossy face chip on top, ×n tail when the
- *  true count is taller than what gets drawn. */
+/** One vertical stack: ground shadow, side slices with a slight sway, glossy
+ *  face chip on top, ×n tail when the true count is taller than the cap. */
 function ChipColumn({
   color,
   count,
   face,
   step,
+  maxShown,
 }: {
   color: ChipColor;
   count: number;
   face: number;
   step: number;
+  maxShown: number;
 }) {
   const p = CHIP_PALETTES[color];
-  const shown = Math.min(count, MAX_CHIPS_SHOWN);
+  const shown = Math.min(count, maxShown);
   const height = (shown - 1) * step + face;
   return (
     <div className="relative shrink-0" style={{ width: face, height }}>
+      {/* the pile sits on the felt: a soft contact shadow under the base */}
+      <span
+        aria-hidden="true"
+        className="absolute left-1/2 rounded-[50%] bg-black/35 blur-[2px]"
+        style={{ width: face * 0.92, height: face * 0.3, bottom: -Math.max(1.5, face * 0.12), transform: 'translateX(-50%)' }}
+      />
       {Array.from({ length: shown }, (_, i) => {
         const top = i === shown - 1;
+        const lean = (WOBBLE[i % WOBBLE.length] ?? 0) * face;
         return (
           <span
             key={i}
@@ -79,13 +123,17 @@ function ChipColumn({
             className="absolute left-0"
             style={{
               bottom: i * step,
+              transform: lean ? `translateX(${lean.toFixed(1)}px)` : undefined,
               ...(top ? faceStyle(p, face) : sideStyle(p, face)),
             }}
           />
         );
       })}
       {count > shown && (
-        <span className="absolute -right-0.5 -top-1.5 font-display text-[0.5rem] font-bold tabular-nums text-white/90 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)] dark:text-slate-100">
+        <span
+          className="absolute -top-0.5 -right-1.5 rounded-full bg-slate-950/80 px-[3px] py-px font-display font-bold leading-none tabular-nums text-white ring-1 ring-white/25"
+          style={{ fontSize: Math.max(8, Math.round(face * 0.6)) }}
+        >
           ×{count}
         </span>
       )}
@@ -93,11 +141,12 @@ function ChipColumn({
   );
 }
 
-export function ChipStack({
+export const ChipStack = memo(function ChipStack({
   amount,
   bb,
   sb,
   size = 'sm',
+  variant,
   className,
 }: {
   amount: number;
@@ -106,18 +155,45 @@ export function ChipStack({
   bb: number;
   /** Explicit small-blind unit for non-standard structures. */
   sb?: number;
-  size?: 'sm' | 'lg';
+  size?: 'xs' | 'sm' | 'lg';
+  /** Which money spot this pile lives in: caps drawn chips per tier and adds
+   *  the pot's under-glow. Falls back to the enclosing ChipVariantContext
+   *  (RoundTable tags its center column `pot`), then to `bet`. See the header. */
+  variant?: ChipVariant;
   className?: string;
 }) {
-  if (amount <= 0) return null;
+  const ctxVariant = useContext(ChipVariantContext);
+  const resolved = variant ?? ctxVariant ?? 'bet';
   const unit = sb ?? sbFromBb(bb);
-  const breakdown = chipBreakdown(amount, unit);
+  // memoized: nine seat banks + nine bet piles + the pot recompute only when
+  // an amount or the blind structure actually changes.
+  const breakdown = useMemo(
+    () => (amount > 0 ? chipBreakdown(amount, unit) : []),
+    [amount, unit],
+  );
+  if (amount <= 0 || breakdown.length === 0) return null;
   const { face, step } = DIMS[size];
   return (
-    <div className={cn('flex items-end gap-[3px] pb-0.5', className)} aria-hidden="true">
+    <div
+      className={cn(
+        'flex items-end',
+        resolved === 'pot' ? 'gap-1' : resolved === 'stack' ? 'gap-[2px]' : 'gap-[3px]',
+        resolved === 'pot' && 'drop-shadow-[0_3px_10px_rgba(251,191,36,0.35)]',
+        className,
+      )}
+      aria-hidden="true"
+      data-chip-variant={resolved}
+    >
       {breakdown.map((tier) => (
-        <ChipColumn key={tier.color} color={tier.color} count={tier.count} face={face} step={step} />
+        <ChipColumn
+          key={tier.color}
+          color={tier.color}
+          count={tier.count}
+          face={face}
+          step={step}
+          maxShown={MAX_SHOWN[resolved]}
+        />
       ))}
     </div>
   );
-}
+});

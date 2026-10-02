@@ -8,7 +8,7 @@ import { t } from '../../shared/i18n/index.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import type { SeatView } from './players.tsx';
-import { ChipStack } from './ChipStack.tsx';
+import { ChipStack, ChipVariantContext } from './ChipStack.tsx';
 import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
 
 /** A real round table: nine seat pods around an oval, your seat pinned at the
@@ -30,7 +30,14 @@ import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
  *    name / stack / 牌型 live on a compact solid plate below the avatar, not
  *    as text floating over the felt; and the pods are anchored by arc so the
  *    bottom seat can no longer be clipped by the rim or covered by the
- *    「行动中」 badge - the pill rides in the pod's own flow. */
+ *    「行动中」 badge - the pill rides in the pod's own flow.
+ *  - Chip semantics v3 (user clarified): every seat shows TWO piles that never
+ *    overlap - the player's FULL STACK as a tiny chip bank riding on their
+ *    name plate (variant="stack", compact caps), and their CURRENT-STREET BET
+ *    as a pile pushed toward the center on the bet ellipse (variant="bet",
+ *    with the indigo amount pill). The CENTER pile (TablePage's pot row) is
+ *    the sum of all contributions. Three locations, three sizes/labels:
+ *    plate bank = 筹码, felt pill = this street, center = 底池. */
 
 const SEATS = 9;
 
@@ -122,7 +129,9 @@ function HoleCards({
  *  - everything else centers on the ring point as before. */
 function anchorOf(s: number, c: number): { tx: string; ty: string } {
   const tx = c > 0.7 ? '-100%' : c < -0.7 ? '0%' : '-50%';
-  const ty = s > 0.55 ? 'calc(-100% - 6px)' : '-50%';
+  // -12px keeps even the fullest bottom pod (pill + cards + plate WITH its
+  // stack bank + strength) clear of the community cards above it.
+  const ty = s > 0.55 ? 'calc(-100% - 12px)' : '-50%';
   return { tx, ty };
 }
 
@@ -142,6 +151,7 @@ export function RoundTable({
   coBankerId,
   hostId,
   bb,
+  sb,
   readyCheck = null,
   onShareHand,
   narrow = false,
@@ -164,6 +174,10 @@ export function RoundTable({
   /** Whoever can deal right now - it moves if the host goes offline. */
   hostId?: number | null;
   bb: number;
+  /** The room's real small blind - chip denominations are SB-based, so this
+   *  keeps the piles honest on non-standard structures (TablePage can pass
+   *  room.room.sb). Omitted: the standard sb = bb/2 is derived instead. */
+  sb?: number;
   /** Pre-deal ready check: green tick on the seats that clicked I'm ready. */
   readyCheck?: { eligible: number[]; ready: number[] } | null;
   /** Opens the share card for the settled hand; rides the top winner's badge. */
@@ -275,7 +289,10 @@ export function RoundTable({
           />
 
           {/* pot, board, and status live at the center (A5: the pot row is the
-              first child, i.e. centered directly above the cards area) */}
+              first child, i.e. centered directly above the cards area).
+              Chip semantics v3: the column is tagged `pot` so the page's own
+              pot pile picks the variant up without the page passing it -
+              piles here read bigger, glow warm, and carry the tallest cap. */}
           <div
             ref={potRef}
             className={cn(
@@ -283,7 +300,7 @@ export function RoundTable({
               narrow ? 'gap-2.5' : 'gap-5',
             )}
           >
-            {children}
+            <ChipVariantContext.Provider value="pot">{children}</ChipVariantContext.Provider>
           </div>
 
           {sitSpots.map((spot) => (
@@ -355,7 +372,13 @@ export function RoundTable({
                         transition={{ type: 'spring', stiffness: 300, damping: 26 }}
                         className="flex items-center gap-1"
                       >
-                        <ChipStack amount={committed} bb={bb} size={narrow ? 'lg' : 'sm'} />
+                        <ChipStack
+                          amount={committed}
+                          bb={bb}
+                          sb={sb}
+                          variant="bet"
+                          size={narrow ? 'lg' : 'sm'}
+                        />
                         <span
                           className={cn(
                             'rounded-full bg-indigo-600/90 px-1.5 py-0.5 font-display font-bold text-white shadow-sm',
@@ -559,7 +582,13 @@ export function RoundTable({
                     </div>
                     {/* feedback v2 #3: name + stack (+ 牌型 / state) live on a
                         compact solid plate - a designed label, not text drawn
-                        over the felt, and never colliding with the cards */}
+                        over the felt, and never colliding with the cards.
+                        Chip semantics v3: the player's ENTIRE current stack
+                        also rides the plate as a tiny xs chip bank (variant
+                        "stack", cap 3 per tier) - chips in front of them at
+                        the table. The STREET BET lives separately on the bet
+                        ellipse toward the pot; the center pile is the pot.
+                        Three money spots, three places, three sizes. */}
                     <div className="flex w-max max-w-[9rem] flex-col items-center rounded-xl bg-white/92 px-2 py-1 shadow-sm ring-1 ring-black/5 backdrop-blur-sm dark:bg-slate-900/90 dark:ring-white/10">
                       <div
                         className={cn(
@@ -570,15 +599,30 @@ export function RoundTable({
                       >
                         {p.displayName}
                       </div>
+                      {/* Chip semantics v3: the pile rides the SAME row as the
+                          number it pictures - a seat plate stays one compact
+                          block and the pod never grows into the board. */}
                       <div
                         className={cn(
-                          'font-display leading-tight text-slate-600 dark:text-slate-300',
+                          'flex items-center justify-center gap-1.5 font-display leading-tight text-slate-600 dark:text-slate-300',
                           narrow ? 'text-[0.8rem]' : 'text-[0.7rem]',
                           p.broke && 'font-bold text-rose-500 dark:text-rose-400',
                         )}
                       >
-                        <StackValue stack={p.stack} won={p.won} />
-                        <span className="opacity-60"> · {bbCount} BB</span>
+                        {p.stack > 0 && (
+                          <ChipStack
+                            amount={p.stack}
+                            bb={bb}
+                            sb={sb}
+                            variant="stack"
+                            size={narrow ? 'sm' : 'xs'}
+                            className="shrink-0"
+                          />
+                        )}
+                        <span className="min-w-0 truncate">
+                          <StackValue stack={p.stack} won={p.won} />
+                          <span className="opacity-60"> · {bbCount} BB</span>
+                        </span>
                       </div>
                       {strength && (
                         <div
