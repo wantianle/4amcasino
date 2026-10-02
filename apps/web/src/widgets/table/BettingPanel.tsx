@@ -5,7 +5,7 @@ import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts
 import { useStore } from '../../shared/store.ts';
 import { ALL_IN_RATIO } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
-import { HourglassMedium } from '@phosphor-icons/react';
+import { HourglassMedium, Bomb } from '@phosphor-icons/react';
 import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
 import { usePokerHotkeys } from '../../features/table/usePokerHotkeys.ts';
@@ -23,10 +23,23 @@ import { t } from '../../shared/i18n/index.ts';
 const bbOf = (amount: number, bb: number): number =>
   Math.max(0, Math.round(amount / Math.max(1, bb)));
 
-/** The action-clock ring next to the amount. When the time-bank feature (P2 B2)
- *  lands server-side, this is the dial that grows the bank track: `totalMs`
- *  becomes remaining+bank instead of the plain turn window. */
-function CountdownRing({ deadline, actionSecs }: { deadline: number | null; actionSecs: number }) {
+/** The action-clock ring next to the amount. P2 B2 (docs/p2-gameplay-design.md)
+ *  grew this into the time-bank dial: the window is `actionSecs` PLUS the
+ *  acting seat's bank, the base clock drains first in indigo, and once
+ *  `baseDeadline` passes the remaining arc turns amber - you are visibly
+ *  spending banked thinking time. The bank balance itself rides as a small
+ *  chip under the ring so it is readable even while the base clock runs. */
+function CountdownRing({
+  deadline,
+  baseDeadline,
+  bankMs,
+  actionSecs,
+}: {
+  deadline: number | null;
+  baseDeadline: number | null;
+  bankMs: number;
+  actionSecs: number;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!deadline) return;
@@ -34,40 +47,71 @@ function CountdownRing({ deadline, actionSecs }: { deadline: number | null; acti
     return () => clearInterval(iv);
   }, [deadline]);
   if (!deadline || actionSecs <= 0) return null;
-  const totalMs = actionSecs * 1000;
+  const baseMs = actionSecs * 1000;
+  // The bank this turn is spending = however far the final deadline reaches
+  // past the base clock. Zero for rooms without the time bank.
+  const bankWindow = baseDeadline ? Math.max(0, deadline - baseDeadline) : 0;
+  const totalMs = baseMs + bankWindow;
+  const baseLeft = Math.max(0, Math.min((baseDeadline ?? deadline) - now, baseMs));
+  const bankLeft = baseDeadline ? Math.max(0, deadline - Math.max(now, baseDeadline)) : 0;
   const remainMs = Math.max(0, deadline - now);
   const frac = Math.min(1, remainMs / totalMs);
   const secs = Math.max(0, Math.ceil(remainMs / 1000));
   const hot = secs <= 10;
+  const spending = baseLeft === 0 && bankWindow > 0;
   const CIRC = 2 * Math.PI * 15;
+  const bankSecs = Math.ceil((spending ? bankLeft : bankMs) / 1000);
   return (
-    <span
-      className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center"
-      role="timer"
-      aria-label={t('time remaining to act')}
-      title={t('time remaining to act')}
-    >
-      <svg viewBox="0 0 36 36" className="h-10 w-10 -rotate-90" aria-hidden="true">
-        <circle cx="18" cy="18" r="15" fill="none" strokeWidth="3.5" className="stroke-white/15" />
-        <circle
-          cx="18"
-          cy="18"
-          r="15"
-          fill="none"
-          strokeWidth="3.5"
-          strokeLinecap="round"
-          strokeDasharray={`${frac * CIRC} ${CIRC}`}
-          className={cn('transition-[stroke] duration-300', hot ? 'stroke-rose-400' : 'stroke-indigo-300')}
-        />
-      </svg>
+    <span className="relative inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center">
       <span
-        className={cn(
-          'absolute font-display text-[0.7rem] font-bold tabular-nums',
-          hot ? 'text-rose-300' : 'text-white/90',
-        )}
+        className="relative inline-flex h-10 w-10 items-center justify-center"
+        role="timer"
+        aria-label={
+          bankWindow > 0 ? t('{secs}s, then {bank}s of time bank', { secs, bank: bankSecs }) : t('time remaining to act')
+        }
+        title={
+          bankWindow > 0
+            ? spending
+              ? t('Spending your time bank')
+              : t('Bank {n}s', { n: bankSecs })
+            : t('time remaining to act')
+        }
       >
-        {secs}
+        <svg viewBox="0 0 36 36" className="h-10 w-10 -rotate-90" aria-hidden="true">
+          <circle cx="18" cy="18" r="15" fill="none" strokeWidth="3.5" className="stroke-white/15" />
+          <circle
+            cx="18"
+            cy="18"
+            r="15"
+            fill="none"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeDasharray={`${frac * CIRC} ${CIRC}`}
+            className={cn(
+              'transition-[stroke] duration-300',
+              hot ? 'stroke-rose-400' : spending ? 'stroke-amber-400' : 'stroke-indigo-300',
+            )}
+          />
+        </svg>
+        <span
+          className={cn(
+            'absolute font-display text-[0.7rem] font-bold tabular-nums',
+            hot ? 'text-rose-300' : spending ? 'text-amber-200' : 'text-white/90',
+          )}
+        >
+          {secs}
+        </span>
       </span>
+      {bankSecs > 0 && (
+        <span
+          className={cn(
+            'absolute -bottom-2.5 rounded-full px-1.5 font-display text-[0.58rem] font-bold tabular-nums leading-[1.15] shadow-sm',
+            spending ? 'bg-amber-400 text-amber-950' : 'bg-amber-400/20 text-amber-300',
+          )}
+        >
+          {bankSecs}s
+        </span>
+      )}
     </span>
   );
 }
@@ -250,6 +294,12 @@ export function BettingPanel({
       t('Seat {n}', { n: st.toAct !== null ? st.toAct + 1 : '-' }))
     : null;
 
+  // P2 B3 (docs/p2-gameplay-design.md): a bomb-pot hand posts antes and opens
+  // the flop directly - the engine never asks for preflop action, so the panel
+  // shows what happened instead of controls that could never fire.
+  const bombHand = !!hand.featureStarted?.bombPot?.enabled;
+  const bombNoPreflop = bombHand && !handIdle && (!st || st.street === 'preflop');
+
   const statusMsg = myTurn
     ? t('Your turn.')
     : handIdle
@@ -307,6 +357,13 @@ export function BettingPanel({
             })}
           </p>
         </div>
+      ) : bombNoPreflop ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-amber-300">
+            <Bomb size={14} weight="fill" aria-hidden="true" />
+            {t('Bomb pot ante posted - straight to the flop.')}
+          </p>
+        </div>
       ) : myTurn && la && st ? (
         <div className="flex flex-col gap-2">
           {/* amount (chips + BB) with the action-clock ring */}
@@ -334,7 +391,12 @@ export function BettingPanel({
                 </span>
               </span>
             </label>
-            <CountdownRing deadline={hand.deadline} actionSecs={room?.room.actionSecs ?? 45} />
+            <CountdownRing
+              deadline={hand.deadline}
+              baseDeadline={hand.baseDeadline}
+              bankMs={mySeat !== null ? (hand.timeBanks[mySeat] ?? 0) : 0}
+              actionSecs={room?.room.actionSecs ?? 45}
+            />
           </div>
           {/* slider, min/max marked in BB (GGPoker-style) */}
           <div className="flex items-center gap-2">

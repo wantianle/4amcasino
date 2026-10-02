@@ -5,6 +5,7 @@ import { pokerOverlayOpen } from '../../features/table/pokerHotkeys.ts';
 import { motion } from 'motion/react';
 import {
   ArrowLeft,
+  Bomb,
   Coins,
   CornersIn,
   CornersOut,
@@ -20,11 +21,14 @@ import {
   PauseCircle,
   Play,
   Receipt,
+  Skull,
+  Sliders,
   Timer,
   Trophy,
   UserPlus,
   VideoCamera,
   Wallet,
+  X,
 } from '@phosphor-icons/react';
 import NumberFlow from '@number-flow/react';
 import confetti from 'canvas-confetti';
@@ -37,10 +41,14 @@ import {
   rankOf,
   HAND_CATEGORY_NAMES,
   type CardId,
+  type RoomGameplaySettings,
+  type ServerMsg,
 } from '@4am/shared';
 import {
+  agreeRunCount,
   answerPeek,
   bindGameClient,
+  chooseRunCount,
   offerPeek,
   ritVote,
   setSitOut,
@@ -49,7 +57,8 @@ import {
 } from '../../shared/gameClient.ts';
 import { wsClient } from '../../shared/ws.ts';
 import { useStore } from '../../shared/store.ts';
-import { api } from '../../shared/api.ts';
+import { api, type FeatureTriggerKind } from '../../shared/api.ts';
+import { GameplaySettingsDialog } from '../../features/table/GameplaySettingsDialog.tsx';
 import { voice } from '../../shared/voice.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
@@ -182,6 +191,159 @@ interface FloatingReaction {
   left: number;
 }
 
+type MultiRunOfferMsg = Extract<ServerMsg, { t: 'multi_run_offer' }>;
+
+/**
+ * P2 B4 (docs/p2-gameplay-design.md): the server-authoritative staged
+ * all-in multi-run negotiation, replacing the old run-it-twice vote.
+ *
+ * stage `choice`  - the BEHIND hand picks how many times to run the board
+ *                   (1-3, countdown on offer.deadlineTs);
+ * stage `agreement` - the AHEAD hand must accept the pick or fall back to
+ *                   one run. Everyone else watches a read-only line.
+ *
+ * The pick is optimistic on the buttons only (the game client patches
+ * requestedRuns); boards are NEVER created here - they arrive with the
+ * board_open frames after multi_run_result resolves the hand.
+ */
+function MultiRunPrompt({
+  offer,
+  mySeat,
+  nameOf,
+}: {
+  offer: MultiRunOfferMsg;
+  mySeat: number | null;
+  nameOf: (seat: number) => string;
+}) {
+  const now = useNow();
+  const secs = Math.max(0, Math.ceil((offer.deadlineTs - now) / 1000));
+  const amBehind = mySeat !== null && mySeat === offer.behindSeat;
+  const amAhead = mySeat !== null && mySeat === offer.aheadSeat;
+  const behind = nameOf(offer.behindSeat);
+  // one in-flight decision per decisionId: after a click the buttons die until
+  // the server's next offer frame (new stage, or the result clearing it)
+  const [sentPick, setSentPick] = useState<string | null>(null);
+  useEffect(() => {
+    setSentPick(null);
+  }, [offer.decisionId, offer.stage]);
+  // if the socket ate the first attempt, hand the player their buttons back
+  // after a few seconds - a re-sent choice the server already processed is
+  // refused by its stage guard, so retrying can only help
+  useEffect(() => {
+    if (!sentPick) return;
+    const iv = setTimeout(() => setSentPick(null), 4000);
+    return () => clearTimeout(iv);
+  }, [sentPick]);
+
+  const pick = (count: 1 | 2 | 3) => {
+    if (sentPick) return;
+    // chooseRunCount() patches requestedRuns optimistically; the latch just
+    // keeps a double-click from sending a second signed choice.
+    setSentPick(`${offer.decisionId}:${count}`);
+    chooseRunCount(count);
+  };
+  const answer = (agree: boolean) => {
+    if (sentPick) return;
+    setSentPick(`${offer.decisionId}:${agree ? 'y' : 'n'}`);
+    agreeRunCount(agree);
+  };
+
+  const myEquity = mySeat === null ? null : (offer.equities.find((e) => e.seat === mySeat)?.bps ?? null);
+  const chosen = offer.requestedRuns !== undefined && offer.requestedRuns > 1;
+
+  let headline: string;
+  let detail: string | null = null;
+  if (offer.stage === 'choice') {
+    if (amBehind && !chosen) {
+      headline = t('You are behind');
+      if (myEquity !== null) detail = t('Equity {pct}%', { pct: Math.round(myEquity / 100) });
+    } else if (amBehind) {
+      headline = t('Waiting for the ahead player to confirm…');
+    } else {
+      headline = t('The behind player is choosing how many times to run the board…');
+      detail = behind;
+    }
+  } else {
+    headline = amAhead
+      ? t('They asked to run it {n} times', { n: offer.requestedRuns ?? 2 })
+      : t('Waiting for the ahead player to confirm…');
+    if (amAhead) detail = behind;
+  }
+
+  const acting =
+    (offer.stage === 'choice' && amBehind && (!chosen || sentPick !== null)) ||
+    (offer.stage === 'agreement' && amAhead);
+
+  return (
+    <div
+      role="region"
+      aria-live="polite"
+      aria-label={t('Multi-run all-in decision')}
+      className="z-20 flex flex-col items-center gap-1.5 rounded-2xl bg-fuchsia-600/95 px-5 py-3 text-white shadow-[0_18px_50px_rgba(192,38,211,0.35)]"
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-display text-lg font-bold">{t('🔁 Run it how many times?')}</span>
+        <span
+          className={cn(
+            'rounded-full bg-white/15 px-2 py-0.5 font-display text-xs font-bold tabular-nums',
+            secs <= 5 && 'bg-rose-400/80',
+          )}
+        >
+          {t('{n}s', { n: secs })}
+        </span>
+      </div>
+      <p className="text-center text-sm font-semibold">
+        {headline}
+        {detail && <span className="ml-1.5 font-normal text-fuchsia-100">{detail}</span>}
+      </p>
+      {offer.stage === 'choice' && amBehind ? (
+        <div className="flex gap-2">
+          {([1, 2, 3] as const).map((count) => (
+            <Button
+              key={count}
+              variant="secondary"
+              className={cn(
+                'border-0 text-fuchsia-700!',
+                count > 1 ? 'bg-white! hover:bg-fuchsia-50!' : 'bg-white/25! text-white! hover:bg-white/35!',
+              )}
+              disabled={sentPick !== null}
+              onClick={() => pick(count)}
+            >
+              {t('Deal {n} times', { n: count })}
+            </Button>
+          ))}
+        </div>
+      ) : offer.stage === 'agreement' && amAhead ? (
+        <div className="flex gap-2">
+          <Button
+            variant="success"
+            disabled={sentPick !== null}
+            onClick={() => answer(true)}
+            className="text-sm!"
+          >
+            {t('Agree')}
+          </Button>
+          <Button
+            variant="secondary"
+            className="border-0 bg-white/20! text-white! hover:bg-white/30!"
+            disabled={sentPick !== null}
+            onClick={() => answer(false)}
+          >
+            {t('Just once')}
+          </Button>
+        </div>
+      ) : null}
+      {!acting && (
+        <span className="text-[0.68rem] text-fuchsia-100">
+          {offer.stage === 'choice'
+            ? t('Only the losing side chooses; dealing more than once needs the other side to agree.')
+            : t('Declining or running out of time means one run.')}
+        </span>
+      )}
+    </div>
+  );
+}
+
 const desktopIconClass =
   'relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-[color,background-color,transform] duration-200 hover:bg-slate-200/70 hover:text-slate-900 active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
 
@@ -244,6 +406,12 @@ export interface TablePresentation {
   seatPicker: ReactNode;
   peekPanel: ReactNode;
   runTwice: ReactNode;
+  /** P2 Lane F (ADDITIVE - optional so the 3D page keeps compiling and
+   *  rendering untouched): the felt-side feature overlays for this hand -
+   *  bomb/squid badges, the bomb-pot flop notice, the multi-run outcome and
+   *  the squid settlement summary. Identical nodes to the ones the 2D felt
+   *  renders; a presentation may place or ignore them. */
+  gameplay?: ReactNode;
   status: string | null;
   amSpectator: boolean;
   players: SeatView[];
@@ -324,6 +492,21 @@ export function TablePage({
   const [chatSeenCount, setChatSeenCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [autoDealOpen, setAutoDealOpen] = useState(false);
+  // ── P2 gameplay (Lane F) ──────────────────────────────────────────────────
+  // The room's stored feature rules, fetched once on join and refreshed by the
+  // host's saves. room_state does not carry them; GET /api/rooms/:id does.
+  const [features, setFeatures] = useState<RoomGameplaySettings | null>(null);
+  const [gameplayOpen, setGameplayOpen] = useState(false);
+  // Manual next-hand triggers the host armed. The requestId came back from
+  // triggerFeature and is what cancelFeatureTrigger needs; the store has no
+  // pending-trigger feed, so this lives here. A new deal claims (or voids)
+  // them, which is also when `feature_started` says what really fired.
+  const [armedTriggers, setArmedTriggers] = useState<Partial<Record<FeatureTriggerKind, string>>>(
+    {},
+  );
+  // did THIS hand ever show a multi-run decision? gates the outcome line so a
+  // plain one-run hand never mentions 发牌次数.
+  const sawRunOfferRef = useRef<string | null>(null);
   const [peekAmtStr, setPeekAmtStr] = useState('');
   const [peekSent, setPeekSent] = useState<Record<number, boolean>>({});
   const [shareOpen, setShareOpen] = useState(false);
@@ -409,9 +592,16 @@ export function TablePage({
     setJoinError(null);
     bindGameClient();
     wsClient.joinRoom(roomId!);
-    api.getRoom(roomId!).catch((e) => {
-      if (alive) setJoinError(e instanceof Error ? e.message : 'Could not load room');
-    });
+    // the REST payload carries `features` (the ws room_state does not) - the
+    // gameplay dialog and the host trigger buttons read it from here.
+    api
+      .getRoom(roomId!)
+      .then((r) => {
+        if (alive) setFeatures((r as { features?: RoomGameplaySettings }).features ?? null);
+      })
+      .catch((e) => {
+        if (alive) setJoinError(e instanceof Error ? e.message : 'Could not load room');
+      });
     return () => {
       alive = false;
       voice.leave();
@@ -419,6 +609,53 @@ export function TablePage({
       useStore.getState().setRoom(null);
     };
   }, [roomId]);
+
+  // A fresh deal claims (or abort-voids) the host's manual triggers, and the
+  // feature_started announcement takes over from the armed chips from here.
+  useEffect(() => {
+    setArmedTriggers({});
+  }, [hand.handId]);
+
+  // remember which hand showed a multi-run decision, so the outcome line only
+  // ever follows a real negotiation
+  useEffect(() => {
+    if (hand.multiRunOffer) sawRunOfferRef.current = hand.multiRunOffer.handId;
+  }, [hand.multiRunOffer]);
+
+  const armFeature = (feature: FeatureTriggerKind) => {
+    // server prose ('this table is closed', 'wait for the current hand to
+    // finish', squid's min-players gate…) goes through the phrase library;
+    // anything unmatched shows the English source, never a wrong translation.
+    const fail = (error: unknown) =>
+      useStore
+        .getState()
+        .pushError(
+          error instanceof Error ? tr(error.message) : t('That change did not go through. Try again.'),
+        );
+    const existing = armedTriggers[feature];
+    if (existing) {
+      // second tap on an armed chip cancels the queued trigger
+      void api
+        .cancelFeatureTrigger(roomId!, feature, existing)
+        .then(() => setArmedTriggers((a) => ({ ...a, [feature]: undefined })))
+        .catch(fail);
+      return;
+    }
+    void api
+      .triggerFeature(roomId!, feature)
+      .then((r) => setArmedTriggers((a) => ({ ...a, [feature]: r.trigger.requestId })))
+      .catch(fail);
+  };
+
+  /** Re-read the stored rules on the way in - the dialog edits a copy of
+   *  whatever the server has right now, not the copy from page load. */
+  const openGameplay = () => {
+    api
+      .getRoom(roomId!)
+      .then((r) => setFeatures((r as { features?: RoomGameplaySettings }).features ?? null))
+      .catch(() => {});
+    setGameplayOpen(true);
+  };
 
   // if the room never arrives, say so instead of spinning forever
   useEffect(() => {
@@ -640,6 +877,9 @@ export function TablePage({
           won,
           wonAmount: won ? delta : 0,
           lastAction: hand.lastActions[p.seat!],
+          // P2 B2: per-seat bank, in ms. Only present in rooms that run the
+          // feature (betting_state carries timeBanks) - seats read it as-is.
+          bankMs: hand.timeBanks[p.seat!],
         };
       });
   }, [room, hand, handLive, voiceState, blinds]);
@@ -837,6 +1077,31 @@ export function TablePage({
         winningFive: null,
       };
     }
+    const mr = hand.showdown.multiRun;
+    if (mr && mr.boards.length > 1) {
+      // P2 B4: per-run awards are the truth of who took which slice; the
+      // merged per-seat deltas in `hand.result` already include the rake.
+      const winnersOf = (aw: { seat: number; amount: number }[]) => {
+        const w = aw.filter((a) => a.amount > 0).map((a) => nameOf(a.seat));
+        return w.length ? w.join(' & ') : t('chips stayed put');
+      };
+      const names = mr.awards.map(winnersOf);
+      const allSame = names.every((nm) => nm === names[0]);
+      return {
+        headline: allSame
+          ? t('They ran it {n} times - {name} took every run.', {
+              n: mr.boards.length,
+              name: names[0] ?? '',
+            })
+          : t('They ran it {n} times. {detail}', {
+              n: mr.boards.length,
+              detail: mr.awards
+                .map((aw, i) => t('Run {n}: {name}', { n: i + 1, name: winnersOf(aw) }))
+                .join(' · '),
+            }),
+        winningFive: null,
+      };
+    }
     const rt = hand.showdown.runTwice;
     if (rt) {
       const winnersOf = (aw: { seat: number; amount: number }[]) =>
@@ -930,11 +1195,13 @@ export function TablePage({
     const top = hand.showdown
       ? [...hand.showdown.reveals].sort((a, b) => b.score - a.score)[0]
       : undefined;
-    const label = hand.showdown?.runTwice
-      ? t('ran it twice')
-      : top
-        ? tScore(top.score)
-        : t('everyone folded');
+    const label = hand.showdown?.multiRun
+      ? t('ran it {n} times', { n: Math.max(1, hand.showdown.multiRun.boards.length) })
+      : hand.showdown?.runTwice
+        ? t('ran it twice')
+        : top
+          ? tScore(top.score)
+          : t('everyone folded');
     const commission = hand.result?.commission ?? 0;
     return (
       <ResultFlash
@@ -1195,10 +1462,182 @@ export function TablePage({
     }
   };
 
-  const runTwice = hand.ritOffer && <RunTwicePrompt offer={hand.ritOffer} mySeat={mySeat} />;
+  // P2 B4: the staged server-authoritative negotiation drives the prompt; the
+  // legacy rit_offer (two-board vote) only ever appears from an old server.
+  // Every seat - including spectators - gets the banner: it degrades to a
+  // read-only status line for anyone who is not the one acting.
+  const runTwice =
+    hand.multiRunOffer && !hand.result && !hand.abort ? (
+      <MultiRunPrompt offer={hand.multiRunOffer} mySeat={mySeat} nameOf={seatName} />
+    ) : hand.ritOffer ? (
+      <RunTwicePrompt offer={hand.ritOffer} mySeat={mySeat} />
+    ) : null;
+
+  // ── P2 feature overlays (B1/B3/B4) ────────────────────────────────────────
+  // Badges ride the felt above the board so every view (seat, rest, spectator)
+  // reads the same hand-state. All of it derives from server announcements -
+  // nothing here invents boards, antes or settlements.
+  const feat = hand.featureStarted;
+  const bombActive = !!feat?.bombPot?.enabled;
+  const bombBeforeFlop = bombActive && handLive && (!hand.betting || hand.betting.street === 'preflop');
+  const featureBannerRow = (feat?.squid?.enabled || bombActive) && hand.handId !== null && (
+    <div className="z-10 flex flex-wrap items-center justify-center gap-1.5" role="status">
+      {bombActive && feat.bombPot && (
+        <span className="flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[0.68rem] font-bold text-amber-950 shadow-md">
+          <Bomb size={12} weight="fill" />
+          {t('Bomb pot · {n}× BB', { n: feat.bombPot.anteBb })}
+        </span>
+      )}
+      {feat?.squid?.enabled && (
+        <span className="flex items-center gap-1 rounded-full bg-violet-600 px-2.5 py-1 text-[0.68rem] font-bold text-white shadow-md">
+          <Skull size={12} weight="fill" />
+          {t('Squid Game · {n}× BB · {p} players', { n: feat.squid.penaltyBb, p: hand.seats.length })}
+        </span>
+      )}
+    </div>
+  );
+  const bombFeltNote = bombBeforeFlop && (
+    <p className="z-10 flex items-center gap-1.5 rounded-full bg-amber-400/90 px-3 py-1 text-xs font-bold text-amber-950 shadow">
+      <Bomb size={13} weight="fill" />
+      {t('Bomb pot ante posted - straight to the flop.')}
+    </p>
+  );
+  // The negotiated outcome, kept honest by the server's terminal message: the
+  // boards below only ever multiply when `multiRunResult.runs` says so.
+  const runOutcome = hand.multiRunResult;
+  const runOutcomeShown =
+    runOutcome !== null &&
+    runOutcome.reason !== 'ineligible' &&
+    runOutcome.reason !== 'disabled' &&
+    (sawRunOfferRef.current === runOutcome.handId || runOutcome.runs > 1);
+  const multiRunOutcome =
+    handLive && runOutcomeShown && runOutcome ? (
+      <p className="z-10 rounded-full bg-white/85 px-3 py-1 text-xs font-bold text-fuchsia-600 shadow-sm ring-1 ring-fuchsia-200/70 dark:bg-slate-900/85 dark:text-fuchsia-300 dark:ring-fuchsia-500/30">
+        🔁{' '}
+        {runOutcome.runs > 1
+          ? t('Dealing {n} runs', { n: runOutcome.runs })
+          : runOutcome.reason === 'declined'
+            ? t('The ahead player declined - dealt once.')
+            : runOutcome.reason === 'timeout'
+              ? t('Confirmation timed out - dealt once.')
+              : runOutcome.reason === 'equity_failed'
+                ? t('Equity did not arrive in time - dealt once.')
+                : t('Dealt once.')}
+      </p>
+    ) : null;
+  // B1: the squid settlement is its own money movement - netBySeat is the
+  // authoritative per-seat number (a seat can both pay and collect), shown
+  // separately from the pot deltas on the pods.
+  const squid = hand.squidResult;
+  const squidSummary =
+    squid !== null && hand.result !== null && !hand.abort ? (
+      <div
+        role="region"
+        aria-label={t('Squid Game settlement')}
+        className="z-10 flex max-w-[min(30rem,92%)] flex-col items-center gap-1 rounded-2xl bg-violet-600/90 px-3.5 py-2 text-white shadow-[0_14px_40px_rgba(109,40,217,0.35)]"
+      >
+        <p className="flex items-center gap-1.5 text-xs font-bold text-white">
+          <Skull size={13} weight="fill" /> {t('Squid Game settlement')}
+          <span className="font-normal text-violet-200">
+            {squid.noClaimant
+              ? t('Nobody won every run - no bounty.')
+              : t('Bounty {n}', { n: squid.winners.map((w) => seatName(w)).join(t(' and ')) })}
+          </span>
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-1">
+          {(squid.netBySeat ?? []).map((n) => (
+            <span
+              key={n.seat}
+              className={cn(
+                'rounded-full px-2 py-0.5 font-display text-[0.68rem] font-bold tabular-nums',
+                n.net > 0 ? 'bg-white/20' : n.net < 0 ? 'bg-black/25' : 'bg-white/5 opacity-70',
+              )}
+            >
+              {seatName(n.seat)} {n.net >= 0 ? `+${fmt(n.net)}` : `−${fmt(-n.net)}`}
+            </span>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
+  // ── host-only dock controls (B1/B3 arming + Lane D dialog) ────────────────
+  const dockChip =
+    'pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200/70 backdrop-blur transition-[color,background-color,transform] duration-200 hover:bg-white hover:text-slate-950 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/80 dark:text-slate-200 dark:ring-slate-700/70 dark:hover:bg-slate-800 dark:hover:text-white';
+  const hostGameplay =
+    isHost && !amSpectator && features ? (
+      <div className="flex flex-wrap items-start gap-1.5">
+        {features.squid.enabled && (
+          <button
+            type="button"
+            disabled={handLive || !wsConnected}
+            onClick={() => armFeature('squid')}
+            title={
+              armedTriggers.squid
+                ? t('Tap again to cancel the armed Squid Game')
+                : t('Trigger Squid Game next hand')
+            }
+            aria-pressed={!!armedTriggers.squid}
+            className={cn(
+              dockChip,
+              armedTriggers.squid &&
+                'bg-violet-100/95 text-violet-700 ring-violet-300 dark:bg-violet-950/80 dark:text-violet-300 dark:ring-violet-700',
+            )}
+          >
+            {armedTriggers.squid ? <X size={15} /> : <Skull size={15} />}
+            <span className={isPhone ? 'sr-only' : undefined}>
+              {armedTriggers.squid ? t('Squid Game armed') : t('Trigger Squid Game next hand')}
+            </span>
+          </button>
+        )}
+        {features.bombPot.enabled && (
+          <button
+            type="button"
+            disabled={handLive || !wsConnected}
+            onClick={() => armFeature('bomb')}
+            title={
+              armedTriggers.bomb
+                ? t('Tap again to cancel the armed bomb pot')
+                : t('Trigger bomb pot next hand')
+            }
+            aria-pressed={!!armedTriggers.bomb}
+            className={cn(
+              dockChip,
+              armedTriggers.bomb &&
+                'bg-amber-100/95 text-amber-700 ring-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:ring-amber-700',
+            )}
+          >
+            {armedTriggers.bomb ? <X size={15} /> : <Bomb size={15} />}
+            <span className={isPhone ? 'sr-only' : undefined}>
+              {armedTriggers.bomb ? t('Bomb pot armed') : t('Trigger bomb pot next hand')}
+            </span>
+          </button>
+        )}
+        {/* phones have no quick-controls strip - the 玩法规则 gear lives here */}
+        {isPhone && (
+          <button
+            type="button"
+            onClick={openGameplay}
+            title={t('Gameplay rules')}
+            className={cn(dockChip, 'text-fuchsia-700 dark:text-fuchsia-300')}
+          >
+            <Sliders size={15} />
+            <span className="sr-only">{t('Gameplay rules')}</span>
+          </button>
+        )}
+      </div>
+    ) : null;
   const sharedDialogs = (
     <>
       <AutoDealDialog open={autoDealOpen} onClose={() => setAutoDealOpen(false)} />
+      {features && (
+        <GameplaySettingsDialog
+          roomId={roomId!}
+          features={features}
+          open={gameplayOpen}
+          onOpenChange={setGameplayOpen}
+          onSaved={setFeatures}
+        />
+      )}
       <BrokeBuyInDialog
         roomId={roomId!}
         open={amBroke && !brokeDismissed}
@@ -1411,6 +1850,14 @@ export function TablePage({
           seatPicker: mySeat === null ? (amSpectator ? spectatorPanel : seatPicker) : null,
           peekPanel,
           runTwice,
+          gameplay: (
+            <>
+              {featureBannerRow}
+              {bombFeltNote}
+              {multiRunOutcome}
+              {squidSummary}
+            </>
+          ),
           status: mobileStatus,
           amSpectator,
           players: seatViews,
@@ -1526,6 +1973,7 @@ export function TablePage({
               onChangeActionSecs={(seconds) =>
                 void api.roomSettings(roomId!, seconds).catch(reportError)
               }
+              onOpenGameplay={isHost && features ? openGameplay : undefined}
             />
           )}
           <DesktopIconButton
@@ -1807,66 +2255,66 @@ export function TablePage({
             </div>
             {/* the felt keeps its layout while a result flashes over it */}
             <>
+              {featureBannerRow}
+              {bombFeltNote}
               {runTwice}
               <div className="flex flex-col items-center gap-2">
-                <div className={cn('flex items-center justify-center', isPhone ? 'gap-1' : 'gap-2.5')}>
-                  {hand.board2.length > 0 && (
-                    <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                      {t('Run 1')}
-                    </span>
-                  )}
-                  {[0, 1, 2, 3, 4].map((index) =>
-                    hand.board[index] !== undefined ? (
-                      <PlayingCard
-                        key={`${index}-${hand.board[index]}`}
-                        card={hand.board[index]}
-                        size={isPhone ? 'md' : 'table'}
-                        deal
-                        // the three flop cards land together, so cascade them; the
-                        // turn and river arrive alone and flip immediately
-                        dealDelay={hand.board.length === 3 ? index * 0.16 : 0}
-                      />
-                    ) : (
+                {(() => {
+                  // P2 B4: render hand.boards - run 1 owns the felt's geometry
+                  // as before; run 2 / run 3 grow underneath, compact (md
+                  // cards + a small 「第 N 跑」 label).
+                  const runs = hand.boards.length > 0 ? hand.boards : [hand.board];
+                  const [first, ...rest] = runs;
+                  return (
+                    <>
                       <div
-                        key={index}
                         className={cn(
-                          'border-2 border-dashed border-slate-300/80 dark:border-slate-700',
-                          isPhone ? 'h-24 w-[4.2rem] rounded-xl' : 'h-36 w-24 rounded-2xl',
+                          'flex items-center justify-center',
+                          isPhone ? 'gap-1' : 'gap-2.5',
                         )}
-                        role="img"
-                        aria-label={t('Empty community card {n}', { n: index + 1 })}
-                      />
-                    ),
-                  )}
-                </div>
-                {/* the second runout grows underneath as its twin cards land */}
-                {hand.board2.length > 0 && (
-                  <div className="flex items-center justify-center gap-1.5">
-                    <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                      {t('Run 2')}
-                    </span>
-                    {[0, 1, 2, 3, 4].map((index) =>
-                      hand.board2[index] !== undefined ? (
-                        <PlayingCard
-                          key={`r2-${index}-${hand.board2[index]}`}
-                          card={hand.board2[index]}
-                          size={isPhone ? 'sm' : 'table'}
-                          deal
-                        />
-                      ) : (
-                        <div
-                          key={`r2-${index}`}
-                          className={cn(
-                            'border-2 border-dashed border-fuchsia-400/30',
-                            isPhone ? 'h-14 w-10 rounded-lg' : 'h-36 w-24 rounded-2xl',
-                          )}
-                          aria-label={t('Empty run 2 card {n}', { n: index + 1 })}
-                        />
-                      ),
-                    )}
-                  </div>
-                )}
+                      >
+                        {[0, 1, 2, 3, 4].map((index) =>
+                          first![index] !== undefined ? (
+                            <PlayingCard
+                              key={`${index}-${first![index]}`}
+                              card={first![index]}
+                              size={isPhone ? 'md' : 'table'}
+                              deal
+                              // the three flop cards land together, so cascade them; the
+                              // turn and river arrive alone and flip immediately
+                              dealDelay={first!.length === 3 ? index * 0.16 : 0}
+                            />
+                          ) : (
+                            <div
+                              key={index}
+                              className={cn(
+                                'border-2 border-dashed border-slate-300/80 dark:border-slate-700',
+                                isPhone ? 'h-24 w-[4.2rem] rounded-xl' : 'h-36 w-24 rounded-2xl',
+                              )}
+                              role="img"
+                              aria-label={t('Empty community card {n}', { n: index + 1 })}
+                            />
+                          ),
+                        )}
+                      </div>
+                      {rest.map((run, runIdx) =>
+                        run.length === 0 ? null : (
+                          <div key={`run-${runIdx}`} className="flex items-center justify-center gap-1">
+                            <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
+                              {t('Run {n}', { n: runIdx + 2 })}
+                            </span>
+                            {run.map((card, i) => (
+                              <PlayingCard key={`r${runIdx}-${card}`} card={card} size="md" deal />
+                            ))}
+                          </div>
+                        ),
+                      )}
+                    </>
+                  );
+                })()}
               </div>
+              {multiRunOutcome}
+              {squidSummary}
               {!handLive && !showResult && (
                 <div className="text-center">
                   <p
@@ -1961,6 +2409,7 @@ export function TablePage({
               the balance chip - bottom-left, and on top of everything docked */}
           <TableDock
             compact={isPhone || compactBar}
+            hostGameplay={hostGameplay}
             hasSeat={mySeat !== null}
             sittingOut={meSittingOut}
             sitOutDisabled={!wsConnected}

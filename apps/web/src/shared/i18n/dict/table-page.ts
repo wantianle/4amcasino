@@ -137,6 +137,49 @@ const tablePage: Record<string, string> = {
   'Everyone is all-in - the rest of the board deals twice if all agree.':
     '所有人都已全下——如果都同意，剩余公共牌发两遍。',
 
+  // ── P2 B4 全下多次发牌（staged prompt, docs/p2-gameplay-design.md）─────
+  // Glossary: 落后方 / 领先方 / 全下多次发牌. Buttons carry no variable the
+  // English source lacks; countdown reuses '{n}s' above.
+  '🔁 Run it how many times?': '🔁 发几次牌？',
+  'Multi-run all-in decision': '全下多次发牌',
+  'You are behind': '你暂时落后',
+  'Equity {pct}%': '胜率 {pct}%',
+  'Deal {n} times': '发 {n} 次',
+  'Waiting for the ahead player to confirm…': '等领先方确认…',
+  'The behind player is choosing how many times to run the board…':
+    '落后方正在选择发牌次数…',
+  'They asked to run it {n} times': '对方想发 {n} 次',
+  Agree: '同意',
+  'Just once': '只发 1 次',
+  'Only the losing side chooses; dealing more than once needs the other side to agree.':
+    '由落后方选次数，领先方同意才会多发。',
+  'Declining or running out of time means one run.': '不同意或超时，就只发 1 次。',
+  'Dealing {n} runs': '已同意，本手发 {n} 次',
+  'The ahead player declined - dealt once.': '领先方不同意，只发 1 次。',
+  'Confirmation timed out - dealt once.': '确认超时，只发 1 次。',
+  'Equity did not arrive in time - dealt once.': '胜率没算出来，只发 1 次。',
+  'Dealt once.': '只发 1 次。',
+
+  // ── P2 B1 鱿鱼游戏 / B3 炸弹池（felt 徽章 + 结算 + 房主触发）────────────
+  // 徽章宽度紧，按 4.5 中英混排规则处理；BB 缩写保持原样。
+  'Bomb pot · {n}× BB': '炸弹池 · {n} 倍大盲',
+  'Squid Game · {n}× BB · {p} players': '鱿鱼游戏 · {n} 倍大盲 · {p} 人',
+  'Squid Game settlement': '鱿鱼游戏结算',
+  'Nobody won every run - no bounty.': '没人每跑都第一，罚金没有转移。',
+  'Bounty {n}': '罚金赔付给 {n}',
+  'Trigger Squid Game next hand': '触发下一手鱿鱼游戏',
+  'Squid Game armed': '鱿鱼游戏已就位',
+  'Tap again to cancel the armed Squid Game': '再点一次，取消鱿鱼游戏的就位状态',
+  'Trigger bomb pot next hand': '下一手开炸弹池',
+  'Bomb pot armed': '炸弹池已就位',
+  'Tap again to cancel the armed bomb pot': '再点一次，取消炸弹池的就位状态',
+
+  // ── Multi-run 结算文案（跑 N 次牌）─────────────────────────────────────
+  'ran it {n} times': '跑了 {n} 次牌',
+  'They ran it {n} times - {name} took every run.': '跑了 {n} 次牌，{name} 每一跑都赢。',
+  'They ran it {n} times. {detail}': '跑了 {n} 次牌。{detail}',
+  'Run {n}: {name}': '第 {n} 跑：{name}',
+
   // ── Header / chrome（aria-label 与 title 同源）────────────────────────
   'Leave table': '离开牌桌',
   'Table menu': '牌桌菜单',

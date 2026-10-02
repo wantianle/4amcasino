@@ -26,11 +26,16 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
   const nameOf = (seat: number) => last.names[seat] ?? t('Seat {n}', { n: seat + 1 });
   const winners = last.deltas.filter((d) => d.delta > 0);
   const top = [...last.reveals].sort((a, b) => b.score - a.score)[0];
+  // P2 B4: the recap snapshot froze run 1 in `board` and (from Lane C's
+  // store adapter) run 2 in `board2`. The legacy run-twice vote still rides
+  // `runTwice` with its per-run awards; new multi-run hands surface at
+  // least the two board rows they froze.
+  const ranTwice = !!last.runTwice || last.board2.length > 0;
   const headline =
     winners.length === 0
       ? t('chips stayed put')
       : `${winners.map((w) => `${nameOf(w.seat)} +${fmt(w.delta)}`).join(' & ')} · ${
-          last.runTwice
+          ranTwice
             ? t('ran it twice')
             : top
               ? tScore(top.score)
@@ -67,17 +72,31 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
         )}
       </button>
       {open && (
-        <div className="space-y-2.5 px-4 pb-3.5">
+        <div className="space-y-2.5">
           {last.runTwice ? (
             <RitBoards rt={last.runTwice} nameOf={nameOf} light={light} />
           ) : (
-            last.board.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                {last.board.map((c) => (
-                  <PlayingCard key={c} card={c} size="xs" />
-                ))}
-              </div>
-            )
+            <>
+              {last.board.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  {last.board.map((c) => (
+                    <PlayingCard key={c} card={c} size="xs" />
+                  ))}
+                </div>
+              )}
+              {/* a multi-run hand froze its second board in `board2` - recap
+                  it under its own small label (docs/p2-gameplay-design.md B4) */}
+              {last.board2.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-11 shrink-0 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
+                    {t('Run {n}', { n: 2 })}
+                  </span>
+                  {last.board2.map((c) => (
+                    <PlayingCard key={`r2-${c}`} card={c} size="xs" />
+                  ))}
+                </div>
+              )}
+            </>
           )}
           <ShowdownCards
             reveals={last.reveals}

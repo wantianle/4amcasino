@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { Crown, Coins, MicrophoneSlash, Play, X } from '@phosphor-icons/react';
+import { Crown, Coins, MicrophoneSlash, Play, Timer, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
@@ -546,6 +546,21 @@ export function RoundTable({
                       <StackValue stack={p.stack} won={p.won} />
                       <span className="opacity-60"> · {bbCount} BB</span>
                     </div>
+                    {/* P2 B2: this seat's thinking-time bank, on the pod that
+                        holds it - glanceable while they chew on the hand */}
+                    {handLive && p.inHand && !p.folded && p.bankMs !== undefined && p.bankMs > 0 && (
+                      <div
+                        title={t('time bank remaining')}
+                        className={cn(
+                          'flex items-center gap-1 rounded-full bg-amber-400/20 px-1.5 font-display font-bold text-amber-600 dark:text-amber-300',
+                          narrow ? 'text-[0.8rem]' : 'text-[0.6rem]',
+                          feltText,
+                        )}
+                      >
+                        <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />
+                        {Math.ceil(p.bankMs / 1000)}s
+                      </div>
+                    )}
                     {/* 牌型 at the bottom of the pod */}
                     {strength && (
                       <div

@@ -124,6 +124,7 @@ export function TableDock({
   chatBody,
   balance,
   shortcut,
+  hostGameplay,
 }: {
   /** Narrow viewport: labels drop out, icons carry the meaning (A1). */
   compact: boolean;
@@ -148,6 +149,10 @@ export function TableDock({
   balance?: ReactNode;
   /** Feedback #3: 「快捷键」 as its own standalone button, bottom-left. */
   shortcut?: ReactNode;
+  /** P2 Lane F: the host's between-hand gameplay controls (arm the squid game
+   *  or a bomb pot for the next hand, open the 玩法规则 editor on phones).
+   *  Rendered as a column above the balance chip; omitted for everyone else. */
+  hostGameplay?: ReactNode;
 }) {
   const rankTriggerRef = useRef<HTMLButtonElement>(null);
   const chatTriggerRef = useRef<HTMLButtonElement>(null);
@@ -212,6 +217,9 @@ export function TableDock({
       )}
 
       <div className="pointer-events-auto relative z-40 flex flex-col items-start gap-1.5">
+        {/* P2 Lane F: host-only 鱿鱼游戏/炸弹池 arming row, above everything
+            else the dock stacks */}
+        {hostGameplay}
         {/* feedback #3: balance chip + the standalone 「快捷键」 button join the
             dock column, so everything the old bottom box carried is reachable */}
         {balance}

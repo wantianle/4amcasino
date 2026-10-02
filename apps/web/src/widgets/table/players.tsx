@@ -37,6 +37,9 @@ export interface SeatView {
   /** Chips requested from the bank, still waiting for approval. */
   pendingBuy: number;
   lastAction?: PlayerAction & { auto?: boolean };
+  /** P2 B2: this seat's remaining time bank in ms. Optional and additive -
+   *  consumers that predate the feature (3D) never see it. */
+  bankMs?: number;
 }
 
 function actionChip(a: PlayerAction & { auto?: boolean }) {
@@ -93,7 +96,7 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
         p.broke && 'opacity-60 saturate-50',
       )}
     >
-      {p.isToAct && <TurnProgress />}
+      {p.isToAct && <TurnProgress seat={p.seat} />}
       <div className="relative">
         <Link
           to={`/players/${p.userId}`}
@@ -123,6 +126,11 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
           )}
         >
           <StackValue stack={p.stack} won={p.won} />
+          {p.isToAct && p.bankMs !== undefined && p.bankMs > 0 && (
+            <span className="ml-1.5 font-semibold text-amber-500" title={t('time bank remaining')}>
+              {t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
+            </span>
+          )}
         </div>
       </div>
       <div className="flex flex-col items-end gap-1">
@@ -165,7 +173,7 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
         p.folded && 'opacity-60',
       )}
     >
-      {p.isToAct && <TurnProgress className="inset-x-4 bottom-1.5" />}
+      {p.isToAct && <TurnProgress seat={p.seat} className="inset-x-4 bottom-1.5" />}
       <div className="relative">
         <Avatar userId={p.userId} name={p.displayName} version={p.avatarVersion} size="lg" speaking={p.speaking} className="bg-indigo-600 text-white" />
         <VoiceDot muted={p.voiceMuted} />
@@ -186,6 +194,11 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
           )}
         >
           <StackValue stack={p.stack} won={p.won} />
+          {p.isToAct && p.bankMs !== undefined && p.bankMs > 0 && (
+            <span className="ml-1.5 text-xs font-semibold text-amber-500" title={t('time bank remaining')}>
+              {t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
+            </span>
+          )}
         </div>
       </div>
       <div className="ml-2">

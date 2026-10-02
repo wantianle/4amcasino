@@ -159,6 +159,19 @@ const table: Record<string, string> = {
     '收起大牌（再点你座位上的牌就会回来）',
   'time remaining to act': '剩余行动时间',
 
+  // ── P2 B2 计时银行 (TurnProgress / BettingPanel ring / seat pods) ─────────
+  // Glossary: time bank → 计时银行 (docs/zh-i18n.md + p2-gameplay-design §4).
+  'time bank remaining': '计时银行剩余',
+  'Bank {n}s': '银行 {n} 秒',
+  'Base clock then time bank remaining': '常规计时加计时银行剩余',
+  'The base clock drains first, then the time bank.': '先走完常规行动计时，才开始扣计时银行。',
+  '{secs}s, then {bank}s of time bank': '还剩 {secs} 秒 · 另有计时银行 {bank} 秒',
+  'Spending your time bank': '正在花你的计时银行',
+
+  // ── P2 B3 炸弹池 (BettingPanel 前注提示) ─────────────────────────────────
+  // 状态长句，按定稿原句：不加句号。
+  'Bomb pot ante posted - straight to the flop.': '炸弹池前注已下，直接看翻牌',
+
   // ── Auto-deal dialog (features/table/AutoDealDialog.tsx) ─────────────────
   'Auto-deal': '自动发牌',
   'Waiting for two seated, online players with chips.': '还差两名已入座、在线且有筹码的玩家。',

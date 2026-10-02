@@ -1,4 +1,4 @@
-import { CardsThree, GearSix, Play, Receipt, Timer } from '@phosphor-icons/react';
+import { CardsThree, GearSix, Play, Receipt, Sliders, Timer } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
@@ -47,6 +47,7 @@ export function TableQuickControls({
   onChangeAutoDeal,
   onOpenAutoDealDialog,
   onChangeActionSecs,
+  onOpenGameplay,
 }: {
   /** Same room the ⋮ menu's record links point at - they live here now. */
   roomId: string;
@@ -63,6 +64,11 @@ export function TableQuickControls({
   onChangeAutoDeal: (value: boolean) => void;
   onOpenAutoDealDialog: () => void;
   onChangeActionSecs: (seconds: number) => void;
+  /** P2 Lane F: host-only 「玩法规则」 entry that opens the GameplaySettings
+   *  dialog (squid / time bank / bomb pot / multi-run). When the page cannot
+   *  offer it (phones fold it into the dock instead), it stays undefined and
+   *  the chip is not rendered. */
+  onOpenGameplay?: () => void;
 }) {
   return (
     <div
@@ -117,6 +123,21 @@ export function TableQuickControls({
             <option value={0}>{t('No limit')}</option>
           </select>
         </label>
+      )}
+
+      {/* P2 玩法规则: the host edits squid / time bank / bomb pot / multi-run
+          between hands - same rail as the switches you touch every hand. */}
+      {isHost && onOpenGameplay && (
+        <button
+          type="button"
+          onClick={onOpenGameplay}
+          title={t('Gameplay rules')}
+          aria-label={t('Gameplay rules')}
+          className={cn(chipClass, compact && iconOnlyClass, 'text-fuchsia-700 dark:text-fuchsia-300')}
+        >
+          <Sliders size={15} />
+          {!compact && <span>{t('Gameplay rules')}</span>}
+        </button>
       )}
 
       {/* the two records you actually check between hands: 出牌记录 and 账本 */}
