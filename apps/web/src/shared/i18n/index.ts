@@ -130,10 +130,13 @@ function translate(source: string, vars: Vars | undefined, normalize: boolean): 
 /**
  * Translate an English source string to Chinese, interpolating `{name}` tokens.
  * Falls back to the source unchanged when no translation matches.
- * In `en` mode the source is returned as-is (English = original copy).
+ * In `en` mode the source is the display copy, but `{name}` tokens are still
+ * filled from `vars` — the template is the English string, same as `tNode()`
+ * renders the source template in `en` (without this, tokens would show up
+ * literally as `{name}` in the English UI).
  */
 export function t(source: string, vars?: Vars): string {
-  if (getLocale() === 'en') return source;
+  if (getLocale() === 'en') return vars ? render(source, vars, undefined, source) : source;
   return translate(source, vars, false);
 }
 

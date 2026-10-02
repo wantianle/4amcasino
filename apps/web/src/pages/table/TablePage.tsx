@@ -49,6 +49,7 @@ import {
   answerPeek,
   bindGameClient,
   chooseRunCount,
+  imReady,
   offerPeek,
   ritVote,
   setSitOut,
@@ -182,6 +183,22 @@ function RunTwicePrompt({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * v3 feedback #7a: with auto-deal on, the server dwells between hands before
+ * the next ready check. This clock makes that wait legible, and the host's
+ * Deal hand button (same panel) beats it outright.
+ */
+function AutoDealClock({ autoDealAt }: { autoDealAt: number | null }) {
+  const now = useNow(1000);
+  if (!autoDealAt) return null;
+  const secs = Math.max(0, Math.ceil((autoDealAt - now) / 1000));
+  return (
+    <p className="text-center font-display text-[0.68rem] font-semibold tabular-nums text-indigo-600 dark:text-indigo-300">
+      {t('Next hand in {n}s', { n: secs })}
+    </p>
   );
 }
 
@@ -549,13 +566,6 @@ export function TablePage({
   const viewportW = useViewportWidth();
   const isPhone = viewportW < 768;
   const compactBar = viewportW < 1280;
-  // lightning on every showdown reveal; keyed so back-to-back hands re-flash
-  const [thunderKey, setThunderKey] = useState(0);
-  useEffect(() => {
-    const boom = () => setThunderKey((k) => k + 1);
-    window.addEventListener('4am-thunder', boom);
-    return () => window.removeEventListener('4am-thunder', boom);
-  }, []);
   const unreadChat = unreadChatCount(chat.length, chatSeenCount, chatOpen);
 
   useEffect(() => {
@@ -735,6 +745,16 @@ export function TablePage({
   }, [errors, dismissError]);
 
   const mySeat = room?.players.find((p) => p.userId === auth.userId)?.seat ?? null;
+  // v3 feedback #7a (client side): an auto-ready player who somehow was not
+  // pre-marked by the server's ready check answers it the moment it opens -
+  // nobody should ever have to click per hand when they opted into auto-ready.
+  const prefs = useStore((s) => s.prefs);
+  useEffect(() => {
+    const rc = hand.readyCheck;
+    if (!rc || !prefs.autoReady || !wsConnected || auth.userId === null) return;
+    if (!rc.eligible.includes(auth.userId) || rc.ready.includes(auth.userId)) return;
+    imReady();
+  }, [hand.readyCheck, prefs.autoReady, wsConnected, auth.userId]);
   const isHost = room?.room.hostId === auth.userId;
   const isBankerHere =
     room?.room.bankerId === auth.userId || room?.room.coBankerId === auth.userId || isHost;
@@ -1902,7 +1922,7 @@ export function TablePage({
   // that scales instead of stretching (A1/A2/A3).
   return (
     <div
-      className="table-app-bg flex h-[100dvh] min-h-[30rem] flex-col gap-2 overflow-hidden p-2 md:gap-2.5 md:p-3"
+      className="table-app-bg flex h-[calc(100dvh-60px)] min-h-[30rem] flex-col gap-2 overflow-hidden p-2 md:h-[calc(100dvh-65px)] md:gap-2.5 md:p-3"
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
     >
       {/* ── compact top bar (A11) ─────────────────────────────────────────── */}
@@ -2137,7 +2157,6 @@ export function TablePage({
         aria-label={t('Poker board')}
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] bg-slate-200/60 ring-1 ring-slate-200 dark:bg-slate-900/60 dark:ring-slate-800 md:rounded-[2rem]"
       >
-        {thunderKey > 0 && <div key={thunderKey} className="thunder-flash" aria-hidden="true" />}
         {showResult && hand.abort && (
           <div
             className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4"
@@ -2315,27 +2334,6 @@ export function TablePage({
               </div>
               {multiRunOutcome}
               {squidSummary}
-              {!handLive && !showResult && (
-                <div className="text-center">
-                  <p
-                    className={cn(
-                      'text-sm font-medium text-slate-600 drop-shadow-[0_1px_2px_rgba(255,255,255,0.75)] dark:text-slate-300 dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
-                      isPhone && 'text-xs',
-                    )}
-                  >
-                    {mySeat === null
-                      ? t('Pick a seat.')
-                      : opponents.length === 0
-                        ? t('Invite a friend to deal.')
-                        : t('Ready.')}
-                  </p>
-                  {mySeat !== null && isHost && opponents.length > 0 && (
-                    <Button className="mt-3 h-10 rounded-xl px-4" onClick={startHand}>
-                      <Play size={17} weight="fill" /> {t('Deal hand')}
-                    </Button>
-                  )}
-                </div>
-              )}
               {notInHand && (
                 <p className="rounded-xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm dark:bg-slate-800/90 dark:text-slate-300">
                   {t("You're in the next hand.")}
@@ -2357,10 +2355,30 @@ export function TablePage({
           </RoundTable>
           </div>
 
+          {/* v3 feedback #7b: the deal command post lives in the open top-right
+              corner, never on the felt (where the board rows pushed it below
+              the fold). Host sees 「准备好就发牌」 + an always-reachable 发牌
+              button - click beats the auto-deal dwell outright (7a) - plus the
+              countdown to the next ready check. */}
+          {!handLive && mySeat !== null && isHost && (
+            <div className="absolute right-2 top-2 z-30 flex w-36 flex-col items-stretch gap-1.5 rounded-2xl bg-white/92 p-2.5 text-center shadow-[0_10px_30px_rgba(15,23,42,0.12)] ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/88 dark:ring-slate-700/70 md:w-40">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                {opponents.length === 0 ? t('Invite a friend to deal.') : t('Deal when ready.')}
+              </p>
+              {opponents.length > 0 && (
+                <Button disabled={!wsConnected} className="w-full" onClick={startHand}>
+                  <Play size={16} weight="fill" /> {t('Deal hand')}
+                </Button>
+              )}
+              <AutoDealClock autoDealAt={hand.autoDealAt} />
+            </div>
+          )}
+
           {/* feedback #3: the last-hand recap floats over the top-left of the
-              felt now - the standalone bottom panel is gone */}
+              felt now - the standalone bottom panel is gone. It stops short of
+              the deal corner so the two never share a row on phones. */}
           <div className="pointer-events-none absolute inset-x-2 top-1 z-20 flex justify-start [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
-            <div className="w-[min(23rem,100%)]">
+            <div className="w-[min(23rem,calc(100%-9.5rem))]">
               <LastHandStrip roomId={roomId!} />
             </div>
           </div>
@@ -2401,7 +2419,7 @@ export function TablePage({
               mySeat={mySeat}
               isHost={!!isHost}
               urgent={urgent}
-              hideIdleStart={!showResult}
+              hideIdleStart
             />
           </fieldset>
 

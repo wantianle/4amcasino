@@ -5,7 +5,7 @@ import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts
 import { useStore } from '../../shared/store.ts';
 import { ALL_IN_RATIO } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
-import { HourglassMedium, Bomb } from '@phosphor-icons/react';
+import { HourglassMedium, Bomb, Timer } from '@phosphor-icons/react';
 import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
 import { usePokerHotkeys } from '../../features/table/usePokerHotkeys.ts';
@@ -509,7 +509,26 @@ export function BettingPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="min-w-0 break-words text-xs font-medium text-white/75">{statusMsg}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="min-w-0 break-words text-xs font-medium text-white/75">{statusMsg}</p>
+            {/* v3 feedback #5: your time-bank balance stays on screen even while
+                you are not the one facing action - the ring only runs on your
+                turn, this chip is always honest about what you have banked. */}
+            {!handIdle && mySeat !== null && hand.timeBanks[mySeat] !== undefined && (
+              <span
+                title={t('Bank {n}s', { n: Math.ceil(hand.timeBanks[mySeat]! / 1000) })}
+                className={cn(
+                  'flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-display text-[0.62rem] font-bold tabular-nums',
+                  hand.timeBanks[mySeat] === 0
+                    ? 'bg-white/10 text-white/45'
+                    : 'bg-amber-400/20 text-amber-300',
+                )}
+              >
+                <Timer size={9} weight="fill" aria-hidden="true" />
+                {Math.ceil(hand.timeBanks[mySeat]! / 1000)}s
+              </span>
+            )}
+          </div>
           {canPreAct && st && mySeat !== null && (
             <div className="flex flex-wrap items-center gap-1.5">
               <HourglassMedium size={14} className="text-white/40" aria-label={t('Ahead of turn')} />

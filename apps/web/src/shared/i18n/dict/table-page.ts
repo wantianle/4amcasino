@@ -46,6 +46,7 @@ const tablePage: Record<string, string> = {
   'Ready.': '就绪。',
   "You're in the next hand.": '下一手就有你的牌。',
   'Deal hand': '发牌',
+  'Next hand in {n}s': '{n} 秒后开下一手',
 
   // ── Peek（买看）───────────────────────────────────────────────────────
   '{name} offers {amount} to privately see the cards you just had.':

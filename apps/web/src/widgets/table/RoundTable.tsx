@@ -344,53 +344,115 @@ export function RoundTable({
             const isCoBanker = coBankerId !== null && p.userId === coBankerId;
             return (
               <div key={seat}>
-                {/* chips this player has pushed toward the pot this street: they
-                    slide in from the seat on every bet, and sweep into the pot
-                    when the street closes */}
-                <AnimatePresence>
-                  {committed > 0 && (
-                    <motion.div
-                      exit={
-                        reduce ? { opacity: 0 } : { left: '50%', top: '44%', opacity: 0, scale: 0.5 }
-                      }
-                      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                      className="absolute z-10 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1"
-                      style={{ left: `${bet.x}%`, top: `${bet.y}%` }}
-                    >
-                      <motion.div
-                        key={committed}
-                        initial={
-                          reduce
-                            ? false
-                            : {
-                                x: (x - bet.x) * 3.2,
-                                y: (y - bet.y) * 3.2,
-                                opacity: 0.4,
-                              }
-                        }
-                        animate={{ x: 0, y: 0, opacity: 1 }}
-                        transition={{ type: 'spring', stiffness: 300, damping: 26 }}
-                        className="flex items-center gap-1"
-                      >
-                        <ChipStack
-                          amount={committed}
-                          bb={bb}
-                          sb={sb}
-                          variant="bet"
-                          size={narrow ? 'lg' : 'sm'}
-                        />
-                        <span
-                          className={cn(
-                            'rounded-full bg-indigo-600/90 px-1.5 py-0.5 font-display font-bold text-white shadow-sm',
-                            narrow ? 'text-[0.85rem]' : 'text-[0.68rem]',
-                          )}
+                {/* v3 feedback #3 + chip semantics: this slot on the inner bet
+                    ellipse is the seat's money spot ON THE FELT. It carries the
+                    D/SB/BB position discs (kept all hand, even after the player
+                    folds - like a real button on the table) plus, when they've
+                    acted, the current-street chip pile + amount pill sliding in
+                    from the seat and sweeping to the pot when the street
+                    closes. */}
+                {(committed > 0 || (p.inHand && (p.isButton || p.isSB || p.isBB))) && (
+                  <div
+                    className="absolute z-20 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5"
+                    style={{ left: `${bet.x}%`, top: `${bet.y}%` }}
+                  >
+                    {p.inHand && (p.isButton || p.isSB || p.isBB) && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        {p.isButton && (
+                          <span
+                            role="img"
+                            aria-label={t('Dealer button')}
+                            title={t('Dealer button')}
+                            className={cn(
+                              'flex items-center justify-center rounded-full bg-white font-black text-slate-900 shadow-md ring-2 ring-slate-900/20 dark:ring-white/30',
+                              narrow ? 'h-6 w-6 text-[0.7rem]' : 'h-5 w-5 text-[0.6rem]',
+                            )}
+                          >
+                            D
+                          </span>
+                        )}
+                        {p.isSB && (
+                          <span
+                            role="img"
+                            aria-label={p.isButton ? t('Small blind (button)') : t('Small blind')}
+                            title={p.isButton ? t('Small blind (button)') : t('Small blind')}
+                            className={cn(
+                              'flex items-center justify-center rounded-full bg-sky-500 px-0.5 font-black text-white shadow-md ring-2 ring-sky-300/40',
+                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
+                            )}
+                          >
+                            SB
+                          </span>
+                        )}
+                        {p.isBB && (
+                          <span
+                            role="img"
+                            aria-label={t('Big blind')}
+                            title={t('Big blind')}
+                            className={cn(
+                              'flex items-center justify-center rounded-full bg-amber-500 px-0.5 font-black text-amber-950 shadow-md ring-2 ring-amber-300/40',
+                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
+                            )}
+                          >
+                            BB
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <AnimatePresence>
+                      {committed > 0 && (
+                        <motion.div
+                          key="pile"
+                          exit={
+                            reduce
+                              ? { opacity: 0 }
+                              : {
+                                  // sweep into the pot when the street closes
+                                  x: ((50 - bet.x) / 100) * canvas.w,
+                                  y: ((44 - bet.y) / 100) * canvas.h,
+                                  opacity: 0,
+                                  scale: 0.5,
+                                }
+                          }
+                          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                          className="flex items-center gap-1"
                         >
-                          {fmt(committed)}
-                        </span>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                          <motion.div
+                            key={committed}
+                            initial={
+                              reduce
+                                ? false
+                                : {
+                                    x: (x - bet.x) * 3.2,
+                                    y: (y - bet.y) * 3.2,
+                                    opacity: 0.4,
+                                  }
+                            }
+                            animate={{ x: 0, y: 0, opacity: 1 }}
+                            transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                            className="flex items-center gap-1"
+                          >
+                            <ChipStack
+                              amount={committed}
+                              bb={bb}
+                              sb={sb}
+                              variant="bet"
+                              size={narrow ? 'lg' : 'sm'}
+                            />
+                            <span
+                              className={cn(
+                                'rounded-full bg-indigo-600/90 px-1.5 py-0.5 font-display font-bold text-white shadow-sm',
+                                narrow ? 'text-[0.85rem]' : 'text-[0.68rem]',
+                              )}
+                            >
+                              {fmt(committed)}
+                            </span>
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
                 <div
                   ref={(el) => {
                     podEls.current[seat] = el;
@@ -446,28 +508,26 @@ export function RoundTable({
                         {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
                       </span>
                     )}
-                    {/* cards + avatar on ONE row; the side closer to the pot
-                        flips so cards always face the felt's center */}
-                    <div
-                      className={cn(
-                        'flex items-end gap-1.5',
-                        c < -0.2 && 'flex-row-reverse',
-                      )}
-                    >
+                    {/* v3 feedback #4: the two hole cards sit ON the avatar -
+                        compact, overlapping its top edge - yet still strictly
+                        side by side (no fan, no mutual overlap). The pt band
+                        reserves that space in the pod's flow, so the cards
+                        can never touch the status pill above them. */}
+                    <div className="relative flex items-end justify-center pt-[26px]">
                       {cardsVisible && (
-                        <HoleCards
-                          size={isMe && !narrow ? 'sm' : 'xs'}
-                          cards={isMe ? myCards : p.revealed}
-                          faceDown={!isMe && !p.revealed}
-                        />
+                        <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2">
+                          <HoleCards
+                            size="xs"
+                            cards={isMe ? myCards : p.revealed}
+                            faceDown={!isMe && !p.revealed}
+                          />
+                        </div>
                       )}
-                      {/* the turn cue wraps the avatar; position discs ride on
-                          it (never on the cards - feedback #3) */}
+                      {/* the turn cue wraps the avatar */}
                       <div
                         className={cn(
                           'relative rounded-full transition-shadow',
                           p.isToAct && (urgent ? 'turn-glow-rose' : 'turn-glow'),
-                          p.won && 'animate-winner',
                           p.isLeader && !p.isToAct && !p.won && 'ring-2 ring-amber-400/80',
                         )}
                       >
@@ -524,60 +584,9 @@ export function RoundTable({
                             <MicrophoneSlash size={9} weight="fill" />
                           </span>
                         )}
-                        {/* position, unmissable: D / SB / BB discs on the avatar
-                            (requested by notpritam, docs/FEATURES.md) */}
-                        {p.isButton && (
-                          <span
-                            role="img"
-                            aria-label={t('Dealer button')}
-                            title={t('Dealer button')}
-                            className={cn(
-                              'absolute -bottom-1.5 -right-2 flex items-center justify-center rounded-full bg-white font-black text-slate-900 shadow-md ring-2 ring-slate-900/20 dark:ring-white/30',
-                              narrow ? 'h-6 min-w-6 px-0.5 text-[0.72rem]' : 'h-5 w-5 text-[0.6rem]',
-                            )}
-                          >
-                            D
-                          </span>
-                        )}
-                        {p.isSB && !p.isButton && (
-                          <span
-                            role="img"
-                            aria-label={t('Small blind')}
-                            title={t('Small blind')}
-                            className={cn(
-                              'absolute -bottom-1.5 -right-2 flex items-center justify-center rounded-full bg-sky-500 px-0.5 font-black text-white shadow-md ring-2 ring-sky-300/40',
-                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
-                            )}
-                          >
-                            SB
-                          </span>
-                        )}
-                        {p.isBB && (
-                          <span
-                            role="img"
-                            aria-label={t('Big blind')}
-                            title={t('Big blind')}
-                            className={cn(
-                              'absolute -bottom-1.5 -right-2 flex items-center justify-center rounded-full bg-amber-500 px-0.5 font-black text-amber-950 shadow-md ring-2 ring-amber-300/40',
-                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
-                            )}
-                          >
-                            BB
-                          </span>
-                        )}
-                        {p.isSB && p.isButton && (
-                          <span
-                            role="img"
-                            aria-label={t('Small blind (button)')}
-                            title={t('Small blind (button)')}
-                            className={cn(
-                              'absolute -bottom-1.5 -left-2 flex items-center justify-center rounded-full bg-sky-500 px-0.5 font-black text-sky-950 shadow-md ring-2 ring-sky-300/40',
-                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
-                            )}
-                          >
-                            SB
-                          </span>
-                        )}
+                        {/* v3 feedback #3: D / SB / BB no longer ride the
+                            avatar - they live on the felt at the seat's bet
+                            slot (see the marker row above). */}
                       </div>
                     </div>
                     {/* feedback v2 #3: name + stack (+ 牌型 / state) live on a
@@ -650,14 +659,22 @@ export function RoundTable({
                         </div>
                       )}
                     </div>
-                    {/* P2 B2: this seat's thinking-time bank, on the pod that
-                        holds it - glanceable while they chew on the hand */}
-                    {handLive && p.inHand && !p.folded && p.bankMs !== undefined && p.bankMs > 0 && (
+                    {/* P2 B2 + v3 feedback #5: a NUMERIC time-bank readout on
+                        every seat that has a bank (0s included - you can lose
+                        it all). The acting seat gets the loud amber chip, the
+                        others a quiet outline; the countdown bar on the pod is
+                        the drain, this badge is the balance. */}
+                    {handLive && p.inHand && !p.folded && p.bankMs !== undefined && (
                       <div
-                        title={t('time bank remaining')}
+                        title={t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
                         className={cn(
-                          'flex items-center gap-1 rounded-full bg-amber-400/90 px-1.5 font-display font-bold text-amber-950 shadow-sm',
+                          'flex items-center gap-1 rounded-full px-1.5 font-display font-bold tabular-nums shadow-sm',
                           narrow ? 'text-[0.75rem]' : 'text-[0.6rem]',
+                          p.isToAct
+                            ? 'bg-amber-400/95 text-amber-950 ring-2 ring-amber-300/80'
+                            : p.bankMs === 0
+                              ? 'bg-slate-500/15 text-slate-500 dark:text-slate-400'
+                              : 'bg-white/80 text-amber-700 ring-1 ring-amber-300/60 dark:bg-slate-800/80 dark:text-amber-300',
                         )}
                       >
                         <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />

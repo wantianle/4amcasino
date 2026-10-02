@@ -91,7 +91,6 @@ export function PlayerRow({ p, urgent }: { p: SeatView; urgent: boolean }) {
         p.isToAct && 'turn-stripes bg-indigo-50/80 ring-2 ring-indigo-500 shadow-md dark:bg-indigo-950/40',
         p.isToAct && urgent && 'turn-stripes-rose bg-rose-50/80 ring-rose-500 animate-urgent dark:bg-rose-950/40',
         p.isLeader && !p.isToAct && 'ring-2 ring-amber-400/70',
-        p.won && 'animate-winner',
         (p.folded || !p.connected) && 'opacity-50',
         p.broke && 'opacity-60 saturate-50',
       )}
@@ -169,7 +168,6 @@ export function YouRow({ p, cards, urgent }: { p: SeatView; cards: CardId[]; urg
         p.isToAct && 'turn-stripes bg-indigo-50/80 ring-2 ring-indigo-500 shadow-lg dark:bg-indigo-950/40',
         p.isToAct && urgent && 'turn-stripes-rose bg-rose-50/80 ring-rose-500 animate-urgent dark:bg-rose-950/40',
         p.isLeader && !p.isToAct && 'ring-2 ring-amber-400/70',
-        p.won && 'animate-winner',
         p.folded && 'opacity-60',
       )}
     >

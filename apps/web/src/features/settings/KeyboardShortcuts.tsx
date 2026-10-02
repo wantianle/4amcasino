@@ -15,30 +15,31 @@ import { useStore } from '../../shared/store.ts';
 import { savePokerHotkeysLocally } from '../../shared/prefs.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { t } from '../../shared/i18n/index.ts';
+import { useLocaleStore } from '../../shared/i18n/locale.ts';
+import { shortcutDescription, shortcutLabel } from './shortcutCopy.ts';
 
-export const SHORTCUT_LABELS: Record<PokerHotkeyAction, string> = {
-  fold: t('Fold'),
-  check: t('Check'),
-  call: t('Call'),
-  raise: t('Bet / raise'),
-  halfPot: t('Half pot'),
-  pot: t('Pot'),
-  allIn: t('All-in'),
-};
-const descriptions: Record<PokerHotkeyAction, string> = {
-  fold: t('Fold immediately on your turn.'),
-  check: t('Check only when nothing is owed.'),
-  call: t('Call the amount shown on your turn.'),
-  raise: t('Edit the amount, then Enter to confirm.'),
-  halfPot: t('Select half pot, then Enter to confirm.'),
-  pot: t('Select pot size, then Enter to confirm.'),
-  allIn: t('Select your full stack, then Enter to confirm.'),
-};
 const keys = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'].filter(validPokerBinding);
 const choices = [...keys, ...keys.map((key) => `Shift+${key}`)];
 
+/** Feedback kept in state as the untranslated SOURCE template plus semantic
+ *  parts (`action` is the hotkey action, `key` the raw binding), never as a
+ *  translated snapshot — so `{action}` interpolates with the label of the
+ *  CURRENT locale at render time. */
+type Feedback = { text: string; action?: PokerHotkeyAction; key?: string };
+function feedbackText(feedback: Feedback): string {
+  return feedback.action !== undefined
+    ? t(feedback.text, { action: shortcutLabel(feedback.action), key: feedback.key ?? '' })
+    : t(feedback.text);
+}
+
 /** Shared by the settings page and the table's shortcut dialog. */
 export function KeyboardShortcuts() {
+  // Every string below is render-time t()/shortcutLabel()/shortcutDescription().
+  // Subscribing to the locale store makes the panel re-render the instant the
+  // language flips — App.tsx's keyed remount also does this today, but the
+  // panel must not silently depend on it. (Bindings in `draft` are key names
+  // only, so a re-render never touches the server-persisted shortcuts.)
+  useLocaleStore((s) => s.locale);
   const userId = useStore((s) => s.auth.userId);
   const token = useStore((s) => s.auth.token);
   const [draft, setDraft] = useState<PokerHotkeys | null>(null);
@@ -46,7 +47,7 @@ export function KeyboardShortcuts() {
   const [recording, setRecording] = useState<PokerHotkeyAction | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<Feedback | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -61,13 +62,13 @@ export function KeyboardShortcuts() {
         if (!active || useStore.getState().auth.token !== token) return;
         const settings = parsePokerHotkeys(profile.pokerHotkeys);
         if (!settings || profile.userId !== userId)
-          throw new Error(t('Could not load your keyboard shortcuts.'));
+          throw new Error('Could not load your keyboard shortcuts.');
         setDraft(settings);
         setSavedValue(JSON.stringify(settings));
         useStore.getState().setPokerHotkeys(settings, profile.userId);
       })
       .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : t('Could not load shortcuts.'));
+        if (active) setError(e instanceof Error ? e.message : 'Could not load shortcuts.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -82,7 +83,7 @@ export function KeyboardShortcuts() {
       (current) => current && { ...current, bindings: { ...current.bindings, [action]: key } },
     );
     setError('');
-    setMessage('');
+    setMessage(null);
     setRecording(null);
   }
   useEffect(() => {
@@ -97,7 +98,7 @@ export function KeyboardShortcuts() {
       if (e.repeat || e.isComposing || ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
       if (e.key === 'Escape') {
         setRecording(null);
-        setMessage(t('Recording cancelled.'));
+        setMessage({ text: 'Recording cancelled.' });
         return;
       }
       if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -118,12 +119,12 @@ export function KeyboardShortcuts() {
       });
       if (!key) {
         setError(
-          t('Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved.'),
+          'Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved.',
         );
         return;
       }
       bind(recording, key);
-      setMessage(t('{action} set to {key}. Save to apply.', { action: SHORTCUT_LABELS[recording], key }));
+      setMessage({ text: '{action} set to {key}. Save to apply.', action: recording, key });
     };
     const cancel = () => setRecording(null);
     window.addEventListener('keydown', onKey, true);
@@ -139,15 +140,15 @@ export function KeyboardShortcuts() {
     if (!draft || !userId || saving || recording || pokerHotkeysError(draft)) return;
     setSaving(true);
     setError('');
-    setMessage('');
+    setMessage(null);
     try {
       await api.updateProfile({ pokerHotkeys: draft });
       if (useStore.getState().auth.token !== token) return;
       savePokerHotkeysLocally(draft, userId);
       setSavedValue(JSON.stringify(draft));
-      setMessage(t('Keyboard shortcuts saved to your account.'));
+      setMessage({ text: 'Keyboard shortcuts saved to your account.' });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('Could not save shortcuts. Try again.'));
+      setError(e instanceof Error ? e.message : 'Could not save shortcuts. Try again.');
     } finally {
       setSaving(false);
     }
@@ -158,7 +159,7 @@ export function KeyboardShortcuts() {
     return (
       <div>
         <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
-          {error}
+          {t(error)}
         </p>
         <Button
           type="button"
@@ -180,7 +181,7 @@ export function KeyboardShortcuts() {
           disabled={saving}
           onChange={(e) => {
             setDraft({ ...draft, enabled: e.target.checked });
-            setMessage('');
+            setMessage(null);
           }}
           className="size-4 accent-indigo-600"
         />
@@ -196,14 +197,16 @@ export function KeyboardShortcuts() {
           <div key={action} className="flex flex-wrap items-center justify-between gap-3 py-3">
             <div className="min-w-0 flex-1 basis-44">
               <label htmlFor={`shortcut-${action}`} className="text-sm font-medium">
-                {SHORTCUT_LABELS[action]}
+                {shortcutLabel(action)}
               </label>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">{descriptions[action]}</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                {shortcutDescription(action)}
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 id={`shortcut-${action}`}
-                aria-label={t('Shortcut for {action}', { action: SHORTCUT_LABELS[action] })}
+                aria-label={t('Shortcut for {action}', { action: shortcutLabel(action) })}
                 value={draft.bindings[action] ?? ''}
                 disabled={saving || !!recording}
                 onChange={(e) => bind(action, e.target.value || null)}
@@ -220,12 +223,12 @@ export function KeyboardShortcuts() {
                 type="button"
                 variant="secondary"
                 disabled={saving}
-                aria-label={t('Record {action} shortcut', { action: SHORTCUT_LABELS[action] })}
+                aria-label={t('Record {action} shortcut', { action: shortcutLabel(action) })}
                 aria-pressed={recording === action}
                 onClick={() => {
                   setRecording(recording === action ? null : action);
                   setError('');
-                  setMessage('');
+                  setMessage(null);
                 }}
               >
                 <RiKeyboardLine size={18} aria-hidden />
@@ -238,18 +241,18 @@ export function KeyboardShortcuts() {
       {recording && (
         <p role="status" className="text-sm text-indigo-700 dark:text-indigo-300">
           {t('Press a key for {action}. Escape cancels; Backspace clears.', {
-            action: SHORTCUT_LABELS[recording],
+            action: shortcutLabel(recording),
           })}
         </p>
       )}
       {(error || validation) && (
         <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
-          {error || (validation ? t(validation) : '')}
+          {error ? t(error) : validation ? t(validation) : ''}
         </p>
       )}
       {message && (
         <p role="status" className="text-sm text-emerald-700 dark:text-emerald-400">
-          {message}
+          {feedbackText(message)}
         </p>
       )}
       <div className="flex flex-wrap gap-3">
@@ -266,7 +269,7 @@ export function KeyboardShortcuts() {
           onClick={() => {
             setDraft(parsePokerHotkeys(DEFAULT_POKER_HOTKEYS)!);
             setError('');
-            setMessage(t('Defaults restored. Save to apply.'));
+            setMessage({ text: 'Defaults restored. Save to apply.' });
           }}
         >
           {t('Restore defaults')}
