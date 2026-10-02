@@ -46,6 +46,71 @@ const server: Record<string, string> = {
   'cannot disable the platform account': '不能停用平台账号。',
   'platform only': '只有平台账号能做这个操作。',
 
+  // ── HTTP: P2 gameplay features (rooms.ts PATCH `features` + feature-triggers
+  // POST/DELETE; bounds strings from gameplaySettings.ts, whose ${MIN}/${MAX}
+  // interpolations are compile-time constants from @4am/shared roomRules.ts
+  // (BOMB_POT_HANDS 1–1000, BOMB_POT_DURATION 60–604800s) — literal keys,
+  // re-check if the shared bounds change. The `${feature}` in
+  // `a ${feature} trigger is already pending` is a z.enum(['squid','bomb']),
+  // so it's expanded into the two concrete strings instead of a {feature}
+  // template (that would inject an English token into Chinese prose). ───────
+  'only the host can change gameplay settings': '只有房主能改玩法设置。',
+  'Gameplay settings apply between hands.': '玩法设置在手与手之间生效。',
+  'bomb pot interval must be 1-1000 hands': '炸弹池间隔必须是 1-1000 手。',
+  'bomb pot interval must be 60-604800 seconds': '炸弹池间隔必须是 60-604800 秒。',
+  'host only': '只有房主能操作。',
+  'this table is closed': '这张桌已经关了。',
+  'squid game is not enabled for this table': '这张桌没开鱿鱼游戏。',
+  'bomb pot is not enabled for this table': '这张桌没开炸弹池。',
+  'wait for the current hand to finish': '等当前这手牌打完。',
+  'that request id was already used for a different feature':
+    '这个请求 ID 用在别的玩法触发上了。',
+  // Exact keys (not a `{n}` template) on purpose: `squid_min_players` is bound
+  // to 2-9 (roomRules.ts), and lobby.ts registers a generic `'{n} players'`
+  // template earlier in the merge order — a template key here would be
+  // shadowed and render "squid game needs at least 5 名玩家". Exact match is
+  // stage (a) of `tr()`, so these always win. If SQUID_MIN_PLAYERS_* bounds
+  // ever widen, add the missing counts here.
+  'squid game needs at least 2 players': '鱿鱼游戏至少需要 2 名玩家。',
+  'squid game needs at least 3 players': '鱿鱼游戏至少需要 3 名玩家。',
+  'squid game needs at least 4 players': '鱿鱼游戏至少需要 4 名玩家。',
+  'squid game needs at least 5 players': '鱿鱼游戏至少需要 5 名玩家。',
+  'squid game needs at least 6 players': '鱿鱼游戏至少需要 6 名玩家。',
+  'squid game needs at least 7 players': '鱿鱼游戏至少需要 7 名玩家。',
+  'squid game needs at least 8 players': '鱿鱼游戏至少需要 8 名玩家。',
+  'squid game needs at least 9 players': '鱿鱼游戏至少需要 9 名玩家。',
+  'a squid trigger is already pending': '已经有一个鱿鱼游戏触发在排队了。',
+  'a bomb trigger is already pending': '已经有一个炸弹池触发在排队了。',
+  'no such pending trigger': '没有这个待触发的玩法安排。',
+  'only manual triggers can be cancelled': '只有手动触发才能取消。',
+
+  // ── P2 brief-specified keys NOT emitted verbatim by the server at lane E ──
+  // The engine's multi-run guards reject stale/wrong-role decisions SILENTLY
+  // (game.ts onRunCountChoice/Agree just `return`), and its HTTP/WS prose reads
+  // differently (see the pairs noted per line). Kept as defensive wording per
+  // the Lane H brief: `tr()` only matches these if a server build ever sends
+  // them; meanwhile every real string above is covered. 优势方/劣势方 follow
+  // docs/p2-gameplay-design.md §0 B4.
+  // (= 'only the host can change gameplay settings' / 'host only')
+  'only the host can trigger gameplay features': '只有房主能触发玩法。',
+  // (= 'squid game is not enabled...' / 'bomb pot is not enabled...')
+  'that feature is disabled': '这个玩法没开。',
+  // (= 'wait for the current hand to finish' / 'hand already running')
+  'a hand is already running': '已经有手牌在打了。',
+  // (= 'squid game needs at least {2..9} players', the exact-key family above)
+  'not enough players for Squid Game': '人不够，开不了鱿鱼游戏。',
+  // (= 'a squid/bomb trigger is already pending')
+  'that feature is already armed': '这个玩法已经排上了。',
+  // (= 'no such pending trigger', the already-claimed cancel path)
+  'that trigger was already claimed by a hand': '这个触发已经被一手牌用掉了。',
+  // (= 'that request id was already used for a different feature'; matches the
+  // existing tournament style 'This request ID was used for a different action.')
+  'This request ID was used for a different trigger.': '这个请求 ID 用在别的触发上了。',
+  // multi-run role/stage rejections — currently silent drops server-side:
+  'only the behind player chooses the run count': '只有劣势方能选跑几次。',
+  'only the ahead player can agree': '只有优势方能同意。',
+  'that multi-run decision is no longer active': '这次多跑决策已经失效了。',
+
   // ── HTTP: chips, buys, transfers, settlement, ledger actions ────────────
   'no such ledger entry': '账本里没有这条记录。',
   'you already have buy requests waiting': '你已经有一条买入申请在排队了。',
@@ -335,6 +400,10 @@ const server: Record<string, string> = {
   'not in a betting round': '现在不在下注轮里。',
   'no share expected from you': '这一步不需要你提交共享值。',
   'illegal action': '这个操作不合法。',
+  // P2 engine (game.ts): server-side deadline backstop + multi-run run-count
+  // validation. `maxRuns` is min(3, features.multiRun.maxRuns) — template key.
+  'the action clock expired': '你的行动时间用完了。',
+  'run count must be between 1 and {n}': '跑牌次数只能是 1 到 {n}。',
   'Join this table as a member to explore the lounge.': '先以成员身份入桌，才能去酒廊逛逛。',
   'Only table members have a seat to leave.': '只有桌上的成员才有座可离。',
   'Take a break before leaving your chair.': '要先申请休息，才能离座。',
@@ -384,6 +453,8 @@ const server: Record<string, string> = {
   'void-hand': '作废',
   peek: '买看',
   'seven-deuce': '7-2 彩头',
+  // P2: one aggregated row per seat at settlement (game.ts applyHandSettlement).
+  'squid-game': '鱿鱼游戏',
 
   // ── Ledger: note phrases ────────────────────────────────────────────────
   'paid the 7-2 offsuit bounty': '付了 7-2 不同花的彩头',
@@ -395,6 +466,15 @@ const server: Record<string, string> = {
   'hand voided by the banker': '账房作废了这手牌',
   'sent to {name}': '转给 {name}',
   'from {name}': '来自 {name}',
+  // P2 squid settlement: the server writes ONE constant note per row
+  // (game.ts:3112 `squidNote: 'Squid Game penalty/payout'`); the sign of the
+  // delta decides whether a given seat paid or collected. The combined key is
+  // the only one the server actually sends today — the split pair below is the
+  // Lane H brief's requested wording, kept for display layers that resolve the
+  // note per-direction. Glossary: 罚金/赔付 per docs/p2-gameplay-design.md §4.
+  'Squid Game penalty/payout': '鱿鱼游戏罚金/赔付',
+  'Squid Game penalty': '鱿鱼游戏罚金',
+  'Squid Game payout': '鱿鱼游戏赔付',
 
   // ── Client-generated prose at the same display boundary ─────────────────
   'request failed ({status})': '请求失败（{status}）',

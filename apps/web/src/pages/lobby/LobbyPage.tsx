@@ -1,14 +1,27 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MAX_QUALIFYING_HANDS, commissionRateLabel } from '@4am/shared';
+import {
+  MAX_QUALIFYING_HANDS,
+  commissionRateLabel,
+  type RoomGameplaySettings,
+} from '@4am/shared';
 import { useCommissionSettings } from '../../shared/useCommissionSettings.ts';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Badge, Button, Dialog, Input, Panel } from '../../shared/ui/index.tsx';
+import { cn } from '../../shared/lib/cn.ts';
 import { FriendsPanel, InvitesPanel } from '../../features/friends/FriendsPanel.tsx';
 import { NetAreaChart } from '../../features/stats/charts.tsx';
 import { CopyInvite } from '../../features/share/ShareRoom.tsx';
+import {
+  GAMEPLAY_UI_DEFAULTS,
+  GameplayRulesToggle,
+  GameplaySettingsEditor,
+  cloneGameplaySettings,
+  enabledFeatureCount,
+  enabledFeatureNames,
+} from '../../features/table/GameplaySettingsDialog.tsx';
 import { fmt } from '../../shared/lib/cn.ts';
 
 interface RoomSummary {
@@ -34,6 +47,12 @@ export function LobbyPage() {
   const [minSettleHands, setMinSettleHands] = useState(0);
   const [meetLink, setMeetLink] = useState('');
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
+  // P2 gameplay rules (squid / time bank / bomb pot / multi-run), seeded from
+  // the shared defaults and sent with the room on create.
+  const [features, setFeatures] = useState<RoomGameplaySettings>(() =>
+    cloneGameplaySettings(GAMEPLAY_UI_DEFAULTS),
+  );
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [timeline, setTimeline] = useState<{ ts: number; net: number }[]>([]);
   const [myStats, setMyStats] = useState<{
     net: number;
@@ -96,6 +115,7 @@ export function LobbyPage() {
         actionSecs,
         minSettleHands,
         commission.settings.revision,
+        enabledFeatureCount(features) > 0 ? features : undefined,
       );
       const extras: Record<string, unknown> = {};
       if (meetLink.trim()) extras.meetLink = meetLink.trim();
@@ -385,6 +405,45 @@ export function LobbyPage() {
               )}
             </span>
           </label>
+
+          {/* P2 — 「玩法规则」 collapsed section */}
+          <div
+            className={cn(
+              'overflow-hidden rounded-xl ring-1 transition-colors',
+              enabledFeatureCount(features) > 0
+                ? 'bg-indigo-50/40 ring-indigo-200/80 dark:bg-indigo-950/20 dark:ring-indigo-900/60'
+                : 'bg-slate-50/60 ring-slate-200/70 dark:bg-slate-900/40 dark:ring-slate-700/70',
+            )}
+          >
+            <GameplayRulesToggle
+              open={rulesOpen}
+              onToggle={setRulesOpen}
+              count={enabledFeatureCount(features)}
+              summary={
+                enabledFeatureCount(features) > 0
+                  ? enabledFeatureNames(features).join(' · ')
+                  : t('Optional twists on top of regular poker.')
+              }
+            />
+            <div
+              className={cn(
+                'grid transition-[grid-template-rows] duration-300 ease-out',
+                rulesOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+              )}
+            >
+              <div className="min-h-0 overflow-hidden">
+                {rulesOpen && (
+                  <div className="px-3.5 pb-3.5">
+                    <GameplaySettingsEditor value={features} onChange={setFeatures} />
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                      {t('You can change these between hands from the table menu.')}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <p className="text-xs leading-relaxed text-slate-500">
             {commission.settings
