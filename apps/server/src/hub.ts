@@ -5,12 +5,24 @@ import { genIdentity } from '@4am/mental-poker';
 import type { DB } from './db.js';
 import { userForToken, touchPresence } from './auth.js';
 import { isMember, isSpectator, roomEvents } from './rooms.js';
-import { GameRoom, type GameOpts } from './game.js';
+import {
+  GameRoom,
+  AUTO_DEAL_INTERVAL_MS,
+  AUTO_DEAL_READY_CHECK_MS,
+  type GameOpts,
+} from './game.js';
 import { LIMITS } from './limits.js';
 import { agentMaySend, resolveAgentGrant } from './agentAccess.js';
 
-// 10s per attempt with 3 retries: a stalled player gets a fixed ~40s to rejoin
-const DEFAULT_OPTS: GameOpts = { cryptoTimeoutMs: 10_000, actionTimeoutMs: 45_000 };
+// 10s per attempt with 3 retries: a stalled player gets a fixed ~40s to rejoin.
+// The auto-deal cadence must be short or "auto deal" feels manual, so the hub
+// always supplies it rather than relying on the engine's fallback.
+const DEFAULT_OPTS: GameOpts = {
+  cryptoTimeoutMs: 10_000,
+  actionTimeoutMs: 45_000,
+  autoDealMs: AUTO_DEAL_INTERVAL_MS,
+  readyCheckMs: AUTO_DEAL_READY_CHECK_MS,
+};
 
 /** Same-origin only. The game socket carries a session credential, so a page on
  *  any other origin has no business opening one. */

@@ -57,9 +57,10 @@ export interface GameOpts {
   actionTimeoutMs: number;
   /** Extra chances a stalled player gets before the hand aborts (default 3). */
   cryptoRetries?: number;
-  /** Delay before an enabled automatic ready check (default 15s). */
+  /** Delay before an enabled automatic ready check (default AUTO_DEAL_INTERVAL_MS). */
   autoDealMs?: number;
-  /** How long the pre-deal ready check waits before dealing without stragglers (default 20s). */
+  /** How long the pre-deal ready check waits before dealing without stragglers
+   *  (default AUTO_DEAL_READY_CHECK_MS; it ends immediately once everyone is in). */
   readyCheckMs?: number;
   /** How long the run-it-twice vote stays open when everyone is all-in (default 15s). */
   ritVoteMs?: number;
@@ -98,6 +99,15 @@ import { activeHands } from './liveHands.js';
  *  still sitting at it. */
 const HOST_HANDOVER_MS = 60_000;
 export { activeHands };
+
+/** With auto-deal on, the next hand starts this soon after the previous one
+ *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one). */
+export const AUTO_DEAL_INTERVAL_MS = 2_500;
+/** How long the ready check waits when auto-deal is on. The check resolves the
+ *  instant every player is in, so this only bounds a straggler - it must not be
+ *  the old 20s or auto-deal would feel manual. Overridable via
+ *  `GameOpts.readyCheckMs`. */
+export const AUTO_DEAL_READY_CHECK_MS = 3_000;
 
 /** The classic house rule: 7-2 offsuit wins collect a bounty from everyone. */
 export function isSevenDeuce(cards: CardId[]): boolean {
@@ -594,7 +604,7 @@ export class GameRoom {
 
   private scheduleAutoDeal(): void {
     if (this.autoDeal || this.hand || this.readyCheck) return;
-    const delay = this.opts.autoDealMs ?? 15_000;
+    const delay = this.opts.autoDealMs ?? AUTO_DEAL_INTERVAL_MS;
     if (this.autoDealerId() === null || this.eligiblePlayers().length < 2) return;
     this.autoDealAt = Date.now() + delay;
     this.autoDeal = setTimeout(() => {
@@ -612,8 +622,9 @@ export class GameRoom {
       .sort((a, b) => a.seat! - b.seat!);
   }
 
-  /** Auto-deal never starts betting on its own: everyone gets 20 seconds to
-   *  click "I'm ready"; whoever misses the deadline sits this one out. */
+  /** Auto-deal's short consent window: everyone who is already in is counted
+   *  the moment the check opens (and the check then resolves at once), while a
+   *  straggler has only the brief window before sitting this hand out. */
   private beginReadyCheck(): void {
     if (this.hand || this.readyCheck) return;
     const eligible = this.eligiblePlayers();
@@ -621,7 +632,7 @@ export class GameRoom {
       this.broadcastRoomState();
       return;
     }
-    const ms = this.opts.readyCheckMs ?? 20_000;
+    const ms = this.opts.readyCheckMs ?? AUTO_DEAL_READY_CHECK_MS;
     const deadline = Date.now() + ms;
     // Players who asked to be dealt in automatically count as ready the moment
     // the check opens. Held server-side rather than auto-clicking in the client,
