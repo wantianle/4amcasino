@@ -60,6 +60,17 @@ export function committedChipPlacement(seat: number) {
   return { x, z, yaw: Math.atan2(x, z) };
 }
 
+/** The full-stack pile lives behind the seat's cards (committedChipPlacement
+ *  is the street bet in front). The radius stays inside the felt ellipse
+ *  (~4.65 × ~3.15) and clear of the chair at 5.65 × 4.05, so the stack reads
+ *  as "what they still have to play" at/behind the seat, never underfoot. */
+export function stackChipPlacement(seat: number) {
+  const angle = Math.PI / 2 + (seat / 9) * Math.PI * 2;
+  const x = Math.cos(angle) * 3.98,
+    z = Math.sin(angle) * 2.78;
+  return { x, z, yaw: Math.atan2(x, z) };
+}
+
 export function privateCardPlacement(seat: number) {
   const angle = Math.PI / 2 + (seat / 9) * Math.PI * 2;
   const x = Math.cos(angle) * 3.35,

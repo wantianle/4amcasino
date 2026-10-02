@@ -56,6 +56,13 @@ import { TablePage, type TablePresentation } from '../table/TablePage.tsx';
 import { TableCards } from './TableCards.tsx';
 import { publicCardsBySeat } from './publicTableCards.ts';
 import { soundsEnabled, setSoundsEnabled } from '../../shared/sounds.ts';
+import {
+  CHIP_PALETTES,
+  chipBreakdown,
+  sbFromBb,
+  type ChipColor,
+  type ChipCount,
+} from '../../shared/lib/chips.ts';
 import { parseAvatar } from './avatar.ts';
 import { buildCharacter, disposeObject, idleCharacter } from './character.ts';
 import {
@@ -63,6 +70,7 @@ import {
   boardPlacement,
   opponentCardPlacement,
   committedChipPlacement,
+  stackChipPlacement,
   privateCardPlacement,
   seatPlacement,
   dealPose,
@@ -287,46 +295,114 @@ function makeCard(id: CardId | null, w = 0.55, tilt = 0.14): THREE.Mesh {
 
 /* ── chips ──────────────────────────────────────────────────────────────── */
 
-const CHIP_COLORS = [0x312e81, 0x10b981, 0xf43f5e, 0xfbbf24]; // 100bb..1bb tiers
+/** Drawn chips per denomination before the rest of the tier rides on a ×n
+ *  badge. Columns (pot / bet piles) get five, the slim seat towers three -
+ *  a big stack should read as "a lot of these", not as a wall of cylinders. */
+const CHIP_CAP_COLUMN = 5;
+const CHIP_CAP_TOWER = 3;
 
-function chipSplit(amount: number, bb: number): number[] {
-  const unit = Math.max(1, bb);
-  const denoms = [unit * 100, unit * 25, unit * 5, unit];
-  const counts = [0, 0, 0, 0];
-  let rest = amount;
-  denoms.forEach((d, i) => {
-    counts[i] = Math.min(Math.floor(rest / d), 6);
-    rest -= counts[i]! * d;
-  });
-  if (!counts.some((c) => c > 0)) counts[3] = 1;
-  return counts;
+/** The ×n overflow badge for a capped tier: a dark glass pill ringed in the
+ *  tier's edge color, showing the tier's true chip count (digits only -
+ *  code-level text, nothing to translate). */
+function countBadgeTexture(count: number, ring: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 80;
+  const x = c.getContext('2d')!;
+  x.font = '800 44px ui-monospace, monospace';
+  x.textAlign = 'center';
+  x.textBaseline = 'middle';
+  const label = `×${count}`;
+  const w = Math.min(120, x.measureText(label).width + 26);
+  x.fillStyle = 'rgba(9,16,22,0.88)';
+  x.beginPath();
+  x.roundRect((128 - w) / 2, 16, w, 48, 16);
+  x.fill();
+  x.strokeStyle = ring;
+  x.lineWidth = 4;
+  x.stroke();
+  x.fillStyle = '#f8fafc';
+  x.fillText(label, 64, 41);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
-function buildChips(amount: number, bb: number, compact = false): THREE.Group {
+/**
+ * Dimensional, multi-denomination chip pile built from the shared model
+ * (shared/lib/chips.ts: white 1 SB · red 5 SB · green 25 SB · blue 100 SB ·
+ * purple 500 SB, sbFromBb for the unit) so the 3D felt shows the SAME
+ * denominations and colors as the 2D widgets.
+ *
+ * Column mode (pot + opponents' street bets): one column per denomination,
+ * spread sideways. Tower mode (own bet pile, full-stack piles): tiers pile
+ * into a single slim column. Each chip is a cylinder with body/light/dark
+ * faces from CHIP_PALETTES and a crown disc in the tier's edge color - the
+ * top disc of each column is what sells the denomination to the overhead
+ * camera. Chips per tier are capped; the overflow shows as a ×n badge.
+ *
+ * Geometry and materials are shared inside one pile; the per-rebuild
+ * disposeObject sweep cleans them up (its Set makes the shared ones safe).
+ */
+function buildChips(amount: number, bb: number, tower = false): THREE.Group {
   const g = new THREE.Group();
-  const counts = chipSplit(amount, bb);
-  let col = 0;
+  const tiers = chipBreakdown(amount, sbFromBb(bb));
+  if (!tiers.length) return g;
+  const cap = tower ? CHIP_CAP_TOWER : CHIP_CAP_COLUMN;
+  const body = new THREE.CylinderGeometry(0.13, 0.13, 0.046, 22);
+  const crownGeo = new THREE.CircleGeometry(0.088, 18);
+  const bodyMats = new Map<ChipColor, THREE.Material[]>();
+  const crownMats = new Map<ChipColor, THREE.MeshStandardMaterial>();
+  const bodyOf = (color: ChipColor) => {
+    let m = bodyMats.get(color);
+    if (!m) {
+      const p = CHIP_PALETTES[color];
+      m = [
+        new THREE.MeshStandardMaterial({ color: p.base, roughness: 0.4, metalness: 0.16 }),
+        new THREE.MeshStandardMaterial({ color: p.light, roughness: 0.28, metalness: 0.08 }),
+        new THREE.MeshStandardMaterial({ color: p.dark, roughness: 0.52, metalness: 0.08 }),
+      ];
+      bodyMats.set(color, m);
+    }
+    return m;
+  };
+  const crownOf = (color: ChipColor) => {
+    let m = crownMats.get(color);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ color: CHIP_PALETTES[color].edge, roughness: 0.34 });
+      crownMats.set(color, m);
+    }
+    return m;
+  };
   let level = 0;
-  counts.forEach((count, tier) => {
-    if (count === 0) return;
-    for (let i = 0; i < count; i++) {
-      const chip = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.13, 0.13, 0.045, 20),
-        new THREE.MeshStandardMaterial({
-          color: CHIP_COLORS[tier],
-          roughness: 0.35,
-          metalness: 0.2,
-        }),
-      );
-      chip.position.set(compact ? 0 : col * 0.3, 0.03 + (compact ? level++ : i) * 0.05, 0);
+  tiers.forEach((tier: ChipCount, index: number) => {
+    const shown = Math.min(tier.count, cap);
+    const x = tower ? 0 : (index - (tiers.length - 1) / 2) * 0.34;
+    const y0 = 0.028 + (tower ? level : 0) * 0.05;
+    for (let i = 0; i < shown; i++) {
+      const chip = new THREE.Mesh(body, bodyOf(tier.color));
+      chip.position.set(x, y0 + i * 0.05, 0);
       g.add(chip);
     }
-    col++;
+    const crown = new THREE.Mesh(crownGeo, crownOf(tier.color));
+    crown.rotation.x = -Math.PI / 2;
+    crown.position.set(x, y0 + (shown - 1) * 0.05 + 0.024, 0);
+    g.add(crown);
+    if (tier.count > cap) {
+      const badge = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: countBadgeTexture(tier.count, CHIP_PALETTES[tier.color].edge),
+          transparent: true,
+          depthTest: false,
+        }),
+      );
+      badge.renderOrder = 991;
+      badge.scale.set(0.5, 0.31, 1);
+      badge.position.set(tower ? x + 0.34 : x, y0 + shown * 0.05 + (tower ? -0.03 : 0.17), 0);
+      g.add(badge);
+    }
+    level += shown;
   });
-  if (!compact)
-    g.children.forEach((chip) => {
-      chip.position.x -= ((col - 1) * 0.3) / 2;
-    });
   return g;
 }
 
@@ -1543,7 +1619,9 @@ function Table3DView({ table }: { table: TablePresentation }) {
           });
         }
 
-        // this street's chips slide toward the middle
+        // this street's bet: a chip pile in front of the seat, pushed toward
+        // the pot. On showdown the payout flight lands exactly here, so the
+        // placement helper stays the animation anchor.
         const committed = engine?.committed ?? 0;
         if (committed > 0) {
           const chips = buildChips(committed, r.room.bb, p.userId === myId);
@@ -1558,6 +1636,19 @@ function Table3DView({ table }: { table: TablePresentation }) {
             chips.position.z *= 0.84;
           }
           dynamic.add(chips);
+        }
+
+        // The FULL stack rides behind the seat's cards - what they still have
+        // to play. The engine's stack is authoritative inside a hand (it
+        // already excludes blind/bet commitments); between hands it is the
+        // player's tabled chips.
+        const stack = engine?.stack ?? p.stack;
+        if (p.seat !== null && !p.sittingOut && stack > 0) {
+          const pile = buildChips(stack, r.room.bb, true);
+          const place = stackChipPlacement(p.seat);
+          pile.position.set(place.x, 1.03, place.z);
+          pile.rotation.y = place.yaw;
+          dynamic.add(pile);
         }
 
         // Opponents' cards rest at their place on the felt. Only publicly revealed
