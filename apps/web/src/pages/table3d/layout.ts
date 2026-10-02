@@ -37,8 +37,12 @@ export function buildChair() {
   return chair;
 }
 
-export function boardPlacement(index: number, second: boolean, doubleRunout: boolean) {
-  return { x: (index - 2) * 0.72, z: doubleRunout ? (second ? -0.57 : 0.57) : 0 };
+/** Felt board rows, B4 multi-run (docs/p2-gameplay-design.md §2.7): run 1 sits
+ *  flat and full-size; runs 2/3 stack behind it as compact extra rows. With a
+ *  single run the row centers on the felt exactly like before. */
+export function boardPlacement(index: number, row: number, runs: number) {
+  if (row === 0) return { x: (index - 2) * 0.72, z: runs > 1 ? 0.57 : 0, width: 0.62 };
+  return { x: (index - 2) * 0.53, z: 0.57 - row * 1.02, width: 0.46 };
 }
 
 /** Card places belong to the felt, independently of chair/character clearance. */

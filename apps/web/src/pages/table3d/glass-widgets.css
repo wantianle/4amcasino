@@ -518,6 +518,36 @@
   background: rgb(16 28 36 / 94%);
   color: var(--lounge-text);
 }
+/* Lane G: the 2D-owned gameplay node is a stack of badges, notices and
+   outcome chips - each carries its own pill styling. Give it the prompt
+   column's place at the top of the HUD without the dark panel behind it. */
+.lounge-game-prompt .lounge-gameplay {
+  padding: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.lounge-game-prompt .lounge-gameplay > * {
+  max-width: 100%;
+}
+/* B2: the acting player's time bank rides beside the turn clock. */
+.turn-status .bank-chip {
+  flex: none;
+  border: 1px solid #574966;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--lounge-text);
+  white-space: nowrap;
+}
+.turn-status.your-turn .bank-chip {
+  border-color: #2f6b57;
+  color: #a7f3d0;
+}
 
 /* A side widget must leave the same action clearance as the hand recap. */
 .table3d-lounge .lounge-panel {

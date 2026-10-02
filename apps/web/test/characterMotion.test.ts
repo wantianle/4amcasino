@@ -247,15 +247,18 @@ describe('layout and overhead clearance', () => {
       expect(facing.dot(p.position.clone().normalize())).toBeCloseTo(-1);
     }
   });
-  it('has no scenery between an overhead camera and any card in either board', () => {
+  it('has no scenery between an overhead camera and any card in the run rows', () => {
     const lounge = buildLounge();
     lounge.updateMatrixWorld(true);
-    for (const second of [false, true])
+    // B4 felt layout: run 1 flat and full-size, runs 2/3 compact rows behind.
+    // Every card footprint - corners as well as centers - must stay clear of
+    // scenery, and consecutive rows must not overlap vertically.
+    for (const row of [0, 1, 2])
       for (let i = 0; i < 5; i++) {
-        const { x, z } = boardPlacement(i, second, true);
-        // Corners as well as centers must stay clear.
-        for (const dx of [-0.31, 0, 0.31])
-          for (const dz of [-0.431, 0, 0.431]) {
+        const { x, z, width } = boardPlacement(i, row, 3);
+        const half = width / 2;
+        for (const dx of [-half, 0, half])
+          for (const dz of [-half * 1.39, 0, half * 1.39]) {
             const ray = new THREE.Raycaster(
               new THREE.Vector3(x + dx, 15, z + dz),
               new THREE.Vector3(0, -1, 0),
@@ -265,9 +268,11 @@ describe('layout and overhead clearance', () => {
             expect(ray.intersectObject(lounge, true)).toHaveLength(0);
           }
       }
-    const row1 = boardPlacement(0, false, true),
-      row2 = boardPlacement(0, true, true);
+    const row1 = boardPlacement(0, 0, 3),
+      row2 = boardPlacement(0, 1, 3),
+      row3 = boardPlacement(0, 2, 3);
     expect(row1.z - row2.z).toBeGreaterThan(0.62 * 1.39);
+    expect(row2.z - row3.z).toBeGreaterThan(0.46 * 1.39);
     disposeObject(lounge);
   });
 });

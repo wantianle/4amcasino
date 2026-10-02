@@ -1197,9 +1197,10 @@
   background: #241c30;
 }
 .run-label {
-  width: 10px;
+  flex: none;
   color: var(--lounge-accent);
   font-size: 10px;
+  white-space: nowrap;
 }
 .lounge-card-rail .private-hand {
   display: flex;

@@ -17,7 +17,14 @@ export function TableCards({
   const myId = useStore((s) => s.auth.userId);
   const mySeat = room?.players.find((p) => p.userId === myId)?.seat ?? null;
   const publicCards = publicCardsBySeat(hand);
-  const boardRows = hand.board2.length ? [hand.board, hand.board2] : [hand.board];
+  // B4: every run in the canonical hand.boards gets a row. Extra runs show as
+  // soon as the negotiation says they are coming (offer/agreed result), so the
+  // rail never hides a board the felt is about to deal. Run 1 keeps its flat
+  // full row; the extras are labelled 第 N 跑 only when there is more than one.
+  const runRows = hand.boards.length > 0 ? hand.boards : [hand.board];
+  const pendingExtra = !!hand.multiRunOffer || (hand.multiRunResult?.runs ?? 0) > 1;
+  const boardRows = runRows.filter((run, row) => row === 0 || run.length > 0 || pendingExtra);
+  const multiRun = boardRows.length > 1;
   return (
     <section
       id="lounge-card-widget"
@@ -26,12 +33,10 @@ export function TableCards({
     >
       <div className="lounge-card-line">
         <div className="community-cards" aria-label={t('Community cards')}>
-          <span className="card-rail-label">
-            {t(hand.board2.length ? 'Two runouts' : 'Community cards')}
-          </span>
+          <span className="card-rail-label">{t(multiRun ? 'Run boards' : 'Community cards')}</span>
           {boardRows.map((board, row) => (
             <div className="community-run" key={row} aria-label={t('Run {n}', { n: row + 1 })}>
-              {hand.board2.length > 0 && <span className="run-label">{row + 1}</span>}
+              {multiRun && <span className="run-label">{t('Run {n}', { n: row + 1 })}</span>}
               {Array.from({ length: 5 }, (_, index) =>
                 board[index] === undefined ? (
                   <span

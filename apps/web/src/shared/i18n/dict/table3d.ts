@@ -11,6 +11,8 @@
 // / '{n}s' / 'Open chat' / 'More table controls' / 'Table controls' /
 // 'Leave table' / 'player' / 'Run {n}' / 'Run 1' / 'Run 2' /
 // 'Empty community card {n}' / 'Hand result' (dict/table-page.ts),
+// 'Bank {n}s' / 'Base clock then time bank remaining' /
+// 'The base clock drains first, then the time bank.' (dict/table.ts),
 // 'Community cards' / 'Your cards' / 'Texas Hold’em' (landing), 'You' /
 // 'Sitting out' (table), 'All-in' / 'None' / 'Saving…' (settings),
 // 'Small blind' / 'Big blind' (lobby), 'Your turn' (tournaments).
@@ -196,7 +198,10 @@ const table3d: Record<string, string> = {
   Players: '玩家',
   'Private card offer — respond': '有人出价买看你的底牌，快回应',
   'Private card peeks': '买看请求',
-  'Two runouts': '两跑牌面',
+  // P2 Lane G: 2D 契约节点（feature 徽章 / 炸弹池通知 / 多跑结果 / 鱿鱼结算）
+  // 在 3D HUD 的挂载区；节点内文字由 dict/table-page.ts 负责，不重复declare。
+  'Gameplay status': '玩法提示',
+  'Run boards': '多跑牌面',
   'Enlarge your cards': '放大你的底牌',
   'Shown to everyone': '已公开亮牌',
   'Publicly shown cards': '公开亮出的牌',

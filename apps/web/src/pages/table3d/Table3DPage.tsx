@@ -449,8 +449,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
   const hudHidden = controlsHidden && !needsResponse && !sceneError;
   const hasCards =
     hand.myCards.length > 0 ||
-    hand.board.length > 0 ||
-    hand.board2.length > 0 ||
+    hand.boards.some((run) => run.length > 0) ||
     Object.keys(publicCardsBySeat(hand)).length > 0 ||
     !!hand.result ||
     !!hand.abort;
@@ -1590,30 +1589,27 @@ function Table3DView({ table }: { table: TablePresentation }) {
         }
       drawLiveTV();
 
-      /* board and my cards */
-      h.board.forEach((cardId, i) => {
-        const cardMesh = makeCard(cardId, 0.62, 0);
-        cardMesh.name = `community-card-1-${i}`;
-        const placement = boardPlacement(i, false, h.board2.length > 0);
-        cardMesh.position.x = placement.x;
-        cardMesh.position.z = placement.z;
-        dynamic.add(cardMesh);
-        // the flop cascades left to right; turn and river flip on arrival
-        spawnCard(
-          cardMesh,
-          h.handId ? `${h.handId}:b:${i}` : '',
-          h.board.length === 3 ? i * 150 : 0,
-        );
-      });
-      // run it twice: the second board sits one row behind the first
-      h.board2.forEach((cardId, i) => {
-        const cardMesh = makeCard(cardId, 0.62, 0);
-        cardMesh.name = `community-card-2-${i}`;
-        const placement = boardPlacement(i, true, true);
-        cardMesh.position.x = placement.x;
-        cardMesh.position.z = placement.z;
-        dynamic.add(cardMesh);
-        spawnCard(cardMesh, h.handId ? `${h.handId}:b2:${i}` : '', 0);
+      /* B4 boards: every run in the canonical hand.boards is on the felt - run
+       * 1 flat and full-size, runs 2/3 as compact rows behind it. The deprecated
+       * board/board2 adapters only serve as a fallback for pre-P2 state shapes;
+       * the felt group rebuilds on any hand patch, so no scene work is needed
+       * beyond iterating here. */
+      const runRows = h.boards.length > 0 ? h.boards : [h.board];
+      runRows.forEach((board, row) => {
+        board.forEach((cardId, i) => {
+          const placement = boardPlacement(i, row, runRows.length);
+          const cardMesh = makeCard(cardId, placement.width, 0);
+          cardMesh.name = `community-card-${row + 1}-${i}`;
+          cardMesh.position.x = placement.x;
+          cardMesh.position.z = placement.z;
+          dynamic.add(cardMesh);
+          // the flop cascades left to right; turn and river flip on arrival
+          spawnCard(
+            cardMesh,
+            h.handId ? `${h.handId}:b${row}:${i}` : '',
+            board.length === 3 ? i * 150 : 0,
+          );
+        });
       });
       const mySeatNow = r.players.find((p) => p.userId === myId)?.seat ?? null;
       if (mySeatNow !== null && h.myCards.length > 0 && h.handId) {
@@ -2033,6 +2029,24 @@ function Table3DView({ table }: { table: TablePresentation }) {
             ? (table.status ?? t('{name} is thinking', { name: actingName ?? t('Table') }))
             : t('Waiting for the next hand');
   const seconds = hand.deadline ? Math.max(0, Math.ceil((hand.deadline - now) / 1000)) : null;
+  // B2: the acting player's bank balance beside the turn clock. The segmented
+  // base-clock-then-bank ring is already drawn by the shared ActionBar /
+  // BettingPanel; the HUD only adds the plain number for the lounge chrome.
+  const actorSeat = handActive ? (hand.betting?.toAct ?? null) : null;
+  const actorBankMs = actorSeat === null ? undefined : hand.timeBanks[actorSeat];
+  // P2 Lane G: the 2D-owned gameplay node (squid/bomb badges, the bomb-pot
+  // flop notice, the multi-run outcome, the squid settlement summary) lives in
+  // the lounge HUD, never forced into the Three.js felt. The node itself is
+  // always a fragment, so mount the prompt column only when at least one of
+  // its overlays would actually render (mirrors the 2D gating conditions).
+  const gameplayVisible =
+    ((!!hand.featureStarted?.squid?.enabled || !!hand.featureStarted?.bombPot?.enabled) &&
+      hand.handId !== null) ||
+    (handActive &&
+      hand.multiRunResult !== null &&
+      hand.multiRunResult.reason !== 'ineligible' &&
+      hand.multiRunResult.reason !== 'disabled') ||
+    (hand.squidResult !== null && hand.result !== null && !hand.abort);
   const closeStudio = () => {
     setCustomizeOpen(false);
     characterButton.current?.focus();
@@ -2370,9 +2384,14 @@ function Table3DView({ table }: { table: TablePresentation }) {
             </Link>
           </div>
         )}
-        {(table.runTwice || (table.seatPicker && (!away || chooseSeat))) && (
+        {(gameplayVisible || table.runTwice || (table.seatPicker && (!away || chooseSeat))) && (
           <div className="lounge-game-prompt">
             <fieldset disabled={!connected}>
+              {gameplayVisible && (
+                <div className="lounge-gameplay" role="status" aria-label={t('Gameplay status')}>
+                  {table.gameplay}
+                </div>
+              )}
               {table.runTwice}
               {(!away || chooseSeat) && table.seatPicker}
             </fieldset>
@@ -2453,7 +2472,7 @@ function Table3DView({ table }: { table: TablePresentation }) {
                   <strong>{fmt(player.stack)}</strong>
                 </div>
                 <div className="player-detail-row">
-                  <span>
+                  <span title={t('The base clock drains first, then the time bank.')}>
                     {[
                       player.isButton && t('Dealer'),
                       player.isSB && t('Small blind'),
@@ -2462,6 +2481,12 @@ function Table3DView({ table }: { table: TablePresentation }) {
                       player.voiceMuted && t('Muted'),
                       player.pendingBuy > 0 && t('{n} pending', { n: player.pendingBuy }),
                       hand.readyCheck?.ready.includes(player.userId) && t('Ready'),
+                      // B2: this seat's bank whenever the room tracks one
+                      hand.timeBanks[player.seat] !== undefined &&
+                        !player.sittingOut &&
+                        t('Bank {n}s', {
+                          n: Math.max(0, Math.ceil((hand.timeBanks[player.seat] ?? 0) / 1000)),
+                        }),
                     ]
                       .filter(Boolean)
                       .join(' · ')}
@@ -2729,6 +2754,11 @@ function Table3DView({ table }: { table: TablePresentation }) {
             <i className="status-indicator" />
             <span>{status}</span>
             {handActive && seconds !== null && <strong>{t('{n}s', { n: seconds })}</strong>}
+            {actorBankMs !== undefined && (
+              <span className="bank-chip" title={t('Base clock then time bank remaining')}>
+                {t('Bank {n}s', { n: Math.max(0, Math.ceil(actorBankMs / 1000)) })}
+              </span>
+            )}
           </div>
           <div className="lounge-tools lounge-glass">
             <button
