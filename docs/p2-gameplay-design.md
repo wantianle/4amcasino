@@ -24,7 +24,7 @@
 6. **B4 决策**：权益→判优势/劣势；>2 未弃牌 / 无余牌 / 权益相等 → 1 次不发提示。发 `multi_run_offer`（stage=behind-chooses）；劣势方 `run_count_choice`（1/2/3）；选 1 立即定；选 2/3 → 新 deadline、stage=ahead-agrees；优势方 `run_count_agree`；拒绝/超时 → 1。全部带 `decisionId`，拒收过期/越权/无效/重复；`resendPending()` 要重发当前 stage。
    - **线值口径**：`packages/shared/src/wsProtocol.ts` 的 `MultiRunStage = 'choice' | 'agreement'`，即契约的 `behind-chooses` / `ahead-agrees`；引擎、shared、本文档以此为准。若要将概念名搬到线上，必须同时改 shared 的 `MultiRunStage` 与 `apps/web/.../store.ts` 的 stage 判断（本次不改 web）。
    - **权益等待态**：worker 计算期间是显式 `equityPending` 状态，不进入可见决策阶段；权益就绪后才广播 offer，因此该窗口内重连的客户端仍会收到 offer（`resendPending()` 在 `multirun` 阶段重发当前 offer）。
-   - **权益失败**：worker 超时/失败 → `multi_run_result.reason = 'equity_failed'`（不再并入 `ineligible`）。共享类型改动：`MultiRunReason` 需加 `'equity_failed'`（引擎已按扩展值广播，web 对未知 reason 被动处理）。
+    - **权益失败**：worker 超时/失败 → `multi_run_result.reason = 'equity_failed'`（不再并入 `ineligible`）。共享类型已改：`MultiRunReason` 含 `'equity_failed'`（引擎按该值广播，web 对未知 reason 被动处理）。
    - **跑数校验**：引擎侧校验 `count ∈ [1, min(3, multiRun.maxRuns)]`，非法值在改 stage 前拒绝（transcript 记 `run_count_rejected`），不信任线值。
 7. **通用多跑**：`runMaps`（run 2..N 的 boardIndex→deckIndex），`boardForRun(run)`，按 run 顺序开牌（先补齐 run1 再 run2/run3）；已有公共牌各跑共享；`index<52` 断言，越界回退 1 次。结算按 `base=floor(pot/runs)`、余数给靠前的跑；每跑用该跑底池切片调 `awardPots()`，合并 per-seat awards。
 8. **B1 结算**：`Hand.settle()`（约 2021-2120）算赢家集合（弃牌赢=该座；单跑=最高分并列；多跑=各跑最高集合的交集，空=无领赏）；`requestedPerLoser = n×bb×(participantCount-1)`；按可用筹码封顶 + 平摊到其他参赛者；聚合 per-seat squid net；写 `squid_result`。
@@ -33,7 +33,7 @@
    - **守恒断言**：应用 delta 后重读行，任一 `finalStack < 0` 或 `sum(finalStacks) + rake ≠ sum(before)` 即抛错，整个事务（含标记）回滚，绝不半落。squid 侧另有净额为零、单笔 `paid ≤ requestedPerLoser` 的断言。
    - **行动先校验后记账**：`onAction()` 先 `applyAction`，成功才 `appendPlayer('action', ...)`；非法/越权/重复/过期动作只记服务端 `action_rejected` 审计条目，绝不出现在正常 `action` 记录里。
    - **服务端 deadline 兜底**：`Date.now() >= lastDeadline` 时 `onAction()` 直接拒收——到期后唯一成功的转换是超时自动弃牌。
-   - **squid 结果权威字段**：`squid_result` 额外带 `netBySeat:[{seat,net}]`（多输家时同一座位既付又收，消费方不得假设只有 `winners` 收钱）。共享类型改动：`squid_result` 需加 `netBySeat`。
+    - **squid 结果权威字段**：`squid_result` 额外带 `netBySeat:[{seat,net}]`（多输家时同一座位既付又收，消费方不得假设只有 `winners` 收钱）。共享类型已改：`squid_result` 含 `netBySeat`（可选字段，引擎始终发送）。
    - **炸弹池 transcript**：不再记 `betting_start {street:'preflop'}`；只记 `bomb_pot_start`，下一手直接是 `flop`。客户端不会看到任何合法翻牌前行动。
    - **多跑索引上界**：单桌 ≤9 人时 `2n+15 ≤ 33 < 52`，`index<52` 回退是防御性死代码，不会被触发。
 10. **中止**：claimed 手动触发复位 `pending`；本手不落任何筹码/账本/银行。

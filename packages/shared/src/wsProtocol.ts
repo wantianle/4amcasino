@@ -405,6 +405,9 @@ export type ServerMsg =
       transfers: SquidTransfer[];
       requestedPerLoser: number;
       paidBySeat: SquidPayment[];
+      /** Authoritative per-seat net for the hand. Always emitted by the engine;
+       *  optional slot so older clients/tests that don't read it keep building. */
+      netBySeat?: SquidNet[];
       noClaimant: boolean;
     }
   | {
@@ -453,8 +456,15 @@ export type { BettingState, PlayerAction, Street };
 /** Multi-run negotiation stage: ahead player chooses, behind player agrees. */
 export type MultiRunStage = 'choice' | 'agreement';
 
-/** Why a multi-run decision resolved the way it did. */
-export type MultiRunReason = 'agreed' | 'declined' | 'timeout' | 'ineligible' | 'disabled';
+/** Why a multi-run decision resolved the way it did. `equity_failed` means the
+ *  server could not compute equities in time, so the hand falls back to 1 run. */
+export type MultiRunReason =
+  | 'agreed'
+  | 'declined'
+  | 'timeout'
+  | 'ineligible'
+  | 'disabled'
+  | 'equity_failed';
 
 /** A player's pot equity expressed in basis points (10_000 = 100%). */
 export interface MultiRunEquity {
@@ -473,6 +483,14 @@ export interface SquidTransfer {
 export interface SquidPayment {
   seat: number;
   amount: number;
+}
+
+/** Authoritative per-seat squid outcome (positive = received, negative = paid).
+ *  With multiple losers a seat can both pay and receive, so this - not
+ *  `winners` - is the source of truth for chip movement. */
+export interface SquidNet {
+  seat: number;
+  net: number;
 }
 
 /** Per-seat time bank snapshot. */
