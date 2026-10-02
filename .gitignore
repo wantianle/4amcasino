@@ -13,3 +13,6 @@ arena-results.json
 
 # Temporary visual-review captures; curated evidence lives in docs/qa.
 .impeccable/review/
+
+# Runtime logs (server.out.log, build.log, ...)
+*.log
