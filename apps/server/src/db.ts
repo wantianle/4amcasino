@@ -345,6 +345,20 @@ function migrate(db: DB): void {
   ensureColumn(db, 'room_players', 'time_bank_hands', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'room_players', 'time_bank_epoch', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`
+    -- Durable finalization marker. The engine inserts this row in the SAME
+    -- transaction as every stack/ledger/trigger/transcript/anchor mutation, so
+    -- a duplicate or replayed finalize sees the marker and applies nothing.
+    -- Its presence is also the authoritative "this hand fully settled" signal
+    -- used by startup recovery instead of transcript existence.
+    CREATE TABLE IF NOT EXISTS hand_settlements (
+      hand_id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      head TEXT NOT NULL,
+      rake INTEGER NOT NULL DEFAULT 0,
+      final_stacks TEXT NOT NULL DEFAULT '[]',
+      applied_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hand_settlements_room ON hand_settlements(room_id);
     -- Progress the game engine keeps for the scheduled features. Kept in its own
     -- row (one per room) so settings writes never race the hand loop.
     CREATE TABLE IF NOT EXISTS room_gameplay_state (
@@ -378,29 +392,46 @@ function migrate(db: DB): void {
     CREATE INDEX IF NOT EXISTS idx_feature_triggers_room
       ON room_feature_triggers(room_id, status);
   `);
-  // A trigger claimed by a hand that never produced a transcript (the process
-  // restarted mid-hand) is stuck: neither pending nor resolved. Put it back so
-  // it can be claimed again. Only the newest claimed row per kind is restored,
-  // and never while a pending row exists - otherwise the partial unique index
-  // would reject the update.
-  db.exec(`
-    UPDATE room_feature_triggers
-    SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL
-    WHERE status = 'claimed'
-      AND (claimed_hand_id IS NULL
-           OR NOT EXISTS (
-             SELECT 1 FROM transcripts t WHERE t.hand_id = room_feature_triggers.claimed_hand_id))
-      AND id = (
-        SELECT MAX(x.id) FROM room_feature_triggers x
-        WHERE x.room_id = room_feature_triggers.room_id
-          AND x.kind = room_feature_triggers.kind
-          AND x.status = 'claimed')
-      AND NOT EXISTS (
-        SELECT 1 FROM room_feature_triggers p
-        WHERE p.room_id = room_feature_triggers.room_id
-          AND p.kind = room_feature_triggers.kind
-          AND p.status = 'pending')
-  `);
+  recoverOrphanedFeatureTriggers(db);
+}
+
+/**
+ * A trigger claimed by a hand that never committed its durable finalization
+ * marker (the process restarted mid-hand) is stuck: neither pending nor
+ * resolved. Put it back so it can be claimed again.
+ *
+ * The marker is authoritative rather than the transcript: finalization writes
+ * the marker, the stack moves, the ledger rows, the trigger status, the
+ * transcript and the schedule anchors in ONE transaction, so "no marker" means
+ * none of those landed and "marker" means all of them did. There is therefore
+ * nothing to reconcile beyond releasing the claim.
+ *
+ * Only the newest claimed row per kind is restored, and never while a pending
+ * row exists - otherwise the partial unique index would reject the update.
+ */
+export function recoverOrphanedFeatureTriggers(db: DB): number {
+  const info = db
+    .prepare(
+      `UPDATE room_feature_triggers
+       SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL
+       WHERE status = 'claimed'
+         AND (claimed_hand_id IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM hand_settlements s
+                WHERE s.hand_id = room_feature_triggers.claimed_hand_id))
+         AND id = (
+           SELECT MAX(x.id) FROM room_feature_triggers x
+           WHERE x.room_id = room_feature_triggers.room_id
+             AND x.kind = room_feature_triggers.kind
+             AND x.status = 'claimed')
+         AND NOT EXISTS (
+           SELECT 1 FROM room_feature_triggers p
+           WHERE p.room_id = room_feature_triggers.room_id
+             AND p.kind = room_feature_triggers.kind
+             AND p.status = 'pending')`,
+    )
+    .run();
+  return info.changes;
 }
 
 function ensureColumn(db: DB, table: string, column: string, decl: string): void {

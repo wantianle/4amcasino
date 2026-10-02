@@ -4,7 +4,7 @@
 
 ## 0. 规则口径（实现按此）
 - **B1 鱿鱼**：**仅手动**触发（房主）。触发后在本手结算时：**每个未获胜者**向**其他所有参赛者**平付罚金，`罚金 = n×BB×(参赛人数−1)`，从桌面筹码扣；`n` 房主可设，默认 1×BB；`squidMinPlayers` 门槛（默认 3），不达标则该手不触发（触发保持 pending）。参赛者 = 本手 `HandSeatInfo` 快照。单人=赢家，其余为未获胜者；短码只付可用筹码（不产生负筹码）。多次发牌时，须**每一跑都第一**才算赢家（交集为空则无人领赏、不转移）。
-- **B2 计时银行**：每房开关。每人初始 X 秒；**每结算 N 手补 Y 秒**（默认 30s / 30手 / 30s）。普通行动计时先走，超时才扣银行；`actionSecs=0`（不限时）不扣银行。改配置清零重置（epoch 机制）。
+- **B2 计时银行**：每房开关。每人初始 X 秒；**每结算 N 手补 Y 秒**（默认 30s / 30手 / 30s）。普通行动计时先走，超时才扣银行；`actionSecs=0`（不限时）不扣银行。改配置清零重置（epoch 机制）。**扣减是“手原子”的**：行动期间只在内存里扣，结算事务一次性落库；中止/崩溃的手不写银行（余额回到本手开始时的值）。若结算时房间 epoch 与快照不一致（配置中途被重置），**显式跳过该写并记 `time_bank_epoch_mismatch`**，绝不静默覆盖已重置的余额。
 - **B3 炸弹池**：设定后按**手数或时长**激活；触发**手动 + 定时都要**。激活手每人**前注**（按 BB，1×/2×/3×，默认 1×）才能参与，**跳过翻牌前下注**直接翻牌；前注进底池、正常抽水、正常参与边池；**双牌面不做**。手动与定时撞同一手 → 只开一次。
 - **B4 全下多次发牌**：全下且有未发牌时，服务端按**实时胜率**判定优势方；**劣势方选 1–3 次**；**优势方同意才发**；拒绝/超时 → 发 1 次；**多人（>2 未弃牌）只发 1 次**；无未发牌只 1 次；胜率相等只 1 次。**发牌前先亮牌**再算权益。**鱿鱼游戏中允许多发，但只有全赢才拿鱿鱼**。
 - **权益**：`equity.ts`/`equityWorker.ts` 已实现（flop/turn/river 精确枚举，preflop 确定性蒙特卡洛 25000 样本，tie=0.5，排除已弃牌，2s 超时→`equity_failed`→按 1 次）。
@@ -22,9 +22,20 @@
 4. **回合计时重构**：把散落的“重算 deadline”改为显式 `beginTurnTimer()/consumeTurnTime()/finishTurnTimer()`；`baseDeadline = startedAt + actionTimeoutMs`，`finalDeadline = baseDeadline + 该座位银行`；只在**动作成功应用后**扣银行（`max(0, now-baseDeadline)`，封顶银行）；超时扣满当轮分配的银行再自动弃牌；非法/重复动作不扣。`broadcastBetting()` 不得再 mint 新 deadline。
 5. **全下 → 先亮牌再决策**：街结束且 `activeNonAllIn<2` 时设 `runout=true`，若牌未发完先 `requestReveals()`，亮牌后算权益，再决定是否多次发牌，最后才发余牌。
 6. **B4 决策**：权益→判优势/劣势；>2 未弃牌 / 无余牌 / 权益相等 → 1 次不发提示。发 `multi_run_offer`（stage=behind-chooses）；劣势方 `run_count_choice`（1/2/3）；选 1 立即定；选 2/3 → 新 deadline、stage=ahead-agrees；优势方 `run_count_agree`；拒绝/超时 → 1。全部带 `decisionId`，拒收过期/越权/无效/重复；`resendPending()` 要重发当前 stage。
+   - **线值口径**：`packages/shared/src/wsProtocol.ts` 的 `MultiRunStage = 'choice' | 'agreement'`，即契约的 `behind-chooses` / `ahead-agrees`；引擎、shared、本文档以此为准。若要将概念名搬到线上，必须同时改 shared 的 `MultiRunStage` 与 `apps/web/.../store.ts` 的 stage 判断（本次不改 web）。
+   - **权益等待态**：worker 计算期间是显式 `equityPending` 状态，不进入可见决策阶段；权益就绪后才广播 offer，因此该窗口内重连的客户端仍会收到 offer（`resendPending()` 在 `multirun` 阶段重发当前 offer）。
+   - **权益失败**：worker 超时/失败 → `multi_run_result.reason = 'equity_failed'`（不再并入 `ineligible`）。共享类型改动：`MultiRunReason` 需加 `'equity_failed'`（引擎已按扩展值广播，web 对未知 reason 被动处理）。
+   - **跑数校验**：引擎侧校验 `count ∈ [1, min(3, multiRun.maxRuns)]`，非法值在改 stage 前拒绝（transcript 记 `run_count_rejected`），不信任线值。
 7. **通用多跑**：`runMaps`（run 2..N 的 boardIndex→deckIndex），`boardForRun(run)`，按 run 顺序开牌（先补齐 run1 再 run2/run3）；已有公共牌各跑共享；`index<52` 断言，越界回退 1 次。结算按 `base=floor(pot/runs)`、余数给靠前的跑；每跑用该跑底池切片调 `awardPots()`，合并 per-seat awards。
 8. **B1 结算**：`Hand.settle()`（约 2021-2120）算赢家集合（弃牌赢=该座；单跑=最高分并列；多跑=各跑最高集合的交集，空=无领赏）；`requestedPerLoser = n×bb×(participantCount-1)`；按可用筹码封顶 + 平摊到其他参赛者；聚合 per-seat squid net；写 `squid_result`。
-9. **原子 finalization**（约 game.ts:2164-2223，一个事务）：poker 结算 + rake + **squid net** + 每座一条聚合 `kind='squid-game'` 账本（note「鱿鱼游戏罚金/赔付」）+ **time bank 余额/计数/补秒** + 触发 `applied` + transcript + `completed_hands` 累加 + 炸弹调度锚点更新。`hand_end.deltas` = poker+squid 合计，另带 `pokerDeltas/squidDeltas`。
+9. **原子 finalization**（约 game.ts:2164-2223，一个事务）：poker 结算 + rake + **squid net** + 每座一条聚合 `kind='squid-game'` 账本（note「Squid Game penalty/payout」）+ **time bank 余额/计数/补秒** + 触发 `applied` + transcript + `completed_hands` 累加 + 炸弹调度锚点更新。`hand_end.deltas` = poker+squid 合计，另带 `pokerDeltas/squidDeltas`。
+   - **持久幂等标记**：同一事务先写 `hand_settlements(hand_id PRIMARY KEY, room_id, head, rake, final_stacks, applied_at)`。已存在 → 直接返回 `duplicate`，一个字节都不再动。这是唯一“本手已完全结算”的权威信号，启动恢复据此判断，而不是看 transcript 是否存在。
+   - **守恒断言**：应用 delta 后重读行，任一 `finalStack < 0` 或 `sum(finalStacks) + rake ≠ sum(before)` 即抛错，整个事务（含标记）回滚，绝不半落。squid 侧另有净额为零、单笔 `paid ≤ requestedPerLoser` 的断言。
+   - **行动先校验后记账**：`onAction()` 先 `applyAction`，成功才 `appendPlayer('action', ...)`；非法/越权/重复/过期动作只记服务端 `action_rejected` 审计条目，绝不出现在正常 `action` 记录里。
+   - **服务端 deadline 兜底**：`Date.now() >= lastDeadline` 时 `onAction()` 直接拒收——到期后唯一成功的转换是超时自动弃牌。
+   - **squid 结果权威字段**：`squid_result` 额外带 `netBySeat:[{seat,net}]`（多输家时同一座位既付又收，消费方不得假设只有 `winners` 收钱）。共享类型改动：`squid_result` 需加 `netBySeat`。
+   - **炸弹池 transcript**：不再记 `betting_start {street:'preflop'}`；只记 `bomb_pot_start`，下一手直接是 `flop`。客户端不会看到任何合法翻牌前行动。
+   - **多跑索引上界**：单桌 ≤9 人时 `2n+15 ≤ 33 < 52`，`index<52` 回退是防御性死代码，不会被触发。
 10. **中止**：claimed 手动触发复位 `pending`；本手不落任何筹码/账本/银行。
 11. **重连**：`resendPending()` 需恢复当前 multi-run stage 与 time bank。
 
@@ -32,7 +43,8 @@
 - `GameRoom` 仍是单房间手牌唯一内存 owner；REST 不得直改内存手牌。
 - 设置改动在 `activeHands` 期间拒绝；设置在手牌创建时快照。
 - 触发认领用 immediate 事务 + requestId 幂等。
-- 结算单事务 + transcript 主键/阶段守卫防重复。
+- 结算单事务 + `hand_settlements` 持久标记保证“恰好一次”；transcript 主键/阶段守卫是第二层防护。
+- 启动恢复 `recoverOrphanedFeatureTriggers()`：`claimed` 且其 `claimed_hand_id` 无 `hand_settlements` 标记 → 复位 `pending`。因为结算的所有写（筹码/账本/触发/transcript/锚点）与标记同事务，无标记即“什么都没落”，无需额外对账。
 
 ## 4. i18n
 新串按 `docs/zh-i18n.md`，加在 `dict/{lobby,table,table-page,server,misc}.ts`：玩法规则/鱿鱼/计时银行/炸弹池/多次发牌相关标签、状态、按钮、服务端校验消息、账本注（`Squid Game penalty/payout`→「鱿鱼游戏罚金/赔付」）。

@@ -124,6 +124,16 @@ interface ShowSnapshot {
 
 type Share = { deckIndex: number; out: string; proof: { A1: string; A2: string; z: string } };
 
+/**
+ * `multi_run_result.reason`. The shared `MultiRunReason` union does not yet
+ * carry `equity_failed`; the engine emits it as a distinct, auditable reason
+ * rather than collapsing an equity failure into `ineligible`. Required shared
+ * change: add `'equity_failed'` to `MultiRunReason` in
+ * `packages/shared/src/wsProtocol.ts` (web handlers treat unknown reasons
+ * passively, so the cast is additive until then).
+ */
+type MultiRunResultReason = MultiRunReason | 'equity_failed';
+
 /** Which feature trigger a hand claimed, and the settings/balances it must
  *  settle against. Snapshot at claim time so a mid-hand settings write (blocked
  *  anyway) or a later config change can never move the goalposts. */
@@ -163,6 +173,204 @@ interface SquidSettlement {
   paidBySeat: { seat: number; amount: number }[];
   noClaimant: boolean;
   netBySeat: Map<number, number>;
+}
+
+/** Everything the atomic settlement writer needs, all already resolved to
+ *  userIds so the writer never touches engine state. */
+export interface HandSettlementWrite {
+  handId: string;
+  roomId: string;
+  head: string;
+  entries: unknown;
+  rake: number;
+  commissionBps: number;
+  /** Combined poker+squid stack deltas, one per hand seat. */
+  stackDeltas: { userId: number; delta: number }[];
+  /** Poker-only ledger rows (kind 'hand-settlement'). */
+  pokerLedger: { userId: number; delta: number }[];
+  /** Squid-only ledger rows (kind 'squid-game'). */
+  squidLedger: { userId: number; delta: number }[];
+  squidNote: string;
+  /** Time-bank writes for this hand's seats. */
+  timeBanks: { userId: number; ms: number; hands: number }[];
+  /** The epoch the time-bank snapshot belongs to; null disables those writes. */
+  timeBankEpoch: number | null;
+  triggerIds: (number | null)[];
+  bombRan: boolean;
+  /** Rake recipient, or null if there is nowhere to credit it. */
+  rakeRecipientId: number | null;
+  now: number;
+}
+
+export interface HandSettlementOutcome {
+  status: 'applied' | 'duplicate';
+  timeBankSkipped: number[];
+  finalStacks: { userId: number; stack: number }[];
+}
+
+/**
+ * Apply one hand's settlement atomically, exactly once.
+ *
+ * Idempotency: a durable `hand_settlements` row is inserted first (same
+ * transaction); if it already exists the call is a no-op and reports
+ * `duplicate`. Conservation: after applying the deltas the writer re-reads the
+ * rows, rejects any negative stack, and asserts
+ * `sum(finalStacks) + rake === sum(stacksBefore)`. Any violation throws and the
+ * whole transaction (including the marker) rolls back, so a corrupted settle
+ * can never be half-applied.
+ */
+export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlementOutcome {
+  const write = db.transaction((): HandSettlementOutcome => {
+    const claim = db
+      .prepare(
+        `INSERT INTO hand_settlements (hand_id, room_id, head, rake, final_stacks, applied_at)
+         VALUES (?, ?, ?, ?, '[]', ?)
+         ON CONFLICT(hand_id) DO NOTHING`,
+      )
+      .run(w.handId, w.roomId, w.head, w.rake, w.now);
+    if (claim.changes === 0) {
+      // already settled by an earlier (committed) call - apply nothing
+      return { status: 'duplicate', timeBankSkipped: [], finalStacks: [] };
+    }
+
+    const userIds = [...new Set(w.stackDeltas.map((d) => d.userId))];
+    const placeholders = userIds.map(() => '?').join(',');
+    const stackRows = userIds.length
+      ? (db
+          .prepare(
+            `SELECT user_id, stack FROM room_players WHERE room_id = ? AND user_id IN (${placeholders})`,
+          )
+          .all(w.roomId, ...userIds) as { user_id: number; stack: number }[])
+      : [];
+    const sumBefore = stackRows.reduce((s, r) => s + r.stack, 0);
+
+    for (const d of w.stackDeltas) {
+      if (d.delta === 0) continue;
+      db.prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?').run(
+        d.delta,
+        w.roomId,
+        d.userId,
+      );
+    }
+
+    const afterRows = userIds.length
+      ? (db
+          .prepare(
+            `SELECT user_id, stack FROM room_players WHERE room_id = ? AND user_id IN (${placeholders})`,
+          )
+          .all(w.roomId, ...userIds) as { user_id: number; stack: number }[])
+      : [];
+    const finalByUser = new Map(afterRows.map((r) => [r.user_id, r.stack]));
+    for (const d of w.stackDeltas) {
+      const finalStack = finalByUser.get(d.userId) ?? 0;
+      if (finalStack < 0)
+        throw new Error(
+          `settlement would drive user ${d.userId} negative (${finalStack}) on hand ${w.handId}`,
+        );
+    }
+    const sumAfter = afterRows.reduce((s, r) => s + r.stack, 0);
+    if (sumAfter + w.rake !== sumBefore)
+      throw new Error(
+        `settlement not conserving on hand ${w.handId}: before=${sumBefore} after=${sumAfter} rake=${w.rake}`,
+      );
+
+    for (const l of w.pokerLedger) {
+      if (l.delta === 0) continue;
+      appendLedger(db, {
+        roomId: w.roomId,
+        userId: l.userId,
+        delta: l.delta,
+        kind: 'hand-settlement',
+        ref: w.head,
+      });
+    }
+    for (const l of w.squidLedger) {
+      if (l.delta === 0) continue;
+      appendLedger(db, {
+        roomId: w.roomId,
+        userId: l.userId,
+        delta: l.delta,
+        kind: 'squid-game',
+        ref: w.head,
+        note: w.squidNote,
+      });
+    }
+    if (w.rake > 0 && w.rakeRecipientId !== null) {
+      settleRake(db, {
+        roomId: w.roomId,
+        recipientId: w.rakeRecipientId,
+        rake: w.rake,
+        ref: w.head,
+        commissionBps: w.commissionBps,
+      });
+    }
+
+    const timeBankSkipped: number[] = [];
+    if (w.timeBankEpoch !== null) {
+      for (const tb of w.timeBanks) {
+        const row = db
+          .prepare(
+            'SELECT time_bank_epoch FROM room_players WHERE room_id = ? AND user_id = ?',
+          )
+          .get(w.roomId, tb.userId) as { time_bank_epoch: number } | undefined;
+        if (!row || row.time_bank_epoch !== w.timeBankEpoch) {
+          // a config change reset the bank mid-hand: do NOT overwrite the reset
+          // with a stale snapshot, and report it so the caller can audit it
+          timeBankSkipped.push(tb.userId);
+          continue;
+        }
+        db.prepare(
+          'UPDATE room_players SET time_bank_ms = ?, time_bank_hands = ?, time_bank_epoch = ? WHERE room_id = ? AND user_id = ? AND time_bank_epoch = ?',
+        ).run(tb.ms, tb.hands, w.timeBankEpoch, w.roomId, tb.userId, w.timeBankEpoch);
+      }
+    }
+
+    for (const id of w.triggerIds) {
+      if (!id) continue;
+      db.prepare(
+        "UPDATE room_feature_triggers SET status = 'applied', resolved_at = ? WHERE id = ? AND status = 'claimed'",
+      ).run(w.now, id);
+    }
+
+    db.prepare(
+      'INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)',
+    ).run(w.handId, w.roomId, w.head, JSON.stringify(w.entries), w.now);
+
+    const gs = db
+      .prepare(
+        `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
+         FROM room_gameplay_state WHERE room_id = ?`,
+      )
+      .get(w.roomId) as
+      | {
+          completed_hands: number;
+          last_bomb_completed_hands: number;
+          last_bomb_at: number | null;
+          schedule_reset_at: number | null;
+        }
+      | undefined;
+    const completed = (gs?.completed_hands ?? 0) + 1;
+    const lastBombHands = w.bombRan ? completed : (gs?.last_bomb_completed_hands ?? 0);
+    const lastBombAt = w.bombRan ? w.now : (gs?.last_bomb_at ?? null);
+    db.prepare(
+      `INSERT INTO room_gameplay_state
+         (room_id, completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(room_id) DO UPDATE SET
+         completed_hands = excluded.completed_hands,
+         last_bomb_completed_hands = excluded.last_bomb_completed_hands,
+         last_bomb_at = excluded.last_bomb_at,
+         schedule_reset_at = excluded.schedule_reset_at`,
+    ).run(w.roomId, completed, lastBombHands, lastBombAt, gs?.schedule_reset_at ?? null);
+
+    const finalStacks = afterRows.map((r) => ({ userId: r.user_id, stack: r.stack }));
+    db.prepare('UPDATE hand_settlements SET final_stacks = ? WHERE hand_id = ?').run(
+      JSON.stringify(finalStacks),
+      w.handId,
+    );
+    return { status: 'applied', timeBankSkipped, finalStacks };
+  });
+  return write();
 }
 
 /** Verifies a player's DLEQ unmask shares against a finished hand's snapshot. */
@@ -1258,6 +1466,10 @@ class Hand {
   private runs = 1;
   private runMaps = new Map<number, Map<number, number>>();
   private multiRunResolved = false;
+  // Explicit equity-pending state: while the worker computes, no offer is
+  // visible yet. A reconnect in this window is safe and the offer is
+  // broadcast to every live socket the moment equity resolves.
+  private equityPending: { decisionId: string } | null = null;
   private multiRun: {
     decisionId: string;
     stage: 'choice' | 'agreement';
@@ -1540,8 +1752,12 @@ class Hand {
         timeBanks: this.timeBankList(),
       });
     }
-    if (this.phase === 'multirun' && this.multiRun) {
-      this.sendMultiRunOffer(this.multiRun);
+    if (this.phase === 'multirun') {
+      // Resend the live stage. While `equityPending` (worker still running)
+      // there is no visible offer yet; the offer is broadcast to every live
+      // socket the moment equity resolves, so a reconnect in that window still
+      // receives it.
+      if (this.multiRun) this.sendMultiRunOffer(this.multiRun);
     }
     if (this.phase === 'audit' && !this.revealedKeys.has(info.seat)) {
       this.room.send(userId, { t: 'need_keys', handId: this.id });
@@ -1951,7 +2167,9 @@ class Hand {
       this.bb,
       ante,
     );
-    this.appendServer('betting_start', { street: 'preflop', bomb: true, ante, anteBb });
+    // No preflop betting round exists in a bomb pot: do NOT record a
+    // `betting_start {street:'preflop'}` (it would imply legal preflop
+    // actions). The ante is the only preflop event; action begins on the flop.
     this.appendServer('bomb_pot_start', {
       ante,
       anteBb,
@@ -2044,23 +2262,39 @@ class Hand {
   private onAction(info: HandSeatInfo, action: PlayerAction, sig: string): void {
     if (this.phase !== 'betting' || !this.betting)
       return this.err(info.userId, 'not in a betting round');
-    this.appendPlayer('action', info.pubkey, { action, seat: info.seat }, sig);
-    this.applyEngineAction(info.seat, action, false, info.userId);
+    // Server-side deadline enforcement: at/after the final deadline the ONLY
+    // successful transition is the timeout auto-fold. A late action arriving
+    // before the timer callback fires is rejected here so a race cannot beat it.
+    if (this.lastDeadline !== null && Date.now() >= this.lastDeadline) {
+      this.appendServer('action_rejected', { seat: info.seat, reason: 'after deadline' });
+      return this.err(info.userId, 'the action clock expired');
+    }
+    // Apply first; the transcript only records an action that actually applied.
+    this.applyEngineAction(info.seat, action, false, info.userId, { pubkey: info.pubkey, sig });
   }
 
+  /** Apply an engine action. Returns true only if it was accepted. When
+   *  `record` is supplied the player's signed action is appended to the
+   *  transcript after a successful apply (never before, so rejected, stale or
+   *  duplicate actions never appear as normal `action` entries). */
   private applyEngineAction(
     seat: number,
     action: PlayerAction,
     auto: boolean,
     userId?: number,
-  ): void {
+    record?: { pubkey: string; sig: string },
+  ): boolean {
     try {
       this.betting = applyAction(this.betting!, seat, action);
     } catch (e) {
-      // an illegal or duplicate action must not consume the actor's time bank
-      if (userId !== undefined) this.err(userId, e instanceof Error ? e.message : 'illegal action');
-      return;
+      // an illegal, out-of-turn, stale or duplicate action must not consume the
+      // actor's time bank and must not be recorded as a normal action
+      const reason = e instanceof Error ? e.message : 'illegal action';
+      this.appendServer('action_rejected', { seat, reason });
+      if (userId !== undefined) this.err(userId, reason);
+      return false;
     }
+    if (record) this.appendPlayer('action', record.pubkey, { action, seat }, record.sig);
     // the action really applied: charge the clock it used past the base deadline
     this.consumeTurnTime(seat);
     this.actionSeq++;
@@ -2072,6 +2306,7 @@ class Hand {
       ...(auto ? { auto: true } : {}),
     });
     this.coordinateTurn();
+    return true;
   }
 
   /**
@@ -2357,6 +2592,9 @@ class Hand {
     return this.runoutIndexes().filter((i) => !this.boardCards.has(i)).length;
   }
 
+  /** Wire `stage` values are `choice` (= the contract's "behind-chooses") and
+   *  `agreement` (= "ahead-agrees"), matching `MultiRunStage` in
+   *  packages/shared/src/wsProtocol.ts. See docs/p2-gameplay-design.md 2.6. */
   private sendMultiRunOffer(state: NonNullable<Hand['multiRun']>): void {
     this.room.broadcast({
       t: 'multi_run_offer',
@@ -2393,6 +2631,7 @@ class Hand {
     this.clearTimer();
     this.phase = 'multirun';
     const decisionId = randomBytes(6).toString('hex');
+    this.equityPending = { decisionId };
     computeHeadsUpEquity({
       holeA: [cardsA[0]!, cardsA[1]!],
       holeB: [cardsB[0]!, cardsB[1]!],
@@ -2401,6 +2640,7 @@ class Hand {
     })
       .then((eq) => {
         if (this.phase === 'done' || this.multiRunResolved) return;
+        this.equityPending = null;
         if (eq.equitiesBps[0] === eq.equitiesBps[1])
           return this.finishMultiRun(1, 'ineligible');
         const aAhead = eq.equitiesBps[0] > eq.equitiesBps[1];
@@ -2429,11 +2669,12 @@ class Hand {
       })
       .catch((err) => {
         if (this.phase === 'done' || this.multiRunResolved) return;
+        this.equityPending = null;
         this.appendServer('equity_failed', {
           decisionId,
           reason: err instanceof EquityError ? err.code : 'equity_failed',
         });
-        this.finishMultiRun(1, 'ineligible');
+        this.finishMultiRun(1, 'equity_failed');
       });
   }
 
@@ -2447,6 +2688,13 @@ class Hand {
     if (this.multiRun.decisionId !== decisionId) return; // stale decision
     if (this.multiRun.stage !== 'choice') return; // wrong stage / duplicate
     if (info.seat !== this.multiRun.behindSeat) return; // wrong role
+    // Engine-side clamp: never trust the wire for the run ceiling. Reject
+    // before mutating the stage so a bad count cannot desync both players.
+    const maxRuns = Math.max(1, Math.min(3, this.features.multiRun.maxRuns));
+    if (!Number.isInteger(count) || count < 1 || count > maxRuns) {
+      this.appendServer('run_count_rejected', { seat: info.seat, decisionId, count, maxRuns });
+      return this.err(info.userId, `run count must be between 1 and ${maxRuns}`);
+    }
     this.appendPlayer('run_count_choice', info.pubkey, { decisionId, count, seat: info.seat }, sig);
     if (count === 1) return this.finishMultiRun(1, 'agreed');
     const ms = this.opts.ritVoteMs ?? 15_000;
@@ -2469,11 +2717,12 @@ class Hand {
   /** Lock in the run count, seed runs 2..N's board positions from the untouched
    *  tail of the deck, and deal them out. A deck that cannot fit every run falls
    *  back to a single run. */
-  private finishMultiRun(runs: number, reason: MultiRunReason): void {
+  private finishMultiRun(runs: number, reason: MultiRunResultReason): void {
     if (this.multiRunResolved) return;
     this.multiRunResolved = true;
     this.clearTimer();
     this.multiRun = null;
+    this.equityPending = null;
     let resolved = runs;
     if (resolved > 1) {
       let extra = 2 * this.n + 5;
@@ -2503,7 +2752,7 @@ class Hand {
       runs: resolved,
       reason,
       sharedBoard: this.currentBoard(),
-    });
+    } as ServerMsg);
     if (this.remainingRunoutCount() > 0) this.openRemainingRunoutBoards();
     else this.settle();
   }
@@ -2643,10 +2892,27 @@ class Hand {
     }));
     this.settlement = { awards, pokerDeltas, stacks, showdown: showdownMsg, rake, squid };
 
+    // Invariants checked BEFORE anything is persisted. A violation is a
+    // programming error and must never reach the ledger.
+    const totalPot = pots.reduce((s, p) => s + p.amount, 0);
+    const awardTotal = [...awards.values()].reduce((s, a) => s + a, 0);
+    if (awardTotal !== totalPot)
+      throw new Error(`awards ${awardTotal} != pot ${totalPot} on hand ${this.id}`);
+    if (pokerDeltas.reduce((s, d) => s + d.delta, 0) !== -rake)
+      throw new Error(`poker deltas are not zero-sum net of rake on hand ${this.id}`);
+    if (squid) {
+      const squidNet = [...squid.netBySeat.values()].reduce((s, v) => s + v, 0);
+      if (squidNet !== 0) throw new Error(`squid net ${squidNet} != 0 on hand ${this.id}`);
+      for (const p of squid.paidBySeat) {
+        if (p.amount < 0 || p.amount > squid.requestedPerLoser)
+          throw new Error(`squid payment ${p.amount} out of range on hand ${this.id}`);
+      }
+    }
     const combined = pokerDeltas.map((d) => ({
       seat: d.seat,
       delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
     }));
+    const netBySeat = [...(squid?.netBySeat.entries() ?? [])].map(([seat, net]) => ({ seat, net }));
     this.appendServer('settlement', {
       board,
       ...(runs > 1
@@ -2661,6 +2927,7 @@ class Hand {
               winners: squid.winners,
               requestedPerLoser: squid.requestedPerLoser,
               noClaimant: squid.noClaimant,
+              netBySeat,
             },
           }
         : {}),
@@ -2671,6 +2938,9 @@ class Hand {
     });
     if (showdownMsg) this.room.broadcast(showdownMsg);
     if (squid)
+      // `netBySeat` is the authoritative per-seat outcome: with multiple losers
+      // a seat can both pay and receive, so consumers must not assume only
+      // `winners` receive chips.
       this.room.broadcast({
         t: 'squid_result',
         handId: this.id,
@@ -2679,7 +2949,8 @@ class Hand {
         requestedPerLoser: squid.requestedPerLoser,
         paidBySeat: squid.paidBySeat,
         noClaimant: squid.noClaimant,
-      });
+        netBySeat,
+      } as ServerMsg);
 
     if (this.auditMode === 'strict-audit' || this.opts.tvReplays) {
       // TV replays: collect everyone's per-hand key so the stored transcript
@@ -2783,7 +3054,6 @@ class Hand {
     this.clearTimer();
     this.phase = 'done';
     const { stacks, rake, squid } = this.settlement;
-    const head = this.transcript.head;
     const room = getRoom(this.db, this.roomId);
     const now = Date.now();
     const pokerDeltas = this.settlement.pokerDeltas;
@@ -2795,122 +3065,63 @@ class Hand {
       seat: d.seat,
       delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
     }));
-    const write = this.db.transaction(() => {
-      // settle by DELTA, never by absolute stack: the hand's snapshot predates
-      // anything credited while it ran (a mid-hand buy, a banker revert), and
-      // an absolute write would silently erase those chips. Poker and squid
-      // move in the same transaction so a crash cannot apply one but not the other.
-      for (const d of combinedDeltas) {
-        if (d.delta === 0) continue;
-        const info = this.seats.find((x) => x.seat === d.seat)!;
-        this.db
-          .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
-          .run(d.delta, this.roomId, info.userId);
-      }
-      for (const d of pokerDeltas) {
-        if (d.delta === 0) continue;
-        const info = this.seats.find((x) => x.seat === d.seat)!;
-        appendLedger(this.db, {
-          roomId: this.roomId,
-          userId: info.userId,
-          delta: d.delta,
-          kind: 'hand-settlement',
-          ref: head,
-        });
-      }
-      // one aggregate squid ledger row per seat, on the same hand ref
-      if (squid) {
-        for (const d of squidDeltas) {
-          if (d.delta === 0) continue;
-          const info = this.seats.find((x) => x.seat === d.seat)!;
-          appendLedger(this.db, {
-            roomId: this.roomId,
-            userId: info.userId,
-            delta: d.delta,
-            kind: 'squid-game',
-            ref: head,
-            note: 'Squid Game penalty/payout',
-          });
+    const bySeat = (seat: number) => this.seats.find((x) => x.seat === seat)!;
+
+    // Time bank: debits lived in memory for the hand (hand-atomic - an aborted
+    // or crashed hand leaves the stored bank untouched), so persist the final
+    // balance + counter/refill here. A config change mid-hand resets the bank
+    // and bumps the epoch; detect that explicitly instead of silently no-oping.
+    const bank = this.features.timeBank;
+    const timeBanks: { userId: number; ms: number; hands: number }[] = [];
+    const mismatchedSeats: number[] = [];
+    if (bank) {
+      for (const s of this.seats) {
+        const row = this.db
+          .prepare('SELECT time_bank_epoch FROM room_players WHERE room_id = ? AND user_id = ?')
+          .get(this.roomId, s.userId) as { time_bank_epoch: number } | undefined;
+        if (!row || row.time_bank_epoch !== bank.epoch) {
+          mismatchedSeats.push(s.seat);
+          continue;
         }
-      }
-      // the raked chips move to the platform account on the same ledger, same
-      // hand ref, so every chip stays accounted for and settle-up still
-      // balances. Falls back to the banker when the platform isn't seeded yet.
-      if (rake > 0 && room) {
-        const recipientId = platformUserId(this.db) ?? room.banker_id;
-        settleRake(this.db, {
-          roomId: this.roomId,
-          recipientId,
-          rake,
-          ref: head,
-          commissionBps: this.commissionBps,
-        });
-      }
-      // time bank: the turn debits are already in memory, add this hand's count
-      // and refill. Epoch-guarded so a config change mid-flight never writes.
-      const bank = this.features.timeBank;
-      if (bank) {
-        for (const s of this.seats) {
-          const remaining = bank.balances.get(s.seat) ?? 0;
-          let hands = (bank.hands.get(s.seat) ?? 0) + 1;
-          let ms = remaining;
-          if (bank.refillEveryHands > 0 && hands >= bank.refillEveryHands) {
-            ms += bank.refillMs;
-            hands = 0;
-          }
-          this.db
-            .prepare(
-              'UPDATE room_players SET time_bank_ms = ?, time_bank_hands = ?, time_bank_epoch = ? WHERE room_id = ? AND user_id = ? AND time_bank_epoch = ?',
-            )
-            .run(ms, hands, bank.epoch, this.roomId, s.userId, bank.epoch);
+        const remaining = bank.balances.get(s.seat) ?? 0;
+        let hands = (bank.hands.get(s.seat) ?? 0) + 1;
+        let ms = remaining;
+        if (bank.refillEveryHands > 0 && hands >= bank.refillEveryHands) {
+          ms += bank.refillMs;
+          hands = 0;
         }
+        timeBanks.push({ userId: s.userId, ms, hands });
       }
-      // claimed triggers are now resolved
-      for (const id of [this.features.squid.triggerId, this.features.bomb.triggerId]) {
-        if (!id) continue;
-        this.db
-          .prepare(
-            "UPDATE room_feature_triggers SET status = 'applied', resolved_at = ? WHERE id = ? AND status = 'claimed'",
-          )
-          .run(now, id);
-      }
-      this.db
-        .prepare(
-          'INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)',
-        )
-        .run(this.id, this.roomId, head, JSON.stringify(this.transcript.entries), now);
-      // hand progress: drives both the bomb schedule and the time-bank refill
-      const gs = this.db
-        .prepare(
-          `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
-           FROM room_gameplay_state WHERE room_id = ?`,
-        )
-        .get(this.roomId) as
-        | {
-            completed_hands: number;
-            last_bomb_completed_hands: number;
-            last_bomb_at: number | null;
-            schedule_reset_at: number | null;
-          }
-        | undefined;
-      const completed = (gs?.completed_hands ?? 0) + 1;
-      const bombRan = !!this.features.bomb.settings;
-      const lastBombHands = bombRan ? completed : (gs?.last_bomb_completed_hands ?? 0);
-      const lastBombAt = bombRan ? now : (gs?.last_bomb_at ?? null);
-      this.db
-        .prepare(
-          `INSERT INTO room_gameplay_state
-             (room_id, completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(room_id) DO UPDATE SET
-             completed_hands = excluded.completed_hands,
-             last_bomb_completed_hands = excluded.last_bomb_completed_hands,
-             last_bomb_at = excluded.last_bomb_at,
-             schedule_reset_at = excluded.schedule_reset_at`,
-        )
-        .run(this.roomId, completed, lastBombHands, lastBombAt, gs?.schedule_reset_at ?? null);
+    }
+    if (mismatchedSeats.length)
+      this.appendServer('time_bank_epoch_mismatch', { seats: mismatchedSeats });
+
+    const head = this.transcript.head;
+    const outcome = applyHandSettlement(this.db, {
+      handId: this.id,
+      roomId: this.roomId,
+      head,
+      entries: this.transcript.entries,
+      rake,
+      commissionBps: this.commissionBps,
+      stackDeltas: combinedDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta })),
+      pokerLedger: pokerDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta })),
+      squidLedger: squid
+        ? squidDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta }))
+        : [],
+      squidNote: 'Squid Game penalty/payout',
+      timeBanks,
+      timeBankEpoch: bank ? bank.epoch : null,
+      triggerIds: [this.features.squid.triggerId, this.features.bomb.triggerId],
+      bombRan: !!this.features.bomb.settings,
+      rakeRecipientId: rake > 0 && room ? (platformUserId(this.db) ?? room.banker_id) : null,
+      now,
     });
-    write();
+    if (outcome.status === 'duplicate') {
+      // a committed finalize already moved every chip for this hand: replay nothing
+      this.onDone();
+      return;
+    }
     // `hand_end.deltas` are the combined poker+squid nets; the split is kept
     // alongside for clients/stats that want to attribute each source.
     const endMsg = {
