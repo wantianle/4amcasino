@@ -1,0 +1,5628 @@
+{
+ "meta": {
+  "gitHash": "583fcb1",
+  "probeHash": "418956eca319",
+  "locale": "zh-CN",
+  "generatedAt": "2026-10-05T02:43:15.673Z"
+ },
+ "results": [
+  {
+   "scenario": "9p-myturn",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 609.5833740234375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.9169,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 5045,
+   "clusterCoveredPods": [
+    8
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 1130.682373046875,
+      "y": 685.12890625,
+      "w": 42.216064453125,
+      "h": 16.25
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 1130.682373046875,
+      "y": 701.37890625,
+      "w": 53.5572509765625,
+      "h": 22.75
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 625,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 499.67425537109375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.8413,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 7148,
+   "clusterCoveredPods": [
+    7,
+    8
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 1054.822998046875,
+      "y": 463.0576477050781,
+      "w": 23.65966796875,
+      "h": 12.159088134765625
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 1054.822998046875,
+      "y": 475.21673583984375,
+      "w": 40.074462890625,
+      "h": 17.022735595703125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 957.866943359375,
+      "y": 556.2013549804688,
+      "w": 31.58831787109375,
+      "h": 12.15911865234375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 957.866943359375,
+      "y": 568.3604736328125,
+      "w": 40.0743408203125,
+      "h": 17.022705078125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 445,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "390x844",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 237.05560302734375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.653354,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.7992,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 330,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.5,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 0.87,
+     "r": {
+      "x": 174.31544494628906,
+      "y": 491.2101745605469,
+      "w": 41.37565612792969,
+      "h": 14.700469970703125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 178.337646484375,
+      "y": 508.5240478515625,
+      "w": 33.32102966308594,
+      "h": 13.39373779296875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.36,
+     "r": {
+      "x": 51.265472412109375,
+      "y": 295.694091796875,
+      "w": 14.588165283203125,
+      "h": 9.14697265625
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.54,
+     "r": {
+      "x": 316.75164794921875,
+      "y": 289.81390380859375,
+      "w": 29.349853515625,
+      "h": 9.14697265625
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.43,
+     "r": {
+      "x": 315.2815856933594,
+      "y": 298.96087646484375,
+      "w": 32.3001708984375,
+      "h": 13.72039794921875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 0.99,
+     "r": {
+      "x": 316.97113037109375,
+      "y": 331.6285400390625,
+      "w": 28.921112060546875,
+      "h": 13.39373779296875
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 495.875,
+    "w": 242,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "844x390",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 200.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 234,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.5238,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 0.34,
+     "r": {
+      "x": 343.01251220703125,
+      "y": 250.18905639648438,
+      "w": 12.28045654296875,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 335.56170654296875,
+      "y": 257.8890686035156,
+      "w": 27.190643310546875,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.5,
+     "r": {
+      "x": 566.5015869140625,
+      "y": 245.23907470703125,
+      "w": 24.70703125,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.46,
+     "r": {
+      "x": 565.2640380859375,
+      "y": 252.93905639648438,
+      "w": 27.190673828125,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 0.87,
+     "r": {
+      "x": 566.6863403320312,
+      "y": 280.4390563964844,
+      "w": 24.34613037109375,
+      "h": 11.274993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "320x700",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 218.62655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.5451,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 234,
+   "clusterVsPodsPx": 6336,
+   "clusterCoveredPods": [
+    0,
+    7,
+    8
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.9571,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 150.99456787109375,
+      "y": 393.42755126953125,
+      "w": 18.026931762695312,
+      "h": 8.00799560546875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 145.87338256835938,
+      "y": 401.435546875,
+      "w": 28.278244018554688,
+      "h": 12.01202392578125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 153.59536743164062,
+      "y": 413.44757080078125,
+      "w": 12.834274291992188,
+      "h": 10.2960205078125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 142.59727478027344,
+      "y": 432.5765686035156,
+      "w": 34.83045959472656,
+      "h": 12.375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 145.9832000732422,
+      "y": 447.15155029296875,
+      "w": 28.050003051757812,
+      "h": 11.2750244140625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.34,
+     "r": {
+      "x": 39.01250076293945,
+      "y": 281.1890563964844,
+      "w": 12.280467987060547,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 31.56171989440918,
+      "y": 288.8890686035156,
+      "w": 27.19062614440918,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.5,
+     "r": {
+      "x": 262.5015869140625,
+      "y": 276.23907470703125,
+      "w": 24.707000732421875,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 332,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 614.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 664.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 614.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 664.125,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "667x375",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 234,
+   "clusterVsPodsPx": 325,
+   "clusterCoveredPods": [
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.4121,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 0.34,
+     "r": {
+      "x": 212.5124969482422,
+      "y": 281.1890563964844,
+      "w": 12.280471801757812,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 205.0617218017578,
+      "y": 288.8890686035156,
+      "w": 27.190628051757812,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 0.5,
+     "r": {
+      "x": 436.0015869140625,
+      "y": 276.23907470703125,
+      "w": 24.707000732421875,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.46,
+     "r": {
+      "x": 434.7640686035156,
+      "y": 283.9390563964844,
+      "w": 27.19061279296875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 0.87,
+     "r": {
+      "x": 436.18634033203125,
+      "y": 311.4390563964844,
+      "w": 24.346099853515625,
+      "h": 11.274993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-myturn",
+   "vp": "568x320",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.7596,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 234,
+   "clusterVsPodsPx": 5048,
+   "clusterCoveredPods": [
+    6,
+    7,
+    8
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.2659,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 0.34,
+     "r": {
+      "x": 163.0124969482422,
+      "y": 281.1890563964844,
+      "w": 12.280471801757812,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 155.5617218017578,
+      "y": 288.8890686035156,
+      "w": 27.190628051757812,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "pod-holo"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 386.5015869140625,
+      "y": 276.23907470703125,
+      "w": 24.707000732421875,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "pod-holo",
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 385.2640686035156,
+      "y": 283.9390563964844,
+      "w": 27.19061279296875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "pod-holo",
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 392.25079345703125,
+      "y": 295.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 386.68634033203125,
+      "y": 311.4390563964844,
+      "w": 24.346099853515625,
+      "h": 11.274993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 404.9093933105469,
+      "y": 334.453125,
+      "w": 19.4046630859375,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 401.01641845703125,
+      "y": 342.15313720703125,
+      "w": 27.19061279296875,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 609.5833740234375,
+   "boardBottom": 595.5,
+   "heroBoardGap": 14.0833740234375,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 784.671875,
+    "w": 296,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 499.67425537109375,
+   "boardBottom": 489.1363525390625,
+   "heroBoardGap": 10.53790283203125,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 604.671875,
+    "w": 296,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "390x844",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 356.0117492675781,
+   "boardBottom": 478.11199951171875,
+   "heroBoardGap": -122.10025024414062,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.682482,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9104,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 982,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.9,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.87,
+     "r": {
+      "x": 44.27817153930664,
+      "y": 432.6203308105469,
+      "w": 16.39022445678711,
+      "h": 12.28466796875
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.7,
+     "r": {
+      "x": 19.794137954711914,
+      "y": 452.41229248046875,
+      "w": 65.37962341308594,
+      "h": 13.916229248046875
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.32,
+     "r": {
+      "x": 329.3102722167969,
+      "y": 432.6203308105469,
+      "w": 16.390228271484375,
+      "h": 12.28466796875
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 740.671875,
+    "w": 242,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "844x390",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 202.75155639648438,
+   "boardBottom": 301.1500244140625,
+   "heroBoardGap": -98.39846801757812,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 342.5484313964844,
+      "y": 264.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 322.81719970703125,
+      "y": 280.4390563964844,
+      "w": 52.688262939453125,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 572.2507934570312,
+      "y": 264.48907470703125,
+      "w": 13.20855712890625,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "320x700",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 289.9755859375,
+   "boardBottom": 402.5367431640625,
+   "heroBoardGap": -112.5611572265625,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.554745,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9137,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 649,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.48,
+     "r": {
+      "x": 37.48814010620117,
+      "y": 365.5595397949219,
+      "w": 13.32253646850586,
+      "h": 9.985382080078125
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.72,
+     "r": {
+      "x": 17.586679458618164,
+      "y": 381.6471252441406,
+      "w": 53.142799377441406,
+      "h": 11.31158447265625
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.48,
+     "r": {
+      "x": 269.1719970703125,
+      "y": 365.5595397949219,
+      "w": 13.322540283203125,
+      "h": 9.985382080078125
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 596.671875,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "667x375",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 233.75155639648438,
+   "boardBottom": 332.1500244140625,
+   "heroBoardGap": -98.39846801757812,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 1,
+   "clusterCoveredPods": [
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 212.04843139648438,
+      "y": 295.48907470703125,
+      "w": 13.208602905273438,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 192.3171844482422,
+      "y": 311.4390563964844,
+      "w": 52.68827819824219,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 441.75079345703125,
+      "y": 295.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-showdown",
+   "vp": "568x320",
+   "scene": {
+    "faces": 5,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 233.75155639648438,
+   "boardBottom": 332.1500244140625,
+   "heroBoardGap": -98.39846801757812,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.8227,
+   "boardCov": 1,
+   "boardCardCount": 5,
+   "boardEls": 5,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 2166,
+   "clusterCoveredPods": [
+    6,
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 162.54843139648438,
+      "y": 295.48907470703125,
+      "w": 13.208602905273438,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 142.8171844482422,
+      "y": 311.4390563964844,
+      "w": 52.68827819824219,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 386.5015869140625,
+      "y": 276.23907470703125,
+      "w": 24.707000732421875,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 385.2640686035156,
+      "y": 283.9390563964844,
+      "w": 27.19061279296875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 392.25079345703125,
+      "y": 295.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 609.5833740234375,
+   "boardBottom": 585.5299682617188,
+   "heroBoardGap": 24.05340576171875,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": 1,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 784.671875,
+    "w": 296,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 499.67425537109375,
+   "boardBottom": 481.67626953125,
+   "heroBoardGap": 17.99798583984375,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": 1,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 604.671875,
+    "w": 296,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "390x844",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 356.0117492675781,
+   "boardBottom": 498.61163330078125,
+   "heroBoardGap": -142.59988403320312,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.682482,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9104,
+   "boardCov": 0.9763,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 982,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.9,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.87,
+     "r": {
+      "x": 44.27817153930664,
+      "y": 432.6203308105469,
+      "w": 16.39022445678711,
+      "h": 12.28466796875
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.7,
+     "r": {
+      "x": 19.794137954711914,
+      "y": 452.41229248046875,
+      "w": 65.37962341308594,
+      "h": 13.916229248046875
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.32,
+     "r": {
+      "x": 329.3102722167969,
+      "y": 432.6203308105469,
+      "w": 16.390228271484375,
+      "h": 12.28466796875
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [
+    {
+     "label": "Td",
+     "cov": 0.12,
+     "r": {
+      "x": 220.20277404785156,
+      "y": 408.1964416503906,
+      "w": 19.655487060546875,
+      "h": 27.51763916015625
+     }
+    },
+    {
+     "label": "Qd",
+     "cov": 0.15,
+     "r": {
+      "x": 241.82382202148438,
+      "y": 408.1964416503906,
+      "w": 19.65545654296875,
+      "h": 27.51763916015625
+     }
+    }
+   ],
+   "clusterRect": {
+    "x": 138,
+    "y": 740.671875,
+    "w": 242,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "844x390",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 202.75155639648438,
+   "boardBottom": 317.6702880859375,
+   "heroBoardGap": -114.91873168945312,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": 0.9666,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 342.5484313964844,
+      "y": 264.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 322.81719970703125,
+      "y": 280.4390563964844,
+      "w": 52.688262939453125,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 572.2507934570312,
+      "y": 264.48907470703125,
+      "w": 13.20855712890625,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [
+    {
+     "label": "7c",
+     "cov": 0.14,
+     "r": {
+      "x": 432.05096435546875,
+      "y": 244.8062744140625,
+      "w": 15.84002685546875,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Td",
+     "cov": 0.18,
+     "r": {
+      "x": 484.322998046875,
+      "y": 244.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Qd",
+     "cov": 0.18,
+     "r": {
+      "x": 501.74700927734375,
+      "y": 244.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    }
+   ],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "320x700",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 289.9755859375,
+   "boardBottom": 419.19952392578125,
+   "heroBoardGap": -129.22393798828125,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.554745,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9137,
+   "boardCov": 0.9672,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 649,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.48,
+     "r": {
+      "x": 37.48814010620117,
+      "y": 365.5595397949219,
+      "w": 13.32253646850586,
+      "h": 9.985382080078125
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.72,
+     "r": {
+      "x": 17.586679458618164,
+      "y": 381.6471252441406,
+      "w": 53.142799377441406,
+      "h": 11.31158447265625
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.48,
+     "r": {
+      "x": 269.1719970703125,
+      "y": 365.5595397949219,
+      "w": 13.322540283203125,
+      "h": 9.985382080078125
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [
+    {
+     "label": "7c",
+     "cov": 0.13,
+     "r": {
+      "x": 127.76275634765625,
+      "y": 345.70697021484375,
+      "w": 15.976654052734375,
+      "h": 22.367279052734375
+     }
+    },
+    {
+     "label": "Td",
+     "cov": 0.18,
+     "r": {
+      "x": 180.48568725585938,
+      "y": 345.70697021484375,
+      "w": 15.976654052734375,
+      "h": 22.367279052734375
+     }
+    },
+    {
+     "label": "Qd",
+     "cov": 0.18,
+     "r": {
+      "x": 198.05999755859375,
+      "y": 345.70697021484375,
+      "w": 15.976638793945312,
+      "h": 22.367279052734375
+     }
+    }
+   ],
+   "clusterRect": {
+    "x": 138,
+    "y": 596.671875,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "667x375",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 233.75155639648438,
+   "boardBottom": 348.6702880859375,
+   "heroBoardGap": -114.91873168945312,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9122,
+   "boardCov": 0.9666,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 1,
+   "clusterCoveredPods": [
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 212.04843139648438,
+      "y": 295.48907470703125,
+      "w": 13.208602905273438,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 192.3171844482422,
+      "y": 311.4390563964844,
+      "w": 52.68827819824219,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 441.75079345703125,
+      "y": 295.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod"
+     ]
+    }
+   ],
+   "worstBoard": [
+    {
+     "label": "7c",
+     "cov": 0.14,
+     "r": {
+      "x": 301.55096435546875,
+      "y": 275.8062744140625,
+      "w": 15.84002685546875,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Td",
+     "cov": 0.18,
+     "r": {
+      "x": 353.822998046875,
+      "y": 275.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Qd",
+     "cov": 0.18,
+     "r": {
+      "x": 371.24700927734375,
+      "y": 275.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    }
+   ],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "9p-multirun3",
+   "vp": "568x320",
+   "scene": {
+    "faces": 15,
+    "heroCards": 2,
+    "runs": 3,
+    "actions": 1,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 233.75155639648438,
+   "boardBottom": 348.6702880859375,
+   "heroBoardGap": -114.91873168945312,
+   "heroBoardOverlapPx": 0,
+   "pods": 9,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.8227,
+   "boardCov": 0.9666,
+   "boardCardCount": 15,
+   "boardEls": 15,
+   "podPairPx": 638,
+   "clusterVsPodsPx": 2166,
+   "clusterCoveredPods": [
+    6,
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstrength",
+     "cov": 0.49,
+     "r": {
+      "x": 162.54843139648438,
+      "y": 295.48907470703125,
+      "w": 13.208602905273438,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:absolute"
+     ]
+    },
+    {
+     "cls": "pointer-events-auto",
+     "cov": 0.73,
+     "r": {
+      "x": 142.8171844482422,
+      "y": 311.4390563964844,
+      "w": 52.68827819824219,
+      "h": 11.21484375
+     },
+     "by": [
+      "pod"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 386.5015869140625,
+      "y": 276.23907470703125,
+      "w": 24.707000732421875,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 385.2640686035156,
+      "y": 283.9390563964844,
+      "w": 27.19061279296875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 392.25079345703125,
+      "y": 295.48907470703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "pod",
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [
+    {
+     "label": "7c",
+     "cov": 0.14,
+     "r": {
+      "x": 252.05096435546875,
+      "y": 275.8062744140625,
+      "w": 15.84002685546875,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Td",
+     "cov": 0.18,
+     "r": {
+      "x": 304.322998046875,
+      "y": 275.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    },
+    {
+     "label": "Qd",
+     "cov": 0.18,
+     "r": {
+      "x": 321.74700927734375,
+      "y": 275.8062744140625,
+      "w": 15.8399658203125,
+      "h": 22.175994873046875
+     }
+    }
+   ],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 91.328125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 595.5,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 625,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 489.1363525390625,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 445,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "390x844",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.17543029785156,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.653354,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.5713,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 25,
+   "clusterCoveredPods": [
+    0
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.5,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 174.31544494628906,
+      "y": 497.0903625488281,
+      "w": 41.37565612792969,
+      "h": 14.700439453125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 178.337646484375,
+      "y": 514.4042358398438,
+      "w": 33.32102966308594,
+      "h": 13.39373779296875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 169.52247619628906,
+      "y": 303.4322509765625,
+      "w": 50.961578369140625,
+      "h": 14.700469970703125
+     },
+     "by": [
+      "center:table-pot-pill",
+      "bet:table-bet-amt",
+      "bet:table-disc-d"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 495.875,
+    "w": 242,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "844x390",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 195.87655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.822,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.5861,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 442.5625,
+      "y": 256.703125,
+      "w": 42.9000244140625,
+      "h": 12.375
+     },
+     "by": [
+      "center:table-pot-pill",
+      "bet:table-bet-amt",
+      "bet:table-disc-d"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "320x700",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 213.6765594482422,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.3172,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 3625,
+   "clusterCoveredPods": [
+    0
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 150.99456787109375,
+      "y": 388.279541015625,
+      "w": 18.026931762695312,
+      "h": 8.008026123046875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 145.87338256835938,
+      "y": 396.2875671386719,
+      "w": 28.278244018554688,
+      "h": 12.011993408203125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 153.1395721435547,
+      "y": 408.299560546875,
+      "w": 13.7369384765625,
+      "h": 10.2960205078125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 153.59536743164062,
+      "y": 418.5955810546875,
+      "w": 12.834274291992188,
+      "h": 10.29595947265625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 142.59727478027344,
+      "y": 437.52655029296875,
+      "w": 34.83045959472656,
+      "h": 12.375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 145.9832000732422,
+      "y": 452.1015625,
+      "w": 28.050003051757812,
+      "h": 11.274993896484375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 138.5625,
+      "y": 287.703125,
+      "w": 42.90000915527344,
+      "h": 12.375
+     },
+     "by": [
+      "center:table-pot-pill",
+      "bet:table-bet-amt",
+      "bet:table-disc-d"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 351.875,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "667x375",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 226.87655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.822,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.4611,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 312.0625,
+      "y": 287.703125,
+      "w": 42.9000244140625,
+      "h": 12.375
+     },
+     "by": [
+      "center:table-pot-pill",
+      "bet:table-bet-amt",
+      "bet:table-disc-d"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "2p-headsup-myturn",
+   "vp": "568x320",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 7,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 226.87655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 2,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.822,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.2975,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 262.5625,
+      "y": 287.703125,
+      "w": 42.9000244140625,
+      "h": 12.375
+     },
+     "by": [
+      "center:table-pot-pill",
+      "bet:table-bet-amt",
+      "bet:table-disc-d"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 609.5833740234375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 625,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 499.67425537109375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.8665,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 2196,
+   "clusterCoveredPods": [
+    3
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstack",
+     "cov": 0.52,
+     "r": {
+      "x": 1061.3712158203125,
+      "y": 431.9886474609375,
+      "w": 40.0743408203125,
+      "h": 17.022705078125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 1061.3712158203125,
+      "y": 449.0113525390625,
+      "w": 16.2120361328125,
+      "h": 12.159088134765625
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 1043.734130859375,
+      "y": 470.0871276855469,
+      "w": 36.895263671875,
+      "h": 14.793548583984375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 445,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "390x844",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 252.56056213378906,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.682482,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9241,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.9,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 177.5913848876953,
+      "y": 536.1317138671875,
+      "w": 34.80657958984375,
+      "h": 13.99090576171875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 535.875,
+    "w": 242,
+    "h": 296.125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "844x390",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 200.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.5861,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "320x700",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 218.62655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.5981,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 3169,
+   "clusterCoveredPods": [
+    0
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 150.99456787109375,
+      "y": 393.42755126953125,
+      "w": 18.026931762695312,
+      "h": 8.00799560546875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 145.87338256835938,
+      "y": 401.435546875,
+      "w": 28.278244018554688,
+      "h": 12.01202392578125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 153.59536743164062,
+      "y": 413.44757080078125,
+      "w": 12.834274291992188,
+      "h": 10.2960205078125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 142.59727478027344,
+      "y": 432.5765686035156,
+      "w": 34.83045959472656,
+      "h": 12.375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 145.9832000732422,
+      "y": 447.15155029296875,
+      "w": 28.050003051757812,
+      "h": 11.2750244140625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 278.8382873535156,
+      "y": 348.6500244140625,
+      "w": 27.568756103515625,
+      "h": 11.27496337890625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 351.875,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "667x375",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.977,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 509,
+   "clusterCoveredPods": [
+    3
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.4611,
+   "worstTexts": [
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 452.52734375,
+      "y": 321.1499938964844,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 0.15,
+     "r": {
+      "x": 452.3382873535156,
+      "y": 348.6500244140625,
+      "w": 27.568756103515625,
+      "h": 11.27496337890625
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "4p-myturn",
+   "vp": "568x320",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 6,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 4,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.7866,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 2548,
+   "clusterCoveredPods": [
+    3
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.2975,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 407.9515686035156,
+      "y": 313.45001220703125,
+      "w": 17.333587646484375,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 403.02734375,
+      "y": 321.1499938964844,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 410.0140686035156,
+      "y": 332.70001220703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 402.8382873535156,
+      "y": 348.6500244140625,
+      "w": 27.568756103515625,
+      "h": 11.27496337890625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 609.5833740234375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.9446,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 3117,
+   "clusterCoveredPods": [
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 0.62,
+     "r": {
+      "x": 1100.518310546875,
+      "y": 668.26953125,
+      "w": 31.6197509765625,
+      "h": 16.25
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.71,
+     "r": {
+      "x": 1100.518310546875,
+      "y": 684.51953125,
+      "w": 53.5572509765625,
+      "h": 22.75
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 625,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 499.67425537109375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.8868,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 3457,
+   "clusterCoveredPods": [
+    6,
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstack",
+     "cov": 0.52,
+     "r": {
+      "x": 1061.3712158203125,
+      "y": 431.9886474609375,
+      "w": 40.0743408203125,
+      "h": 17.022705078125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 1061.3712158203125,
+      "y": 449.0113525390625,
+      "w": 16.2120361328125,
+      "h": 12.159088134765625
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 1045.7861328125,
+      "y": 470.0871276855469,
+      "w": 32.79150390625,
+      "h": 14.793548583984375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.47,
+     "r": {
+      "x": 935.296630859375,
+      "y": 555.745361328125,
+      "w": 40.0743408203125,
+      "h": 17.022705078125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 445,
+    "w": 296,
+    "h": 251
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "390x844",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 237.05560302734375,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.653354,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.8841,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 39,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.5,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pill",
+     "cov": 0.87,
+     "r": {
+      "x": 174.31544494628906,
+      "y": 491.2101745605469,
+      "w": 41.37565612792969,
+      "h": 14.700469970703125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 178.337646484375,
+      "y": 508.5240478515625,
+      "w": 33.32102966308594,
+      "h": 13.39373779296875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 495.875,
+    "w": 242,
+    "h": 336.125
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "844x390",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 200.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 28,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.5238,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "320x700",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 218.62655639648438,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.6065,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 28,
+   "clusterVsPodsPx": 5854,
+   "clusterCoveredPods": [
+    0,
+    6,
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.9571,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 150.99456787109375,
+      "y": 393.42755126953125,
+      "w": 18.026931762695312,
+      "h": 8.00799560546875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 145.87338256835938,
+      "y": 401.435546875,
+      "w": 28.278244018554688,
+      "h": 12.01202392578125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstrength",
+     "cov": 1,
+     "r": {
+      "x": 153.59536743164062,
+      "y": 413.44757080078125,
+      "w": 12.834274291992188,
+      "h": 10.2960205078125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 142.59727478027344,
+      "y": 432.5765686035156,
+      "w": 34.83045959472656,
+      "h": 12.375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 145.9832000732422,
+      "y": 447.15155029296875,
+      "w": 28.050003051757812,
+      "h": 11.2750244140625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.36,
+     "r": {
+      "x": 279.02734375,
+      "y": 321.1499938964844,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 286.0140686035156,
+      "y": 332.70001220703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 280.4496154785156,
+      "y": 348.6500244140625,
+      "w": 24.346099853515625,
+      "h": 11.27496337890625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 332,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 614.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 664.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 614.125,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 664.125,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "667x375",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.9919,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 28,
+   "clusterVsPodsPx": 509,
+   "clusterCoveredPods": [
+    6
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.4121,
+   "worstTexts": [
+    {
+     "cls": "table-pstack",
+     "cov": 0.15,
+     "r": {
+      "x": 452.52734375,
+      "y": 321.1499938964844,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "8p-myturn",
+   "vp": "568x320",
+   "scene": {
+    "faces": 0,
+    "heroCards": 2,
+    "runs": 0,
+    "actions": 8,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": 231.82656860351562,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 8,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.7372,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 28,
+   "clusterVsPodsPx": 4642,
+   "clusterCoveredPods": [
+    5,
+    6,
+    7
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": 44,
+   "dockMinH": 44,
+   "clusterVisible": 0.2659,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 0.48,
+     "r": {
+      "x": 369.1078186035156,
+      "y": 260.8304748535156,
+      "w": 17.333587646484375,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 0.46,
+     "r": {
+      "x": 364.18359375,
+      "y": 268.53045654296875,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 0.73,
+     "r": {
+      "x": 371.1703186035156,
+      "y": 280.0804748535156,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 0.46,
+     "r": {
+      "x": 363.9945373535156,
+      "y": 296.03045654296875,
+      "w": 27.568756103515625,
+      "h": 11.2750244140625
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 404.2648620605469,
+      "y": 313.45001220703125,
+      "w": 24.70703125,
+      "h": 7.699981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 403.02734375,
+      "y": 321.1499938964844,
+      "w": 27.190643310546875,
+      "h": 11.550018310546875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-paction",
+     "cov": 1,
+     "r": {
+      "x": 410.0140686035156,
+      "y": 332.70001220703125,
+      "w": 13.208587646484375,
+      "h": 9.899993896484375
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 404.4496154785156,
+      "y": 348.6500244140625,
+      "w": 24.346099853515625,
+      "h": 11.27496337890625
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 376.125
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "1440x900",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 1.08333,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.9455,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 2110,
+   "clusterCoveredPods": [
+    5
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 13,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pstack",
+     "cov": 0.18,
+     "r": {
+      "x": 1191.94140625,
+      "y": 670.25,
+      "w": 53.557373046875,
+      "h": 22.75
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 1171.789794921875,
+      "y": 709.7916870117188,
+      "w": 42.469970703125,
+      "h": 16.25
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 1120,
+    "y": 689.75,
+    "w": 296,
+    "h": 186.25
+   },
+   "dockRects": [
+    {
+     "x": 1357,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 817,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 851.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "1280x720",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.810606,
+   "canvasW": 1180,
+   "canvasH": 660,
+   "textCov": 0.8556,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 4533,
+   "clusterCoveredPods": [
+    5
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.7,
+   "sliderH": null,
+   "dockMinH": null,
+   "clusterVisible": 1,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 1003.7041625976562,
+      "y": 532.9090576171875,
+      "w": 23.65960693359375,
+      "h": 12.15911865234375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 1003.7041625976562,
+      "y": 545.0681762695312,
+      "w": 40.07440185546875,
+      "h": 17.02276611328125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 988.6256713867188,
+      "y": 574.6552734375,
+      "w": 31.77825927734375,
+      "h": 12.15911865234375
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 960,
+    "y": 509.75,
+    "w": 296,
+    "h": 186.25
+   },
+   "dockRects": [
+    {
+     "x": 1197,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 637,
+     "w": 100,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 671.5,
+     "w": 89,
+     "h": 28.5
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "390x844",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.682482,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 9.9,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 645.75,
+    "w": 242,
+    "h": 186.25
+   },
+   "dockRects": [
+    {
+     "x": 311,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 738,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 788,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "844x390",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 0.9681,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 636,
+    "y": 181,
+    "w": 184,
+    "h": 203.5
+   },
+   "dockRects": [
+    {
+     "x": 761,
+     "y": 132.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 276,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 104,
+     "y": 326,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "320x700",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.554745,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 1,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 138,
+    "y": 484.5,
+    "w": 172,
+    "h": 203.5
+   },
+   "dockRects": [
+    {
+     "x": 241,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 594,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 10,
+     "y": 644,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "667x375",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 1,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 0,
+   "clusterCoveredPods": [],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 0.7617,
+   "worstTexts": [],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 479,
+    "y": 212,
+    "w": 172,
+    "h": 203.5
+   },
+   "dockRects": [
+    {
+     "x": 588,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 265,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 315,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  },
+  {
+   "scenario": "idle-6p",
+   "vp": "568x320",
+   "scene": {
+    "faces": 0,
+    "heroCards": 0,
+    "runs": 0,
+    "actions": 2,
+    "fontsReady": true,
+    "storeUrl": "http://localhost:5173/src/shared/store.ts?t=1791166675427"
+   },
+   "heroTop": null,
+   "boardBottom": null,
+   "heroBoardGap": null,
+   "heroBoardOverlapPx": 0,
+   "pods": 6,
+   "k": 0.55,
+   "canvasW": 548,
+   "canvasH": 410,
+   "textCov": 0.6981,
+   "boardCov": null,
+   "boardCardCount": 0,
+   "boardEls": 0,
+   "podPairPx": 0,
+   "clusterVsPodsPx": 3991,
+   "clusterCoveredPods": [
+    4,
+    5
+   ],
+   "dockVsClusterPx": 0,
+   "effNamePx": 8,
+   "sliderH": null,
+   "dockMinH": 44,
+   "clusterVisible": 0.4914,
+   "worstTexts": [
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 386.5015869140625,
+      "y": 281.1890563964844,
+      "w": 24.707000732421875,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 385.2640686035156,
+      "y": 288.8890686035156,
+      "w": 27.19061279296875,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 387.2191467285156,
+      "y": 306.48907470703125,
+      "w": 23.28045654296875,
+      "h": 9.074981689453125
+     },
+     "by": [
+      "ctl:m-0",
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pname",
+     "cov": 1,
+     "r": {
+      "x": 389.15704345703125,
+      "y": 364.62579345703125,
+      "w": 19.404693603515625,
+      "h": 7.70001220703125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pstack",
+     "cov": 1,
+     "r": {
+      "x": 385.2640686035156,
+      "y": 372.3258056640625,
+      "w": 27.19061279296875,
+      "h": 11.54998779296875
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    },
+    {
+     "cls": "table-pill",
+     "cov": 1,
+     "r": {
+      "x": 387.2191467285156,
+      "y": 389.92578125,
+      "w": 23.28045654296875,
+      "h": 9.07501220703125
+     },
+     "by": [
+      "ctl:poker-action-bar"
+     ]
+    }
+   ],
+   "worstBoard": [],
+   "clusterRect": {
+    "x": 380,
+    "y": 212,
+    "w": 172,
+    "h": 203.5
+   },
+   "dockRects": [
+    {
+     "x": 489,
+     "y": 165.75,
+     "w": 67,
+     "h": 28.5
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 230,
+     "w": 39,
+     "h": 44
+    },
+    {
+     "x": 16,
+     "y": 280,
+     "w": 39,
+     "h": 44
+    }
+   ]
+  }
+ ]
+}
