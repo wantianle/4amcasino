@@ -300,8 +300,9 @@ interface ShowSnapshot {
   revealedSeats: Set<number>;
   winnerSeats: number[];
   reveals: Map<number, CardId[]>;
-  /** True when no one had to show: the hand was decided by a fold. Peeking is
-   *  only offered out of a heads-up fold, never out of a public showdown. */
+  /** True when no one had to show: the hand was decided by a fold. Kept on the
+   *  snapshot for consumers; the peek gate no longer keys off it (a peek is
+   *  allowed out of any hand with still-private cards). */
   endedByFold: boolean;
 }
 
@@ -1885,13 +1886,33 @@ export class GameRoom {
   }
 
   /**
-   * A paid request to privately see someone's cards from the last hand.
+   * Whether a hand participant's hole cards are already public for `handId`:
+   * revealed at showdown, or voluntarily shown. Shared by offer creation AND
+   * acceptance so the two gates can never drift - a target may stay private
+   * when the offer is made and then `show_cards` before answering, and only an
+   * acceptance-time re-check can stop the buyer from paying for cards that are
+   * already on screen for everyone.
+   */
+  private peekTargetIsPublic(handId: string, targetSeat: number): boolean {
+    const revealed =
+      this.lastHandShow?.handId === handId && this.lastHandShow.revealedSeats.has(targetSeat);
+    const shown = this.shownHandId === handId && this.shown.has(targetSeat);
+    return revealed || shown;
+  }
+
+  /**
+   * A paid request to privately see a player's cards from the hand that just
+   * ended.
    *
    * House rule (server-authoritative): a peek costs a FIXED 1bb, paid by the
-   * requester to the player being looked at, and is only offered out of a
-   * heads-up hand that ended by a fold (so the target's cards are still hidden).
-   * A full ring game or any hand decided at showdown has no private cards left
-   * to sell. The client's `amount` is ignored.
+   * requester to the player being looked at. ANY seated player may be the
+   * requester - including players who folded this hand and players who did not
+   * take part in it at all - so a ring table can have several parallel offers
+   * (one per target, tracked separately in `peekOffers`). The target is any
+   * participant of the last hand whose hole cards are still private: a folder,
+   * or a winner who was never shown. Cards already public - revealed at
+   * showdown or voluntarily shown - cannot be bought. The client's `amount` is
+   * ignored.
    */
   private onPeekOffer(userId: number, msg: Extract<ClientMsg, { t: 'peek_offer' }>): void {
     const snap = this.lastHandShow;
@@ -1901,19 +1922,12 @@ export class GameRoom {
     // offer can later be accepted into a transfer the void cannot reverse.
     if (this.isHandVoided(msg.handId))
       return this.send(userId, { t: 'error', message: 'that hand was voided' });
-    if (snap.bySeat.size !== 2)
-      return this.send(userId, { t: 'error', message: 'peeks are only for a heads-up hand' });
-    if (!snap.endedByFold)
-      return this.send(userId, { t: 'error', message: 'that hand was decided at showdown' });
     const target = snap.bySeat.get(msg.targetSeat);
     if (!target)
       return this.send(userId, { t: 'error', message: 'that player was not in the last hand' });
     if (target.userId === userId)
       return this.send(userId, { t: 'error', message: 'those are your own cards' });
-    if (
-      snap.revealedSeats.has(msg.targetSeat) ||
-      (this.shownHandId === msg.handId && this.shown.has(msg.targetSeat))
-    )
+    if (this.peekTargetIsPublic(msg.handId, msg.targetSeat))
       return this.send(userId, { t: 'error', message: 'those cards are already public' });
     const room = getRoom(this.db, this.roomId);
     if (!room) return;
@@ -1921,12 +1935,19 @@ export class GameRoom {
     const amount = room.bb;
     const buyer = this.db
       .prepare(
-        `SELECT rp.stack, COALESCE(u.display_name, u.username) as name
+        `SELECT rp.stack, rp.seat, COALESCE(u.display_name, u.username) as name
          FROM room_players rp JOIN users u ON u.id = rp.user_id
          WHERE rp.room_id = ? AND rp.user_id = ?`,
       )
-      .get(this.roomId, userId) as { stack: number; name: string } | undefined;
-    if (!buyer) return;
+      .get(this.roomId, userId) as
+      | { stack: number; seat: number | null; name: string }
+      | undefined;
+    // A spectator (no `room_players` row at all) or a player who left their
+    // seat (seat null) has no stake and cannot pay the target. Reject
+    // explicitly: a silent drop would strand a client that is waiting for a
+    // result that will never arrive.
+    if (!buyer || buyer.seat === null)
+      return this.send(userId, { t: 'error', message: 'only seated players can buy a peek' });
     if (buyer.stack < amount)
       return this.send(userId, { t: 'error', message: 'not enough chips for that offer' });
     const offerId = randomBytes(6).toString('hex');
@@ -2036,6 +2057,13 @@ export class GameRoom {
     if (this.isHandVoided(offer.handId)) {
       finish('failed');
       return this.send(userId, { t: 'error', message: 'that hand was voided' });
+    }
+    // The target may have been private when the offer was made and then showed
+    // its cards before answering. Re-check the CURRENT public state before any
+    // money moves, or the buyer would pay for cards already visible table-wide.
+    if (this.peekTargetIsPublic(offer.handId, offer.targetSeat)) {
+      finish('failed');
+      return this.send(userId, { t: 'error', message: 'those cards are already public' });
     }
     if (!verifyContent(target.pubkey, offer.handId, 'peek_accept', signedBody(msg), msg.sig)) {
       finish('failed');

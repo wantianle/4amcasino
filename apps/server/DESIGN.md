@@ -131,19 +131,31 @@ again.
 
 ## Peek (paid card look) house rules
 
-A peek is a paid request to privately see an opponent's cards from the hand that
-just ended. The rules are server-authoritative and enforced in
+A peek is a paid request to privately see another player's cards from the hand
+that just ended. The rules are server-authoritative and enforced in
 `GameRoom.onPeekOffer` / `onPeekAnswer`:
 
 - **Fixed price, 1bb.** The server charges `room.bb` from the requester to the
   player being looked at ("the target"). A client-supplied `amount` on
   `peek_offer` is accepted for wire compatibility but is ignored — old clients
   that send a number are not trusted. `peek_result.amount` echoes the fixed 1bb.
-- **Heads-up, fold-decided only.** A peek is offered only when the last hand was
-  exactly two players (`ShowSnapshot.bySeat.size === 2`) and ended by a fold
-  (`ShowSnapshot.endedByFold`, i.e. `betting.winnerByFold !== null`). A ring hand
-  or a hand decided at showdown has no hidden cards left to sell; those requests
-  are rejected with an error.
+- **Any seated player may ask; any hidden hand's cards may be sold.** The
+  requester must hold a seat (`room_players.seat IS NOT NULL`) and at least 1bb.
+  Folding earlier in the hand, or not taking part in it at all, does not
+  disqualify them, and several players may hold parallel offers at once (one
+  entry per target in `peekOffers`). The target must be a participant of the
+  just-ended hand (`ShowSnapshot.bySeat`) whose hole cards are still private - a
+  folder, or a winner who was never shown. There is **no** heads-up and no
+  fold-ended requirement: a ring hand can be peeked too. Cards already public -
+  revealed at showdown (`revealedSeats`) or voluntarily shown (`shown`) - are
+  rejected with an `already public` error, so a showdown's live players cannot
+  be bought.
+- **The public check runs twice.** Creation is not enough: a target can be
+  private when `peek_offer` is made and then `show_cards` before answering, so
+  `onPeekAnswer` re-checks `revealedSeats`/`shown` **before any money moves** and
+  fails the offer (`peek_result: 'failed'`, `peek_offer_closed: 'failed'`, no
+  ledger/stack change). Both gates call the shared `peekTargetIsPublic()` helper
+  so creation and acceptance can never drift apart.
 - **Mutual consent, ledger transfer.** The target must accept (signed
   `peek_accept` with unmask shares verified against the finished hand's snapshot);
   only then does the 1bb move, through two `kind: 'peek'` ledger rows that net to

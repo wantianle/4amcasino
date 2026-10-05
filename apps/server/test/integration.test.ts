@@ -1247,20 +1247,29 @@ describe('full hand integration', () => {
     expect(peeks.reduce((s: number, e: any) => s + e.delta, 0)).toBe(0); // zero-sum
   });
 
-  it('refuses peeks in a ring hand and in a showdown hand', async () => {
-    // Ring: three players, still a fold-out, but not heads-up.
+  it('allows a ring fold-out peek but refuses cards already shown at showdown', async () => {
+    // Ring: three players, fold-out. This used to be refused (not heads-up);
+    // now any still-private participant is a valid target, so the winner can buy
+    // a look at the folder's mucked cards.
     const ring = await setupRoom(['ra', 'rb', 'rc'], ['fold-first', 'fold-first', 'passive']);
     ring.host.send({ t: 'start_hand' });
     await Promise.all(ring.players.map((p) => p.waitFor(() => p.handEnd !== null)));
     for (const p of ring.players) p.send({ t: 'sit_out', sittingOut: true });
-    const rc = ring.players[2]!;
+    const [ra, rb, rc] = ring.players as [TestClient, TestClient, TestClient];
+    const targetSeat = ring.host.seat!;
     rc.errors = [];
-    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat: ring.host.seat });
-    await rc.waitFor(() => rc.errors.length > 0);
-    expect(rc.errors[0]).toMatch(/heads-up/i);
-    expect(ring.players[0]!.peekOffers).toHaveLength(0);
+    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat });
+    await ra.waitFor(() => ra.peekOffers.length > 0);
+    expect(rc.errors).toHaveLength(0);
+    ra.acceptPeek(ra.peekOffers[0]!.offerId);
+    await rc.waitFor(() => rc.peekResults.length > 0);
+    expect(rc.peekResults.at(-1)!.status).toBe('accepted');
+    expect(rc.peekResults.at(-1)!.cards!.slice().sort()).toEqual(ra.myCards.slice().sort());
+    // the third player never receives the reveal
+    expect(rb.peekResults).toHaveLength(0);
+    expect(rb.peekOffers).toHaveLength(0);
 
-    // Heads-up but decided at showdown: no private cards left to sell.
+    // Showdown: the players who showed have no private cards left to sell.
     const hu = await setupRoom(['sa', 'sb'], ['passive', 'passive']);
     hu.host.send({ t: 'start_hand' });
     await Promise.all(hu.players.map((p) => p.waitFor(() => p.handEnd !== null)));
@@ -1269,9 +1278,9 @@ describe('full hand integration', () => {
     sb.errors = [];
     sb.send({ t: 'peek_offer', handId: sb.handId, targetSeat: hu.host.seat });
     await sb.waitFor(() => sb.errors.length > 0);
-    expect(sb.errors[0]).toMatch(/showdown/i);
+    expect(sb.errors[0]).toMatch(/already public/i);
     expect(hu.players[0]!.peekOffers).toHaveLength(0);
-  });
+  }, 25000);
 
   it('refuses a peek for a hand that is not the last one', async () => {
     const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
@@ -1591,7 +1600,7 @@ describe('full hand integration', () => {
     expect(snap.raw.fromUserId).toBeUndefined();
   }, 20000);
 
-  it('still refuses a heads-up peek after a player leaves their seat from a 3-way hand', async () => {
+  it('a player who left their seat cannot buy a peek, but a seated player still can', async () => {
     const ring = await setupRoom(
       ['la', 'lb', 'lc'],
       ['fold-first', 'fold-first', 'passive'],
@@ -1606,12 +1615,225 @@ describe('full hand integration', () => {
       () => leaver.roomState?.players.find((p) => p.userId === leaver.userId)?.seat === null,
       5000,
     );
+    const target = ring.players[1]!;
+    // no seat means no stake: the leaver may not buy a look
+    leaver.errors = [];
+    leaver.send({ t: 'peek_offer', handId: leaver.handId, targetSeat: target.seat! });
+    await leaver.waitFor(() => leaver.errors.length > 0);
+    expect(leaver.errors[0]).toMatch(/seated/i);
+    // a still-seated player can still buy the folded target's cards
     const rc = ring.players[2]!;
     rc.errors = [];
-    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat: ring.players[1]!.seat! });
-    await rc.waitFor(() => rc.errors.length > 0);
-    expect(rc.errors[0]).toMatch(/heads-up/i);
+    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat: target.seat! });
+    await target.waitFor(() => target.peekOffers.length > 0);
+    expect(rc.errors).toHaveLength(0);
+    target.acceptPeek(target.peekOffers[0]!.offerId);
+    await rc.waitFor(() => rc.peekResults.length > 0);
+    expect(rc.peekResults.at(-1)!.status).toBe('accepted');
+    expect(rc.peekResults.at(-1)!.cards!.slice().sort()).toEqual(target.myCards.slice().sort());
+  }, 25000);
+
+  it('a folder can buy a look at the still-private winner (the requester is the folder)', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    // The user's example: host folded, bob won, and host pays to see bob's
+    // cards (which were never shown because the hand ended by a fold).
+    h.errors = [];
+    h.send({ t: 'peek_offer', handId: h.handId, targetSeat: bob.seat! });
+    await bob.waitFor(() => bob.peekOffers.length > 0);
+    expect(h.errors).toHaveLength(0);
+    expect(bob.peekOffers.at(-1)!.fromUserId).toBe(h.userId);
+    bob.acceptPeek(bob.peekOffers[0]!.offerId);
+    await h.waitFor(() => h.peekResults.length > 0);
+    expect(h.peekResults.at(-1)!.status).toBe('accepted');
+    expect(h.peekResults.at(-1)!.cards!.slice().sort()).toEqual(bob.myCards.slice().sort());
+    // the target sees only its closure, never the revealed cards
+    await bob.waitFor(() => bob.peekClosures.length > 0);
+    expect(bob.peekClosures.at(-1)!.status).toBe('accepted');
+    expect(bob.peekClosures.at(-1)!.raw.cards).toBeUndefined();
   }, 20000);
+
+  it('a seated player who sat the hand out can still buy a look', async () => {
+    const { players, room, host } = await setupRoom(['na', 'nb', 'nc']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [na, nb, nc] = players as [TestClient, TestClient, TestClient];
+    // nc sits the hand out: only na and nb are dealt in
+    nc.send({ t: 'sit_out', sittingOut: true });
+    await nc.waitFor(
+      () => nc.roomState?.players.find((p) => p.userId === nc.userId)?.sittingOut === true,
+      3000,
+    );
+    na.strategy = 'fold-first';
+    na.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(na.handEnd!.stacks.map((s) => s.seat).sort()).toEqual([0, 1]);
+
+    // nc holds a seat but took no part in the hand, so it may still buy nb's
+    // mucked cards (its hand id comes from the broadcast `hand_end`).
+    nc.errors = [];
+    nc.send({ t: 'peek_offer', handId: nc.handEnd!.handId, targetSeat: nb.seat! });
+    await nb.waitFor(() => nb.peekOffers.length > 0);
+    expect(nc.errors).toHaveLength(0);
+    nb.acceptPeek(nb.peekOffers[0]!.offerId);
+    await nc.waitFor(() => nc.peekResults.length > 0);
+    expect(nc.peekResults.at(-1)!.status).toBe('accepted');
+    expect(nc.peekResults.at(-1)!.cards!.slice().sort()).toEqual(nb.myCards.slice().sort());
+  }, 25000);
+
+  it('allows several parallel offers to the same target and settles each independently', async () => {
+    const { players, room, host } = await setupRoom(
+      ['pa', 'pb', 'pc'],
+      ['fold-first', 'fold-first', 'passive'],
+    );
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+    const [pa, pb, pc] = players as [TestClient, TestClient, TestClient];
+
+    const stackOf = (uid: number) =>
+      (
+        ctx.db
+          .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+          .get(room.id, uid) as { stack: number }
+      ).stack;
+    const before = { pa: stackOf(pa.userId), pb: stackOf(pb.userId), pc: stackOf(pc.userId) };
+    const bb = room.bb;
+
+    // two different requesters target the same folder concurrently
+    pc.send({ t: 'peek_offer', handId: pc.handId, targetSeat: pa.seat! });
+    pb.send({ t: 'peek_offer', handId: pb.handId, targetSeat: pa.seat! });
+    await pa.waitFor(() => pa.peekOffers.length === 2);
+    const pcOffer = pa.peekOffers.find((o) => o.fromUserId === pc.userId)!;
+    const pbOffer = pa.peekOffers.find((o) => o.fromUserId === pb.userId)!;
+    expect(pcOffer).toBeTruthy();
+    expect(pbOffer).toBeTruthy();
+    expect(pcOffer.offerId).not.toBe(pbOffer.offerId);
+
+    // accept BOTH: each offer settles independently and only its own buyer sees
+    // pa's cards
+    pa.acceptPeek(pcOffer.offerId);
+    await pc.waitFor(() => pc.peekResults.length > 0);
+    expect(pc.peekResults.at(-1)!.status).toBe('accepted');
+    expect(pc.peekResults.at(-1)!.cards!.slice().sort()).toEqual(pa.myCards.slice().sort());
+    pa.acceptPeek(pbOffer.offerId);
+    await pb.waitFor(() => pb.peekResults.length > 0);
+    expect(pb.peekResults.at(-1)!.status).toBe('accepted');
+    expect(pb.peekResults.at(-1)!.cards!.slice().sort()).toEqual(pa.myCards.slice().sort());
+    // both offers are terminally closed for the target, and it never received
+    // a reveal of its own cards
+    await pa.waitFor(() => pa.peekClosures.length === 2);
+    expect(pa.peekClosures.map((c) => c.status)).toEqual(['accepted', 'accepted']);
+    expect(pa.peekResults).toHaveLength(0);
+
+    // exact ledger shape: two requester -bb rows and two target +bb rows
+    const peekRows = ctx.db
+      .prepare(
+        "SELECT user_id, delta FROM ledger WHERE room_id = ? AND kind = 'peek' ORDER BY user_id, delta",
+      )
+      .all(room.id) as { user_id: number; delta: number }[];
+    expect(peekRows).toHaveLength(4);
+    expect(peekRows.filter((r) => r.user_id === pc.userId)).toEqual([
+      { user_id: pc.userId, delta: -bb },
+    ]);
+    expect(peekRows.filter((r) => r.user_id === pb.userId)).toEqual([
+      { user_id: pb.userId, delta: -bb },
+    ]);
+    expect(peekRows.filter((r) => r.user_id === pa.userId)).toEqual([
+      { user_id: pa.userId, delta: bb },
+      { user_id: pa.userId, delta: bb },
+    ]);
+    // stacks match the two settled transfers
+    expect(stackOf(pa.userId)).toBe(before.pa + 2 * bb);
+    expect(stackOf(pc.userId)).toBe(before.pc - bb);
+    expect(stackOf(pb.userId)).toBe(before.pb - bb);
+  }, 25000);
+
+  it('refuses a peek when the target shows its cards after the offer was made', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    const peekLedger = () =>
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
+          .get(room.id) as { n: number }
+      ).n;
+    const stacks = () =>
+      ctx.db
+        .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+        .all(room.id) as { user_id: number; stack: number }[];
+    const before = stacks();
+    expect(peekLedger()).toBe(0);
+
+    // host (the folder) offers to see bob's (the winner's) still-private cards
+    h.send({ t: 'peek_offer', handId: h.handId, targetSeat: bob.seat! });
+    await bob.waitFor(() => bob.peekOffers.length > 0);
+    const offerId = bob.peekOffers[0]!.offerId;
+
+    // bob voluntarily shows before answering: the cards are public now
+    bob.showCards();
+    await h.waitFor(() => h.cardsShown.length > 0);
+    expect(h.cardsShown.at(-1)!.seat).toBe(bob.seat);
+
+    // accepting the stale offer must fail before any money moves
+    bob.errors = [];
+    bob.acceptPeek(offerId);
+    await h.waitFor(() => h.peekResults.length > 0);
+    expect(h.peekResults.at(-1)!.status).toBe('failed');
+    expect(h.peekResults.at(-1)!.cards).toBeUndefined();
+    await bob.waitFor(() => bob.peekClosures.length > 0);
+    expect(bob.peekClosures.at(-1)!.status).toBe('failed');
+    await bob.waitFor(() => bob.errors.length > 0);
+    expect(bob.errors[0]).toMatch(/already public/i);
+
+    // no transfer, no stack change
+    expect(peekLedger()).toBe(0);
+    expect(stacks()).toEqual(before);
+  }, 25000);
+
+  it('refuses a spectator peek explicitly instead of dropping it', async () => {
+    const { players, room, host } = await setupRoom(['sa', 'sb'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    // a watch-only observer: a `spectators` row and NO `room_players` row
+    const link = await host.api(`/api/rooms/${room.id}/spectate-settings`, { allow: true });
+    const spec = new TestClient(baseUrl, 'watcher');
+    clients.push(spec);
+    await spec.register();
+    const watch = await spec.api(`/api/watch/${link.token}`);
+    expect(watch.roomId).toBe(room.id);
+
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+    await spec.connect(room.id);
+
+    const peekLedger = () =>
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
+          .get(room.id) as { n: number }
+      ).n;
+    expect(peekLedger()).toBe(0);
+
+    spec.errors = [];
+    spec.send({ t: 'peek_offer', handId: h.handEnd!.handId, targetSeat: bob.seat! });
+    await spec.waitFor(() => spec.errors.length > 0);
+    expect(spec.errors[0]).toMatch(/seated/i);
+    // nothing was created for the target and nothing moved
+    expect(bob.peekOffers).toHaveLength(0);
+    expect(peekLedger()).toBe(0);
+  }, 25000);
 
   it('replays the showdown to a client that reconnects during the hold', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
