@@ -41,7 +41,7 @@ import {
   signedBody,
 } from '@4am/shared';
 import { firstPendingHandLifecycle, type DB } from './db.js';
-import { materializeHandProjection, positionAssignments } from './handProjection.js';
+import { materializeHandProjection, positionAssignments, voidHandExistsSql } from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
 import { readRoomFeatures } from './gameplaySettings.js';
@@ -1749,6 +1749,29 @@ export class GameRoom {
     this.sevenDeucePaid.add(handId);
   }
 
+  /**
+   * True when this hand already has a `void-hand` compensating row. The void
+   * writer correlates settlement-family legs on the transcript head and
+   * seven-deuce / peek legs on the hand id, so a hand counts as voided when a
+   * `void-hand` row references EITHER key. This reuses the canonical
+   * `voidHandExistsSql` (the same fragment the stats read models exclude on) so
+   * the engine and the read models can never disagree about what "voided"
+   * means; the head is resolved from the settlement marker for this hand.
+   */
+  private isHandVoided(handId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT ${voidHandExistsSql({
+          roomExpr: '?',
+          handIdExpr: '?',
+          headExpr:
+            '(SELECT hs.head FROM hand_settlements hs WHERE hs.room_id = ? AND hs.hand_id = ?)',
+        })} AS voided`,
+      )
+      .get(this.roomId, handId, this.roomId, handId) as { voided: number } | undefined;
+    return row?.voided === 1;
+  }
+
   /** Pays the 7-2 offsuit bounty to a verified winner, once per hand. */
   private trySevenDeuce(handId: string, seat: number, cards: CardId[]): void {
     const snap = this.lastHandShow;
@@ -1769,6 +1792,13 @@ export class GameRoom {
         injectedFault = false;
       }
       const apply = this.db.transaction(() => {
+        // A voided hand never happened, so no leg may be added after the
+        // banker's compensating refund. Without this, a fold winner's
+        // *legitimate* later 7-2 show re-opened the bounty transfer, leaving
+        // the hand unbalanced with no way back: a second void is rejected as
+        // "already voided". Check inside the money transaction so the read and
+        // the transfer can never interleave.
+        if (this.isHandVoided(handId)) throw new GameError('that hand was voided');
         // Test-only internal fault: deliberately NOT special-cased, so a
         // TypeError/schema/invariant failure here stays a programming error.
         this.opts.faultInjection?.sevenDeuceInternal?.();
@@ -1867,6 +1897,10 @@ export class GameRoom {
     const snap = this.lastHandShow;
     if (this.hand || !snap || snap.handId !== msg.handId)
       return this.send(userId, { t: 'error', message: 'peek offers only work between hands' });
+    // A voided hand never happened: refuse new offers outright so no stale
+    // offer can later be accepted into a transfer the void cannot reverse.
+    if (this.isHandVoided(msg.handId))
+      return this.send(userId, { t: 'error', message: 'that hand was voided' });
     if (snap.bySeat.size !== 2)
       return this.send(userId, { t: 'error', message: 'peeks are only for a heads-up hand' });
     if (!snap.endedByFold)
@@ -1995,6 +2029,13 @@ export class GameRoom {
     if (this.hand) {
       finish('failed');
       return this.send(userId, { t: 'error', message: 'a new hand already started' });
+    }
+    // The offer may have been made before the banker voided the hand. Reject
+    // the acceptance before any money moves, and terminate the offer so the
+    // requester gets an explicit `peek_result` instead of a silent stall.
+    if (this.isHandVoided(offer.handId)) {
+      finish('failed');
+      return this.send(userId, { t: 'error', message: 'that hand was voided' });
     }
     if (!verifyContent(target.pubkey, offer.handId, 'peek_accept', signedBody(msg), msg.sig)) {
       finish('failed');
