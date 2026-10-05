@@ -42,6 +42,7 @@ const bots: Record<string, string> = {
   Start: '开始',
   Stop: '停止',
   'Add chips': '补码',
+  'Current stack': '当前筹码',
   'Add chips for this bot': '给这个机器人补码',
   'Remove this bot': '移除这个机器人',
   'Remove for good?': '确认移除？',

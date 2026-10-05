@@ -8,6 +8,7 @@ import { canBank, getRoom, isMember, roomEvents, type RoomRow } from './rooms.js
 import { LIMITS } from './limits.js';
 import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIdentity.js';
+import { pickFunBotName } from './botNames.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -172,6 +173,9 @@ function botPublicJson(db: DB, bot: BotRow) {
   const user = db
     .prepare('SELECT username, COALESCE(display_name, username) AS displayName FROM users WHERE id = ?')
     .get(bot.user_id) as { username: string; displayName: string } | undefined;
+  const player = db
+    .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+    .get(bot.room_id, bot.user_id) as { stack: number } | undefined;
   return {
     id: bot.id,
     userId: bot.user_id,
@@ -188,6 +192,7 @@ function botPublicJson(db: DB, bot: BotRow) {
     stopRequestedAt: bot.stop_requested_at,
     // Whether the runner can ever recover this bot's signing identity.
     identityRecoverable: !!(bot.identity_ct && bot.identity_nonce && bot.identity_tag) && identityKeyConfigured(),
+    stack: player?.stack ?? 0,
   };
 }
 
@@ -197,6 +202,22 @@ function uniqueBotUsername(db: DB): string {
     if (!db.prepare('SELECT 1 FROM users WHERE username = ?').get(candidate)) return candidate;
   }
   throw new Error('could not allocate a unique bot username');
+}
+
+/**
+ * Display names already live at a table (humans and bots alike). Used to keep a
+ * generated bot name from colliding with a seat-mate. Falls back to `username`
+ * for rows that have no display name yet, matching how the table renders them.
+ */
+function roomDisplayNames(db: DB, roomId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(u.display_name, u.username) AS name
+         FROM room_players rp JOIN users u ON u.id = rp.user_id
+        WHERE rp.room_id = ?`,
+    )
+    .all(roomId) as { name: string }[];
+  return rows.map((row) => row.name);
 }
 
 /** Only a logged-in human host may manage bots - never an agent token. */
@@ -548,7 +569,9 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     const seed = randomBytes(32);
     const identity = identityFromSeed(seed);
     const enc = encryptBotSeed(seed.toString('hex'));
-    const displayName = b.name ?? username;
+    // The username stays the opaque `bot_<hex>` identity; only the presentation
+    // name is dressed up. An explicit `name` always wins.
+    const displayName = b.name ?? pickFunBotName(roomDisplayNames(db, id));
     const botId = randomBytes(12).toString('hex');
     const now = Date.now();
 

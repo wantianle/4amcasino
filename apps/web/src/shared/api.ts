@@ -51,6 +51,8 @@ export interface BotPublic {
   stoppedAt: number | null;
   stopRequestedAt: number | null;
   identityRecoverable: boolean;
+  /** Current room_players stack, using the same source as the table. */
+  stack: number;
 }
 
 export type BotDifficulty = 'low' | 'medium' | 'high';

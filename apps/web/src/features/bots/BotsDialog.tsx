@@ -289,8 +289,14 @@ export function BotsDialog({
                         {' · '}
                         {botDifficultyLabel(bot.difficulty ?? 'low')}
                       </span>
-                    </span>
-                    <Badge tone={BADGE_TONE[tone]}>{botStatusLabel(bot.status)}</Badge>
+                     </span>
+                     <span
+                       className="shrink-0 text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200"
+                       title={t('Current stack')}
+                     >
+                       {fmt(bot.stack ?? 0)}
+                     </span>
+                     <Badge tone={BADGE_TONE[tone]}>{botStatusLabel(bot.status)}</Badge>
                     <span className="flex flex-wrap items-center justify-end gap-1.5">
                       {startable && (
                         <Button

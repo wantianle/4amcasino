@@ -182,6 +182,10 @@ describe('bot create', () => {
     const created = (await createBot({ seat: 1 })).json();
     expect(stackOf(created.bot.userId)).toBe(0);
 
+    const before = await ctx.app.inject({ url: `/api/rooms/${room}/bots`, headers: auth(hostToken) });
+    expect(before.statusCode).toBe(200);
+    expect(before.json().bots.find((b: { id: string }) => b.id === created.bot.id).stack).toBe(0);
+
     const denied = await ctx.app.inject({
       method: 'POST',
       url: `/api/rooms/${room}/bots/${created.bot.id}/buy`,
@@ -199,6 +203,9 @@ describe('bot create', () => {
     expect(buy.statusCode).toBe(200);
     expect(buy.json().buyRequest.status).toBe('approved'); // host is the banker
     expect(stackOf(created.bot.userId)).toBe(700);
+
+    const after = await ctx.app.inject({ url: `/api/rooms/${room}/bots`, headers: auth(hostToken) });
+    expect(after.json().bots.find((b: { id: string }) => b.id === created.bot.id).stack).toBe(700);
   });
 });
 
