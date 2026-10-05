@@ -589,6 +589,24 @@ describe('postflop: blockers', () => {
     expect(blockerFactor(high) / blockerFactor(low)).toBeGreaterThanOrEqual(1.5);
   });
 
+  it('blockerFactor is a clamped affine map with explicit boundaries', () => {
+    // Documented affine form 0.4 + 1.6·blocker, neutral at blocker = 0.375.
+    expect(blockerFactor(0)).toBeCloseTo(0.4, 9);
+    expect(blockerFactor(0.375)).toBeCloseTo(1, 9);
+    expect(blockerFactor(1)).toBeCloseTo(2.0, 9);
+    // Input outside [0,1] (or non-finite) clamps to the [0.2, 2.2] range.
+    expect(blockerFactor(-1)).toBeCloseTo(0.4, 9);
+    expect(blockerFactor(2)).toBeCloseTo(2.0, 9);
+    expect(blockerFactor(Number.NaN)).toBeCloseTo(0.4, 9);
+    // Monotone non-decreasing over the domain.
+    let prev = -Infinity;
+    for (const b of [0, 0.1, 0.25, 0.375, 0.5, 0.75, 0.9, 1]) {
+      const f = blockerFactor(b);
+      expect(f).toBeGreaterThanOrEqual(prev);
+      prev = f;
+    }
+  });
+
   it('bluffs high-blocker hands at least 1.5× as often as low-blocker ones', () => {
     const board = [c('Ks'), c('7s'), c('2d')];
     const p = policy();

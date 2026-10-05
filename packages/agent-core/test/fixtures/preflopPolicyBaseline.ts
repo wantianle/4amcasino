@@ -1,5 +1,16 @@
-import type { DecisionView } from './decisionView.js';
-import type { RuleParams } from './ruleStyles.js';
+// Generated from packages/agent-core/src/preflopPolicy.ts at HEAD 5f9b12a via
+// `git show 5f9b12a:packages/agent-core/src/preflopPolicy.ts`.
+//
+// Scope of the copy: this file additionally carries the generation header you
+// are reading. Apart from that header, the decision-logic body is byte-for-byte
+// the 5f9b12a file; the only other change is redirecting the relative imports to
+// ../../src. It exists so a test can run "current policy with `adaptivePreflop`
+// off" against the true pre-step-3 baseline per input, proving the legacy tables
+// are untouched by the adaptive step-3 additions.
+// DO NOT EDIT BY HAND - regenerate from git if the baseline ever changes.
+
+import type { DecisionView } from '../../src/decisionView.js';
+import type { RuleParams } from '../../src/ruleStyles.js';
 import {
   BB_DEFEND,
   CALL_VS_OPEN,
@@ -17,19 +28,17 @@ import {
   positionGroup,
   type Position,
   type PositionGroup,
-} from './preflopRanges.js';
+} from '../../src/preflopRanges.js';
 import {
   adaptiveChartFor,
   bbDefendChartFor,
-  buildDerivedChart,
   canonicalSlot,
   chartToRangeEntries,
   computeBehindPending,
   continueWidthScale,
-  multiwayWidthScale,
   preflopActionOrder,
   rescaleRangeMix,
-} from './preflopCharts/index.js';
+} from '../../src/preflopCharts/index.js';
 import {
   compileRangeMix,
   handClassForCards,
@@ -39,7 +48,7 @@ import {
   type CompiledMix,
   type HandClassInfo,
   type RangeEntry,
-} from './rangeParser.js';
+} from '../../src/rangeParser.js';
 
 /**
  * Rules-v1 preflop policy: turn a `DecisionView` into a preflop spot, look the
@@ -460,94 +469,50 @@ function buildLegacyMix(ctx: PreflopContext): Map<string, CompiledMix> {
 
 /**
  * True when the adaptive headcount charts may serve this decision: the flag is
- * on, the history is complete, the hero is the live acting seat (active and
- * `toAct`), and the seat states give a trustworthy current-round behind-unacted
- * count. Anything else falls back to the legacy tables — missing history is
- * never read as "nobody acted", and a snapshot that is not actually the hero's
- * live decision is never served.
+ * on, the spot is a first-in or a single open, the history is complete, the
+ * hero is the live acting seat (active and `toAct`), and the seat states give a
+ * trustworthy current-round behind-unacted count. Anything else falls back to
+ * the legacy tables — missing history is never read as "nobody acted", and a
+ * snapshot that is not actually the hero's live decision is never served.
  *
- * Per-spot gates:
- *  - `unopened`: slot B1..B8 (B0 = BB never opens); HU uses the HU chart at B1.
- *  - `facingOpen`: non-HU, a known opener slot B1..B5, and the server's
- *    `needToAct` (`needToActTracked`) with a non-empty list that contains the
- *    hero — the defensive widths depend on who still owes an action after a
- *    raise, which the historical "acted at some point" set cannot express.
- *  - `limped`: non-HU. No raise has happened yet, so a reopening is impossible
- *    this round and the fallback pending inference is trustworthy.
- *  - `facingOpenMultiway` / `facing3Bet` / `facing3BetCold` / `facing4BetPlus`:
- *    non-HU and a raise is on the table, so the current-round `needToAct`
- *    contract is required exactly as for `facingOpen`.
- *
- * Heads-up facing a raise (or any later street of the auction) stays on the
- * legacy tables: the FRLA subset is 6-max and the step-1 contract pinned HU
- * BB-facing-raise to legacy. HU limped pots are pinned to legacy for the same
- * reason (no HU limp-iso anchor exists); see the `limped` branch below.
+ * `facingOpen` additionally requires the server's `needToAct` (`needToActTracked`):
+ * the defensive widths depend on who still owes an action after a raise, which
+ * the historical "acted at some point" set cannot express. Heads-up vs-open
+ * stays on the legacy defence (the FRLA subset is 6-max).
  */
 export function adaptivePreflopAvailable(ctx: PreflopContext, params: RuleParams): boolean {
   if (!params.adaptivePreflop) return false;
+  if (ctx.spot !== 'unopened' && ctx.spot !== 'facingOpen') return false;
   if (!ctx.historyComplete || !ctx.headcountReliable) return false;
   if (!(ctx.dealtCount >= 2 && ctx.dealtCount <= 9)) return false;
   if (!Number.isFinite(ctx.behindUnacted)) return false;
-  // Every adaptive branch models a live decision by the hero. A stale or
+  // Both adaptive branches model a live decision by the hero. A stale or
   // malformed snapshot can list the hero in `needToAct` while the hero is
   // folded / all-in / sitting out, or while the public turn belongs to another
   // seat; such a view is not a hero decision and must fall back to legacy.
   if (!ctx.heroActive) return false;
   if (!ctx.heroToAct) return false;
 
-  switch (ctx.spot) {
-    case 'unopened':
-      // HU first-in is the SB=BTN chart; B0 (BB) never opens first in.
-      if (ctx.headsUp) return ctx.actorSlot === 1;
-      return ctx.actorSlot >= 1 && ctx.actorSlot <= 8;
-
-    case 'facingOpen':
-      if (ctx.headsUp) return false;
-      if (ctx.openerSlot === null || ctx.openerSlot < 1 || ctx.openerSlot > 5) return false;
-      // Without `needToAct`, a raise reopening the round is invisible and
-      // `behindUnacted` can undercount — never serve the defensive charts then.
-      if (!ctx.needToActTracked) return false;
-      // A tracked snapshot is necessary but not sufficient. The adaptive premise
-      // is "the hero still owes this round and there are live players behind".
-      // An empty list is a closed/mis-timed snapshot, and a list without the
-      // hero is not a live decision for them; either way `behindUnacted` would
-      // not measure the hero's own pending action, so fall back to legacy.
-      if (!ctx.needToActSeats || ctx.needToActSeats.length === 0) return false;
-      if (!ctx.needToActSeats.includes(ctx.heroSeat)) return false;
-      return ctx.actorSlot >= 0 && ctx.actorSlot <= 8;
-
-    case 'limped':
-      // No raise yet, so the round cannot have reopened: the historical
-      // "active and not acted" inference behind `behindUnacted` is exact.
-      //
-      // HU limped pots deliberately stay on the legacy tables. A heads-up BB
-      // facing a SB limp is *not* the same decision as a multiway isolation
-      // raise: there is no ISO_RANGES equivalent for HU (the legacy ISO tables
-      // are position-group based, non-HU), and the FRLA/HU solver subsets have
-      // no HU limp-iso anchor to derive from. Serving the multiway
-      // `ISO_RANGES` here would import a wider, non-HU range into a 2-handed
-      // pot with no evidence. The step-1 contract already pinned HU
-      // BB-facing-raise to legacy; HU limped is pinned for the same reason.
-      // Switching it to adaptive would require a dedicated HU limp-iso anchor,
-      // not a gate tweak.
-      if (ctx.headsUp) return false;
-      return ctx.actorSlot >= 0 && ctx.actorSlot <= 8;
-
-    case 'facingOpenMultiway':
-    case 'facing3Bet':
-    case 'facing3BetCold':
-    case 'facing4BetPlus':
-      // A raise is on the table: the round can reopen, so the current-round
-      // pending list is required, non-empty, and must name the hero.
-      if (ctx.headsUp) return false;
-      if (!ctx.needToActTracked) return false;
-      if (!ctx.needToActSeats || ctx.needToActSeats.length === 0) return false;
-      if (!ctx.needToActSeats.includes(ctx.heroSeat)) return false;
-      return ctx.actorSlot >= 0 && ctx.actorSlot <= 8;
-
-    default:
-      return false;
+  if (ctx.spot === 'facingOpen') {
+    // HU keeps the legacy defence: the FRLA BB subset is 6-max NL100 and the
+    // step-1 contract pinned HU BB facing a raise to legacy.
+    if (ctx.headsUp) return false;
+    if (ctx.openerSlot === null || ctx.openerSlot < 1 || ctx.openerSlot > 5) return false;
+    // Without `needToAct`, a raise reopening the round is invisible and
+    // `behindUnacted` can undercount — never serve the defensive charts then.
+    if (!ctx.needToActTracked) return false;
+    // A tracked snapshot is necessary but not sufficient. The adaptive premise
+    // is "the hero still owes this round and there are live players behind".
+    // An empty list is a closed/mis-timed snapshot, and a list without the hero
+    // is not a live decision for them; either way `behindUnacted` would not
+    // measure the hero's own pending action, so fall back to legacy.
+    if (!ctx.needToActSeats || ctx.needToActSeats.length === 0) return false;
+    if (!ctx.needToActSeats.includes(ctx.heroSeat)) return false;
+    return ctx.actorSlot >= 0 && ctx.actorSlot <= 8;
   }
+
+  if (ctx.headsUp) return ctx.actorSlot === 1;
+  return ctx.actorSlot >= 1 && ctx.actorSlot <= 8;
 }
 
 /**
@@ -573,118 +538,6 @@ function buildColdAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> {
   return rescaleRangeMix(entries, continueWidthScale(ctx.behindUnacted));
 }
 
-/** Anchor for a derived (no-solver-subset) adaptive spot. */
-interface DerivedAnchor {
-  situation: 'unopened' | 'facingOpen' | 'facing3Bet';
-  actor: string | null;
-  entries: RangeEntry[];
-  usage: string;
-}
-
-/**
- * Map the remaining preflop spots onto their legacy anchor. These spots have no
- * solver subset, so the anchor is the hand-built rules-v1 table and
- * `behindUnacted` tapers it (see `buildDerivedChart`). Mixed raises keep their
- * explicit role: the value/bluff split of `COLD_3BET_*` and `FACING_3BET_*` is
- * preserved, and only the non-premium participation shrinks.
- */
-function derivedAnchorFor(ctx: PreflopContext): DerivedAnchor | null {
-  const openerGroup: PositionGroup = ctx.openerGroup ?? 'EP';
-  switch (ctx.spot) {
-    case 'limped':
-      return {
-        situation: 'unopened',
-        actor: ctx.position,
-        entries: [
-          { range: ISO_RANGES[ctx.positionGroup], action: 'raise', weight: 1, role: 'value' },
-        ],
-        usage: `ISO_RANGES.${ctx.positionGroup}`,
-      };
-    case 'facingOpenMultiway': {
-      const entries: RangeEntry[] = [];
-      if (ctx.positionGroup === 'BB') {
-        entries.push(...BB_DEFEND[openerGroup]);
-      } else {
-        entries.push(
-          { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
-          {
-            range: COLD_3BET_BLUFF[openerGroup],
-            action: 'raise',
-            weight: COLD_3BET_BLUFF_WEIGHT,
-            role: 'bluff',
-          },
-          { range: CALL_VS_OPEN[ctx.positionGroup], action: 'call', weight: 1 },
-        );
-      }
-      return {
-        situation: 'facingOpen',
-        actor: ctx.position,
-        entries,
-        usage:
-          ctx.positionGroup === 'BB'
-            ? `BB_DEFEND.${openerGroup} (multiway)`
-            : `COLD_3BET_*.${openerGroup} + CALL_VS_OPEN.${ctx.positionGroup} (multiway)`,
-      };
-    }
-    case 'facing3Bet':
-      return {
-        situation: 'facing3Bet',
-        actor: ctx.position,
-        entries: [...FACING_3BET_4BET, ...FACING_3BET_CALL],
-        usage: 'FACING_3BET_4BET + FACING_3BET_CALL',
-      };
-    case 'facing3BetCold':
-      return {
-        situation: 'facing3Bet',
-        actor: ctx.position,
-        entries: COLD_3BET_COLD,
-        usage: 'COLD_3BET_COLD',
-      };
-    case 'facing4BetPlus':
-      return {
-        situation: 'facing3Bet',
-        actor: ctx.position,
-        entries: FACING_4BET_PLUS,
-        usage: 'FACING_4BET_PLUS',
-      };
-    default:
-      return null;
-  }
-}
-
-/**
- * Build the derived adaptive mix for a remaining spot. Width tapers with
- * `behindUnacted` (`continueWidthScale`), plus an extra documented caller
- * squeeze factor in the multiway pot. The chart is a real `preflop-chart/v1`
- * (169 classes, sum 1, explicit roles); the compiled mix is then fed to the
- * unchanged style / short-stack pipeline.
- */
-function buildDerivedAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
-  const anchor = derivedAnchorFor(ctx);
-  if (!anchor) return null;
-  const scale =
-    ctx.spot === 'facingOpenMultiway'
-      ? continueWidthScale(ctx.behindUnacted) * multiwayWidthScale(ctx.callers)
-      : continueWidthScale(ctx.behindUnacted);
-  const chart = buildDerivedChart({
-    id: `derived-${ctx.spot}-${ctx.position}-b${ctx.actorSlot}`,
-    situation: anchor.situation,
-    actor: anchor.actor,
-    actorSlot: ctx.actorSlot,
-    opener: ctx.opener,
-    openerSlot: ctx.openerSlot,
-    behindUnacted: ctx.behindUnacted,
-    activeCount: ctx.activeCount,
-    seats: ctx.dealtCount,
-    format: ctx.dealtCount <= 2 ? 'hu' : ctx.dealtCount <= 6 ? '6max' : '9max',
-    depthBB: Math.round(ctx.stackBB),
-    usage: anchor.usage,
-    entries: anchor.entries,
-    scale,
-  });
-  return compileRangeMix(chartToRangeEntries(chart));
-}
-
 function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
   if (ctx.spot === 'facingOpen') {
     if (ctx.positionGroup === 'BB') {
@@ -693,12 +546,9 @@ function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null 
     }
     return buildColdAdaptiveMix(ctx);
   }
-  if (ctx.spot === 'unopened') {
-    const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
-    if (!chart) return null;
-    return compileRangeMix(chartToRangeEntries(chart));
-  }
-  return buildDerivedAdaptiveMix(ctx);
+  const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
+  if (!chart) return null;
+  return compileRangeMix(chartToRangeEntries(chart));
 }
 
 /**

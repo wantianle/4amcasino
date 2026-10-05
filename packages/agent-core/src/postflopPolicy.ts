@@ -42,8 +42,9 @@ import { estimateOpponent } from './sessionMemory.js';
  *     the range as a blocker correction (`heroFlushBlockFactor`): a nut/second
  *     blocker lightens the opponent's flush range, while holding no card of the
  *     suit keeps the flush range at full value and slightly heavier. Only an
- *     **overpair** with no card of that suit (`isOverpair && heroFlushExposed`)
- *     is treated as a bluff-catcher and has its bet/raise frequency dialled
+ *     **overpair** with no card of that suit (`isExposedOverpair`, i.e.
+ *     `isOverpair && heroFlushExposed`) is treated as a bluff-catcher and has
+ *     its bet/raise frequency dialled
  *     down; every other made-hand category keeps its normal aggression.
  *  3. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
  *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
@@ -555,14 +556,33 @@ const FLUSH_TIER: Record<FlushLayer, number> = {
 };
 
 /**
- * True when the board offers a flush (>= 3 of a suit) and hero holds **no** card
- * of that suit - the "no-suit-protection" overpair spot. Such hands are a bluff
- * target against a flush-heavy value range, so their aggression is dialled down.
+ * **Suit-exposure predicate only**: true when the board offers a flush (>= 3 of
+ * a suit) and hero holds **no** card of that suit. It says nothing about hand
+ * strength - a set, a straight, air and an overpair are all "exposed" here. The
+ * *decision* rule that dials aggression down applies only to an **exposed
+ * overpair**, which is the explicit composition `isExposedOverpair` below, not
+ * this predicate alone. Callers must never treat `heroFlushExposed` as "the
+ * exposed-overpair spot".
  */
 export function heroFlushExposed(hole: readonly CardId[], board: readonly CardId[]): boolean {
   const info = boardFlushInfo(board);
   if (!info) return false;
   return !hole.some((card) => suitOf(card) === info.suit);
+}
+
+/**
+ * The exact hand the P1 no-suit discount is scoped to: an **overpair** (`ev`
+ * category one pair, pair above the board) with no card of the board's flush
+ * suit. This is the single explicit definition both the value-bet and value-
+ * raise call sites use, so the "which hands are discounted" set cannot drift
+ * apart or silently widen to every no-suit made hand.
+ */
+export function isExposedOverpair(
+  hole: readonly CardId[],
+  board: readonly CardId[],
+  ev: HandEval,
+): boolean {
+  return isOverpair(hole, board, ev) && heroFlushExposed(hole, board);
 }
 
 /**
@@ -572,17 +592,21 @@ export function heroFlushExposed(hole: readonly CardId[], board: readonly CardId
  * the board is an underpair, and a pocket pair matching the board is a set /
  * trips - neither is an overpair. Pure and side-effect free.
  *
- * `ev`, when supplied, only short-circuits on the hand category (an overpair is
- * always a one-pair hand); callers that already evaluated the hand pass it to
- * avoid a second classification.
+ * `ev` is **required** and must be `evaluateHand(hole, board)`. The hand
+ * category is what makes the predicate safe on a *paired* board: `AA` on `QQx`
+ * is two pair (aces and queens), not an overpair, and only the evaluated
+ * category (`!== 1`) rejects it. An earlier optional-`ev` signature silently
+ * returned `true` for exactly that case, so the category check is now part of
+ * the contract rather than a caller-supplied optimisation. Passing an `ev`
+ * computed for a different hole/board is a programming error.
  */
 export function isOverpair(
   hole: readonly CardId[],
   board: readonly CardId[],
-  ev?: HandEval,
+  ev: HandEval,
 ): boolean {
   if (hole.length !== 2 || board.length < 3) return false;
-  if (ev && ev.category !== 1) return false;
+  if (ev.category !== 1) return false;
   const pairRank = rankOf(hole[0]!);
   if (pairRank !== rankOf(hole[1]!)) return false;
   let maxBoard = -1;
@@ -1711,7 +1735,7 @@ export class PostflopPolicy {
     // bluff-catcher against a flush-heavy continuing range, so it bets less
     // often. The discount is deliberately scoped to exposed overpairs only -
     // sets, two pair, straights and strong draws keep their normal frequency.
-    const exposedOverpair = isOverpair(hole, board, ev) && heroFlushExposed(hole, board);
+    const exposedOverpair = isExposedOverpair(hole, board, ev);
 
     if (la.canBet) {
       const sizingCtx: SizingContext = {
@@ -1831,7 +1855,7 @@ export class PostflopPolicy {
     // on a suited board - it is held back from value raising (a much tighter
     // equity gate and a lower raise frequency). Sets, two pair, straights and
     // strong draws are unaffected.
-    const exposedOverpair = isOverpair(hole, board, ev) && heroFlushExposed(hole, board);
+    const exposedOverpair = isExposedOverpair(hole, board, ev);
     const strong =
       ev.category >= 3 ||
       percentile >= 0.85 ||

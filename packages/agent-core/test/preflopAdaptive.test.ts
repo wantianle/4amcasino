@@ -9,16 +9,20 @@ import {
 } from '@4am/shared';
 import {
   buildDecisionView,
+  type DecisionLegalActions,
   type DecisionSeat,
   type DecisionView,
   type PublicAction,
 } from '../src/decisionView.js';
 import { HeadlessClient } from '../src/client.js';
+import { RulePolicy } from '../src/rulePolicy.js';
 import { choosePreflopIntent, derivePreflopContext, adaptivePreflopAvailable, preflopMixCacheKey } from '../src/preflopPolicy.js';
 import {
+  DERIVED_ANCHOR_PREMIUM,
   HAND_KEYS,
   bbDefendChartFor,
   buildChartMix,
+  buildDerivedChart,
   chartLimpShare,
   chartToRangeEntries,
   chartWidth,
@@ -26,11 +30,14 @@ import {
   continueWidthScale,
   huChart,
   maxReachableWidth,
+  multiwayWidthScale,
   preflopActionOrder,
+  rangeEntriesToRawSpot,
   rawSpotWidth,
   rescaleRangeMix,
   rfiChartForSlot,
   slotsForDealtCount,
+  taperRawSpot,
   worstCellDeviation,
 } from '../src/preflopCharts/index.js';
 import { FRLA_BB_DEFEND, FRLA_RFI, MHL_HU } from '../src/preflopCharts/data/index.js';
@@ -39,11 +46,18 @@ import {
   CALL_VS_OPEN,
   COLD_3BET_BLUFF,
   COLD_3BET_BLUFF_WEIGHT,
+  COLD_3BET_COLD,
   COLD_3BET_VALUE,
+  FACING_3BET_4BET,
+  FACING_3BET_CALL,
+  FACING_4BET_PLUS,
+  ISO_RANGES,
   RFI_RANGES,
 } from '../src/preflopRanges.js';
 import { compileRangeMix, mixFor, parseRange, type RangeEntry } from '../src/rangeParser.js';
 import { RULE_PRESETS, type RuleParams } from '../src/ruleStyles.js';
+import * as Baseline from './fixtures/preflopPolicyBaseline.js';
+import * as BaselineRule from './fixtures/rulePolicyBaseline.js';
 
 /**
  * Headcount-adaptive preflop charts (step 1).
@@ -1047,5 +1061,556 @@ describe('step 2: deterministic effective-frequency assertions', () => {
     expect(w.raise).toBeGreaterThan(0);
     expect(t.raise).toBeGreaterThan(0); // the bluff raise is not swallowed
     expect(t.call).toBeLessThan(w.call); // only the flat call narrows
+  });
+});
+
+// ---------------------------------------------------------------------------
+// step 3: derived adaptive charts for the remaining spots (ISO / 3-bet / 4-bet)
+// ---------------------------------------------------------------------------
+
+/** A view with an explicit preflop auction and (optional) current-round pending. */
+function auctionView(args: {
+  n: number;
+  heroSeat: number;
+  history: PublicAction[];
+  pending?: number[];
+  currentBet: number;
+  states?: Record<number, Partial<DecisionSeat>>;
+}): DecisionView {
+  const base = nHandedView(args.n, args.heroSeat, []);
+  const view: DecisionView = {
+    ...base,
+    hand: { ...base.hand!, currentBet: args.currentBet, toAct: args.heroSeat },
+    actionHistory: args.history,
+    ...(args.pending ? { needToActSeats: args.pending } : {}),
+  };
+  return args.states ? withStates(view, args.states) : view;
+}
+
+const DERIVED_ANCHORS: ReadonlyArray<{ name: string; entries: RangeEntry[] }> = [
+  { name: 'iso-lp', entries: [{ range: ISO_RANGES.LP, action: 'raise', weight: 1, role: 'value' }] },
+  { name: 'facing3bet', entries: [...FACING_3BET_4BET, ...FACING_3BET_CALL] },
+  { name: 'facing3bet-cold', entries: COLD_3BET_COLD },
+  { name: 'facing4bet', entries: FACING_4BET_PLUS },
+];
+
+function derivedChart(entries: RangeEntry[], behind: number) {
+  return buildDerivedChart({
+    id: `test-${behind}`,
+    situation: 'facing3Bet',
+    actor: 'BTN',
+    actorSlot: behind,
+    opener: null,
+    openerSlot: null,
+    behindUnacted: behind,
+    activeCount: behind + 1,
+    seats: 6,
+    format: '6max',
+    depthBB: 100,
+    usage: 'test',
+    entries,
+    scale: continueWidthScale(behind),
+  });
+}
+
+describe('step 3: derived chart construction', () => {
+  it('builds 169-cell normalised charts with explicit value/bluff roles', () => {
+    for (const { entries } of DERIVED_ANCHORS) {
+      const chart = derivedChart(entries, 4);
+      expect(Object.keys(chart.mix)).toHaveLength(169);
+      expect(worstCellDeviation(chart) * 1326).toBeLessThan(0.01);
+      const roles = new Set(HAND_KEYS.map((k) => chart.mix[k]!.raiseRole));
+      expect(roles.has('value')).toBe(true);
+    }
+    // The facing-3bet anchor keeps its blocker bluff raise as `bluff`.
+    const f3 = derivedChart([...FACING_3BET_4BET, ...FACING_3BET_CALL], 4);
+    expect(HAND_KEYS.some((k) => f3.mix[k]!.raiseRole === 'bluff')).toBe(true);
+    // A tapered *value* raise (ISO 99: mixed raise/fold after the taper) keeps
+    // its explicit `value` role rather than being relabelled a bluff.
+    const iso = derivedChart(
+      [{ range: ISO_RANGES.LP, action: 'raise', weight: 1, role: 'value' }],
+      8,
+    );
+    expect(iso.mix['99']!.raise).toBeGreaterThan(0);
+    expect(iso.mix['99']!.fold).toBeGreaterThan(0);
+    expect(iso.mix['99']!.raiseRole).toBe('value');
+  });
+
+  it('tapers width strictly monotonically in behindUnacted and never vanishes', () => {
+    for (const { entries } of DERIVED_ANCHORS) {
+      const widths = Array.from({ length: 9 }, (_, b) => chartWidth(derivedChart(entries, b)));
+      for (let i = 1; i < widths.length; i++) expect(widths[i]!).toBeLessThan(widths[i - 1]!);
+      expect(widths[8]!).toBeGreaterThan(0);
+    }
+  });
+
+  it('holds AA/KK full and never folds a premium under the taper', () => {
+    const entries: RangeEntry[] = [
+      { range: 'AA, KK, QQ, AKs, 72o', action: 'raise', weight: 1, role: 'value' },
+    ];
+    const chart = derivedChart(entries, 8);
+    for (const k of ['AA', 'KK']) {
+      expect(chart.mix[k]!.raise + chart.mix[k]!.allin).toBeCloseTo(1, 9);
+      expect(chart.mix[k]!.fold).toBeCloseTo(0, 9);
+    }
+    expect(chart.mix['QQ']!.raise).toBeLessThan(1); // non-premium tapered
+    expect(chart.mix['72o']!.raise).toBeLessThan(1);
+
+    const raw = rangeEntriesToRawSpot(entries);
+    expect(taperRawSpot(raw, 1)).toBe(raw); // identity at scale 1
+    expect(rawSpotWidth(taperRawSpot(raw, 0.5))).toBeLessThan(rawSpotWidth(raw));
+    expect(DERIVED_ANCHOR_PREMIUM.has('AA')).toBe(true);
+    expect(DERIVED_ANCHOR_PREMIUM.has('QQ')).toBe(false);
+  });
+
+  it('multiwayWidthScale is a monotone caller-squeeze ladder', () => {
+    expect(multiwayWidthScale(0)).toBe(1);
+    expect(multiwayWidthScale(1)).toBeCloseTo(1 / 1.15, 12);
+    expect(multiwayWidthScale(0)).toBeGreaterThan(multiwayWidthScale(2));
+    expect(multiwayWidthScale(2)).toBeGreaterThan(multiwayWidthScale(6));
+  });
+});
+
+describe('step 3: end-to-end derived spots', () => {
+  const limped = (hero: number) =>
+    auctionView({ n: 6, heroSeat: hero, history: [act(2, 'call')], currentBet: 100 });
+  const facing3Bet = () =>
+    auctionView({
+      n: 6,
+      heroSeat: 2,
+      history: [act(2, 'raise', 250), act(3, 'fold'), act(4, 'raise', 750)],
+      pending: [2, 5, 0, 1],
+      currentBet: 750,
+      states: { 3: { folded: true } },
+    });
+  const facing3BetCold = () =>
+    auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+      pending: [5, 0, 1],
+      currentBet: 750,
+    });
+  const facing4BetPlus = () =>
+    auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750), act(2, 'raise', 2000)],
+      pending: [5, 0, 1],
+      currentBet: 2000,
+    });
+  const facingOpenMultiway = () =>
+    auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(3, 'call')],
+      pending: [5, 0, 1],
+      currentBet: 250,
+    });
+
+  const cases: ReadonlyArray<{ name: string; spot: string; slot: number; view: () => DecisionView }> = [
+    { name: 'limped BTN', spot: 'limped', slot: 2, view: () => limped(5) },
+    { name: 'facing3Bet UTG', spot: 'facing3Bet', slot: 3, view: facing3Bet },
+    { name: 'facing3BetCold BTN', spot: 'facing3BetCold', slot: 2, view: facing3BetCold },
+    { name: 'facing4BetPlus BTN', spot: 'facing4BetPlus', slot: 2, view: facing4BetPlus },
+    { name: 'facingOpenMultiway BTN', spot: 'facingOpenMultiway', slot: 2, view: facingOpenMultiway },
+  ];
+
+  it('routes each remaining spot to adaptive only with the flag on', () => {
+    for (const { name, spot, slot, view } of cases) {
+      const ctx = derivePreflopContext(view());
+      expect(ctx.spot, name).toBe(spot);
+      expect(ctx.actorSlot, name).toBe(slot);
+      expect(adaptivePreflopAvailable(ctx, ADAPTIVE), name).toBe(true);
+      expect(adaptivePreflopAvailable(ctx, LEGACY), name).toBe(false);
+    }
+  });
+
+  it('gives the derived spots a genuinely different width than legacy', () => {
+    for (const { name, view } of cases) {
+      const card = [c('Ac'), c('Kd')];
+      const v = { ...view(), hand: { ...view().hand!, myCards: card } };
+      // The cold 3-bet / 4-bet anchors are only a few percent wide, so the
+      // absolute delta is small; any non-zero delta proves the route changed.
+      expect(Math.abs(measuredWidth(v, ADAPTIVE) - measuredWidth(v, LEGACY)), name).toBeGreaterThan(
+        1e-4,
+      );
+    }
+  });
+
+  it('limped width rises as players behind fall (BTN > CO > HJ)', () => {
+    const widths = [3, 4, 5].map((hero) =>
+      measuredWidth({ ...limped(hero), hand: { ...limped(hero).hand!, myCards: [c('Ac'), c('Kd')] } }, ADAPTIVE),
+    );
+    for (let i = 1; i < widths.length; i++) expect(widths[i]!).toBeGreaterThan(widths[i - 1]!);
+  });
+
+  it('keeps a raise money in every derived spot even when tapered', () => {
+    for (const { name, view } of cases) {
+      const cards = [c('Ks'), c('Qs')]; // a 3-bet bluff / value-ish class
+      const f = choosePreflopIntent(
+        { ...view(), hand: { ...view().hand!, myCards: cards } },
+        ADAPTIVE,
+        () => 0.5,
+      ).frequencies;
+      expect(f.raise + f.call, name).toBeLessThanOrEqual(1 + 1e-9);
+    }
+  });
+
+  it('requires the current-round pending list for every raised spot', () => {
+    // Drop the pending list: the round can reopen, so adaptive must refuse.
+    const noPending = auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+      currentBet: 750,
+    });
+    expect(adaptivePreflopAvailable(derivePreflopContext(noPending), ADAPTIVE)).toBe(false);
+    const empty = auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+      pending: [],
+      currentBet: 750,
+    });
+    expect(adaptivePreflopAvailable(derivePreflopContext(empty), ADAPTIVE)).toBe(false);
+    const absent = auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+      pending: [0, 1],
+      currentBet: 750,
+    });
+    expect(adaptivePreflopAvailable(derivePreflopContext(absent), ADAPTIVE)).toBe(false);
+    // Limped needs no pending (nothing can have reopened), but HU stays legacy.
+    const huLimped: DecisionView = {
+      ...nHandedView(2, 1, []),
+      actionHistory: [act(0, 'call')],
+      hand: { ...nHandedView(2, 1, []).hand!, toAct: 1 },
+    };
+    const huCtx = derivePreflopContext(huLimped);
+    expect(huCtx.spot).toBe('limped');
+    expect(adaptivePreflopAvailable(huCtx, ADAPTIVE)).toBe(false);
+  });
+
+  it('keeps HU limped on legacy by design (there is no HU limp-iso anchor)', () => {
+    // Intentional design decision, not an oversight: a heads-up BB facing a SB
+    // limp is not a multiway isolation raise. The legacy `ISO_RANGES` are
+    // position-group (non-HU) tables and the solver subsets have no HU
+    // limp-iso anchor, so importing the multiway anchor into a 2-handed pot
+    // would be unsupported. `adaptivePreflopAvailable`'s `limped` branch pins
+    // HU to legacy for exactly this reason; changing it needs a dedicated HU
+    // anchor, not a gate tweak.
+    const hu = auctionView({ n: 2, heroSeat: 1, history: [act(0, 'call')], currentBet: 100 });
+    const ctx = derivePreflopContext(hu);
+    expect(ctx.spot).toBe('limped');
+    expect(ctx.headsUp).toBe(true);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(adaptivePreflopAvailable(ctx, LEGACY)).toBe(false);
+    // ...and the flag cannot move it: flag on == flag off, per hand.
+    const withCards = { ...hu, hand: { ...hu.hand!, myCards: [c('Ac'), c('Kd')] } };
+    expect(measuredWidth(withCards, ADAPTIVE)).toBeCloseTo(measuredWidth(withCards, LEGACY), 12);
+  });
+
+  it('routes limped by real policy view: HU legacy, 3/6/9 adaptive and narrowing with behind', () => {
+    // Real policy views (not a chart-level probe) for 2/3/6/9-handed limped
+    // pots. Within each table the hero and their anchor position are fixed, and
+    // only the server-supplied current-round pending list shrinks, so the width
+    // ordering isolates the `behindUnacted` taper from the anchor choice.
+    const orderFor = (n: number) => preflopActionOrder(Array.from({ length: n }, (_, i) => i));
+    const cases = [
+      { n: 2, hero: 1 }, // HU BB vs SB limp -> legacy (see the test above)
+      { n: 3, hero: 0 },
+      { n: 6, hero: 3 },
+      { n: 9, hero: 3 },
+    ];
+    for (const { n, hero } of cases) {
+      const order = orderFor(n);
+      const limper = order[0]!;
+      const idx = order.indexOf(hero);
+      const after = order.slice(idx + 1);
+      const samples: Array<{ behind: number; width: number }> = [];
+      for (let behind = after.length; behind >= 0; behind--) {
+        const view = auctionView({
+          n,
+          heroSeat: hero,
+          history: [act(limper, 'call')],
+          currentBet: 100,
+          pending: [hero, ...after.slice(0, behind)],
+        });
+        const ctx = derivePreflopContext(view);
+        expect(ctx.spot, `n=${n}`).toBe('limped');
+        if (n === 2) {
+          // Pinned to legacy by design (no HU limp-iso anchor).
+          expect(adaptivePreflopAvailable(ctx, ADAPTIVE), 'HU limped stays legacy').toBe(false);
+          expect(behind, 'HU limped has no behind').toBe(0);
+          continue;
+        }
+        expect(adaptivePreflopAvailable(ctx, ADAPTIVE), `n=${n} behind=${behind}`).toBe(true);
+        expect(ctx.behindUnacted, `n=${n} behind=${behind}`).toBe(behind);
+        samples.push({
+          behind,
+          width: measuredWidth(
+            { ...view, hand: { ...view.hand!, myCards: [c('Ac'), c('Kd')] } },
+            ADAPTIVE,
+          ),
+        });
+      }
+      // Same hero/anchor: fewer players behind must never be tighter.
+      for (let i = 1; i < samples.length; i++) {
+        expect(samples[i]!.width, `n=${n} behind ${samples[i]!.behind}`).toBeGreaterThan(
+          samples[i - 1]!.width,
+        );
+      }
+    }
+  });
+
+  it('keeps the <20BB open-jam on SHORT_JAM_RANGES (separate semantic)', () => {
+    // A limped pot at 15BB: the route is adaptive, but the short-stack pipeline
+    // (`shortStackMix`) still short-circuits to the position-group jam set, so
+    // `22` folds (not in SHORT_JAM_RANGES.LP) while `AA` jams. Sizing / short-
+    // stack adaptation is deliberately out of step-3 scope.
+    const base = auctionView({ n: 6, heroSeat: 5, history: [act(2, 'call')], currentBet: 100 });
+    const short: DecisionView = {
+      ...base,
+      me: { ...base.me!, stack: 1_500 },
+      opponents: base.opponents.map((o) => ({ ...o, stack: 1_500 })),
+    };
+    const ctx = derivePreflopContext(short);
+    expect(ctx.spot).toBe('limped');
+    expect(ctx.stackBB).toBeCloseTo(15, 9);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(true);
+    const withCards = (cards: CardId[]): DecisionView => ({
+      ...short,
+      hand: { ...short.hand!, myCards: cards },
+    });
+    expect(choosePreflopIntent(withCards([c('2c'), c('2d')]), ADAPTIVE, () => 0.99).intent).toBe(
+      'fold',
+    );
+    expect(choosePreflopIntent(withCards([c('Ac'), c('Ad')]), ADAPTIVE, () => 0.99).intent).toBe(
+      'raise',
+    );
+  });
+
+  it('refuses a raised spot when the snapshot is not the hero live decision', () => {
+    const base = facing3BetCold();
+    for (const state of [{ folded: true }, { allIn: true }, { sittingOut: true }] as const) {
+      const dead: DecisionView = { ...base, me: { ...base.me!, ...state } };
+      expect(adaptivePreflopAvailable(derivePreflopContext(dead), ADAPTIVE)).toBe(false);
+    }
+    const notMyTurn: DecisionView = { ...base, hand: { ...base.hand!, toAct: 0 } };
+    expect(adaptivePreflopAvailable(derivePreflopContext(notMyTurn), ADAPTIVE)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// step 3: flag-off legacy path is unchanged versus the pre-change baseline
+// ---------------------------------------------------------------------------
+
+describe('step 3: flag-off differential against the 5f9b12a baseline', () => {
+  const BASE_CARDS: CardId[][] = [
+    [c('Ac'), c('Ad')],
+    [c('Ks'), c('Kd')],
+    [c('Ks'), c('Qs')],
+    [c('9s'), c('8s')],
+    [c('7c'), c('2d')],
+    [c('Ah'), c('Kd')],
+    [c('Jd'), c('Jc')],
+    [c('As'), c('5s')],
+    [c('Th'), c('Jh')],
+    [c('2c'), c('2d')],
+    [c('Qc'), c('Qd')],
+    [c('4h'), c('3d')],
+  ];
+
+  /**
+   * Fine-grained check: `choosePreflopIntent`'s resolved intent, frequencies
+   * and derived context must match the pre-step-3 engine. This deliberately
+   * does NOT cover the final legal action, its amount, or the decision reason;
+   * `expectDecideBaseline` below is the end-to-end `PolicyDecision` check.
+   */
+  function expectBaseline(view: DecisionView): void {
+    for (const cards of BASE_CARDS) {
+      for (const roll of [0.1, 0.5, 0.9]) {
+        const v: DecisionView = { ...view, hand: { ...view.hand!, myCards: cards } };
+        const cur = choosePreflopIntent(v, LEGACY, () => roll);
+        const base = Baseline.choosePreflopIntent(v, LEGACY, () => roll);
+        expect({
+          intent: cur.intent,
+          frequencies: cur.frequencies,
+          spot: cur.context.spot,
+          slot: cur.context.actorSlot,
+          behind: cur.context.behindUnacted,
+        }).toEqual({
+          intent: base.intent,
+          frequencies: base.frequencies,
+          spot: base.context.spot,
+          slot: base.context.actorSlot,
+          behind: base.context.behindUnacted,
+        });
+      }
+    }
+  }
+
+  it('choosePreflopIntent matches the baseline intent/frequencies/context across spots', () => {
+    expectBaseline(nHandedView(9, 2, [])); // unopened 9-max
+    expectBaseline(nHandedView(2, 0, [])); // HU first-in
+    expectBaseline(
+      auctionView({ n: 6, heroSeat: 5, history: [act(2, 'call')], currentBet: 100 }), // limped
+    );
+    expectBaseline(faceOpenView(6, 1, 2, [])); // BB vs open
+    expectBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 2,
+        history: [act(2, 'raise', 250), act(3, 'fold'), act(4, 'raise', 750)],
+        pending: [2, 5, 0, 1],
+        currentBet: 750,
+        states: { 3: { folded: true } },
+      }),
+    ); // facing 3-bet
+    expectBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 5,
+        history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+        pending: [5, 0, 1],
+        currentBet: 750,
+      }),
+    ); // cold 3-bet
+    expectBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 5,
+        history: [act(2, 'raise', 250), act(4, 'raise', 750), act(2, 'raise', 2000)],
+        pending: [5, 0, 1],
+        currentBet: 2000,
+      }),
+    ); // 4-bet+
+    // <20BB short-stack path (SHORT_JAM_RANGES) must also be untouched.
+    const short = nHandedView(6, 5, []);
+    expectBaseline({
+      ...short,
+      me: { ...short.me!, stack: 1_500 },
+      opponents: short.opponents.map((o) => ({ ...o, stack: 1_500 })),
+    });
+  });
+
+  // --- end-to-end: the final PolicyDecision, not just the intent ------------
+
+  /** A plausible, already-normalised preflop legal-action set for a view. */
+  function legalFor(view: DecisionView, maxRaiseTo = 20_000): DecisionLegalActions {
+    const currentBet = view.hand?.currentBet ?? 0;
+    const committed = view.me?.committed ?? 0;
+    const callAmount = Math.max(0, currentBet - committed);
+    return {
+      canCheck: callAmount === 0,
+      canCall: callAmount > 0,
+      callAmount,
+      canBet: false,
+      canRaise: true,
+      minRaiseTo: Math.max(currentBet * 2, 200),
+      maxRaiseTo,
+    };
+  }
+
+  /**
+   * The real differential: the *final* `RulePolicy.decide` output — the legal
+   * action, its amount and the reason — must be identical to the 5f9b12a
+   * engine for every input when `adaptivePreflop` is off. `RulePolicy` itself is
+   * byte-unchanged between 5f9b12a and HEAD, so the only possible divergence is
+   * `choosePreflopIntent`; the baseline fixture redirects that to the old
+   * engine. Several seeds cover raise / call / fold rolls, so the sizing path,
+   * the short-stack all-in mapping and the `reason` string are all exercised.
+   */
+  function expectDecideBaseline(view: DecisionView, maxRaiseTo = 20_000): void {
+    const la = legalFor(view, maxRaiseTo);
+    for (const cards of BASE_CARDS) {
+      for (const seed of [1, 2, 3, 5, 8]) {
+        const v: DecisionView = {
+          ...view,
+          legalActions: la,
+          hand: { ...view.hand!, myCards: cards },
+        };
+        const cur = new RulePolicy({ params: LEGACY, seed }).decide(v);
+        const base = new BaselineRule.RulePolicy({ params: LEGACY, seed }).decide(v);
+        expect({ cards, seed, cur }).toEqual({ cards, seed, cur: base });
+      }
+    }
+  }
+
+  it('final RulePolicy.decide matches the baseline decision (action + amount + reason)', () => {
+    expectDecideBaseline(nHandedView(9, 2, [])); // unopened 9-max
+    expectDecideBaseline(nHandedView(2, 0, [])); // HU first-in
+    expectDecideBaseline(
+      auctionView({ n: 6, heroSeat: 5, history: [act(2, 'call')], currentBet: 100 }), // limped
+    );
+    expectDecideBaseline(faceOpenView(6, 1, 2, [])); // BB vs open
+    expectDecideBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 2,
+        history: [act(2, 'raise', 250), act(3, 'fold'), act(4, 'raise', 750)],
+        pending: [2, 5, 0, 1],
+        currentBet: 750,
+        states: { 3: { folded: true } },
+      }),
+    ); // facing 3-bet
+    expectDecideBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 5,
+        history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+        pending: [5, 0, 1],
+        currentBet: 750,
+      }),
+    ); // cold 3-bet
+    expectDecideBaseline(
+      auctionView({
+        n: 6,
+        heroSeat: 5,
+        history: [act(2, 'raise', 250), act(4, 'raise', 750), act(2, 'raise', 2000)],
+        pending: [5, 0, 1],
+        currentBet: 2000,
+      }),
+    ); // 4-bet+
+    // <20BB short-stack path (SHORT_JAM_RANGES + all-in mapping) must be untouched.
+    const short = nHandedView(6, 5, []);
+    expectDecideBaseline(
+      {
+        ...short,
+        me: { ...short.me!, stack: 1_500 },
+        opponents: short.opponents.map((o) => ({ ...o, stack: 1_500 })),
+      },
+      1_500,
+    );
+  });
+
+  it('the baseline really is the pre-step-3 engine: with the flag on the final decision differs', () => {
+    // Positive control (the reverse verification): leave `adaptivePreflop` on
+    // and the final decision diverges from the baseline for at least one input,
+    // so the flag-off equality above is not vacuous.
+    const view = auctionView({
+      n: 6,
+      heroSeat: 5,
+      history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+      pending: [5, 0, 1],
+      currentBet: 750,
+    });
+    const la = legalFor(view);
+    let adaptiveDiffs = 0;
+    for (const cards of BASE_CARDS) {
+      for (const seed of [1, 2, 3, 5, 8]) {
+        const v: DecisionView = {
+          ...view,
+          legalActions: la,
+          hand: { ...view.hand!, myCards: cards },
+        };
+        const on = new RulePolicy({ params: ADAPTIVE, seed }).decide(v);
+        const base = new BaselineRule.RulePolicy({ params: ADAPTIVE, seed }).decide(v);
+        if (JSON.stringify(on) !== JSON.stringify(base)) adaptiveDiffs++;
+      }
+    }
+    expect(adaptiveDiffs).toBeGreaterThan(0);
   });
 });

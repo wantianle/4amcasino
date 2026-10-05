@@ -1,6 +1,6 @@
 # 策略 P2 实现报告（范围传播 / 收缩估计 / 尺寸网格 / 24 桶）— 三轮返修版
 
-状态：已实现、已自测（**未 commit / push**）。基线 HEAD `c1dcf0d`（P2 基线为 `f4a5904`）。
+状态：已实现、已自测、**已 commit**（P2 主体 `6828fb3`，翻前第三步同批的 P2 债务清理 `c4fb6d2` / `2b3e2e7`）。基线 HEAD `c1dcf0d`（P2 基线为 `f4a5904`）。
 改动文件（stage 清单，5 文件：4 个代码/测试 + 本报告）：
 
 1. `packages/agent-core/src/sessionMemory.ts`（收缩估计；一轮已交付，后续轮未再改）
@@ -130,6 +130,28 @@ export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
 - **性能**：原报告写 `12.31/10.89/21.75/42.02ms` 并标"实测"，但缺批次/条件。**处理**：改为
   本次同批次测量值，明确命令与条件（§5），并注明不同批次不可直接比较。
 
+### 1.5 P2 债务清理（翻前第三步同批，`c4fb6d2` / `2b3e2e7`）
+
+复审指出的 P2 遗留问题，默认行为仍全关，仅收紧契约与补测试：
+
+1. **`isOverpair` 签名收紧：`ev` 必填**。旧签名 `ev?: HandEval` 在省略 `ev` 时直接
+   按角子对判定，会把 `AA` on `QQx`（两对）误报为超对。现在 `ev` 为必需参数，
+   `ev.category !== 1` 是契约的一部分（不是调用方可选优化）；传入为别的 hole/board
+   计算的 `ev` 属编程错误。`AA on QQx` 因此被 `category !== 1` 拒绝。
+2. **新增 `isExposedOverpair(hole, board, ev) = isOverpair(...) && heroFlushExposed(...)`**，
+   价值下注与价值加注两处调用点统一用它，使「哪些手牌被降频」只有一个显式定义，
+   不会漂移或悄悄扩到所有无同花保护成手。
+3. **`heroFlushExposed` 语义拆分**：源码文档明确它只是「公面成花且 hero 无该花色」的
+   **花色暴露谓词**，不代表手牌强度（暗三 / 顺子 / 空气同样"暴露"）；降频决策只作用于
+   **暴露的超对**，即上面的显式组合。调用方不得把该谓词直接当作 exposed-overpair 判定。
+4. **flush 单调容差 0.15 → 0.05**：river 四花面对 all-in 的「强同花继续率不弱于弱同花」
+   是启发式排序而非定理证明，容差不可避免；本次收紧到 5% 并在注释里显式标注为近似，
+   三次复跑稳定通过。
+5. **`blockerFactor` 补测试**：文档化仿射式 `clamp(0.4 + 1.6·clamp01(blocker), 0.2, 2.2)`
+   （有效输入域 [0.4, 2.0]，中性点 blocker=0.375 → 1），断言边界、严格单调、
+   非有限输入不产生 NaN。exposed range tilt 增加有限正值与 flush 份额边界测试。
+   四开关默认仍全关，`postflopPolicyBaseline` 差分保持通过。
+
 ---
 
 ## 2. 一轮返修项（已确认正确，保留）
@@ -208,7 +230,7 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 
 | 命令 | 结果 |
 | --- | --- |
-| `npx vitest run packages/agent-core` | **386 passed / 16 files**（P2 文件 43 用例） |
+| `npx vitest run packages/agent-core` | **404 passed / 16 files**（P2 文件 43 用例；P2 报告初版为 386，其后翻前第三步及其复审 v2 追加了用例） |
 | `npx vitest run packages/agent-core/test/postflopPolicyP2.test.ts` | **43 passed** |
 | `npm run typecheck -w @4am/agent-core` | 通过（退出 0） |
 | `git diff --check -- packages/agent-core` | 通过（退出 0，无空白错误） |
@@ -283,4 +305,4 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 - 尺寸网格会改变多个尺寸的 model 分档，不只限于某个区间；已实测：`0.41` 关闭时 `balanced`、
   开启时 snap 到 `0.33` → `bluff-heavy`；`0.9` 关闭时 `balanced`、开启时 snap 到 `1.0` →
   `value-heavy`。`0.875` 是恰好中点、取较小档 `0.75`（仍为 `balanced`）。系设计使然。
-- 未在 HEAD 检出上重跑整套测试；基线一致性由 §3 差分测试直接证明。
+- HEAD 检出上已复跑整套测试（§4：404 passed / 16 files）；基线一致性由 §3 差分测试直接证明。

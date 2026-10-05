@@ -15,6 +15,7 @@ import {
   evaluateHand,
   flushLayerOf,
   heroFlushExposed,
+  isExposedOverpair,
   isOverpair,
   villainStrengthTier,
 } from '../src/postflopPolicy.js';
@@ -368,16 +369,19 @@ describe('postflop P1: user case a — river four-flush vs all-in', () => {
     expect(cont[spades.length - 1]!).toBeLessThanOrEqual(0.05);
     expect(cont[0]!).toBeGreaterThanOrEqual(0.95);
     // Monotone in flush strength: a stronger flush never continues *less* than a
-    // weaker one, allowing a 15% slack for the Monte-Carlo boundary jitter at the
-    // fold/call line. (Comparing only adjacent ranks cannot work here: the
-    // available spade ranks are not evenly spaced and the whole 0.95 range must
-    // be covered in 7 steps, so some genuine step is necessarily > 5%. The
-    // global pairwise form below still fails loudly if a weaker flush ever
-    // continues materially more than a stronger one.)
+    // weaker one, within an **explicit heuristic tolerance** of 5% at the
+    // fold/call line. This is a deterministic seeded sweep, not a statistical
+    // proof, so a tolerance is unavoidable; it was tightened from the original
+    // 15% after confirming the step-3 engine holds it (the extremes are still
+    // >0.8 apart, so the bound is not vacuous). Comparing only adjacent ranks
+    // cannot work here: the available spade ranks are not evenly spaced and the
+    // whole 0.95 range is covered in 7 steps, so some genuine step exceeds 5%.
+    // The global pairwise form below fails loudly if a weaker flush ever
+    // continues materially more than a stronger one.
     for (let strong = 0; strong < cont.length; strong++) {
       for (let weak = strong + 1; weak < cont.length; weak++) {
         expect(cont[strong]!, `${spades[strong]} vs ${spades[weak]}`).toBeGreaterThanOrEqual(
-          cont[weak]! - 0.15,
+          cont[weak]! - 0.05,
         );
       }
     }
@@ -518,18 +522,31 @@ describe('postflop P1: reproducibility', () => {
 // ---------------------------------------------------------------------------
 
 describe('postflop P1: isOverpair (pure)', () => {
+  const op = (hole: CardId[], board: CardId[]) => isOverpair(hole, board, evaluateHand(hole, board));
+
   it('identifies a pocket pair above every board card and rejects the rest', () => {
-    expect(isOverpair([c('Ad'), c('Ac')], THREE_FLUSH)).toBe(true); // AA on Q-high
-    expect(isOverpair([c('Ks'), c('Kd')], THREE_FLUSH)).toBe(true); // KK on Q-high
-    expect(isOverpair([c('Jd'), c('Jc')], THREE_FLUSH)).toBe(false); // underpair
-    expect(isOverpair([c('Qd'), c('Qc')], THREE_FLUSH)).toBe(false); // set (pair on board)
-    expect(isOverpair([c('4d'), c('4c')], THREE_FLUSH)).toBe(false); // set of 4
-    expect(isOverpair([c('Qd'), c('9d')], THREE_FLUSH)).toBe(false); // two pair
-    expect(isOverpair([c('Ad'), c('Kd')], THREE_FLUSH)).toBe(false); // unpaired high cards
-    expect(isOverpair([c('Ad'), c('Ac')], DRY)).toBe(true); // suit-agnostic
-    expect(isOverpair([c('9d'), c('9c')], DRY)).toBe(false); // 9 below a K-high board
-    expect(isOverpair([c('Ad')], THREE_FLUSH)).toBe(false); // needs two hole cards
-    expect(isOverpair([c('Ad'), c('Ac')], [c('Kh')])).toBe(false); // board too short
+    expect(op([c('Ad'), c('Ac')], THREE_FLUSH)).toBe(true); // AA on Q-high
+    expect(op([c('Ks'), c('Kd')], THREE_FLUSH)).toBe(true); // KK on Q-high
+    expect(op([c('Jd'), c('Jc')], THREE_FLUSH)).toBe(false); // underpair
+    expect(op([c('Qd'), c('Qc')], THREE_FLUSH)).toBe(false); // set (pair on board)
+    expect(op([c('4d'), c('4c')], THREE_FLUSH)).toBe(false); // set of 4
+    expect(op([c('Qd'), c('9d')], THREE_FLUSH)).toBe(false); // two pair
+    expect(op([c('Ad'), c('Kd')], THREE_FLUSH)).toBe(false); // unpaired high cards
+    expect(op([c('Ad'), c('Ac')], DRY)).toBe(true); // suit-agnostic
+    expect(op([c('9d'), c('9c')], DRY)).toBe(false); // 9 below a K-high board
+    expect(op([c('Ad')], THREE_FLUSH)).toBe(false); // needs two hole cards
+    expect(op([c('Ad'), c('Ac')], [c('Kh')])).toBe(false); // board too short
+  });
+
+  it('rejects AA on a paired board (the optional-ev regression)', () => {
+    // AA on QQx is two pair (aces and queens), not an overpair. The old
+    // optional-`ev` signature returned true when the caller omitted `ev`; the
+    // required, evaluated category now rejects it.
+    const paired = [c('Qh'), c('Qd'), c('2c')];
+    expect(isOverpair([c('Ad'), c('Ac')], paired, evaluateHand([c('Ad'), c('Ac')], paired))).toBe(
+      false,
+    );
+    expect(evaluateHand([c('Ad'), c('Ac')], paired).category).toBe(2); // two pair
   });
 
   it('honours the evaluated category when supplied', () => {
@@ -537,6 +554,48 @@ describe('postflop P1: isOverpair (pure)', () => {
     const overHand = [c('Ks'), c('Kd')];
     expect(isOverpair(setHand, THREE_FLUSH, evaluateHand(setHand, THREE_FLUSH))).toBe(false);
     expect(isOverpair(overHand, THREE_FLUSH, evaluateHand(overHand, THREE_FLUSH))).toBe(true);
+  });
+});
+
+describe('postflop P1: isExposedOverpair is the explicit discount set', () => {
+  const ev = (hole: CardId[], board: CardId[]) => evaluateHand(hole, board);
+
+  it('is overpair AND no card of the board flush suit, nothing else', () => {
+    // Exposed overpair: pocket pair above the board, no card of the suit.
+    expect(
+      isExposedOverpair([c('Kd'), c('Kc')], FOUR_FLUSH, ev([c('Kd'), c('Kc')], FOUR_FLUSH)),
+    ).toBe(true);
+    // Same overpair holding a card of the flush suit is NOT exposed.
+    expect(
+      isExposedOverpair([c('Ks'), c('Kd')], FOUR_FLUSH, ev([c('Ks'), c('Kd')], FOUR_FLUSH)),
+    ).toBe(false);
+    // Overpair on a dry (flushless) board is NOT exposed.
+    expect(isExposedOverpair([c('Kd'), c('Kc')], DRY, ev([c('Kd'), c('Kc')], DRY))).toBe(false);
+    // Two pair / set with no card of the suit are `heroFlushExposed` but must
+    // NOT enter the discount set.
+    expect(heroFlushExposed([c('Qd'), c('9d')], FOUR_FLUSH)).toBe(true);
+    expect(
+      isExposedOverpair([c('Qd'), c('9d')], FOUR_FLUSH, ev([c('Qd'), c('9d')], FOUR_FLUSH)),
+    ).toBe(false);
+    expect(heroFlushExposed([c('Qs'), c('Qc')], THREE_FLUSH)).toBe(true);
+    expect(
+      isExposedOverpair([c('Qs'), c('Qc')], THREE_FLUSH, ev([c('Qs'), c('Qc')], THREE_FLUSH)),
+    ).toBe(false);
+  });
+
+  it('the exposed range tilt stays finite, positive and heavier for the no-suit hero', () => {
+    const exposed = buildVillainRange([c('Kd'), c('Kc')], FOUR_FLUSH, 'balanced');
+    expect(exposed.length).toBeGreaterThan(0);
+    for (const combo of exposed) {
+      expect(combo.cards).toHaveLength(2);
+      expect(Number.isFinite(combo.weight)).toBe(true);
+      expect(combo.weight).toBeGreaterThan(0);
+    }
+    // The no-suit hero sees a strictly heavier flush share than a suited hero
+    // (the explicit tilt boundary the heuristic is documented to produce).
+    expect(flushShare([c('Kd'), c('Kc')], FOUR_FLUSH)).toBeGreaterThan(
+      flushShare([c('3s'), c('8d')], FOUR_FLUSH),
+    );
   });
 });
 

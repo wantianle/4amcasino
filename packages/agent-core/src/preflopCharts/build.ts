@@ -1,6 +1,7 @@
 import {
   allHandClasses,
   compileRangeMix,
+  parseRange,
   type CompiledMix,
   type RangeEntry,
 } from '../rangeParser.js';
@@ -519,4 +520,187 @@ export function rescaleRangeMix(entries: RangeEntry[], scale: number): Map<strin
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: derived charts for the spots with no solver subset
+// ---------------------------------------------------------------------------
+
+/**
+ * Extra squeeze tightening per caller already in a raised pot, layered on top of
+ * `continueWidthScale` for the multiway branch. Like `CONTINUE_WIDTH_SLOPE`,
+ * `0.15` is a **hand-tuned heuristic, NOT fitted to solver data** (there is no
+ * multiway anchor): it only needs to be monotone and conservative. One caller
+ * is `1/1.15 ≈ 0.87×`.
+ */
+export const MULTIWAY_CALLER_SLOPE = 0.15;
+
+export function multiwayWidthScale(callers: number): number {
+  const c = Math.max(0, Math.trunc(Number.isFinite(callers) ? callers : 0));
+  return 1 / (1 + MULTIWAY_CALLER_SLOPE * c);
+}
+
+/**
+ * Hands the derived taper holds at full frequency. Only the two absolute top
+ * hands are exempt - they are a raise/stack-off at any table size, so folding a
+ * fraction of them would be indefensible. Every other class, including `QQ` and
+ * `AK`, scales with the behind-unacted count.
+ */
+export const DERIVED_ANCHOR_PREMIUM: ReadonlySet<string> = new Set(['AA', 'KK']);
+
+/**
+ * Convert explicit-role `RangeEntry[]` anchors into a RawSpot triple map.
+ * Overlapping raise/call coverage (the legacy charts overlap freely) is
+ * resolved in favour of the raise: the chart carries one fold per class, so the
+ * call keeps only the residual `1 - raise` of the shared budget.
+ */
+export function rangeEntriesToRawSpot(entries: RangeEntry[]): RawSpot {
+  const acc: Record<string, [number, number, number]> = {};
+  for (const entry of entries) {
+    const weight = clamp01(entry.weight ?? 1);
+    if (weight <= 0) continue;
+    for (const key of parseRange(entry.range).keys) {
+      const t = acc[key] ?? [0, 0, 0];
+      if (entry.action === 'call') t[2] = Math.min(1, t[2] + weight);
+      else t[0] = Math.min(1, t[0] + weight);
+      acc[key] = t;
+    }
+  }
+  const out: Record<string, [number, number, number]> = {};
+  for (const key of Object.keys(acc)) {
+    const t = acc[key]!;
+    // The raise wins the shared budget, the call keeps the residual.
+    out[key] = [clamp01(t[0]), 0, clamp01(Math.min(t[2], 1 - clamp01(t[0])))];
+  }
+  return out;
+}
+
+/**
+ * Taper a derived anchor's participation by `scale`, holding `premium` hands
+ * fixed. Unlike `buildChartMix`'s threshold narrowing - which leaves every
+ * `p = 1` class untouched and therefore cannot tighten the binary legacy
+ * anchors at all - this scales each non-premium class's participation, so the
+ * chart width is strictly monotone in `scale` while the premium hands still
+ * never fold. A documented heuristic, since the legacy anchors carry no
+ * multiway / squeeze frequencies to narrow by threshold.
+ */
+export function taperRawSpot(
+  raw: RawSpot,
+  scale: number,
+  premium: ReadonlySet<string> = DERIVED_ANCHOR_PREMIUM,
+): RawSpot {
+  const s = clamp01(scale);
+  if (s >= 1) return raw;
+  const out: Record<string, RawTriple> = {};
+  for (const key of HAND_KEYS) {
+    const t = raw[key];
+    if (!t) continue;
+    const p = participation(t);
+    if (p <= 0) continue;
+    if (premium.has(key)) {
+      out[key] = t;
+      continue;
+    }
+    const p2 = clamp01(p * s);
+    if (p2 <= 0) continue;
+    const r = p2 / p;
+    out[key] = [t[0] * r, t[1] * r, t[2] * r];
+  }
+  return out;
+}
+
+/**
+ * The anchor's explicit raise roles, keyed by class. `RangeEntry`'s default
+ * role (weight >= 1 is value, fractional is bluff) is mirrored from
+ * `compileRangeMix`, so the derived chart preserves the *semantic* role even
+ * after the taper makes a value hand mixed raise/fold: a value hand stays a
+ * continuation under style discounts, rather than being re-labelled a bluff.
+ */
+function derivedRaiseRoles(entries: RangeEntry[]): { value: Set<string>; bluff: Set<string> } {
+  const value = new Set<string>();
+  const bluff = new Set<string>();
+  for (const entry of entries) {
+    if (entry.action !== 'raise') continue;
+    const weight = clamp01(entry.weight ?? 1);
+    if (weight <= 0) continue;
+    const role = entry.role ?? (weight >= 1 ? 'value' : 'bluff');
+    const target = role === 'value' ? value : bluff;
+    for (const key of parseRange(entry.range).keys) target.add(key);
+  }
+  return { value, bluff };
+}
+
+export interface DerivedChartSpec {
+  id: string;
+  situation: ChartSituation;
+  actor: string | null;
+  actorSlot: number;
+  opener: string | null;
+  openerSlot: number | null;
+  behindUnacted: number;
+  activeCount: number;
+  seats: number;
+  format: '6max' | '9max' | 'short' | 'hu';
+  depthBB: number;
+  usage: string;
+  entries: RangeEntry[];
+  scale: number;
+  premium?: ReadonlySet<string>;
+}
+
+/**
+ * Build a `preflop-chart/v1` for a spot with no solver subset by tapering the
+ * legacy anchor. The mix still goes through `buildChartMix` (identity target),
+ * so the 169-cell sum-to-one normalisation, the explicit `raiseRole` and the
+ * `p = 0` handling are the existing mechanism, not a second implementation.
+ *
+ * The `source` names the in-repo baseline (not a provider export): the anchor is
+ * a hand-built approximation, and the taper is an explicit unsourced heuristic.
+ */
+export function buildDerivedChart(spec: DerivedChartSpec): PreflopChart {
+  const raw = rangeEntriesToRawSpot(spec.entries);
+  const tapered = taperRawSpot(raw, spec.scale, spec.premium ?? DERIVED_ANCHOR_PREMIUM);
+  const roles = derivedRaiseRoles(spec.entries);
+  const mix = buildChartMix(tapered, NaN);
+  // Preserve the anchor's explicit role on every raising class: `buildChartMix`
+  // re-derives it from the (tapered) fold frequency, which would relabel a
+  // tapered value raise as a bluff.
+  for (const key of HAND_KEYS) {
+    const m = mix[key];
+    if (!m) continue;
+    if (m.raise + m.allin <= 0) {
+      m.raiseRole = null;
+    } else if (roles.value.has(key)) {
+      m.raiseRole = 'value';
+    } else if (roles.bluff.has(key)) {
+      m.raiseRole = 'bluff';
+    }
+  }
+  return {
+    schema: 'preflop-chart/v1',
+    id: spec.id,
+    game: {
+      seats: spec.seats,
+      format: spec.format,
+      depthBB: spec.depthBB,
+      openSizeBB: 2.5,
+    },
+    spot: {
+      situation: spec.situation,
+      actor: spec.actor,
+      actorSlot: spec.actorSlot,
+      opener: spec.opener,
+      openerSlot: spec.openerSlot,
+      activeCount: spec.activeCount,
+      behindUnacted: spec.behindUnacted,
+    },
+    source: {
+      provider: 'rules-v1-baseline',
+      url: 'internal://packages/agent-core/src/preflopRanges.ts',
+      commit: 'working-tree',
+      capturedAt: 'n/a',
+      usage: spec.usage,
+    },
+    mix,
+  };
 }

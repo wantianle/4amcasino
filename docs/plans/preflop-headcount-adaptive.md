@@ -1,9 +1,10 @@
-# 人数自适应翻前范围 —— 第一、二步（RFI / HU / 面对 open）
+# 人数自适应翻前范围 —— 第一、二、三步（RFI / HU / 面对 open / 剩余 spot）
 
-- 状态：两步均已实现，flag 默认关闭（`adaptivePreflop=false`），不改变现有行为
+- 状态：三步均已实现，flag 默认关闭（`adaptivePreflop=false`），不改变现有行为
 - 关联代码：`packages/agent-core/src/preflopCharts/**`、`preflopPolicy.ts`、`decisionView.ts`、`ruleStyles.ts`
 - 数据来源：`~/dev/preflop-trainer/data/external/{frla-gto-nl100,mhl-nl100}`
-- 验收测试：`packages/agent-core/test/preflopAdaptive.test.ts`（51 例）
+- 验收测试：`packages/agent-core/test/preflopAdaptive.test.ts`（67 例）；
+  P2 债务清理见 `docs/plans/postflop-p2-report.md` §1.5
 
 ## 1. 核心模型：用 `behindUnacted`，不用位置名
 
@@ -140,13 +141,15 @@ B7 14.12% > B8 12.66%，单调。
 - `buildMix(ctx, params)`：先试 `buildAdaptiveMix`，返回 `null` 时回退
   `buildLegacyMix`（原 `RFI_RANGES`/`RFI_MARGINAL`/`ISO_RANGES`/`BB_DEFEND`/
   `CALL_VS_OPEN`/`FACING_3BET_*` 全部原样）。
-- 自适应可用条件（`adaptivePreflopAvailable`）分两支，其余 spot 一律回退 legacy：
-  - `spot==='unopened'`：flag 开 + `historyComplete` + `headcountReliable` +
-    `2<=dealtCount<=9` + `behindUnacted` 有限 + HU 时 `actorSlot===1`、
-    否则 `1<=actorSlot<=8`（RFI / HU）。
+- 自适应可用条件（`adaptivePreflopAvailable`）按 spot 分支，未覆盖的 spot 一律回退 legacy：
+  - 统一前置门禁（所有分支）：flag 开 + `historyComplete` + `headcountReliable` +
+    `2<=dealtCount<=9` + `behindUnacted` 有限 + `heroActive` + `heroToAct`。
+  - `spot==='unopened'`：HU 时要求 `actorSlot===1`，否则 `1<=actorSlot<=8`（RFI / HU）。
   - `spot==='facingOpen'`：见 §10.3（额外要求 `needToActTracked` 且服务器
     pending 列表**非空并包含 hero**）。
-  第一步只接 unopened；第二步已在 §10 接入 facingOpen 的两个分支。
+  - `spot ∈ {limped, facingOpenMultiway, facing3Bet, facing3BetCold, facing4BetPlus}`：
+    见 §11（派生图；带加注的四类额外要求 `needToActTracked` 且 pending 非空含 hero）。
+  第一步接 unopened，第二步接 facingOpen，第三步（§11）接其余五类 spot。
 - 缓存键 `preflopMixCacheKey` 含 `spot|position|openerGroup|dealtCount|actorSlot|
   openerSlot|raises|callers|round(stackBB)|route`，其中 `route = adaptivePreflopAvailable(ctx, params) ? 'adaptive' : 'legacy'`。
   **必须编码最终路由而非 flag**：flag 只表示"允许"，实际路由还取决于
@@ -184,6 +187,14 @@ B7 14.12% > B8 12.66%，单调。
   `openerSlot` 的判据；HU SB 走 HU chart、HU BB 面对 raise/limp/fold 全走 legacy
   （不退化成 HU RFI）；
 - widening 契约（新增）：`maxReachableWidth` 上限、`p=0` 保持 fold、超限抛错；
+- flag 关最终决策差分（第三步新增）：`test/fixtures/rulePolicyBaseline.ts` 把
+  `choosePreflopIntent` 指向 `preflopPolicyBaseline`，构造真正的 5f9b12a
+  `RulePolicy`；对 unopened / HU / limped / facing-open / 3-bet / 冷 3-bet / 4-bet+ /
+  `<20BB` 的多底牌 × 多 seed 逐输入比较**完整 `PolicyDecision`（action + amount +
+  reason，`toEqual`）**。`RulePolicy` 本体在 `5f9b12a..HEAD` 逐字节未变，故差分隔离出
+  的正是 `preflopPolicy.ts`。另保留一条更细的 `choosePreflopIntent`
+  intent/frequencies/context 差分，但其声明已如实收窄，不再等同最终决策。
+  反向验证：把差分里的 flag 打开、或对 baseline fixture 做一次刻意扰动，测试均按预期报红；
 - 现有 `packages/agent-core` 全部测试不变（含本文件，全绿）。
 
 ## 8. 偏离与说明
@@ -200,13 +211,14 @@ B7 14.12% > B8 12.66%，单调。
 
 ## 9. 第二步建议（落地状态）
 
-这里原本是第一步收尾时提出的第二步计划。第二步（§10）已经落地了其中第 1 条，
-其余仍未做，保留以便对照（避免与 §10 的「已实现」互相矛盾）：
+这里原本是第一步收尾时提出的第二步计划。第二步（§10）落地了其中第 1 条，第三步
+（§11）落地了第 2 条；其余仍未做，保留以便对照（避免与 §10 / §11 的「已实现」互相矛盾）：
 
 1. **已实现**（§10.1–10.6）：接入 `facingOpen` 的 BB / 非 BB 防守，图表按
    `openerSlot` 取 `FRLA_BB_DEFEND` / `COLD_3BET`，并用 `behindUnacted` 调整
    防守宽度。
-2. **未实现**：多人 limped pot / 多个 caller 的 `activeCount` 影响，见 §10.7。
+2. **已在第三步实现**（§11）：多人 limped pot 的 `behindUnacted` taper 与
+   `facingOpenMultiway` 的 caller squeeze。
 3. **未实现**：sizing 随 `game.openSizeBB` 自适应（HU 2.5bb），短码段
    `raise` vs `allin` 映射，见 §10.7。
 4. **未实现**：chart 持久化/自检（schema 校验、169 格和=1）与抽取脚本入库。
@@ -267,10 +279,11 @@ B7 14.12% > B8 12.66%，单调。
   `CALL_VS_OPEN[heroGroup]`，call 频率乘 `continueWidthScale(behindUnacted) =
   1 / (1 + 0.08·B)`（B=0 为恒等 1，B=8 ≈ 0.61）。**`0.08` 是启发式系数，未由
   solver 数据拟合**：现有 FRLA/MHL 子集没有 multiway / squeeze 防守锚点，该斜率
-  只保证单调、保守。第三步必须用真实的 multiway/squeeze 数据重校准它，不得当作
-  已求解的值。
-- **仍回退 legacy**：limped / 多人（`facingOpenMultiway`）、HU 面对 open、raiser
-  已行动后的 `facing3Bet*`。HU 保留第一步契约，且 6-max NL100 防守数据不适用 HU。
+  只保证单调、保守。第三步（§11）复用了同一启发式系数，仍未重校准；后续步骤必须用真实
+  的 multiway/squeeze 数据重校准它，不得当作已求解的值。
+- **HU 面对 open 仍回退 legacy**：FRLA 子集是 6-max，第一步契约也把 HU
+  BB-facing-raise 固定为 legacy。limped / `facingOpenMultiway` / `facing3Bet` /
+  `facing3BetCold` / `facing4BetPlus` 已在第三步（§11）改走派生图，均为非 HU。
 
 ### 10.4 宽度表（neutral style、100BB）
 
@@ -328,15 +341,71 @@ MP/LJ/HJ→25.46%，CO→30.44%，BTN→39.32%，SB→42.73%）。
 3. **BB 面对单 open 时 `behindUnacted` 恒 0**，缩放为恒等；缩放机制保留，用于
    BB 身后仍有未行动者的非常规顺序。
 
-### 10.7 第三步建议（复审给出的顺序）
+### 10.7 第三步及后续的顺序（落地状态）
 
-1. **先建契约测试**：`betting-state → DecisionView` 的契约测试，把 `needToAct`
-   的镜像语义（空数组 vs 缺失、raise 重开、fold/all-in 排除、hero 是否在
-   pending）固定下来，再在其上扩展，避免再次出现 `[...undefined]` 这类契约漂移。
-2. 接入 limped / 多人 pot（`facingOpenMultiway`）：`activeCount` 决定 squeeze 风险，
-   需要 multiway 防守数据而非把 6-max HU-vs-open 直接外推。
-3. `facing3Bet` 的 acted 语义已就绪（`needToAct`），可接着做面对 3-bet 的继续范围。
-4. **重校准 `continueWidthScale` 的 0.08**：用 multiway/squeeze 防守数据拟合，
-   替换当前的启发式斜率。
-5. sizing 随 `game.openSizeBB` 自适应，并补短码段 `raise` vs `allin` 映射。
-6. 抽取脚本纳入仓库工具目录，chart schema 自检（169 格和=1）常态化。
+这里原本是复审给出的第三步建议顺序。第三步（§11）已落地第 1–3 条，第 4–6 条仍未做：
+
+1. **已落地**：`betting-state → DecisionView` 契约测试（`needToAct` 镜像语义、raise
+   重开、fold/all-in 排除、hero 是否在 pending），见 §10.1 与 §11.2。
+2. **已落地**：接入 limped / 多人 pot（`facingOpenMultiway`）的派生图，见 §11。
+3. **已落地**：`facing3Bet` / `facing3BetCold` / `facing4BetPlus` 三类带加注 spot 的
+   派生图（要求 `needToActTracked` 且 pending 非空含 hero），见 §11。
+4. **未落地**：用 multiway/squeeze 防守数据重校准 `continueWidthScale` 的 0.08。第三步
+   的派生图复用了同一启发式斜率，仍未由 solver 数据拟合，见 §11.4。
+5. **未落地**：sizing 随 `game.openSizeBB` 自适应（HU 2.5bb）与短码段 `raise` vs
+   `allin` 映射。`<20BB` 仍短路到 `SHORT_JAM_RANGES`，第三步未适配。
+6. **未落地**：抽取脚本纳入仓库工具目录；chart schema 自检目前由测试承担（169 格和=1、
+   role、单调性），尚未成为独立工具。
+
+## 11. 第三步：剩余 spot 的派生图
+
+### 11.1 动机与做法
+
+`limped`、`facingOpenMultiway`、`facing3Bet`、`facing3BetCold`、`facing4BetPlus`
+没有 solver 子集。第三步不再外推 FRLA 图，而是把既有 rules-v1 锚点**显式转换**成真正的
+`preflop-chart/v1`：
+
+- `buildDerivedChart`：用 `rangeEntriesToRawSpot` 把带显式 role 的 `RangeEntry[]` 锚点
+  转成 RawSpot，再经 `buildChartMix` 归一，产出含全部 169 类、逐格
+  `raise+allin+call+fold=1`、role 显式保留的图。
+- `taperRawSpot` / `continueWidthScale(behind) = 1/(1+0.08·B)`：逐手缩放**非 premium**
+  的参与率，宽度对 `behindUnacted` 严格单调；`AA`/`KK` 保频不 fold
+  （`DERIVED_ANCHOR_PREMIUM`）。阈值缩窄对二元旧表无空间，故用频率缩放。
+- `multiwayWidthScale(callers) = 1/(1+0.15·callers)`：`facingOpenMultiway` 在
+  `behind` taper 之外再乘的 caller squeeze；对非负有限 caller 严格单调、不塌 0。
+- role 从锚点显式保留（tapered 的 value 仍是 value，不会因缩窄被误标为 bluff）。
+
+锚点对应关系：`limped → ISO_RANGES[positionGroup]`；`facingOpenMultiway`（非 BB）→
+`COLD_3BET_*[openerGroup] + CALL_VS_OPEN[positionGroup]`、（BB）→ `BB_DEFEND[openerGroup]`；
+`facing3Bet → FACING_3BET_4BET + FACING_3BET_CALL`；`facing3BetCold → COLD_3BET_COLD`；
+`facing4BetPlus → FACING_4BET_PLUS`。
+
+### 11.2 路由与门控
+
+- 统一前置门禁（见 §6）：flag 开 + `historyComplete` + `headcountReliable` +
+  `2..9` + `behindUnacted` 有限 + `heroActive` + `heroToAct`。统一门禁在所有 spot
+  分派**之前**，任何 spot 都绕不过 hero 当前行动门控。
+- 非 HU（`headsUp` 一律回退，见 11.3）。
+- `limped`：无加注、本轮不可能重开，故用历史推断的 pending，不强制
+  `needToActTracked`。
+- `facingOpenMultiway` / `facing3Bet` / `facing3BetCold` / `facing4BetPlus`：桌上有加注，
+  必须 `needToActTracked` 且 pending 列表非空并含 hero，与 `facingOpen` 一致。
+- `<20BB` 仍短路到 `SHORT_JAM_RANGES`（位置组 shove），与自适应无关；派生图不改变
+  短码语义。
+
+### 11.3 HU limped 有意保持 legacy
+
+`adaptivePreflopAvailable` 的 `limped` 分支对 `headsUp` 返回 `false`，这是**有意的设计
+决定，不是功能缺口**：HU BB 面对 SB limp 与多人 ISO 不是同一语义；`ISO_RANGES` 是位置组
+（非 HU）表，FRLA/HU 子集也没有 HU limp-iso 锚点，把多人锚点搬进 2 人桌没有依据。第一步
+契约已把 HU BB-facing-raise 固定为 legacy，HU limped 同理。若判定应改，需要新增
+HU limp-iso 锚点而非改 gate。测试断言 HU limped 在 flag on/off 下宽度一致。
+
+### 11.4 偏离与未决
+
+- 派生图的宽度缩放（`continueWidthScale` 的 0.08、`multiwayWidthScale` 的 0.15）仍是
+  **启发式系数，未由 solver 数据拟合**；只保证单调、保守，不得当作已求解值。
+- `<20BB` 的 sizing / 短码适配未做；`limped` 的短码仍走 `SHORT_JAM_RANGES`。
+- 第三步不改变 sizing（`raiseTo` 仍按既有规则），`sizing 随 openSizeBB 自适应` 仍属后续。
+- 多人 limped 的 callback：`facingOpenMultiway` 的 caller squeeze 用 `ctx.callers`，未区分
+  caller 位置质量，属粗粒度近似。
