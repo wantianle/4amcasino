@@ -7,8 +7,13 @@ import {
   suitOf,
   type CardId,
 } from '@4am/shared';
-import type { DecisionLegalActions, DecisionView } from './decisionView.js';
-import { mulberry32 } from './equity.js';
+import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from './decisionView.js';
+import {
+  estimateEquity,
+  mulberry32,
+  type VillainCombo,
+  type VillainRange,
+} from './equity.js';
 import type { PolicyDecision } from './policy.js';
 import { seatsInDealingOrder } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
@@ -20,12 +25,15 @@ import type { RuleParams } from './ruleStyles.js';
  * A compact, deterministic *heuristic* (no solver / CFR / network / GTO). It is
  * built around four modern concepts, each an intentional approximation:
  *
- *  1. **MDF-derived defence** — `mdf = P/(P+B)`. We defend the top `mdf` of a
- *     uniform *unknown-opponent-combo prior* (board and hero cards removed),
- *     using the shared `@4am/shared` evaluator for hand ranking and an
- *     empirical, mid-rank percentile. A boundary-clamped linear band keeps the
- *     expected defence frequency ≈ `mdf` under that prior; it does not model
- *     the opponent's actual betting range.
+ *  1. **Conditional range equity vs pot odds** — facing a bet we assign the
+ *     bettor a coarse continuing range (value-heavy / balanced / bluff-heavy)
+ *     from public information, weight every board-remaining opponent combo by a
+ *     heuristic strength tier, and estimate hero equity against that weighted
+ *     range. We call when equity clears pot odds by an adaptive sampling-error
+ *     band (`facingBetMargin`), fold when it is clearly short, and randomise by
+ *     the old `mdf = P/(P+B)` percentile mix inside the band. This is still an
+ *     approximation (no range propagation) but no longer a pure frequency
+ *     argument against uniform unknown combos.
  *  2. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
  *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
  *     range advantage.
@@ -43,6 +51,29 @@ import type { RuleParams } from './ruleStyles.js';
 const clamp = (x: number, lo: number, hi: number): number =>
   Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : lo;
 const clamp01 = (x: number): number => clamp(x, 0, 1);
+
+/** Bound for the board-keyed caches (dist + villain tiers). */
+const BOARD_CACHE_LIMIT = 256;
+
+/** LRU read: return and refresh recency on a hit. */
+function lruGet<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key) as V;
+  cache.delete(key); // re-insert at the MRU end
+  cache.set(key, value);
+  return value;
+}
+
+/** LRU write: insert as MRU and evict the single oldest entry on overflow. */
+function lruSet<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > BOARD_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // hand strength / evaluation
@@ -376,7 +407,7 @@ function countLess(list: readonly number[], target: number, strict: boolean): nu
  */
 function boardDist(board: readonly CardId[]): BoardDist {
   const key = [...board].sort((a, b) => a - b).join(',');
-  const cached = distCache.get(key);
+  const cached = lruGet(distCache, key);
   if (cached) return cached;
   const boardSet = new Set(board);
   const deck = ALL_CARDS.filter((card) => !boardSet.has(card));
@@ -395,9 +426,8 @@ function boardDist(board: readonly CardId[]): BoardDist {
   }
   scores.sort((a, b) => a - b);
   for (const list of byCard.values()) list.sort((a, b) => a - b);
-  if (distCache.size > 256) distCache.clear();
   const dist = { scores, byCard };
-  distCache.set(key, dist);
+  lruSet(distCache, key, dist);
   return dist;
 }
 
@@ -427,6 +457,391 @@ export function handPercentile(hole: readonly CardId[], board: readonly CardId[]
     1; // the {a,b} combo equals our score and is counted in both card lists
   const equal = equalOrLess - less;
   return (less + 0.5 * equal) / total;
+}
+
+// ---------------------------------------------------------------------------
+// P0: conditional (range-weighted) opponent model for facing-a-bet decisions
+// ---------------------------------------------------------------------------
+
+/**
+ * P0 replaces the old "uniform unknown-combo percentile + MDF short-circuit"
+ * defence with a **conditional range equity vs pot odds** decision:
+ *
+ *  1. classify the bettor's likely continuing range into one of three coarse
+ *     tiers - value-heavy / balanced / bluff-heavy - from public information
+ *     only (bet size relative to the pot, all-in, board wetness, whether hero
+ *     was the preflop aggressor, and observed VPIP/PFR/postflop aggression);
+ *  2. weight every board-remaining opponent combo by a heuristic hand-strength
+ *     tier under that model, and estimate hero equity against that weighted
+ *     range (rather than against uniform unknown combos);
+ *  3. call when `equity > potOdds + margin`, fold when
+ *     `equity < potOdds - margin`, and only inside the band fall back to the
+ *     former MDF/percentile randomisation. `margin` is the estimator's own
+ *     `~2` standard errors, so a spot is only treated as "clear" when the
+ *     observed edge exceeds sampling noise.
+ *
+ * This is intentionally a small, explainable approximation: it does NOT do
+ * range propagation (that is the P2 follow-on). The weighted range is applied to
+ * every still-active opponent (a multiway simplification); when a tiny range
+ * cannot fill every opponent without replacement, `estimateEquity` fills the
+ * overflow uniformly and reports `uniformFallbacks`.
+ */
+export type VillainRangeModel = 'value-heavy' | 'balanced' | 'bluff-heavy';
+
+/**
+ * Floor of the equity/pot-odds decision band. The band itself is adaptive (see
+ * `facingBetMargin`), this only keeps a small tolerance for a near-certain
+ * estimate where the standard error vanishes.
+ */
+export const P0_FACING_BET_MARGIN = 0.05;
+
+/** Confidence multiplier applied to the estimator's standard error for the band. */
+export const P0_BET_CONFIDENCE = 1.96;
+
+/**
+ * Monte-Carlo samples for one heads-up facing-a-bet equity estimate. At
+ * `p = 0.5` the standard error is `sqrt(0.25/128) = 4.4%`, so a 95% decision
+ * band (`1.96 * SE`) is ~8.7% — an edge that large is a real edge, not seed
+ * noise. The band is still derived from the actual sample count via
+ * `facingBetMargin` rather than being a fixed cutoff, so no decision claims a
+ * sharper boundary than its samples support.
+ */
+export const P0_EQUITY_SAMPLES = 128;
+
+/**
+ * Samples for the multiway facing-a-bet estimate. Multiway already applies one
+ * heuristic continuing range to every opponent (a documented simplification),
+ * so it spends half the heads-up budget to bound the worst-case per-decision
+ * cost; its error-matched band is correspondingly wider.
+ */
+export const P0_MULTIWAY_EQUITY_SAMPLES = 64;
+
+/** Sample budget for a facing-bet decision against `opponents` active hands. */
+export function facingBetSamples(opponents: number): number {
+  return opponents <= 1 ? P0_EQUITY_SAMPLES : P0_MULTIWAY_EQUITY_SAMPLES;
+}
+
+/**
+ * Half-width of the equity/pot-odds decision band for an observed `equity`:
+ * `max(P0_FACING_BET_MARGIN, 1.96 * sqrt(e(1-e)/samples))`. Near `e = 0.5` this
+ * is ~0.123 at 64 samples; it narrows as the estimate approaches 0/1. Comparing
+ * the point estimate against `requiredEquity ± facingBetMargin(equity)` means
+ * the "clear call / clear fold" zones account for the estimator's own sampling
+ * error, and spots inside the band deliberately mix via the MDF/percentile
+ * fallback instead of pretending the point estimate is exact.
+ */
+export function facingBetMargin(equity: number, samples = P0_EQUITY_SAMPLES): number {
+  const e = clamp01(equity);
+  const se = Math.sqrt(Math.max(0, (e * (1 - e)) / Math.max(1, samples)));
+  return Math.max(P0_FACING_BET_MARGIN, P0_BET_CONFIDENCE * se);
+}
+
+/** Tolerance for mirrored pot-odds fields (chips are integers; allows FP round-off). */
+const PRICE_EPSILON = 1e-6;
+
+export interface FacingBetPrice {
+  /** True only when the snapshot is internally consistent and matches the legal call. */
+  trusted: boolean;
+  /** Pot before the bet (`pot - call`), or 0 when the pot is unusable. */
+  potBefore: number;
+  /** Authoritative `call / (pot + call)` recomputed from pot/call (0 when unusable). */
+  derivedOdds: number;
+  /** Price compared against equity: the mirrored odds when trusted, else derived. */
+  requiredEquity: number;
+  /** MDF `P/(P+B)` for the real price; a neutral 0.5 when the pot is unusable. */
+  requiredMdf: number;
+}
+
+/**
+ * Validate a facing-bet price snapshot against the legal call amount and the
+ * authoritative `call / (pot + call)`, returning everything the decision needs.
+ *
+ * `trusted` requires ALL of:
+ *  - a finite legal `call >= 0`;
+ *  - `potOdds.pot` finite, `>= 0`, and `>= call` (a pot smaller than the call is
+ *    malformed; it is NOT silently corrected with `max(0, pot - call)`);
+ *  - `potOdds.callAmount` finite, `>= 0`, and exactly the legal call amount;
+ *  - `potOdds.potOdds` finite in `[0, 1]` and within `1e-6` of the derived odds;
+ *  - `potOdds.breakEvenEquity` finite in `[0, 1]` and within `1e-6` of the
+ *    derived odds (the `DecisionPotOdds` contract makes it equal to `potOdds`).
+ *
+ * Any violation marks the snapshot untrusted; the caller then takes a
+ * conservative neutral path rather than trusting (or clamping) the bad price.
+ */
+export function resolveFacingBetPrice(
+  potOdds: DecisionPotOdds | null | undefined,
+  legalCallAmount: number,
+): FacingBetPrice {
+  const call = legalCallAmount;
+  const callValid = Number.isFinite(call) && call >= 0;
+  const potValue = potOdds?.pot;
+  const mirrorCall = potOdds?.callAmount;
+  const potUsable =
+    callValid &&
+    typeof potValue === 'number' &&
+    Number.isFinite(potValue) &&
+    potValue >= 0 &&
+    potValue >= call;
+  const mirrorCallValid =
+    typeof mirrorCall === 'number' &&
+    Number.isFinite(mirrorCall) &&
+    mirrorCall >= 0 &&
+    mirrorCall === call;
+  const potBefore = potUsable ? (potValue as number) - call : 0;
+  const denominator = potBefore + 2 * call;
+  const derivedOdds = potUsable && denominator > 0 ? call / denominator : 0;
+  const oddsField = potOdds?.potOdds;
+  const breakEvenField = potOdds?.breakEvenEquity;
+  const oddsValid =
+    typeof oddsField === 'number' &&
+    Number.isFinite(oddsField) &&
+    oddsField >= 0 &&
+    oddsField <= 1 &&
+    Math.abs(oddsField - derivedOdds) <= PRICE_EPSILON;
+  const breakEvenValid =
+    typeof breakEvenField === 'number' &&
+    Number.isFinite(breakEvenField) &&
+    breakEvenField >= 0 &&
+    breakEvenField <= 1 &&
+    Math.abs(breakEvenField - derivedOdds) <= PRICE_EPSILON &&
+    // `DecisionPotOdds` contract: breakEvenEquity === potOdds (exact).
+    typeof oddsField === 'number' &&
+    breakEvenField === oddsField;
+  const trusted = potUsable && mirrorCallValid && oddsValid && breakEvenValid;
+  return {
+    trusted,
+    potBefore,
+    derivedOdds,
+    requiredEquity: trusted ? (oddsField as number) : derivedOdds,
+    requiredMdf: potUsable ? mdf(potBefore, call) : 0.5,
+  };
+}
+
+export interface VillainModelInput {
+  /** The bettor's bet as a fraction of the pot *before* the bet (1 = pot). */
+  betFraction: number;
+  /** Any still-active opponent is all-in. */
+  allIn: boolean;
+  /** Hero made the last preflop aggressive action. */
+  heroWasAggressor: boolean;
+  /** Board is flush/straight heavy (polarises a betting range). */
+  wet: boolean;
+  /** Observed opponents' average VPIP / PFR / postflop aggression, if known. */
+  opponentVpip?: number;
+  opponentPfr?: number;
+  opponentAggression?: number;
+}
+
+/**
+ * Map public bet/opponent information onto one of the three coarse range tiers.
+ *
+ * Bet size drives the baseline: all-in / large are value-leaning, small bets
+ * bluff-leaning, medium sits in the (explicitly defined) neutral zone that maps
+ * to `balanced`. Wet boards and hero holding the preflop aggression shade the
+ * baseline a further half-step toward bluff-heavy, because both make a bet less
+ * likely to be pure value.
+ *
+ * Opponent type then overrides the size read, because it changes what a bet of
+ * that size means:
+ *  - a **maniac** (loose, aggressive) bets/shoves a wide, bluff-heavy range, so
+ *    any bet is `bluff-heavy`;
+ *  - a **station** (loose, passive preflop) or a **nit** (very tight) rarely
+ *    bluffs, so any bet is `value-heavy`.
+ * With no usable read ("normal" opponent) the size/texture baseline stands.
+ */
+export function chooseVillainModel(input: VillainModelInput): VillainRangeModel {
+  let score = 0;
+  if (input.allIn) score += 2;
+  else if (input.betFraction >= 1) score += 1.5;
+  else if (input.betFraction <= 0.4) score -= 1;
+  else if (input.betFraction <= 0.6) score -= 0.3;
+  if (input.wet) score -= 0.5;
+  if (input.heroWasAggressor) score -= 0.5;
+
+  const { opponentVpip: vpip, opponentPfr: pfr, opponentAggression: aggression } = input;
+  const maniac = vpip !== undefined && vpip > 0.55 && (aggression ?? 0) > 0.5 && (pfr ?? 1) > 0.25;
+  const station = vpip !== undefined && vpip > 0.45 && (pfr ?? 1) < 0.18;
+  const nit = vpip !== undefined && vpip < 0.22;
+  if (maniac) {
+    // A maniac's bet is mostly bluffs regardless of size; cap the score into the
+    // bluff-heavy band.
+    score = Math.min(score, -1.5);
+  } else if (station || nit) {
+    // A station/nit bets for value; cap the score into the value-heavy band.
+    score = Math.max(score, 1.5);
+  }
+
+  if (score >= 1) return 'value-heavy';
+  if (score <= -1) return 'bluff-heavy';
+  return 'balanced';
+}
+
+/**
+ * Heuristic strength tier in [0, 1] for one opponent combo on the current board:
+ * made hands dominate, strong draws sit in the middle, air at the bottom. Purely
+ * a ranking aid for range weighting - never used to compare hero's hand.
+ */
+export function villainStrengthTier(
+  hole: readonly CardId[],
+  board: readonly CardId[],
+): number {
+  const ev = evaluateHand(hole, board);
+  if (ev.category >= 5) return 1; // flush or better (a full house/quads also won here)
+  // On a four-flush board every non-flush made hand loses to any flush, so it
+  // cannot be part of a value-heavy continuing range.
+  const boardSuits = [0, 0, 0, 0];
+  for (const card of board) boardSuits[suitOf(card)] = boardSuits[suitOf(card)]! + 1;
+  if (Math.max(0, ...boardSuits) >= 4) return 0.35;
+  if (ev.category === 4) return 0.95; // straight
+  if (ev.category === 3) return 0.9; // three of a kind / set
+  if (ev.category === 2) return 0.8; // two pair
+  if (ev.category === 1) {
+    const boardRanks = board.map(rankOf);
+    const maxBoard = boardRanks.length ? Math.max(...boardRanks) : -1;
+    const pairedWithBoard = hole.find((card) => boardRanks.includes(rankOf(card)));
+    if (pairedWithBoard !== undefined) {
+      // Top/middle pair vs a weak pair: compare the paired rank to the second
+      // highest board rank (a coarse "top pair or better" split).
+      const sorted = [...new Set(boardRanks)].sort((a, b) => b - a);
+      const second = sorted[1] ?? maxBoard;
+      return rankOf(pairedWithBoard) >= second ? 0.62 : 0.4;
+    }
+    const pocket = rankOf(hole[0]!) === rankOf(hole[1]!);
+    if (pocket) return rankOf(hole[0]!) > maxBoard ? 0.55 : 0.25; // overpair / underpair
+    return 0.3; // playing the board's pair
+  }
+  if (ev.flushDraw || ev.straightDraw >= 2) return 0.4; // strong draw
+  if (ev.straightDraw === 1) return 0.25;
+  if (ev.overcards >= 1) return 0.15;
+  return 0.05; // air
+}
+
+/** Weight a combo's strength tier under a range model. */
+export function villainModelWeight(tier: number, model: VillainRangeModel): number {
+  const t = clamp01(tier);
+  switch (model) {
+    case 'value-heavy':
+      // Steep: on a made-hand board the bettor's range is close to their
+      // strongest tier, so draws/air are all but removed (a value-heavy range
+      // still keeps a trace of everything, hence the floor).
+      return 0.01 + t * t * t * t * t;
+    case 'bluff-heavy':
+      return 1 - 0.55 * t; // air up-weighted, value still present but discounted
+    case 'balanced':
+    default:
+      return 0.25 + 0.75 * t;
+  }
+}
+
+interface VillainBaseCombo {
+  a: CardId;
+  b: CardId;
+  tier: number;
+}
+
+const villainTierCache = new Map<string, VillainBaseCombo[]>();
+
+/**
+ * Board-keyed cache of every board-remaining combo's strength tier. The expensive
+ * `evaluateHand` sweep runs once per board, not once per decision; per-decision
+ * hero-card exclusion and model weights are then cheap O(combos) passes.
+ */
+function villainBaseCombos(board: readonly CardId[]): VillainBaseCombo[] {
+  const key = [...board].sort((a, b) => a - b).join(',');
+  const cached = lruGet(villainTierCache, key);
+  if (cached) return cached;
+  const boardSet = new Set(board);
+  const deck = ALL_CARDS.filter((card) => !boardSet.has(card));
+  const combos: VillainBaseCombo[] = [];
+  for (let i = 0; i < deck.length; i++) {
+    for (let j = i + 1; j < deck.length; j++) {
+      const a = deck[i]!;
+      const b = deck[j]!;
+      combos.push({ a, b, tier: villainStrengthTier([a, b], board) });
+    }
+  }
+  lruSet(villainTierCache, key, combos);
+  return combos;
+}
+
+/**
+ * Weighted villain combos for the board, excluding hero's own cards. Returned as
+ * an explicit `VillainRange` so `estimateEquity` samples it without re-running
+ * any hand evaluation.
+ */
+export function buildVillainRange(
+  hole: readonly CardId[],
+  board: readonly CardId[],
+  model: VillainRangeModel,
+): VillainCombo[] {
+  const heroSet = new Set(hole);
+  const out: VillainCombo[] = [];
+  for (const combo of villainBaseCombos(board)) {
+    if (heroSet.has(combo.a) || heroSet.has(combo.b)) continue;
+    out.push({ cards: [combo.a, combo.b], weight: villainModelWeight(combo.tier, model) });
+  }
+  return out;
+}
+
+/** Observed average VPIP / PFR / postflop aggression of the active opponents. */
+export function opponentModelStats(view: DecisionView): {
+  vpip?: number;
+  pfr?: number;
+  aggression?: number;
+} {
+  const bySeat = new Map(view.sessionMemory.opponents.map((o) => [o.seat, o]));
+  let vpip = 0;
+  let pfr = 0;
+  let aggression = 0;
+  let n = 0;
+  for (const o of view.opponents) {
+    if (o.folded) continue;
+    const stats = bySeat.get(o.seat);
+    if (!stats || stats.sampleHands < 10) continue;
+    vpip += stats.vpipHands / stats.sampleHands;
+    pfr += stats.pfrHands / stats.sampleHands;
+    aggression +=
+      stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
+    n++;
+  }
+  if (n === 0) return {};
+  return { vpip: vpip / n, pfr: pfr / n, aggression: aggression / n };
+}
+
+/**
+ * The coarse range model the P0 decision assigns to the current bettor, derived
+ * only from the public `DecisionView`. Exported so tests can reproduce the
+ * decision's own equity estimate exactly.
+ */
+export function facingVillainModel(
+  view: DecisionView,
+  potBefore: number,
+  call: number,
+): VillainRangeModel {
+  const board = view.hand?.board ?? [];
+  const texture = classifyTexture(board);
+  const activeOpponents = view.opponents.filter((o) => !o.folded);
+  const stats = opponentModelStats(view);
+  return chooseVillainModel({
+    betFraction: potBefore > 0 ? call / potBefore : 1,
+    allIn: activeOpponents.some((o) => o.allIn),
+    heroWasAggressor: heroWasAggressor(view),
+    wet: texture.wet,
+    opponentVpip: stats.vpip,
+    opponentPfr: stats.pfr,
+    opponentAggression: stats.aggression,
+  });
+}
+
+/** Weighted range the P0 decision samples against for this view. */
+export function facingVillainRange(
+  view: DecisionView,
+  hole: readonly CardId[],
+  potBefore: number,
+  call: number,
+): VillainRange {
+  const board = view.hand?.board ?? [];
+  return { combos: buildVillainRange(hole, board, facingVillainModel(view, potBefore, call)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +932,6 @@ export class PostflopPolicy {
     const spr = this.spr(view);
     const active = Math.max(1, view.opponents.filter((o) => !o.folded).length);
     const call = la.callAmount;
-    const potBefore = Math.max(0, (view.potOdds?.pot ?? 0) - call);
 
     if (la.canCheck) {
       return this.decideUnopened(view, la, hole, board, ev, percentile, texture, adv, spr, rng);
@@ -533,7 +947,6 @@ export class PostflopPolicy {
       adv,
       spr,
       active,
-      potBefore,
       call,
       rng,
     );
@@ -652,18 +1065,68 @@ export class PostflopPolicy {
     adv: number,
     spr: number,
     active: number,
-    potBefore: number,
     call: number,
     rng: () => number,
   ): PolicyDecision {
-    const required = mdf(potBefore, call);
-    // Defence is decided purely by the (boundary-corrected) MDF mix; a strong
-    // hand with a high percentile already defends with probability 1, so value
-    // never folds while the realised defence frequency still tracks `required`.
-    const defendChance = defendProbability(percentile, required);
-    const defend = rng() < defendChance;
+    // Resolve the price from the snapshot (pure, unit-tested): a malformed
+    // field, a mismatched call amount or a pot below the call is never clamped
+    // into a fold. `price.trusted` gates the equity comparison; an untrusted
+    // snapshot takes the conservative MDF/percentile path below.
+    const price = resolveFacingBetPrice(view.potOdds, call);
+    const potBefore = price.potBefore;
+    const requiredEquity = price.requiredEquity;
+    const priceTrusted = price.trusted;
+    const required = price.requiredMdf;
+
+    // P0: equity against a heuristic continuing range (value/balanced/bluff
+    // weighted), compared with the price. A non-finite estimate fails closed to
+    // zero equity rather than a neutral 0.5 that would invite a call. A
+    // malformed view (hole/board overlap) or an estimator error falls back to
+    // the neutral `requiredEquity` - the policy must never throw just because a
+    // snapshot was inconsistent.
+    const samples = facingBetSamples(active);
+    let equity = requiredEquity;
+    try {
+      const knownValid = new Set([...hole, ...board]).size === hole.length + board.length;
+      if (knownValid) {
+        const estimate = estimateEquity({
+          hole,
+          board,
+          opponents: active,
+          samples,
+          seed: deriveRulesSeed(this.seed, view),
+          villainRange: facingVillainRange(view, hole, potBefore, call),
+        });
+        equity = Number.isFinite(estimate.equity) ? clamp01(estimate.equity) : 0;
+      }
+    } catch {
+      equity = requiredEquity;
+    }
+
+    let defend: boolean;
+    if (!priceTrusted) {
+      // Conservative neutral path: the price mirror is unusable, so never fold
+      // solely on its account. Defend by hand percentile against the MDF of the
+      // authoritative pot/call price (or a neutral 0.5 when the pot is bad too).
+      defend = rng() < defendProbability(percentile, required);
+    } else {
+      // The band is the estimator's own ~2 standard errors, so a decision only
+      // counts as clear when the observed edge exceeds sampling noise; inside
+      // the band the former MDF/percentile mix still sets the frequency.
+      const margin = facingBetMargin(equity, samples);
+      if (equity > requiredEquity + margin) {
+        defend = true;
+      } else if (equity < requiredEquity - margin) {
+        defend = false;
+      } else {
+        defend = rng() < defendProbability(percentile, required);
+      }
+    }
     if (!defend) {
-      return { action: { type: 'fold' }, reason: `rules-v1 postflop fold below MDF (pct ${percentile.toFixed(2)})` };
+      return {
+        action: { type: 'fold' },
+        reason: `rules-v1 postflop fold (equity ${equity.toFixed(2)} < pot odds ${requiredEquity.toFixed(2)}, pct ${percentile.toFixed(2)})`,
+      };
     }
 
     const sizingCtx: SizingContext = {
@@ -674,9 +1137,10 @@ export class PostflopPolicy {
       maxOverbetFrequency: this.params.maxOverbetFrequency,
     };
 
-    const strong = ev.category >= 3 || percentile >= 0.85;
+    // `equity` is already available; a clear equity edge also counts as value.
+    const strong = ev.category >= 3 || percentile >= 0.85 || equity >= 0.8;
     if (strong && la.canRaise && rng() < 0.6) {
-      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)})`);
+      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)})`);
     }
 
     const blocker = blockerScore(hole, board);
@@ -688,7 +1152,10 @@ export class PostflopPolicy {
     ) {
       return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop semibluff raise (blocker ${blocker.toFixed(2)})`);
     }
-    return { action: { type: 'call' }, reason: `rules-v1 postflop MDF call (pct ${percentile.toFixed(2)})` };
+    return {
+      action: { type: 'call' },
+      reason: `rules-v1 postflop call (equity ${equity.toFixed(2)} vs pot odds ${requiredEquity.toFixed(2)}, pct ${percentile.toFixed(2)})`,
+    };
   }
 
   private bet(

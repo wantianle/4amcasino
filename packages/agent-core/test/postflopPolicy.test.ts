@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ALL_CARDS,
   applyAction,
   cardFromName,
   evaluate7,
@@ -29,6 +28,9 @@ import {
   classifyTexture,
   defendProbability,
   evaluateHand,
+  facingBetMargin,
+  facingBetSamples,
+  facingVillainRange,
   handPercentile,
   heroInPosition,
   heroWasAggressor,
@@ -37,6 +39,8 @@ import {
   unknownComboCount,
   valueBetProbability,
 } from '../src/postflopPolicy.js';
+import { estimateEquity } from '../src/equity.js';
+import { deriveRulesSeed } from '../src/rulesSeed.js';
 import { RulePolicy } from '../src/rulePolicy.js';
 import { RULE_PRESETS } from '../src/ruleStyles.js';
 import { ScriptedPolicy } from '../src/scriptedPolicy.js';
@@ -266,49 +270,220 @@ describe('postflop: MDF', () => {
     }
   });
 
-  it('defends ≈ MDF against a uniform combo prior across bet sizes', () => {
-    const board = [c('Kh'), c('7d'), c('2c')];
-    const boardSet = new Set(board);
-    const deck = ALL_CARDS.filter((x) => !boardSet.has(x));
+  // P0 replaced the uniform-MDF short-circuit with a conditional range-equity
+  // vs pot-odds decision. Instead of the old frequency claim, this matrix checks
+  // the decision against the *same* equity the policy computed (`policyEquity`)
+  // for value / medium / air hands across half-pot / pot / overbet / all-in.
+  const policySeed = 7;
+  const policyEquityOf = (view: DecisionView) => {
+    const hole = view.hand!.myCards;
+    const board = view.hand!.board;
+    const call = view.legalActions!.callAmount;
+    const pot = view.potOdds!.pot;
+    const potBefore = pot - call;
+    const active = Math.max(1, view.opponents.filter((o) => !o.folded).length);
+    const samples = facingBetSamples(active);
+    const estimate = estimateEquity({
+      hole,
+      board,
+      opponents: active,
+      samples,
+      seed: deriveRulesSeed(policySeed, view),
+      villainRange: facingVillainRange(view, hole, potBefore, call),
+    });
+    return {
+      equity: estimate.equity,
+      margin: facingBetMargin(estimate.equity, samples),
+      required: view.potOdds!.potOdds,
+    };
+  };
+
+  const matrixBoard = [c('Kh'), c('7d'), c('2c')];
+  const tiers = ['value', 'medium', 'air'] as const;
+  type Tier = (typeof tiers)[number];
+  const matrixHands: Record<Tier, CardId[]> = {
+    value: [c('Kc'), c('Kd')], // trips
+    medium: [c('Ks'), c('Qs')], // top pair
+    air: [c('8s'), c('3s')], // no pair, no draw
+  };
+  const matrixSizes: { name: string; pot: number; call: number; allIn: boolean }[] = [
+    { name: 'half', pot: 150, call: 50, allIn: false },
+    { name: 'pot', pot: 200, call: 100, allIn: false },
+    { name: 'overbet', pot: 300, call: 200, allIn: false },
+    { name: 'all-in', pot: 300, call: 200, allIn: true },
+  ];
+  const matrixView = (
+    cards: CardId[],
+    size: (typeof matrixSizes)[number],
+    opponents: number,
+    seq: number,
+  ): DecisionView => {
+    const villains: DecisionSeat[] = [];
+    for (let i = 0; i < opponents; i++) {
+      villains.push(
+        seat({ seat: i + 2, isMe: false, committed: size.call, total: size.call, allIn: size.allIn }),
+      );
+    }
+    return facingViewAt(cards, matrixBoard, size.pot, size.call, {
+      actionSeq: seq,
+      hand: hand(cards, matrixBoard, { pot: size.pot, currentBet: size.call }),
+      opponents: villains,
+    });
+  };
+
+  it('heads-up matrix: per-cell behaviour, 0% consistency violations, raise layering', () => {
     const p = policy();
-    for (const [pot, call] of [
-      [100, 50],
-      [250, 50],
-      [100, 80],
-      [100, 10],
-    ] as [number, number][]) {
-      const required = mdf(pot - call, call);
-      let nonFold = 0;
-      let total = 0;
-      let seq = 0;
-      for (let i = 0; i < deck.length; i++) {
-        for (let j = i + 1; j < deck.length; j++) {
-          const v = facingViewAt([deck[i]!, deck[j]!], board, pot, call, { actionSeq: seq++ });
-          if (p.decide(v).action.type !== 'fold') nonFold++;
-          total++;
+    const n = 160; // distinct actionSeq seeds
+    const cells = new Map<string, { fold: number; raise: number }>();
+    let clearAbove = 0;
+    let clearBelow = 0;
+    let inconsistent = 0;
+    for (const size of matrixSizes) {
+      for (const tier of tiers) {
+        let folds = 0;
+        let raises = 0;
+        for (let seq = 0; seq < n; seq++) {
+          const v = matrixView(matrixHands[tier], size, 1, seq);
+          const action = p.decide(v).action.type;
+          if (action === 'fold') folds++;
+          if (action === 'raise') raises++;
+          const { equity, margin, required } = policyEquityOf(v);
+          if (equity > required + margin) {
+            clearAbove++;
+            if (action === 'fold') inconsistent++;
+          } else if (equity < required - margin) {
+            clearBelow++;
+            if (action !== 'fold') inconsistent++;
+          }
         }
+        cells.set(`${tier}:${size.name}`, { fold: folds, raise: raises });
       }
-      expect(Math.abs(nonFold / total - required)).toBeLessThanOrEqual(0.04);
+    }
+    // Every seed's action agrees with the policy's own equity and band.
+    expect(inconsistent).toBe(0);
+    expect(clearAbove).toBeGreaterThan(0);
+    expect(clearBelow).toBeGreaterThan(0);
+    // Explicit per-cell expectations for all twelve cells.
+    for (const size of matrixSizes) {
+      const value = cells.get(`value:${size.name}`)!;
+      const medium = cells.get(`medium:${size.name}`)!;
+      const air = cells.get(`air:${size.name}`)!;
+      expect(value.fold, `value ${size.name} never folds`).toBe(0);
+      expect(medium.fold, `medium ${size.name} never folds heads-up`).toBe(0);
+      expect(air.fold, `air ${size.name} always folds`).toBe(n);
+      // Per-cell minimum aggression proportions.
+      expect(value.raise, `value ${size.name} raise rate`).toBeGreaterThan(n * 0.6);
+      expect(medium.raise, `medium ${size.name} raise rate`).toBeGreaterThan(n * 0.4);
+      expect(air.raise, `air ${size.name} raise rate`).toBe(0);
+      // Layering: value out-raises medium in every cell.
+      expect(value.raise).toBeGreaterThan(medium.raise);
     }
   });
 
-  it('folds (almost) everything at MDF = 0', () => {
-    const board = [c('Kh'), c('7d'), c('2c')];
+  it('heads-up: inside the equity band seeds genuinely mix (fold/defend floors)', () => {
     const p = policy();
-    let nonFold = 0;
-    let total = 0;
-    let seq = 0;
-    for (let i = 0; i < ALL_CARDS.length; i++) {
-      for (let j = i + 1; j < ALL_CARDS.length; j++) {
-        const a = ALL_CARDS[i]!;
-        const b = ALL_CARDS[j]!;
-        if (board.includes(a) || board.includes(b)) continue;
-        const v = facingViewAt([a, b], board, 50, 50, { actionSeq: seq++ }); // potBefore 0 → mdf 0
-        if (p.decide(v).action.type !== 'fold') nonFold++;
-        total++;
+    const size = matrixSizes[1]!; // pot-sized bet, price 1/3
+    const n = 500;
+    let inBand = 0;
+    let bandFold = 0;
+    let bandDefend = 0;
+    let inconsistent = 0;
+    for (let seq = 0; seq < n; seq++) {
+      // ~0.46 percentile: its equity straddles the price, so the band governs.
+      const v = matrixView([c('Qc'), c('Tc')], size, 1, seq);
+      const action = p.decide(v).action.type;
+      const { equity, margin, required } = policyEquityOf(v);
+      if (equity > required + margin) {
+        if (action === 'fold') inconsistent++;
+      } else if (equity < required - margin) {
+        if (action !== 'fold') inconsistent++;
+      } else {
+        inBand++;
+        if (action === 'fold') bandFold++;
+        else bandDefend++;
       }
     }
-    expect(nonFold / total).toBeLessThanOrEqual(0.02);
+    expect(inconsistent).toBe(0);
+    expect(inBand).toBeGreaterThan(30); // enough in-band seeds to mean something
+    // Neither action may collapse to zero inside the band: both floors must hold.
+    expect(bandFold / inBand).toBeGreaterThan(0.3);
+    expect(bandDefend / inBand).toBeGreaterThan(0.05);
+  });
+
+  it('multiway (3-way, 64 samples): value never folds, air always folds, medium mixes', () => {
+    const p = policy();
+    const n = 120; // distinct actionSeq seeds
+    const opponents = 3;
+    expect(facingBetSamples(opponents)).toBe(64);
+    const foldsByCell = new Map<string, number>();
+    const nonFold: Record<Tier, number> = { value: 0, medium: 0, air: 0 };
+    let inconsistent = 0;
+    for (const size of matrixSizes) {
+      for (const tier of tiers) {
+        let folds = 0;
+        for (let seq = 0; seq < n; seq++) {
+          const v = matrixView(matrixHands[tier], size, opponents, seq);
+          const action = p.decide(v).action.type;
+          if (action === 'fold') folds++;
+          else nonFold[tier]++;
+          const { equity, margin, required } = policyEquityOf(v);
+          if (equity > required + margin && action === 'fold') inconsistent++;
+          if (equity < required - margin && action !== 'fold') inconsistent++;
+        }
+        foldsByCell.set(`${tier}:${size.name}`, folds);
+      }
+    }
+    expect(inconsistent).toBe(0);
+    for (const size of matrixSizes) {
+      expect(foldsByCell.get(`value:${size.name}`)).toBe(0); // value never folds
+      expect(foldsByCell.get(`air:${size.name}`)).toBe(n); // air always folds
+    }
+    // Top pair never folds at a half-pot price, and mixes at pot/overbet/all-in.
+    expect(foldsByCell.get('medium:half')).toBe(0);
+    for (const name of ['pot', 'overbet', 'all-in']) {
+      const folds = foldsByCell.get(`medium:${name}`)!;
+      expect(folds).toBeGreaterThan(0);
+      expect(folds).toBeLessThan(n);
+    }
+    // Multiway layering survives.
+    expect(nonFold.value).toBeGreaterThan(nonFold.medium);
+    expect(nonFold.medium).toBeGreaterThan(nonFold.air);
+  });
+
+  it('multiway: the band does not collapse a marginal hand to always-fold', () => {
+    const p = policy();
+    const size = matrixSizes[0]!; // half-pot, MDF threshold 1/3
+    const n = 200;
+    let inBand = 0;
+    let bandDefend = 0;
+    for (let seq = 0; seq < n; seq++) {
+      // A-T high sits on the boundary against three weighted ranges.
+      const v = matrixView([c('Ac'), c('Tc')], size, 3, seq);
+      const action = p.decide(v).action.type;
+      const { equity, margin, required } = policyEquityOf(v);
+      if (Math.abs(equity - required) <= margin) {
+        inBand++;
+        if (action !== 'fold') bandDefend++;
+      }
+    }
+    expect(inBand).toBeGreaterThan(20);
+    // Inside the band the MDF/percentile mix defends, not auto-folds.
+    expect(bandDefend / inBand).toBeGreaterThan(0.5);
+  });
+
+  it('still continues a strong hand when the pot before the bet is zero (pot odds, not MDF = 0)', () => {
+    const board = [c('Kh'), c('7d'), c('2c')];
+    const p = policy();
+    const value = [c('Kc'), c('Kd')]; // set of kings
+    let nonFold = 0;
+    const n = 40;
+    for (let seq = 0; seq < n; seq++) {
+      // potBefore 0 → old MDF was 0 (auto-fold); the price is 50%, so a set
+      // must not be folded by construction.
+      const v = facingViewAt(value, board, 50, 50, { actionSeq: seq });
+      if (p.decide(v).action.type !== 'fold') nonFold++;
+    }
+    expect(nonFold).toBeGreaterThanOrEqual(n * 0.8);
   });
 
   it('enumerates opponent combos excluding both the board and hero hole cards', () => {
@@ -664,14 +839,28 @@ describe('postflop: RulePolicy integration & fail-closed', () => {
 });
 
 describe('postflop: performance', () => {
-  const measureP95 = (): number => {
-    const board = [c('Ac'), c('7d'), c('2h')];
+  const board = [c('Ac'), c('7d'), c('2h')];
+  const hole = [c('Ks'), c('Qd')];
+
+  /** `opponents` active villains facing hero with a half-pot bet. */
+  const multiView = (opponents: number, seq: number): DecisionView => {
+    const base = facingViewAt(hole, board, 150, 50, { actionSeq: seq });
+    const villains: DecisionSeat[] = [];
+    for (let i = 0; i < opponents; i++) {
+      villains.push(
+        seat({ seat: i + 2, isMe: false, committed: 50, total: 50 }),
+      );
+    }
+    return { ...base, opponents: villains };
+  };
+
+  const measureP95 = (opponents: number): number => {
     const p = policy();
+    // Warm the board / villain-tier caches (the one-time cost).
+    p.decide(multiView(opponents, 0));
     const times: number[] = [];
-    // Warm the board/opponent-combo distribution cache (the one-time cost).
-    p.decide(unopenedView([c('As'), c('Ad')], board));
-    for (let i = 0; i < 200; i++) {
-      const v = facingBetView([c('Ks'), c('Qd')], board, { actionSeq: i });
+    for (let i = 0; i < 120; i++) {
+      const v = multiView(opponents, i + 1);
       const t0 = performance.now();
       p.decide(v);
       times.push(performance.now() - t0);
@@ -680,13 +869,22 @@ describe('postflop: performance', () => {
     return times[Math.floor(times.length * 0.95)]!;
   };
 
-  it('wide smoke threshold: p95 well under 25ms', () => {
-    expect(measureP95()).toBeLessThanOrEqual(25);
+  it('heads-up p95 is inside the per-decision budget', () => {
+    // The performance budget is defined for heads-up: it runs the full
+    // `P0_EQUITY_SAMPLES` and is the common live case.
+    const p95 = measureP95(1);
+    console.log(`postflop decision p95: heads-up ${p95.toFixed(2)}ms`);
+    expect(p95).toBeLessThanOrEqual(20);
   });
 
-  it('measured steady-state p95 is ~microseconds (well under 5ms)', () => {
-    // The actual claim, measured on the same warmed board; deliberately much
-    // tighter than the smoke threshold above.
-    expect(measureP95()).toBeLessThanOrEqual(5);
+  it('reports 2/4/8-way p95 truthfully (multiway is the coarse approximation)', () => {
+    const results = [2, 4, 8].map((opponents) => ({ opponents, p95: measureP95(opponents) }));
+    for (const r of results) {
+      console.log(`postflop decision p95: ${r.opponents}-way ${r.p95.toFixed(2)}ms`);
+    }
+    // Multiway uses the halved sample budget (`facingBetSamples`) with an
+    // error-matched band, so only a generous smoke ceiling is asserted; the
+    // measured numbers above are the honest report, not a tight budget.
+    for (const r of results) expect(r.p95).toBeLessThanOrEqual(120);
   });
 });

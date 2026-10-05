@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardFromName, type CardId } from '@4am/shared';
+import { cardFromName, rankOf, type CardId } from '@4am/shared';
 import { estimateEquity } from '../src/equity.js';
 
 const c = (n: string) => cardFromName(n);
@@ -99,5 +99,240 @@ describe('estimateEquity (Monte-Carlo)', () => {
     const fourWay = estimateEquity({ hole: [c('2c'), c('3d')], board, opponents: 3, samples: 40, seed: 1 });
     expect(headsUp.equity).toBe(0.5);
     expect(fourWay.equity).toBe(0.25);
+  });
+});
+
+describe('estimateEquity (weighted villain range)', () => {
+  const hero = [c('7c'), c('2d')];
+
+  it('explicit combos narrow the prior and change the estimate vs uniform', () => {
+    const uniform = estimateEquity({ hole: hero, opponents: 1, samples: 600, seed: 7 });
+    const premium = estimateEquity({
+      hole: hero,
+      opponents: 1,
+      samples: 600,
+      seed: 7,
+      villainRange: {
+        combos: [
+          { cards: [c('Ac'), c('Ad')], weight: 1 },
+          { cards: [c('Ah'), c('As')], weight: 1 },
+          { cards: [c('Kc'), c('Kd')], weight: 1 },
+          { cards: [c('Kh'), c('Ks')], weight: 1 },
+        ],
+      },
+    });
+    // 7-2 offsuit is badly dominated by AA/KK, and must sit below the uniform
+    // random-hand prior it would otherwise be measured against.
+    expect(premium.equity).toBeLessThan(uniform.equity - 0.05);
+    expect(premium.equity).toBeGreaterThanOrEqual(0);
+    expect(premium.samples).toBe(600);
+  });
+
+  it('a weightFn produces a non-uniform estimate and is deterministic', () => {
+    const aceHeavy = (cards: readonly [CardId, CardId]) =>
+      cards.some((card) => rankOf(card) === 12) ? 1 : 0;
+    const uniform = estimateEquity({ hole: hero, opponents: 1, samples: 800, seed: 11 });
+    const range = estimateEquity({
+      hole: hero,
+      opponents: 1,
+      samples: 800,
+      seed: 11,
+      villainRange: { weightFn: aceHeavy },
+    });
+    expect(range.equity).toBeLessThan(uniform.equity);
+    const again = estimateEquity({
+      hole: hero,
+      opponents: 1,
+      samples: 800,
+      seed: 11,
+      villainRange: { weightFn: aceHeavy },
+    });
+    expect(again.equity).toBe(range.equity);
+  });
+
+  it('drops impossible combos (board/hero collisions) and rejects an empty range', () => {
+    const board = [c('Ac'), c('Kd'), c('7h')];
+    const hole = [c('Qc'), c('Jd')];
+    const r = estimateEquity({
+      hole,
+      board,
+      opponents: 1,
+      samples: 50,
+      seed: 1,
+      villainRange: {
+        combos: [
+          { cards: [c('Ac'), c('Ad')], weight: 1 }, // uses a board card → dropped
+          { cards: [c('2c'), c('3d')], weight: 1 },
+        ],
+      },
+    });
+    expect(r.equity).toBeGreaterThanOrEqual(0);
+    expect(() =>
+      estimateEquity({
+        hole,
+        board,
+        samples: 50,
+        villainRange: { combos: [{ cards: [c('Ac'), c('Ad')], weight: 1 }] },
+      }),
+    ).toThrow(/no legal combos/);
+  });
+
+  it('fails fast on malformed ranges', () => {
+    expect(() =>
+      estimateEquity({
+        hole: hero,
+        villainRange: { combos: [{ cards: [c('2c'), c('3d')], weight: Number.NaN }] },
+      }),
+    ).toThrow(/weight/);
+    expect(() =>
+      estimateEquity({
+        hole: hero,
+        villainRange: { combos: [{ cards: [c('2c'), c('2c')], weight: 1 }] },
+      }),
+    ).toThrow(/distinct/);
+    expect(() =>
+      estimateEquity({ hole: hero, villainRange: { weightFn: () => -1 } }),
+    ).toThrow(/weightFn/);
+    expect(() => estimateEquity({ hole: hero, villainRange: {} })).toThrow(/combos or weightFn/);
+  });
+
+  it('rejects supplying both combos and weightFn instead of silently preferring combos', () => {
+    expect(() =>
+      estimateEquity({
+        hole: hero,
+        villainRange: {
+          combos: [{ cards: [c('2c'), c('3d')], weight: 1 }],
+          weightFn: () => 1,
+        },
+      }),
+    ).toThrow(/exactly one/);
+  });
+
+  it('fails fast when the accumulated range weight overflows to Infinity', () => {
+    // Two individually-finite MAX_VALUE weights sum to Infinity; without the
+    // check the binary-search draw would silently degenerate to combo 0.
+    const max = Number.MAX_VALUE;
+    expect(() =>
+      estimateEquity({
+        hole: hero,
+        samples: 50,
+        villainRange: {
+          combos: [
+            { cards: [c('Ac'), c('Ad')], weight: max },
+            { cards: [c('Ah'), c('As')], weight: max },
+          ],
+        },
+      }),
+    ).toThrow(/overflow|finite/i);
+    // Same via a weightFn that overflows.
+    expect(() =>
+      estimateEquity({
+        hole: hero,
+        samples: 50,
+        villainRange: {
+          weightFn: (cards) => (rankOf(cards[0]) === 12 && rankOf(cards[1]) === 12 ? max : 0),
+        },
+      }),
+    ).toThrow(/overflow|finite/i);
+  });
+
+  it('merges duplicate combos by summing weights, order-independently', () => {
+    const one = estimateEquity({
+      hole: hero,
+      samples: 300,
+      seed: 5,
+      villainRange: { combos: [{ cards: [c('Ac'), c('Ad')], weight: 2 }] },
+    });
+    const duplicated = estimateEquity({
+      hole: hero,
+      samples: 300,
+      seed: 5,
+      villainRange: {
+        combos: [
+          { cards: [c('Ac'), c('Ad')], weight: 1 },
+          { cards: [c('Ad'), c('Ac')], weight: 1 }, // same unordered pair
+        ],
+      },
+    });
+    expect(duplicated.equity).toBe(one.equity);
+    expect(duplicated.uniformFallbacks).toBe(0);
+  });
+
+  it('weights multiway opponents by the supplied range (conditioning is not vacuous)', () => {
+    const hero = [c('7c'), c('2d')];
+    const board = [c('Qh'), c('Jh'), c('2c')];
+    const pairHeavy = (cards: readonly [CardId, CardId]) =>
+      rankOf(cards[0]) === rankOf(cards[1]) ? 1 : 0.002;
+    const airHeavy = (cards: readonly [CardId, CardId]) =>
+      rankOf(cards[0]) === rankOf(cards[1]) ? 0.002 : 1;
+    const versusAces = estimateEquity({
+      hole: hero,
+      board,
+      opponents: 2,
+      samples: 600,
+      seed: 9,
+      villainRange: { weightFn: pairHeavy },
+    });
+    const versusAir = estimateEquity({
+      hole: hero,
+      board,
+      opponents: 2,
+      samples: 600,
+      seed: 9,
+      villainRange: { weightFn: airHeavy },
+    });
+    // Both ranges are full-size, so no opponent ever falls back.
+    expect(versusAces.uniformFallbacks).toBe(0);
+    expect(versusAir.uniformFallbacks).toBe(0);
+    // Two opponents from an ace-heavy range leave the weak hero worse off.
+    expect(versusAces.equity).toBeLessThan(versusAir.equity);
+  });
+
+  it('reports the documented uniform fallback and never reuses a combo card across opponents', () => {
+    // A single-combo range can fill at most one of two opponents; the second is
+    // a documented uniform fallback on every sample.
+    const single = estimateEquity({
+      hole: [c('Ac'), c('Ad')],
+      board: [c('Kh'), c('7d'), c('2c')],
+      opponents: 2,
+      samples: 120,
+      seed: 3,
+      villainRange: { combos: [{ cards: [c('Kc'), c('Kd')], weight: 1 }] },
+    });
+    expect(single.uniformFallbacks).toBe(120); // exactly (opponents - 1) * samples
+    expect(Number.isFinite(single.equity)).toBe(true);
+    expect(single.equity).toBeGreaterThanOrEqual(0);
+    expect(single.equity).toBeLessThanOrEqual(1);
+
+    // Heads-up the same range is never exhausted, so there is no fallback.
+    const headsUp = estimateEquity({
+      hole: [c('Ac'), c('Ad')],
+      board: [c('Kh'), c('7d'), c('2c')],
+      opponents: 1,
+      samples: 120,
+      seed: 3,
+      villainRange: { combos: [{ cards: [c('Kc'), c('Kd')], weight: 1 }] },
+    });
+    expect(headsUp.uniformFallbacks).toBe(0);
+
+    // Two disjoint combos for two opponents never exhaust the range.
+    const disjoint = estimateEquity({
+      hole: [c('7c'), c('2d')],
+      opponents: 2,
+      samples: 120,
+      seed: 3,
+      villainRange: {
+        combos: [
+          { cards: [c('Ac'), c('Ad')], weight: 1 },
+          { cards: [c('Kh'), c('Ks')], weight: 1 },
+        ],
+      },
+    });
+    expect(disjoint.uniformFallbacks).toBe(0);
+  });
+
+  it('does not report a fallback for the uniform (no-range) path', () => {
+    const r = estimateEquity({ hole: hero, opponents: 2, samples: 50, seed: 1 });
+    expect(r.uniformFallbacks).toBeUndefined();
   });
 });
