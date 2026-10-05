@@ -13,6 +13,8 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { ChipStack } from './ChipStack.tsx';
 import { BetFlight, ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
+import { DealCard } from './DealCard.tsx';
+import { dealMotionEpoch } from '../../shared/gameClient.ts';
 import {
   anchorOf,
   angleOf,
@@ -115,11 +117,17 @@ function HoleCards({
   cards,
   faceDown,
   narrow = false,
+  delay = 0,
+  handId = null,
+  motionPrefix = 'hole:opponent',
 }: {
   size: 'xs' | 'sm' | 'pod' | 'md';
   cards?: CardId[];
   faceDown?: boolean;
   narrow?: boolean;
+  delay?: number;
+  handId?: string | null;
+  motionPrefix?: string;
 }) {
   // L2 (rev-3 mockup): opponents' face-down cards ride the avatar's top edge
   // as a small-angle GG fan — two burgundy backs tilted ±6° with a slight
@@ -128,12 +136,12 @@ function HoleCards({
   if (faceDown) {
     return (
       <div className="table-pod-fan">
-        <PlayingCard
+        <DealCard delay={delay} handId={handId} motionKey={`${motionPrefix}:0`} epoch={dealMotionEpoch(handId, `${motionPrefix}:0`)}><PlayingCard
           faceDown
           size={size}
           className="table-pod-fan-back table-pod-fan-back--first"
-        />
-        <PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" />
+        /></DealCard>
+        <DealCard delay={delay + 90} handId={handId} motionKey={`${motionPrefix}:1`} epoch={dealMotionEpoch(handId, `${motionPrefix}:1`)}><PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" /></DealCard>
       </div>
     );
   }
@@ -141,7 +149,7 @@ function HoleCards({
   return (
     <div className={cn('flex items-center', narrow ? 'gap-0.5' : 'gap-[5px]')}>
       {cards.slice(0, 2).map((c, i) => (
-        <PlayingCard key={`${i}-${c}`} card={c} size={size} deal podFace />
+        <DealCard key={`${i}-${c}`} delay={delay + i * 90} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace /></DealCard>
       ))}
     </div>
   );
@@ -452,6 +460,7 @@ export function RoundTable({
             <span className="table-felt-watermark">4AM · CASINO</span>
           </div>
 
+          <div className="table-deck" data-table-deck aria-hidden="true"><PlayingCard faceDown size="xs" /></div>
           {/* pot, board, and status live at the center (A5: the pot row is the
               first child, i.e. centered directly above the cards area).
               H2 size budget: with centerBudget on (the live table), content
@@ -688,9 +697,13 @@ export function RoundTable({
                         aria-label={t('Your cards')}
                       >
                         <HoleCards
+                          key={handId}
+                          delay={i * 45}
                           size={narrow ? holeSize : 'md'}
                           narrow={narrow}
                           cards={myCards}
+                          handId={handId}
+                          motionPrefix="hole:hero"
                         />
                       </div>
                     )}
@@ -711,10 +724,14 @@ export function RoundTable({
                           )}
                         >
                           <HoleCards
+                            key={handId}
+                            delay={i * 45}
                             size={holeSize}
                             narrow={narrow}
                             cards={isMe ? myCards : p.revealed}
                             faceDown={!isMe && !p.revealed}
+                            handId={handId}
+                            motionPrefix={`hole:seat:${p.seat}`}
                           />
                         </div>
                       )}

@@ -51,6 +51,8 @@ import {
   setSitOut,
   sit,
   startHand,
+  dealMotionEpoch,
+  boardMotionKey,
 } from '../../shared/gameClient.ts';
 import { wsClient } from '../../shared/ws.ts';
 import { useStore } from '../../shared/store.ts';
@@ -71,6 +73,8 @@ import type { SeatView } from '../../widgets/table/RoundTable.tsx';
 import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
+import { DealCard } from '../../widgets/table/DealCard.tsx';
+import { BombPotIntro } from '../../widgets/table/BombPotIntro.tsx';
 import { ribbonFitsRail } from '../../widgets/table/geometry.ts';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
 import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
@@ -1233,7 +1237,7 @@ export function TablePage() {
     'invite',
     'watch',
     ...(isPhone
-      ? []
+      ? (['auto-deal', 'sit-out', 'bots'] as const)
       : (['auto-deal', 'sit-out', 'timer', 'bots', 'preferences', 'hands', 'ledger'] as const)),
   ];
   const desktopMenuGroups = filterDesktopMenuGroups(utilityGroups, inlineSurfaced);
@@ -1437,7 +1441,8 @@ export function TablePage() {
     bombActive && handLive && (!hand.betting || hand.betting.street === 'preflop');
   const featureRibbon =
     ((feat?.squid?.enabled || bombActive) && hand.handId !== null) || bombBeforeFlop ? (
-      <div className="table-ribbon" role="status">
+       <div className="table-ribbon" role="status">
+         <BombPotIntro />
         {(feat?.squid?.enabled || bombActive) && hand.handId !== null && (
           <div className="table-ribbon-row">
             {bombActive && feat.bombPot && (
@@ -2054,7 +2059,7 @@ export function TablePage() {
             </DesktopIconButton>
           )}
 
-          <div className={cn('relative', isPhone && 'absolute bottom-1 right-1')}>
+          <div className="relative">
             <DesktopIconButton
               label={t('More table controls')}
               onClick={() => setMenuOpen((open) => !open)}
@@ -2063,7 +2068,7 @@ export function TablePage() {
               expanded={menuOpen}
               buttonRef={desktopMenuTriggerRef}
               className={isPhone ? 'h-11 w-11' : undefined}
-              data-testid="table-more"
+               data-testid={isPhone ? 'mobile-table-utilities' : 'table-more'}
             >
               <DotsThreeVertical size={20} weight="bold" />
             </DesktopIconButton>
@@ -2098,7 +2103,7 @@ export function TablePage() {
                         {utilityGroupLabels[group.id]}
                       </div>
                       {group.actions.map((action) => (
-                        <div key={action} role="none">
+                        <div key={action} role="none" data-testid={isPhone ? `mobile-utility-${action}` : undefined}>
                           {utilityAction(action)}
                         </div>
                       ))}
@@ -2114,10 +2119,11 @@ export function TablePage() {
                       <div className="px-3 pb-1 pt-2 text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
                         {t('View')}
                       </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className={cn(utilityItemClass, !fullscreenSupported && 'opacity-50')}
+                       <button
+                         type="button"
+                         role="menuitem"
+                         data-testid="mobile-utility-fullscreen"
+                         className={cn(utilityItemClass, !fullscreenSupported && 'opacity-50')}
                         disabled={!fullscreenSupported}
                         onClick={() => {
                           toggleFullscreen();
@@ -2139,10 +2145,11 @@ export function TablePage() {
                           </span>
                         )}
                       </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className={utilityItemClass}
+                       <button
+                         type="button"
+                         role="menuitem"
+                         data-testid="mobile-utility-voice"
+                         className={utilityItemClass}
                         onClick={() => {
                           if (voiceState.joined) voice.toggleMute();
                           else void voice.join();
@@ -2386,15 +2393,13 @@ export function TablePage() {
                           {multiRunBoard && runLabel(1)}
                           {[0, 1, 2, 3, 4].map((index) =>
                             first![index] !== undefined ? (
-                              <PlayingCard
-                                key={`${index}-${first![index]}`}
+                               <DealCard key={boardMotionKey(hand.handId, 0, first![index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, 0, first![index]!))} motionKey={boardMotionKey(hand.handId, 0, first![index]!)} delay={index < 3 ? index * 90 : 0}><PlayingCard
                                 card={first![index]}
                                 size={runSize}
-                                deal
                                 // the three flop cards land together, so cascade them; the
                                 // turn and river arrive alone and flip immediately
                                 dealDelay={first!.length === 3 ? index * 0.16 : 0}
-                              />
+                              /></DealCard>
                             ) : (
                               emptySlot(`r0-slot-${index}`, index)
                             ),
@@ -2414,12 +2419,10 @@ export function TablePage() {
                               {runLabel(runIdx + 2)}
                               {[0, 1, 2, 3, 4].map((index) =>
                                 run[index] !== undefined ? (
-                                  <PlayingCard
-                                    key={`r${runIdx}-${index}-${run[index]}`}
+                                   <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} delay={index < 3 ? index * 90 : 0}><PlayingCard
                                     card={run[index]}
                                     size={runSize}
-                                    deal
-                                  />
+                                  /></DealCard>
                                 ) : (
                                   emptySlot(`r${runIdx}-slot-${index}`, index)
                                 ),

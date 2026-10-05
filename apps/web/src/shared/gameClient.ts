@@ -23,6 +23,86 @@ const lookup = cardLookup();
 
 const KEY_PREFIX = '4am/handkey/';
 
+// This is deliberately client-session state, not part of the authoritative
+// hand snapshot.  A reconnect can replay frames, but it must not make cards
+// fly again; a fixture/resetHand call also cannot manufacture a deal event.
+const dealEpochByHand = new Map<string, number>();
+const dealtMotionByCard = new Map<string, number>();
+const dealEpochByCard = new Map<string, number>();
+const boardDeckIndexByCard = new Map<string, number>();
+
+export function dealMotionEpoch(handId: string | null, cardKey: string): number {
+  return handId ? dealEpochByCard.get(`${handId}:${cardKey}`) ?? 0 : 0;
+}
+
+export function boardMotionKey(handId: string | null, runIndex: number, card: number): string {
+  return `board:${runIndex}:${card}`;
+}
+
+type BoardOpenForMotion = { deckIndex: number; card: number; run?: number };
+
+function orderKnownBoard(handId: string, runIndex: number, cards: number[]): number[] {
+  const indexOf = (card: number) => boardDeckIndexByCard.get(`${handId}:${runIndex}:${card}`)
+    ?? boardDeckIndexByCard.get(`${handId}:0:${card}`);
+  // Snapshot cards without metadata keep their slots, not an artificial
+  // Infinity index. Sort only the known slots with a transitive comparator.
+  const known = cards.filter((card) => indexOf(card) !== undefined)
+    .sort((a, b) => indexOf(a)! - indexOf(b)!);
+  if (known.length === cards.length) return known;
+  let cursor = 0;
+  return cards.map((card) => indexOf(card) === undefined ? card : known[cursor++]!);
+}
+
+/** Handler-level board merge contract: duplicate frames add metadata but no motion. */
+export function mergeBoardOpenForMotion(
+  handId: string,
+  boards: number[][],
+  msg: BoardOpenForMotion,
+): number[][] {
+  const runIndex = (msg.run ?? 1) - 1;
+  const next = boards.map((run) => [...run]);
+  while (next.length <= runIndex) next.push([]);
+  boardDeckIndexByCard.set(`${handId}:${runIndex}:${msg.card}`, msg.deckIndex);
+  if (!next[runIndex]!.includes(msg.card)) next[runIndex]!.push(msg.card);
+  next[runIndex] = orderKnownBoard(handId, runIndex, next[runIndex]!);
+  return next;
+}
+
+export function mergeAuthoritativeBoardForMotion(
+  handId: string,
+  boards: number[][],
+  board: number[],
+): number[][] {
+  const next = boards.map((run) => [...run]);
+  // The snapshot is authoritative, including its ordering. It must be able to
+  // correct local state even if previously recorded event metadata disagrees.
+  next[0] = [...board];
+  return next;
+}
+
+/** Claim the one animation belonging to a newly received card event. */
+export function claimDealMotion(handId: string | null, cardKey: string, epoch: number): boolean {
+  if (!handId || epoch === 0) return false;
+  const key = `${handId}:${cardKey}`;
+  if ((dealtMotionByCard.get(key) ?? 0) >= epoch) return false;
+  dealtMotionByCard.set(key, epoch);
+  return true;
+}
+
+function advanceDealEpoch(handId: string): number {
+  const next = (dealEpochByHand.get(handId) ?? 0) + 1;
+  dealEpochByHand.set(handId, next);
+  return next;
+}
+
+/** Test/fixture bridge for an explicitly simulated deal event. Snapshots must
+ * use resetHand/patchHand instead; only an event may call this. */
+export function noteDealMotion(handId: string, cardKey: string): number {
+  const epoch = advanceDealEpoch(handId);
+  dealEpochByCard.set(`${handId}:${cardKey}`, epoch);
+  return epoch;
+}
+
 /** Read the per-hand key, or null if this browser has never held it.
  *
  *  localStorage, not sessionStorage: sessionStorage is per-TAB, so opening the
@@ -215,7 +295,7 @@ export function sendChat(text: string, kind: 'text' | 'sticker' | 'phrase' = 'te
   wsClient.send({ t: 'chat', text, kind });
 }
 
-function handle(msg: ServerMsg): void {
+export function handle(msg: ServerMsg): void {
   const store = useStore.getState();
   switch (msg.t) {
     case 'room_state': {
@@ -291,8 +371,8 @@ function handle(msg: ServerMsg): void {
           }
         }
       }
-      if (mySeat === null) return; // spectator
       if (fresh) play('shuffle');
+      if (mySeat === null) return; // spectator
       const k = createHandKey(msg.handId);
       const commit = pointHex(handKeyCommit(k));
       wsClient.send({
@@ -354,6 +434,7 @@ function handle(msg: ServerMsg): void {
 
     case 'your_card': {
       const h = useStore.getState().hand;
+      if (h.handId !== msg.handId) return;
       if (h.myCardPoints.some((c) => c.deckIndex === msg.deckIndex)) return; // re-delivered on reconnect
       const k = handKeyFor(msg.handId);
       if (k === null) return;
@@ -363,7 +444,15 @@ function handle(msg: ServerMsg): void {
         store.pushError(t('Could not decode a dealt card. The hand will abort.'));
         return;
       }
-      play('deal');
+      if (h.myCards.length === 0) play('deal');
+      noteDealMotion(msg.handId, `hole:hero:${h.myCards.length}`);
+      // Opponent cards are intentionally face-down, so the client cannot
+      // identify their individual your_card frame. They join the same deal
+      // beat only after an actual your_card event, never at hand_start.
+      for (const seat of h.seats) {
+        if (seat.seat === mySeatIn(h.seats)) continue;
+        noteDealMotion(msg.handId, `hole:seat:${seat.seat}:${h.myCards.length}`);
+      }
       store.patchHand({
         myCards: [...h.myCards, card],
         myCardPoints: [...h.myCardPoints, { deckIndex: msg.deckIndex, point: msg.point }],
@@ -373,15 +462,21 @@ function handle(msg: ServerMsg): void {
 
     case 'board_open': {
       const { hand } = useStore.getState();
+      if (hand.handId !== msg.handId) return;
       const runIndex = (msg.run ?? 1) - 1;
       const boards = hand.boards.map((run) => run);
       while (boards.length <= runIndex) boards.push([]);
       const board = boards[runIndex]!;
-      if (!board.includes(msg.card)) {
-        play('flip');
-        boards[runIndex] = [...board, msg.card];
-        store.patchHand({ boards });
+      const existing = board.includes(msg.card);
+      // Metadata is authoritative even when the card came from an earlier
+      // snapshot. Only a genuinely new card advances the visual epoch.
+      const nextBoards = mergeBoardOpenForMotion(msg.handId, boards, msg);
+      if (!existing) {
+        if (board.length === 0 || board.length >= 3) play('flip');
+        const epoch = advanceDealEpoch(msg.handId);
+        dealEpochByCard.set(`${msg.handId}:${boardMotionKey(msg.handId, runIndex, msg.card)}`, epoch);
       }
+      if (JSON.stringify(nextBoards) !== JSON.stringify(hand.boards)) store.patchHand({ boards: nextBoards });
       return;
     }
 
@@ -394,7 +489,7 @@ function handle(msg: ServerMsg): void {
         play('turn');
       }
       const boards = prev.boards.map((run) => run);
-      boards[0] = msg.board;
+      const reconciled = mergeAuthoritativeBoardForMotion(prev.handId!, boards, msg.board);
       // baseDeadline/timeBanks are optional while the server rolls out: keep the
       // last known values rather than clearing them when a frame omits them.
       const timeBanks: Record<number, number> = { ...prev.timeBanks };
@@ -407,7 +502,7 @@ function handle(msg: ServerMsg): void {
         deadline: msg.deadline,
         baseDeadline: msg.baseDeadline !== undefined ? msg.baseDeadline : prev.baseDeadline,
         timeBanks,
-        boards,
+        boards: reconciled,
         ...(streetChanged ? { lastActions: {}, preAction: null, preActionCallAt: null } : {}),
       });
       // the street closed with chips out front: they sweep into the pot
@@ -537,6 +632,7 @@ function handle(msg: ServerMsg): void {
     }
 
     case 'feature_started': {
+      if (msg.handId && msg.handId !== useStore.getState().hand.handId) return;
       // announces which new-gameplay features are live for this hand; re-sent
       // on reconnect, so it simply overwrites the previous announcement
       store.patchHand({

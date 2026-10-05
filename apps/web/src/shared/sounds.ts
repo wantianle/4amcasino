@@ -28,17 +28,20 @@ const VOLUME_KEY = '4am-sound-volume';
 const ENABLED_KEY = '4am-sounds';
 
 export function soundsEnabled(): boolean {
-  return localStorage.getItem(ENABLED_KEY) !== 'off';
+  try { return localStorage.getItem(ENABLED_KEY) !== 'off'; } catch { return false; }
 }
 export function setSoundsEnabled(on: boolean): void {
-  localStorage.setItem(ENABLED_KEY, on ? 'on' : 'off');
+  try { localStorage.setItem(ENABLED_KEY, on ? 'on' : 'off'); } catch { /* storage disabled */ }
 }
 export function soundVolume(): number {
-  const v = Number(localStorage.getItem(VOLUME_KEY));
-  return Number.isFinite(v) && v > 0 ? Math.min(v, 1) : 0.5;
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    const v = raw === null ? NaN : Number(raw);
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 1) : 0.5;
+  } catch { return 0.5; }
 }
 export function setSoundVolume(v: number): void {
-  localStorage.setItem(VOLUME_KEY, String(Math.min(Math.max(v, 0), 1)));
+  try { localStorage.setItem(VOLUME_KEY, String(Math.min(Math.max(v, 0), 1))); } catch { /* storage disabled */ }
 }
 
 let ctx: AudioContext | null = null;
@@ -52,7 +55,7 @@ function ensureCtx(): AudioContext | null {
       master = ctx.createGain();
       master.connect(ctx.destination);
     }
-    if (ctx.state === 'suspended') void ctx.resume();
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
     master!.gain.value = soundVolume() * 0.6; // headroom: these are UI sounds, not music
     return ctx;
   } catch {

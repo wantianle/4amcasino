@@ -9,6 +9,8 @@
 // Big blind (dict/lobby.ts). Hand categories + rank words live in
 // dict/shared.ts and reach the UI through tHandCategory()/tScore() only.
 const table: Record<string, string> = {
+  'Bomb pot!': '炸弹池！',
+  'Everyone antes · No preflop betting': '本手全员强制 ante · 无翻前下注',
   'Sit out next deal': '下一手离座',
   'Deal me in next hand': '下一手发牌',
   Gameplay: '玩法',
