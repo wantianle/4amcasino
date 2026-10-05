@@ -20,10 +20,13 @@ import {
 } from './preflopRanges.js';
 import {
   adaptiveChartFor,
+  bbDefendChartFor,
   canonicalSlot,
   chartToRangeEntries,
-  computeBehindUnacted,
+  computeBehindPending,
+  continueWidthScale,
   preflopActionOrder,
+  rescaleRangeMix,
 } from './preflopCharts/index.js';
 import {
   compileRangeMix,
@@ -79,7 +82,7 @@ export interface PreflopContext {
   /** Position of the first raiser, or null when unknown / incomplete history. */
   opener: Position | null;
   openerGroup: PositionGroup | null;
-  /** Canonical behind-unacted slot of the first raiser (B0..B8), or null. */
+  /** 6-max reference slot of the first raiser (B0..B5), or null. */
   openerSlot: number | null;
   /** Number of preflop bets/raises observed (implied opens included). */
   raises: number;
@@ -112,6 +115,33 @@ export interface PreflopContext {
    * is tracked separately by `historyComplete`.
    */
   headcountReliable: boolean;
+  /**
+   * True when the view carried the server's current-round `needToAct` list, so
+   * `behindUnacted` tracks the live betting round (a raise reopening the action
+   * re-includes the earlier callers). False means the fallback "acted at some
+   * point this hand" inference ran; the facing-open adaptive route refuses to
+   * trust that, since it cannot see a reopening.
+   */
+  needToActTracked: boolean;
+  /** Absolute hero seat, so the pending-list gate can check the hero owes action. */
+  heroSeat: number;
+  /**
+   * The server's current-round pending seats copied verbatim, or `null` when
+   * the server did not supply `needToAct`. Keeping the list (not just a
+   * boolean) lets the facing-open route require a non-empty snapshot that
+   * actually contains the hero: an empty list is "nobody owes an action" and a
+   * list without the hero is not a live decision for them, so both must fall
+   * back to the legacy tables even though `needToActTracked` is true.
+   */
+  needToActSeats: readonly number[] | null;
+  /** True when the hero can still put chips in (not folded / all-in / sitting out). */
+  heroActive: boolean;
+  /**
+   * True when the public turn is the hero's (`hand.toAct === heroSeat`). A
+   * snapshot that lists the hero in `needToAct` but has the turn on someone
+   * else is not a live hero decision.
+   */
+  heroToAct: boolean;
 }
 
 /**
@@ -169,6 +199,34 @@ function positionForSeat(seat: number, seatOrder: number[]): Position {
   return idx === 0 ? 'SB' : idx === 1 ? 'BB' : 'BTN';
 }
 
+/**
+ * 6-max reference slot for an opener's position, used to pick the
+ * `FRLA_BB_DEFEND` anchor. The solver subset is 6-max, so every table size maps
+ * its positions onto that reference: UTG/UTG1 -> B5 (UTG), MP/LJ/HJ -> B4 (MP),
+ * CO -> B3, BTN -> B2, SB -> B1, BB -> B0. Using the raw behind-unacted slot
+ * would misalign 9-max (there the BTN has 0 players behind, but the defence data
+ * keys BTN at B2), so the position name is the stable key here.
+ */
+function sixMaxSlotForPosition(pos: Position): number {
+  switch (pos) {
+    case 'UTG':
+    case 'UTG1':
+      return 5;
+    case 'MP':
+    case 'LJ':
+    case 'HJ':
+      return 4;
+    case 'CO':
+      return 3;
+    case 'BTN':
+      return 2;
+    case 'SB':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 /** Classify the preflop spot / position / stack from the view. */
 export function derivePreflopContext(view: DecisionView): PreflopContext {
   const hand = view.hand;
@@ -223,20 +281,31 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
   for (const o of view.opponents) {
     if (!o.folded && !o.allIn && !o.sittingOut) activeSeats.add(o.seat);
   }
-  // NOTE (step-2 limitation, must-fix 5): `actedSeats` only records *that* a
-  // seat acted at some point, not whether it still owes action after a raise
-  // reopened the betting round. Preflop action can reopen (a player who called
-  // an open must act again facing a 3-bet), so this set over-counts "completed"
-  // actors once the auction has a raise. Step 1 only feeds `behindUnacted` into
-  // the `unopened` spot (nobody has acted yet), so the error cannot surface; the
-  // step-2 defensive charts MUST replace this with the server's `needToAct` /
-  // current-betting-round criterion before shipping.
+  // `behindUnacted` must count seats that still owe an action *in the current
+  // betting round*, not seats that have acted at some point this hand. A raise
+  // reopens the round: an earlier caller must act again facing a 3-bet, and the
+  // flat "acted at some point" set would wrongly drop it, undercounting
+  // `behindUnacted` exactly when the defensive charts matter. Prefer the
+  // server's public `needToAct`; fall back to the historical set only when it is
+  // unavailable (a legacy server), which the facing-open adaptive route refuses
+  // to trust because it cannot observe a reopening.
+  const needToActSeats = Array.isArray(view.needToActSeats) ? [...view.needToActSeats] : null;
+  const needToActTracked = needToActSeats !== null;
+  const currentRoundSeats = needToActSeats ? new Set(needToActSeats) : null;
+  // The adaptive charts only ever serve a live hero decision. `needToAct` alone
+  // is not enough: a stale/malformed snapshot can list the hero while the hero
+  // is folded / all-in / sitting out, or while the public turn is another
+  // seat's, so the route gate re-checks both here.
+  const heroActive = !!me && !me.folded && !me.allIn && !me.sittingOut;
+  const heroToAct = mySeat >= 0 && hand?.toAct === mySeat;
   const actedSeats = new Set(actions.map((a) => a.seat));
-  const behindUnacted = computeBehindUnacted({
+  const pendingSeats =
+    currentRoundSeats ?? new Set([...activeSeats].filter((s) => !actedSeats.has(s)));
+  const behindUnacted = computeBehindPending({
     order,
     heroSeat: mySeat,
     activeSeats,
-    actedSeats,
+    pendingSeats,
   });
   const actorSlot = canonicalSlot(behindUnacted);
   const dealtCount = seatOrder.length;
@@ -257,17 +326,11 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
     // 3-handed table as heads-up; the size + coverage pair forces equality.
     suppliedSet.size === knownSeats.size &&
     [...knownSeats].every((s) => suppliedSet.has(s));
-  const openerSlot =
-    firstRaise !== undefined
-      ? canonicalSlot(
-          computeBehindUnacted({
-            order,
-            heroSeat: firstRaise.seat,
-            activeSeats,
-            actedSeats,
-          }),
-        )
-      : null;
+  // The opener's slot keys the 6-max defence anchors (see
+  // `sixMaxSlotForPosition`). Unlike `behindUnacted` it must not shrink as the
+  // auction folds/acts: it encodes *how early the opener acted*, not how many
+  // players happen to still owe action at the hero's decision.
+  const openerSlot = opener ? sixMaxSlotForPosition(opener) : null;
 
   let spot: PreflopSpot;
   if (raises === 0) {
@@ -324,6 +387,11 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
     actorSlot,
     headsUp,
     headcountReliable,
+    needToActTracked,
+    heroSeat: mySeat,
+    needToActSeats,
+    heroActive,
+    heroToAct,
   };
 }
 
@@ -390,21 +458,83 @@ function buildLegacyMix(ctx: PreflopContext): Map<string, CompiledMix> {
 
 /**
  * True when the adaptive headcount charts may serve this decision: the flag is
- * on, the spot is a first-in, the history is complete, and the seat states give
- * a trustworthy behind-unacted count. Anything else falls back to the legacy
- * tables — missing history is never read as "nobody acted".
+ * on, the spot is a first-in or a single open, the history is complete, the
+ * hero is the live acting seat (active and `toAct`), and the seat states give a
+ * trustworthy current-round behind-unacted count. Anything else falls back to
+ * the legacy tables — missing history is never read as "nobody acted", and a
+ * snapshot that is not actually the hero's live decision is never served.
+ *
+ * `facingOpen` additionally requires the server's `needToAct` (`needToActTracked`):
+ * the defensive widths depend on who still owes an action after a raise, which
+ * the historical "acted at some point" set cannot express. Heads-up vs-open
+ * stays on the legacy defence (the FRLA subset is 6-max).
  */
 export function adaptivePreflopAvailable(ctx: PreflopContext, params: RuleParams): boolean {
   if (!params.adaptivePreflop) return false;
-  if (ctx.spot !== 'unopened') return false;
+  if (ctx.spot !== 'unopened' && ctx.spot !== 'facingOpen') return false;
   if (!ctx.historyComplete || !ctx.headcountReliable) return false;
   if (!(ctx.dealtCount >= 2 && ctx.dealtCount <= 9)) return false;
   if (!Number.isFinite(ctx.behindUnacted)) return false;
+  // Both adaptive branches model a live decision by the hero. A stale or
+  // malformed snapshot can list the hero in `needToAct` while the hero is
+  // folded / all-in / sitting out, or while the public turn belongs to another
+  // seat; such a view is not a hero decision and must fall back to legacy.
+  if (!ctx.heroActive) return false;
+  if (!ctx.heroToAct) return false;
+
+  if (ctx.spot === 'facingOpen') {
+    // HU keeps the legacy defence: the FRLA BB subset is 6-max NL100 and the
+    // step-1 contract pinned HU BB facing a raise to legacy.
+    if (ctx.headsUp) return false;
+    if (ctx.openerSlot === null || ctx.openerSlot < 1 || ctx.openerSlot > 5) return false;
+    // Without `needToAct`, a raise reopening the round is invisible and
+    // `behindUnacted` can undercount — never serve the defensive charts then.
+    if (!ctx.needToActTracked) return false;
+    // A tracked snapshot is necessary but not sufficient. The adaptive premise
+    // is "the hero still owes this round and there are live players behind".
+    // An empty list is a closed/mis-timed snapshot, and a list without the hero
+    // is not a live decision for them; either way `behindUnacted` would not
+    // measure the hero's own pending action, so fall back to legacy.
+    if (!ctx.needToActSeats || ctx.needToActSeats.length === 0) return false;
+    if (!ctx.needToActSeats.includes(ctx.heroSeat)) return false;
+    return ctx.actorSlot >= 0 && ctx.actorSlot <= 8;
+  }
+
   if (ctx.headsUp) return ctx.actorSlot === 1;
   return ctx.actorSlot >= 1 && ctx.actorSlot <= 8;
 }
 
+/**
+ * Non-BB cold 3-bet / cold-call versus a single open. No solver subset exists
+ * for these seats, so the existing `COLD_3BET_*` / `CALL_VS_OPEN` tables are the
+ * anchor and `behindUnacted` narrows them: the more players still to act behind
+ * the hero, the tighter the continue. The opener group (from the opener's
+ * position) already picks the 3-bet value/bluff brackets.
+ */
+function buildColdAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> {
+  const openerGroup: PositionGroup = ctx.openerGroup ?? 'EP';
+  const entries: RangeEntry[] = [
+    { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
+    {
+      range: COLD_3BET_BLUFF[openerGroup],
+      action: 'raise',
+      weight: COLD_3BET_BLUFF_WEIGHT,
+      role: 'bluff',
+    },
+    // The BB branch is handled separately, so this is always a non-BB group.
+    { range: CALL_VS_OPEN[ctx.positionGroup], action: 'call', weight: 1 },
+  ];
+  return rescaleRangeMix(entries, continueWidthScale(ctx.behindUnacted));
+}
+
 function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
+  if (ctx.spot === 'facingOpen') {
+    if (ctx.positionGroup === 'BB') {
+      const chart = bbDefendChartFor(ctx.openerSlot ?? 0, ctx.behindUnacted);
+      return compileRangeMix(chartToRangeEntries(chart));
+    }
+    return buildColdAdaptiveMix(ctx);
+  }
   const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
   if (!chart) return null;
   return compileRangeMix(chartToRangeEntries(chart));

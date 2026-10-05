@@ -188,6 +188,15 @@ export interface DecisionView {
    * frequencies differ within one hand while staying reproducible.
    */
   actionSeq?: number;
+  /**
+   * Absolute seats that still owe an action in the **current betting round**,
+   * mirrored from the server's public `betting.needToAct`. Unlike a flat "this
+   * seat acted at some point this hand" set, this correctly re-includes a seat
+   * whose action was reopened by a raise (a caller facing a 3-bet again).
+   * `undefined` when the server did not supply it; an empty array is a valid
+   * "no one owes an action" snapshot.
+   */
+  needToActSeats?: number[];
 }
 
 const EMPTY_MEMORY: SessionMemory = {
@@ -319,5 +328,13 @@ export function buildDecisionView(
     // positions / per-action seeds without guessing. Empty/-1 when no live hand.
     seatOrder: betting ? betting.seats.map((s) => s.seat) : [],
     actionSeq: betting ? client.actionSeq : -1,
+    // Current-round pending actors (public `needToAct`). Distinguishing an
+    // empty array from `undefined` lets a policy fall back to inference when a
+    // legacy server omits the field, instead of reading "no one owes action".
+    // The `Array.isArray` guard is load-bearing: an older server's
+    // `betting_state.state` has no `needToAct`, and spreading `undefined`
+    // (`[...undefined]`) throws before the fallback can run.
+    needToActSeats:
+      betting && Array.isArray(betting.needToAct) ? [...betting.needToAct] : undefined,
   };
 }

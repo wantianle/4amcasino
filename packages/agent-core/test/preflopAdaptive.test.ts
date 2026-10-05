@@ -1,25 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cardFromName, type CardId, type PlayerAction } from '@4am/shared';
-import type { DecisionSeat, DecisionView, PublicAction } from '../src/decisionView.js';
+import {
+  applyAction,
+  cardFromName,
+  startHand,
+  type BettingState,
+  type CardId,
+  type PlayerAction,
+} from '@4am/shared';
+import {
+  buildDecisionView,
+  type DecisionSeat,
+  type DecisionView,
+  type PublicAction,
+} from '../src/decisionView.js';
+import { HeadlessClient } from '../src/client.js';
 import { choosePreflopIntent, derivePreflopContext, adaptivePreflopAvailable, preflopMixCacheKey } from '../src/preflopPolicy.js';
 import {
   HAND_KEYS,
+  bbDefendChartFor,
   buildChartMix,
   chartLimpShare,
   chartToRangeEntries,
   chartWidth,
   computeBehindUnacted,
+  continueWidthScale,
   huChart,
   maxReachableWidth,
   preflopActionOrder,
   rawSpotWidth,
+  rescaleRangeMix,
   rfiChartForSlot,
   slotsForDealtCount,
   worstCellDeviation,
 } from '../src/preflopCharts/index.js';
-import { FRLA_RFI, MHL_HU } from '../src/preflopCharts/data/index.js';
-import { RFI_RANGES } from '../src/preflopRanges.js';
-import { compileRangeMix, mixFor, parseRange } from '../src/rangeParser.js';
+import { FRLA_BB_DEFEND, FRLA_RFI, MHL_HU } from '../src/preflopCharts/data/index.js';
+import {
+  BB_DEFEND,
+  CALL_VS_OPEN,
+  COLD_3BET_BLUFF,
+  COLD_3BET_BLUFF_WEIGHT,
+  COLD_3BET_VALUE,
+  RFI_RANGES,
+} from '../src/preflopRanges.js';
+import { compileRangeMix, mixFor, parseRange, type RangeEntry } from '../src/rangeParser.js';
 import { RULE_PRESETS, type RuleParams } from '../src/ruleStyles.js';
 
 /**
@@ -558,5 +581,471 @@ describe('adaptive preflop cache key', () => {
       expect(got.adaptive).toBeCloseTo(adaptiveWidth, 9);
       expect(got.legacy).toBeCloseTo(legacyWidth, 9);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// step 2: facing an open — current-round acted semantics + defensive charts
+// ---------------------------------------------------------------------------
+
+/** Width of a compiled legacy range, as a fraction of all combos. */
+function legacyRangeWidth(entries: RangeEntry[]): number {
+  const mix = compileRangeMix(entries);
+  let sum = 0;
+  for (const [key, m] of mix) {
+    sum += parseRange(key).combos * Math.min(1, m.valueRaise + m.bluffRaise + m.marginalRaise + m.call);
+  }
+  return sum / COMBOS.length;
+}
+
+/** Total unweighted frequency in a compiled mix (value + bluff + call). */
+function sumMix(mix: Map<string, { valueRaise: number; bluffRaise: number; marginalRaise: number; call: number }>): number {
+  let sum = 0;
+  for (const [, m] of mix) sum += m.valueRaise + m.bluffRaise + m.marginalRaise + m.call;
+  return sum;
+}
+
+/** The legacy cold 3-bet / cold-call anchor for an opener x hero group pair. */
+function coldEntries(
+  openerGroup: keyof typeof COLD_3BET_VALUE,
+  heroGroup: keyof typeof CALL_VS_OPEN,
+): RangeEntry[] {
+  return [
+    { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
+    { range: COLD_3BET_BLUFF[openerGroup], action: 'raise', weight: COLD_3BET_BLUFF_WEIGHT, role: 'bluff' },
+    { range: CALL_VS_OPEN[heroGroup], action: 'call', weight: 1 },
+  ];
+}
+
+/**
+ * A single-open view: `openerSeat` raised, the hero is to decide, and the
+ * server's current-round `needToAct` lists the hero plus everyone behind them.
+ */
+function faceOpenView(
+  n: number,
+  heroSeat: number,
+  openerSeat: number,
+  cards: CardId[],
+  over: Partial<DecisionView> = {},
+): DecisionView {
+  const base = nHandedView(n, heroSeat, cards, over);
+  const order = preflopActionOrder(Array.from({ length: n }, (_, i) => i));
+  const idx = order.indexOf(heroSeat);
+  return {
+    ...base,
+    hand: { ...base.hand!, currentBet: 250, toAct: heroSeat },
+    actionHistory: [act(openerSeat, 'raise', 250)],
+    needToActSeats: [...order.slice(idx)],
+  };
+}
+
+describe('step 2: faced-open acted semantics', () => {
+  it('re-includes the earlier callers once a raise reopens the round', () => {
+    // 6-max: UTG opens, HJ and CO call, BTN 3-bets. The raise reopens the
+    // round, so UTG owes action again and HJ/CO are behind him *again* — the
+    // flat "acted at some point" set would count only the two blinds.
+    const base = nHandedView(6, 2, [c('Ac'), c('Kd')]);
+    const reopens: DecisionView = {
+      ...base,
+      actionHistory: [act(2, 'raise', 250), act(3, 'call'), act(4, 'call'), act(5, 'raise', 750)],
+      // Server rebuilds `needToAct` from the raiser: SB, BB, then UTG (who
+      // raised), HJ and CO (the reopened callers).
+      needToActSeats: [0, 1, 2, 3, 4],
+    };
+    const tracked = derivePreflopContext(reopens);
+    expect(tracked.needToActTracked).toBe(true);
+    expect(tracked.behindUnacted).toBe(4); // HJ, CO, SB, BB all still owe
+
+    const untracked = derivePreflopContext({ ...reopens, needToActSeats: undefined });
+    expect(untracked.needToActTracked).toBe(false);
+    expect(untracked.behindUnacted).toBe(2); // legacy inference: only the blinds
+    expect(tracked.behindUnacted).toBeGreaterThan(untracked.behindUnacted);
+  });
+
+  it('refuses the facing-open charts when the server did not supply needToAct', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]);
+    expect(adaptivePreflopAvailable(derivePreflopContext(view), ADAPTIVE)).toBe(true);
+
+    const untracked: DecisionView = { ...view, needToActSeats: undefined };
+    const ctx = derivePreflopContext(untracked);
+    expect(ctx.needToActTracked).toBe(false);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(measuredWidth(untracked, ADAPTIVE)).toBeCloseTo(measuredWidth(untracked, LEGACY), 12);
+  });
+});
+
+describe('step 2: BB defence by opener slot', () => {
+  // 6-max dealing order: 0 SB, 1 BB, 2 UTG, 3 HJ, 4 CO, 5 BTN.
+  const cases = [
+    { seat: 2, slot: 5, key: 'BB-vs-open-UTG' },
+    { seat: 3, slot: 4, key: 'BB-vs-open-MP' },
+    { seat: 4, slot: 3, key: 'BB-vs-open-CO' },
+    { seat: 5, slot: 2, key: 'BB-vs-open-BTN' },
+    { seat: 0, slot: 1, key: 'BB-vs-open-SB' },
+  ] as const;
+
+  it('charts are 169-cell normalised', () => {
+    for (const { slot } of cases) {
+      const chart = bbDefendChartFor(slot);
+      expect(Object.keys(chart.mix)).toHaveLength(169);
+      expect(worstCellDeviation(chart) * 1326).toBeLessThan(0.01);
+    }
+  });
+
+  it('narrows monotonically the earlier the opener (UTG tightest, SB widest)', () => {
+    const widths = cases.map(({ slot }) => chartWidth(bbDefendChartFor(slot)));
+    // cases run slot 5 (UTG) -> 1 (SB); the later the opener, the wider.
+    for (let i = 1; i < widths.length; i++) expect(widths[i]!).toBeGreaterThan(widths[i - 1]!);
+  });
+
+  it('end-to-end BB views match the anchor selected by openerSlot', () => {
+    for (const { seat, slot, key } of cases) {
+      const view = faceOpenView(6, 1, seat, [c('Ac'), c('Kd')]);
+      const ctx = derivePreflopContext(view);
+      expect(ctx.openerSlot).toBe(slot);
+      expect(ctx.spot).toBe('facingOpen');
+      expect(ctx.actorSlot).toBe(0);
+      expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(true);
+      const anchor = rawSpotWidth(FRLA_BB_DEFEND.spots[key]!);
+      expect(Math.abs(measuredWidth(view, ADAPTIVE) - anchor)).toBeLessThan(0.005);
+    }
+  });
+
+  it('keeps the huge-9max openers on the matching 6-max anchor', () => {
+    // 9-max: UTG(2), MP(4), CO(7), BTN(8) must map to UTG/MP/CO/BTN anchors,
+    // not to their raw behind-unacted slot (BTN is B0 there).
+    const mapping: Array<[number, number]> = [
+      [2, 5],
+      [4, 4],
+      [7, 3],
+      [8, 2],
+    ];
+    for (const [seat, slot] of mapping) {
+      const ctx = derivePreflopContext(faceOpenView(9, 1, seat, [c('Ac'), c('Kd')]));
+      expect(ctx.openerSlot).toBe(slot);
+    }
+  });
+
+  it('does not collide cache entries across opener slots', () => {
+    const utg = derivePreflopContext(faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]));
+    const btn = derivePreflopContext(faceOpenView(6, 1, 5, [c('Ac'), c('Kd')]));
+    expect(utg.openerSlot).not.toBe(btn.openerSlot);
+    expect(preflopMixCacheKey(utg, ADAPTIVE)).not.toBe(preflopMixCacheKey(btn, ADAPTIVE));
+  });
+});
+
+describe('step 2: non-BB cold continue', () => {
+  it('tightens monotonically as more players remain to act', () => {
+    const widths = [3, 4, 5].map((hero) =>
+      measuredWidth(faceOpenView(6, hero, 2, [c('Ac'), c('Kd')]), ADAPTIVE),
+    );
+    for (let i = 1; i < widths.length; i++) expect(widths[i]!).toBeGreaterThan(widths[i - 1]!);
+  });
+
+  it('keeps raise + call frequency <= 1 for every hand class', () => {
+    // The raw anchor can overlap (a hand may be both a 3-bet and a flat call);
+    // the guarantee is the *effective* policy frequency, which budgets the
+    // overlap. Check it end-to-end for every hand class.
+    const view = faceOpenView(6, 3, 2, [c('Ac'), c('Kd')]);
+    for (const cards of COMBOS) {
+      const f = choosePreflopIntent(
+        { ...view, hand: { ...view.hand!, myCards: cards } },
+        ADAPTIVE,
+        () => 0.5,
+      ).frequencies;
+      expect(f.raise + f.call).toBeLessThanOrEqual(1 + 1e-9);
+    }
+  });
+
+  it('tightens the cold range while leaving 3-bet value raises intact', () => {
+    const entries = coldEntries('EP', 'LP');
+    const wide = rescaleRangeMix(entries, 1);
+    const tight = rescaleRangeMix(entries, continueWidthScale(4));
+    expect(sumMix(tight)).toBeLessThan(sumMix(wide));
+    // A pure value 3-bet (AA) must never fold, however tight the spot.
+    expect(wide.get('AA')!.valueRaise).toBe(1);
+    expect(tight.get('AA')!.valueRaise).toBe(1);
+    expect(legacyRangeWidth(entries)).toBeGreaterThan(0);
+  });
+});
+
+describe('step 2: fallback', () => {
+  it('flag off keeps the legacy BB defence', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]);
+    expect(adaptivePreflopAvailable(derivePreflopContext(view), LEGACY)).toBe(false);
+    expect(measuredWidth(view, LEGACY)).toBeCloseTo(legacyRangeWidth(BB_DEFEND.EP), 3);
+    // The adaptive route is genuinely different (it uses the solver subset).
+    expect(Math.abs(measuredWidth(view, ADAPTIVE) - measuredWidth(view, LEGACY))).toBeGreaterThan(0.005);
+  });
+
+  it('flag off keeps the legacy cold continue', () => {
+    const view = faceOpenView(6, 5, 2, [c('Ac'), c('Kd')]); // BTN vs UTG open
+    expect(adaptivePreflopAvailable(derivePreflopContext(view), LEGACY)).toBe(false);
+    expect(measuredWidth(view, LEGACY)).toBeCloseTo(legacyRangeWidth(coldEntries('EP', 'LP')), 3);
+    // ...while the adaptive route narrows it by the behind-unacted count.
+    expect(measuredWidth(view, ADAPTIVE)).toBeLessThan(measuredWidth(view, LEGACY));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// real state-machine fixtures (startHand / applyAction) for the step-2 gate
+// ---------------------------------------------------------------------------
+
+interface RoomPlayerLike {
+  userId: number;
+  username: string;
+  displayName: string;
+  seat: number;
+  stack: number;
+  sittingOut: boolean;
+  connected: boolean;
+  totalBought: number;
+  privateStats: boolean;
+}
+
+/** A resynced `HeadlessClient` wrapping a real `BettingState`. */
+function liveClient(
+  st: BettingState,
+  opts: { heroSeat: number; cards: CardId[]; history?: PublicAction[] },
+): HeadlessClient {
+  const client = new HeadlessClient('http://127.0.0.1:1', 'bot', 'pw');
+  client.userId = 1 + opts.heroSeat; // seat n is userId n+1
+  client.connected = true;
+  client.connectionEpoch = 1;
+  client.roomStateEpoch = 1;
+  client.handContextEpoch = 1;
+  (client as unknown as { resyncHandId: string | null }).resyncHandId = 'h1';
+  client.handId = 'h1';
+  client.seats = st.seats.map((s) => ({ seat: s.seat, userId: 1 + s.seat, username: `p${s.seat}` }));
+  client.room = {
+    room: {
+      id: 'r1',
+      name: 'Test',
+      joinCode: 'ABC123',
+      hostId: 1,
+      bankerId: 1,
+      coBankerId: null,
+      sb: st.sb,
+      bb: st.bb,
+      minSettleHands: 0,
+      sevenDeuceBonus: 0,
+    },
+    players: st.seats.map(
+      (s): RoomPlayerLike => ({
+        userId: 1 + s.seat,
+        username: `p${s.seat}`,
+        displayName: `p${s.seat}`,
+        seat: s.seat,
+        stack: s.stack,
+        sittingOut: false,
+        connected: true,
+        totalBought: 0,
+        privateStats: false,
+      }),
+    ),
+    handActive: true,
+  };
+  client.betting = st;
+  client.myCards = opts.cards;
+  client.actionHistory = opts.history ?? [];
+  client.actionSeq = (opts.history ?? []).length;
+  return client;
+}
+
+/** 6-max dealing order: seat 0 SB, 1 BB, 2 UTG, 3 HJ, 4 CO, 5 BTN. */
+function sixMaxState(): BettingState {
+  return startHand(
+    [0, 1, 2, 3, 4, 5].map((seat) => ({ seat, stack: 10_000 })),
+    5,
+    50,
+    100,
+  );
+}
+
+describe('step 2: raise reopening on the real betting state machine', () => {
+  it('mirrors the round: order, raiser excluded, reopened callers re-added', () => {
+    let st = sixMaxState();
+    st = applyAction(st, 2, { type: 'raise', amount: 250 }); // UTG opens
+    st = applyAction(st, 3, { type: 'call' }); // HJ calls
+    st = applyAction(st, 4, { type: 'call' }); // CO calls
+    st = applyAction(st, 5, { type: 'raise', amount: 750 }); // BTN 3-bets
+
+    // The raising seat rebuilds `needToAct` from itself: the earlier callers
+    // come back because the raise reopened the round.
+    expect(st.needToAct).toEqual([0, 1, 2, 3, 4]);
+    expect(st.needToAct).not.toContain(5); // the raiser never owes its own action
+    expect(st.needToAct).toContain(3); // HJ, a reopened caller
+    expect(st.needToAct).toContain(4); // CO, a reopened caller
+    expect(st.toAct).toBe(0);
+
+    const history = [act(2, 'raise', 250), act(3, 'call'), act(4, 'call'), act(5, 'raise', 750)];
+    const client = liveClient(st, { heroSeat: 2, cards: [c('Ac'), c('Kd')], history });
+    const view = buildDecisionView(client);
+    expect(view.needToActSeats).toEqual([0, 1, 2, 3, 4]);
+
+    const ctx = derivePreflopContext(view);
+    expect(ctx.heroSeat).toBe(2);
+    expect(ctx.needToActTracked).toBe(true);
+    expect(ctx.needToActSeats).toEqual([0, 1, 2, 3, 4]);
+    expect(ctx.needToActSeats!.includes(ctx.heroSeat)).toBe(true); // hero still owes
+    expect(ctx.spot).toBe('facing3Bet');
+    // UTG has HJ/CO/SB/BB behind it again after the 3-bet; the flat "acted at
+    // some point" set would see only the two blinds.
+    expect(ctx.behindUnacted).toBe(4);
+
+    const untracked = derivePreflopContext({ ...view, needToActSeats: undefined });
+    expect(untracked.needToActTracked).toBe(false);
+    expect(untracked.behindUnacted).toBe(2); // legacy inference: only the blinds
+  });
+
+  it('drops folded and all-in seats when the raise rebuilds needToAct', () => {
+    let st = sixMaxState();
+    st = applyAction(st, 2, { type: 'raise', amount: 250 }); // UTG opens
+    st = applyAction(st, 3, { type: 'fold' }); // HJ folds
+    st = applyAction(st, 4, { type: 'call' }); // CO calls
+    // SB is all-in before the 3-bet: it cannot act, so it must not be pending.
+    st.seats.find((s) => s.seat === 0)!.allIn = true;
+    st = applyAction(st, 5, { type: 'raise', amount: 750 }); // BTN 3-bets
+
+    expect(st.needToAct).not.toContain(5); // raiser
+    expect(st.needToAct).not.toContain(3); // folded
+    expect(st.needToAct).not.toContain(0); // all-in
+    expect(st.needToAct).toEqual([1, 2, 4]); // BB, UTG, CO in order
+  });
+});
+
+describe('step 2: legacy server and empty/hero-absent pending', () => {
+  it('buildDecisionView survives a state with no needToAct and falls back', () => {
+    let st = sixMaxState();
+    st = applyAction(st, 2, { type: 'raise', amount: 250 }); // UTG opens
+    // An older server's `betting_state.state` predates `needToAct`.
+    delete (st as unknown as { needToAct?: number[] }).needToAct;
+
+    const client = liveClient(st, {
+      heroSeat: 1,
+      cards: [c('Ac'), c('Kd')],
+      history: [act(2, 'raise', 250)],
+    });
+    const view = buildDecisionView(client); // must not throw on [...undefined]
+
+    expect(view.needToActSeats).toBeUndefined();
+    const ctx = derivePreflopContext(view);
+    expect(ctx.needToActTracked).toBe(false);
+    expect(ctx.needToActSeats).toBeNull();
+    expect(ctx.spot).toBe('facingOpen');
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(measuredWidth(view, ADAPTIVE)).toBeCloseTo(measuredWidth(view, LEGACY), 12);
+  });
+
+  it('refuses an empty needToActSeats snapshot and falls back to legacy', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]);
+    const empty: DecisionView = { ...view, needToActSeats: [] };
+    const ctx = derivePreflopContext(empty);
+    expect(ctx.needToActTracked).toBe(true); // the server did supply the field
+    expect(ctx.needToActSeats).toEqual([]);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(measuredWidth(empty, ADAPTIVE)).toBeCloseTo(measuredWidth(empty, LEGACY), 12);
+  });
+
+  it('refuses a tracked snapshot that does not list the hero', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]); // hero = BB (seat 1)
+    const absent: DecisionView = { ...view, needToActSeats: [0] }; // SB only
+    const ctx = derivePreflopContext(absent);
+    expect(ctx.needToActTracked).toBe(true);
+    expect(ctx.needToActSeats!.includes(ctx.heroSeat)).toBe(false);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(measuredWidth(absent, ADAPTIVE)).toBeCloseTo(measuredWidth(absent, LEGACY), 12);
+  });
+
+  it('refuses when the hero is inactive even though pending lists it', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]); // hero = BB, toAct = BB
+    for (const state of [{ folded: true }, { allIn: true }, { sittingOut: true }] as const) {
+      const dead: DecisionView = { ...view, me: { ...view.me!, ...state } };
+      const ctx = derivePreflopContext(dead);
+      // The snapshot still tracks a non-empty pending list containing the hero,
+      // but a folded/all-in/sitting hero cannot be deciding.
+      expect(ctx.needToActTracked).toBe(true);
+      expect(ctx.needToActSeats!.includes(ctx.heroSeat)).toBe(true);
+      expect(ctx.heroActive).toBe(false);
+      expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+      expect(measuredWidth(dead, ADAPTIVE)).toBeCloseTo(measuredWidth(dead, LEGACY), 12);
+    }
+  });
+
+  it('refuses when the hero is pending but it is not the hero to act', () => {
+    const view = faceOpenView(6, 1, 2, [c('Ac'), c('Kd')]); // hero = BB, toAct = BB
+    const notMyTurn: DecisionView = { ...view, hand: { ...view.hand!, toAct: 0 } };
+    const ctx = derivePreflopContext(notMyTurn);
+    expect(ctx.heroActive).toBe(true);
+    expect(ctx.heroToAct).toBe(false);
+    expect(ctx.needToActSeats!.includes(ctx.heroSeat)).toBe(true);
+    expect(adaptivePreflopAvailable(ctx, ADAPTIVE)).toBe(false);
+    expect(measuredWidth(notMyTurn, ADAPTIVE)).toBeCloseTo(
+      measuredWidth(notMyTurn, LEGACY),
+      12,
+    );
+  });
+
+  it('continueWidthScale is an explicit B0/B1/B8 heuristic ladder', () => {
+    expect(continueWidthScale(0)).toBe(1);
+    expect(continueWidthScale(1)).toBeCloseTo(1 / 1.08, 12);
+    expect(continueWidthScale(8)).toBeCloseTo(1 / 1.64, 12);
+    expect(continueWidthScale(0)).toBeGreaterThan(continueWidthScale(1));
+    expect(continueWidthScale(1)).toBeGreaterThan(continueWidthScale(8));
+  });
+});
+
+describe('step 2: deterministic effective-frequency assertions', () => {
+  const eff = (view: DecisionView, params: RuleParams, cards: CardId[]) =>
+    choosePreflopIntent({ ...view, hand: { ...view.hand!, myCards: cards } }, params, () => 0.5)
+      .frequencies;
+
+  it('gives a different effective mix than legacy for the same BB-vs-UTG hand', () => {
+    const view = faceOpenView(6, 1, 2, [c('As'), c('5s')]); // BB vs UTG, A5s
+    const adaptive = eff(view, ADAPTIVE, [c('As'), c('5s')]);
+    const legacy = eff(view, LEGACY, [c('As'), c('5s')]);
+    expect(adaptive.raise + adaptive.call).toBeGreaterThan(0);
+    expect(
+      Math.abs(adaptive.raise - legacy.raise) > 1e-9 ||
+        Math.abs(adaptive.call - legacy.call) > 1e-9,
+    ).toBe(true);
+  });
+
+  it('keeps AA a continuation under cold-call scaling (never a fold)', () => {
+    const view = faceOpenView(6, 5, 2, [c('Ac'), c('Ad')]); // BTN vs UTG
+    const f = eff(view, ADAPTIVE, [c('Ac'), c('Ad')]);
+    expect(f.raise + f.call).toBeCloseTo(1, 9);
+    const intent = choosePreflopIntent(
+      { ...view, hand: { ...view.hand!, myCards: [c('Ac'), c('Ad')] } },
+      ADAPTIVE,
+      () => 0.999,
+    ).intent;
+    expect(intent).not.toBe('fold');
+  });
+
+  it('narrows an edge flat call as behindUnacted grows (B0 vs B4)', () => {
+    const cards = [c('9s'), c('8s')]; // pure flat call: no 3-bet value/bluff
+    const wideBase = faceOpenView(6, 5, 2, cards); // BTN, hero last
+    const wide: DecisionView = { ...wideBase, needToActSeats: [5] }; // B0
+    const tight = faceOpenView(6, 3, 2, cards); // HJ, four behind -> B4
+    expect(derivePreflopContext(wide).behindUnacted).toBe(0);
+    expect(derivePreflopContext(tight).behindUnacted).toBe(4);
+    expect(adaptivePreflopAvailable(derivePreflopContext(wide), ADAPTIVE)).toBe(true);
+    expect(adaptivePreflopAvailable(derivePreflopContext(tight), ADAPTIVE)).toBe(true);
+    const w = eff(wide, ADAPTIVE, cards);
+    const t = eff(tight, ADAPTIVE, cards);
+    expect(w.call).toBeGreaterThan(t.call);
+  });
+
+  it('keeps a 3-bet bluff raise alive while the flat call narrows', () => {
+    const cards = [c('Ks'), c('Qs')]; // COLD_3BET_BLUFF.EP includes KQs
+    const wideBase = faceOpenView(6, 5, 2, cards);
+    const wide: DecisionView = { ...wideBase, needToActSeats: [5] }; // B0
+    const tight = faceOpenView(6, 3, 2, cards); // B4
+    const w = eff(wide, ADAPTIVE, cards);
+    const t = eff(tight, ADAPTIVE, cards);
+    expect(w.raise).toBeGreaterThan(0);
+    expect(t.raise).toBeGreaterThan(0); // the bluff raise is not swallowed
+    expect(t.call).toBeLessThan(w.call); // only the flat call narrows
   });
 });

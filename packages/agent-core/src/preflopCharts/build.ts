@@ -1,6 +1,11 @@
-import { allHandClasses, type RangeEntry } from '../rangeParser.js';
-import { FRLA_RFI, MHL_HU } from './data/index.js';
-import { MAX_SLOT } from './headcount.js';
+import {
+  allHandClasses,
+  compileRangeMix,
+  type CompiledMix,
+  type RangeEntry,
+} from '../rangeParser.js';
+import { FRLA_BB_DEFEND, FRLA_RFI, MHL_HU } from './data/index.js';
+import { MAX_SLOT, canonicalSlot } from './headcount.js';
 import type {
   ChartMix,
   ChartSituation,
@@ -402,4 +407,116 @@ export function worstCellDeviation(chart: PreflopChart): number {
     worst = Math.max(worst, Math.abs(m.raise + m.allin + m.call + m.fold - 1));
   }
   return worst;
+}
+
+// ---------------------------------------------------------------------------
+// Step 2: facing an open
+// ---------------------------------------------------------------------------
+
+/**
+ * Opener behind-unacted slot -> FRLA BB-defence spot. The data set has five
+ * 6-max anchors: SB (B1), BTN (B2), CO (B3), MP (B4) and UTG (B5). 9-max early
+ * slots B6..B8 (UTG1 / MP / UTG) and the degenerate B0 clamp to the tightest
+ * anchor (UTG), matching "the earlier the open, the tighter the defence".
+ */
+const BB_DEFEND_SPOT_BY_OPENER_SLOT: Record<number, string> = {
+  1: 'BB-vs-open-SB',
+  2: 'BB-vs-open-BTN',
+  3: 'BB-vs-open-CO',
+  4: 'BB-vs-open-MP',
+};
+
+/** The FRLA BB-defence spot key for a canonical opener slot. */
+export function bbDefendSpotKey(openerSlot: number): string {
+  return BB_DEFEND_SPOT_BY_OPENER_SLOT[Math.trunc(openerSlot)] ?? 'BB-vs-open-UTG';
+}
+
+/**
+ * How much to tighten a continuing (flat-call / 3-bet) range for each player
+ * still to act behind the hero. `0` (the last actor) is the identity; every
+ * extra unacted seat narrows the anchor multiplicatively. The factor is always
+ * `<= 1`, so the rescaled target never exceeds the anchor width and the
+ * narrowing side of `buildChartMix` (call frequency, never a strong hand) is
+ * the only branch reached — no widening ceiling can be violated.
+ *
+ * `0.08` is a **hand-tuned heuristic, NOT fitted to solver data**: the FRLA /
+ * MHL subsets have no multiway or squeeze defence anchor, so the slope only
+ * needs to be monotone and conservative (`B=0` identity, `B=8` ≈ 0.61×) while
+ * the missing data is built. Step 3 must recalibrate it against real
+ * multiway / squeeze defence data rather than treat it as a solved value.
+ */
+export const CONTINUE_WIDTH_SLOPE = 0.08;
+
+export function continueWidthScale(behindUnacted: number): number {
+  const b = Math.max(0, Math.min(MAX_SLOT, Math.trunc(behindUnacted)));
+  return 1 / (1 + CONTINUE_WIDTH_SLOPE * b);
+}
+
+const defendCache = new Map<string, PreflopChart>();
+
+/**
+ * Build (and memoise) the BB defence chart against an opener at `openerSlot`.
+ * `behindUnacted` only tightens the anchor (it is 0 whenever the BB closes the
+ * action, the normal case); the opener slot selects the anchor width, which is
+ * itself monotone: SB widest, then BTN, CO, MP, UTG tightest.
+ */
+export function bbDefendChartFor(openerSlot: number, behindUnacted = 0): PreflopChart {
+  const s = canonicalSlot(openerSlot);
+  const scale = continueWidthScale(behindUnacted);
+  const cacheKey = `bbdefend:${s}:${scale.toFixed(6)}`;
+  const cached = defendCache.get(cacheKey);
+  if (cached) return cached;
+
+  const key = bbDefendSpotKey(s);
+  const raw = FRLA_BB_DEFEND.spots[key];
+  if (!raw) throw new Error(`FRLA_BB_DEFEND is missing the "${key}" defence spot`);
+  const target = rawSpotWidth(raw) * scale;
+  const chart: PreflopChart = {
+    schema: 'preflop-chart/v1',
+    id: `bbdefend-o${s}`,
+    game: { seats: 6, format: '6max', depthBB: 100, openSizeBB: 2.5 },
+    spot: {
+      situation: 'facingOpen',
+      actor: 'BB',
+      actorSlot: 0,
+      opener: null,
+      openerSlot: s,
+      activeCount: 2,
+      behindUnacted: 0,
+    },
+    source: sourceFrom(
+      FRLA_BB_DEFEND,
+      `BB defence vs opener slot B${s} (${key}); target width ${(target * 100).toFixed(2)}%`,
+    ),
+    mix: buildChartMix(raw, target),
+  };
+  defendCache.set(cacheKey, chart);
+  return chart;
+}
+
+/**
+ * Scale a legacy `RangeEntry[]` continuing range by `scale` (a fraction of the
+ * anchor's frequencies: `0` folds everything, `1` is identity).
+ *
+ * This deliberately scales only the **call** frequency, leaving the 3-bet value
+ * and bluff frequencies intact. The step-1 `buildChartMix` narrow transform
+ * keeps every `p = 1` hand untouched, and the cold-call tables are almost
+ * entirely `call = 1`, so a threshold shrink has no room to move (the anchor's
+ * width *is* its `p = 1` floor) and would silently return the anchor width.
+ * Frequency scaling has no such floor, and because the raises are preserved a
+ * `role: 'value'` hand still never folds.
+ */
+export function rescaleRangeMix(entries: RangeEntry[], scale: number): Map<string, CompiledMix> {
+  const s = Math.min(1, Math.max(0, scale));
+  const anchor = compileRangeMix(entries);
+  const out = new Map<string, CompiledMix>();
+  for (const [key, m] of anchor) {
+    out.set(key, {
+      valueRaise: clamp01(m.valueRaise),
+      bluffRaise: clamp01(m.bluffRaise),
+      marginalRaise: clamp01(m.marginalRaise),
+      call: clamp01(m.call * s),
+    });
+  }
+  return out;
 }

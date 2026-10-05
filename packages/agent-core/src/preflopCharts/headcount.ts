@@ -56,6 +56,34 @@ export function computeBehindUnacted(input: HeadcountInput): number {
   return behind;
 }
 
+export interface HeadcountPendingInput {
+  /** Preflop action order (see `preflopActionOrder`). */
+  order: readonly number[];
+  heroSeat: number;
+  /** Seats still able to act: not folded, not all-in, not sitting out. */
+  activeSeats: ReadonlySet<number>;
+  /** Seats that still owe an action in the current betting round. */
+  pendingSeats: ReadonlySet<number>;
+}
+
+/**
+ * Count active players after the hero who still owe an action **in the current
+ * betting round**. Unlike `computeBehindUnacted` — which is fed a flat set of
+ * seats that acted at some point — this takes the current-round pending set, so
+ * a raise that reopened the round correctly re-includes the earlier callers.
+ * Returns 0 when the hero is absent from the order.
+ */
+export function computeBehindPending(input: HeadcountPendingInput): number {
+  const idx = input.order.indexOf(input.heroSeat);
+  if (idx < 0) return 0;
+  let behind = 0;
+  for (let i = idx + 1; i < input.order.length; i++) {
+    const seat = input.order[i]!;
+    if (input.activeSeats.has(seat) && input.pendingSeats.has(seat)) behind++;
+  }
+  return behind;
+}
+
 /**
  * The distinct actor slots for a full n-handed table where nobody has acted yet:
  * the first actor has `n-1` players behind, the big blind `0`. Always exactly
