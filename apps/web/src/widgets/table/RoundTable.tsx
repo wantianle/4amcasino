@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Link } from 'react-router-dom';
+import type { RoomHud } from '../../features/stats/types.ts';
+import { PlayerHud } from './PlayerHud.tsx';
+import { isValidHudPlayer, SeatBadges } from './SeatBadges.tsx';
 import { Crown, Coins, MicrophoneSlash, Play, Robot, Timer, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
@@ -190,6 +192,7 @@ export function RoundTable({
   centerBudget = false,
   ribbon,
   handTypes,
+  hudRoomId,
   children,
 }: {
   seats: SeatView[];
@@ -244,10 +247,20 @@ export function RoundTable({
   ribbon?: React.ReactNode;
   /** Hand type (牌型) to show at the bottom of each pod, keyed by seat. */
   handTypes?: Record<number, string>;
+  hudRoomId?: string;
   children: React.ReactNode;
 }) {
   // two-tap kick: first tap arms, second confirms, so a stray click never stands anyone up
   const [kickArmed, setKickArmed] = useState<number | null>(null);
+  const [hudUserId, setHudUserId] = useState<number | null>(null);
+  const [hud, setHud] = useState<RoomHud | null>(null);
+  const hudOpener = useRef<HTMLElement | null>(null);
+  const closeHud = useCallback(() => setHudUserId(null), []);
+  const openHud = useCallback((userId: number, opener: HTMLElement) => {
+    hudOpener.current = opener;
+    setHud(null);
+    setHudUserId(userId);
+  }, [hudRoomId]);
   // L2: one tap on ANY seat's stack flips pts ⇄ BB for every seat (local pref)
   const [stackUnit, toggleStackUnit] = useStackUnit();
   const reduce = useReducedMotion();
@@ -662,19 +675,13 @@ export function RoundTable({
                       rev-3 rules: one hairline + one shadow, ≤1 role corner
                       (merged tooltip), dimmed folded/offline/sitting-out. */}
 
-                  <div
-                    className={cn(
-                      'table-pod-card transition-transform',
-                      !cardsVisible && 'table-pod-card--bare',
-                      p.isToAct && 'table-pod-card--acting scale-[1.04]',
-                      p.won && 'table-pod-card--won',
-                      dim && 'table-pod-card--dim',
-                    )}
-                  >
+                  <div className="table-pod-visual">
                     {isMe && myCards.length > 0 && (
                       <div
                         className={cn(
-                          narrow ? 'table-pod-holo table-pod-holo--side' : 'table-hero-cards',
+                          narrow
+                            ? 'table-pod-holo table-pod-holo--side table-pod-holo--hero'
+                            : 'table-hero-cards',
                           dim && 'table-hero-cards--dim',
                         )}
                         data-testid="hero-hole-cards"
@@ -687,258 +694,291 @@ export function RoundTable({
                         />
                       </div>
                     )}
-                    {cardsVisible && !isMe && (
-                      <div
-                        className={cn(
-                          'table-pod-holo',
-                          isMe || p.revealed ? 'table-pod-holo--side' : 'table-pod-holo--fan',
-                        )}
-                      >
-                        <HoleCards
-                          size={holeSize}
-                          narrow={narrow}
-                          cards={isMe ? myCards : p.revealed}
-                          faceDown={!isMe && !p.revealed}
-                        />
-                      </div>
-                    )}
                     <div
                       className={cn(
-                        'table-avatar-ring',
-                        p.isToAct && !urgent && 'table-avatar-ring--acting',
-                        // L5 danger: last 10s - the glow shifts red and
-                        // breathes at 1Hz (table-motion.css)
-                        p.isToAct && urgent && 'table-avatar-ring--hot',
-                        p.won && 'table-avatar-ring--won',
-                        p.speaking && 'table-avatar-ring--speaking',
-                        dim && 'table-avatar-ring--dim',
+                        'table-pod-card transition-transform',
+                        !cardsVisible && 'table-pod-card--bare',
+                        p.isToAct && 'table-pod-card--acting scale-[1.04]',
+                        p.won && 'table-pod-card--won',
+                        dim && 'table-pod-card--dim',
                       )}
                     >
-                      <Link
-                        to={`/players/${p.userId}`}
-                        aria-label={t("{name}'s profile", { name: p.displayName })}
-                      >
-                        <Avatar
-                          userId={p.userId}
-                          name={p.displayName}
-                          version={p.avatarVersion}
-                          // L6: phone avatars ride one tier down (hero 42,
-                          // opponents 32 design px) so the compact pod
-                          // clears the board budget at 9 seats.
-                          size={isMe ? 'md' : 'sm'}
+                      {cardsVisible && !isMe && (
+                        <div
                           className={cn(
-                            'rounded-full',
-                            isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
-                            !isMe && !narrow && 'h-[40px]! w-[40px]!',
-                          )}
-                        />
-                      </Link>
-                      {corner && (
-                        <span
-                          role="img"
-                          aria-label={cornerTip}
-                          title={cornerTip}
-                          className={cn(
-                            'table-role-badge',
-                            corner.pos,
-                            corner.key === 'muted' && 'table-role-badge--muted',
+                            'table-pod-holo',
+                            isMe || p.revealed ? 'table-pod-holo--side' : 'table-pod-holo--fan',
                           )}
                         >
-                          {corner.icon}
-                        </span>
+                          <HoleCards
+                            size={holeSize}
+                            narrow={narrow}
+                            cards={isMe ? myCards : p.revealed}
+                            faceDown={!isMe && !p.revealed}
+                          />
+                        </div>
                       )}
-                      {/* The bot identity badge rides outside the one-role
+                      <div
+                        className={cn(
+                          'table-avatar-ring',
+                          p.isToAct && !urgent && 'table-avatar-ring--acting',
+                          // L5 danger: last 10s - the glow shifts red and
+                          // breathes at 1Hz (table-motion.css)
+                          p.isToAct && urgent && 'table-avatar-ring--hot',
+                          p.won && 'table-avatar-ring--won',
+                          p.speaking && 'table-avatar-ring--speaking',
+                          dim && 'table-avatar-ring--dim',
+                        )}
+                      >
+                        {hudRoomId ? <button
+                          type="button"
+                          onClick={(event) => openHud(p.userId, event.currentTarget)}
+                          aria-label={`${p.displayName} · ${t('Player HUD')}`}
+                          aria-haspopup="dialog"
+                          className="block rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300"
+                        >
+                          <Avatar
+                            userId={p.userId}
+                            name={p.displayName}
+                            version={p.avatarVersion}
+                            // L6: phone avatars ride one tier down (hero 42,
+                            // opponents 32 design px) so the compact pod
+                            // clears the board budget at 9 seats.
+                            size={isMe ? 'md' : 'sm'}
+                            className={cn(
+                              'rounded-full',
+                              isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
+                              !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                            )}
+                          />
+                        </button> : <div aria-hidden="true">
+                          <Avatar
+                            userId={p.userId}
+                            name={p.displayName}
+                            version={p.avatarVersion}
+                            size={isMe ? 'md' : 'sm'}
+                            className={cn('rounded-full', isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'), !isMe && !narrow && 'h-[40px]! w-[40px]!')}
+                          />
+                        </div>}
+                        {corner && (
+                          <span
+                            role="img"
+                            aria-label={cornerTip}
+                            title={cornerTip}
+                            className={cn(
+                              'table-role-badge',
+                              corner.pos,
+                              corner.key === 'muted' && 'table-role-badge--muted',
+                            )}
+                          >
+                            {corner.icon}
+                          </span>
+                        )}
+                        {/* The bot identity badge rides outside the one-role
                                 corner rule on purpose: who is a bot must stay
                                 visible even when the seat also holds a crown.
                                 The bottom-right slot is reserved for it - the
                                 roles list above cannot emit a `muted` corner
                                 for a bot, so no collision is possible. */}
-                      {p.bot && (
-                        <span
-                          role="img"
-                          aria-label={t('Bot - {status}', { status: botStatusLabel(p.bot.status) })}
-                          title={t('Bot opponent - {status}', {
-                            status: botStatusLabel(p.bot.status),
-                          })}
-                          className="table-role-badge table-role-badge--bot -bottom-[3px] -right-[3px]"
-                        >
-                          <Robot size={9} weight="fill" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="table-pod-info">
-                      <div className="table-pname" title={p.displayName}>
-                        {p.displayName}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={toggleStackUnit}
-                        aria-label={stackHint}
-                        title={stackHint}
-                        className={cn('table-pstack', p.broke && 'table-pstack--out')}
-                      >
-                        {stackUnit === 'chips' ? (
-                          <>
-                            <StackValue stack={p.stack} won={p.won} />
-                            <span className="table-pstack-unit">{t('pts')}</span>
-                          </>
-                        ) : (
-                          <>
-                            {bbCount}
-                            <span className="table-pstack-unit">BB</span>
-                          </>
+                        {p.bot && (
+                          <span
+                            role="img"
+                            aria-label={t('Bot - {status}', {
+                              status: botStatusLabel(p.bot.status),
+                            })}
+                            title={t('Bot opponent - {status}', {
+                              status: botStatusLabel(p.bot.status),
+                            })}
+                            className="table-role-badge table-role-badge--bot -bottom-[3px] -right-[3px]"
+                          >
+                            <Robot size={9} weight="fill" />
+                          </span>
                         )}
-                      </button>
-                      {showAction && (
-                        <motion.div
-                          key={
-                            lastAction ? `${lastAction.type}-${lastAction.amount ?? 0}` : 'all-in'
-                          }
-                          initial={reduce ? false : { scale: 1.35, y: -2 }}
-                          animate={{ scale: 1, y: 0 }}
-                          transition={{ type: 'spring', stiffness: 220, damping: 22 }}
-                          className={cn(
-                            'table-paction',
-                            !lastAction
-                              ? 'table-paction--allin'
-                              : aggressive
-                                ? 'table-paction--aggr'
-                                : folded
-                                  ? 'table-paction--fold'
-                                  : '',
-                          )}
-                        >
-                          {lastAction ? actionLabel(lastAction) : t('All-in')}
-                        </motion.div>
-                      )}
-                      {strength && <div className="table-pstrength">{strength}</div>}
-                      {(p.broke || !p.connected || p.sittingOut) && (
-                        <div
-                          className={cn(
-                            'table-pstate',
-                            p.broke
-                              ? 'table-pstate--out'
-                              : !p.connected
-                                ? 'table-pstate--off'
-                                : 'table-pstate--sit',
-                          )}
-                        >
-                          {p.broke
-                            ? t('Out of chips')
-                            : !p.connected
-                              ? t('Offline')
-                              : t('Sitting out')}
+                      </div>
+                      <div className="table-pod-info">
+                        <div className="table-pod-name-row">
+                        <div className="table-pname" title={p.displayName}>
+                          {p.displayName}
                         </div>
-                      )}
-                      {p.isToAct && <TurnProgress seat={p.seat} />}
-                    </div>
-                  </div>
-                  {/* pills ride BELOW the unit (rev-3); wrapped so the
-                            phone rule can collapse them to one capped row */}
-                  {(p.isToAct ||
-                    (p.won && !p.isToAct) ||
-                    (readyCheck &&
-                      !p.won &&
-                      !p.isToAct &&
-                      readyCheck.eligible.includes(p.userId)) ||
-                    (handLive && p.inHand && !p.folded && p.bankMs !== undefined) ||
-                    p.pendingBuy > 0 ||
-                    (!!p.bot && p.bot.status !== 'running')) && (
-                    <div className="table-pod-pills">
-                      {p.isToAct && (
-                        <span
-                          className={cn(
-                            'table-pill',
-                            urgent ? 'table-pill--acting-hot' : 'table-pill--acting',
-                          )}
+                        {hudRoomId && <SeatBadges player={(Array.isArray(hud?.players) ? hud.players.filter(isValidHudPlayer) : []).find((v) => v.userId === p.userId)} minHands={hud?.minHands ?? 0} />}
+                        </div>
+                        <div className="table-pod-detail-row">
+                        <button
+                          type="button"
+                          onClick={toggleStackUnit}
+                          aria-label={stackHint}
+                          title={stackHint}
+                          className={cn('table-pstack', p.broke && 'table-pstack--out')}
                         >
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" />
-                          {t('playing')}
-                        </span>
-                      )}
-                      {p.won && !p.isToAct && (
-                        <WinBadge
-                          amount={p.wonAmount}
-                          onShare={p.seat === shareSeat ? onShareHand : undefined}
-                        />
-                      )}
-                      {readyCheck &&
+                          {stackUnit === 'chips' ? (
+                            <>
+                              <StackValue stack={p.stack} won={p.won} />
+                              <span className="table-pstack-unit">{t('pts')}</span>
+                            </>
+                          ) : (
+                            <>
+                              {bbCount}
+                              <span className="table-pstack-unit">BB</span>
+                            </>
+                          )}
+                        </button>
+                        {showAction && lastAction?.type !== 'check' && (
+                          <motion.div
+                            key={
+                              lastAction ? `${lastAction.type}-${lastAction.amount ?? 0}` : 'all-in'
+                            }
+                            initial={reduce ? false : { scale: 1.35, y: -2 }}
+                            animate={{ scale: 1, y: 0 }}
+                            transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+                            className={cn(
+                              'table-paction',
+                              !lastAction
+                                ? 'table-paction--allin'
+                                : aggressive
+                                  ? 'table-paction--aggr'
+                                  : folded
+                                    ? 'table-paction--fold'
+                                    : '',
+                            )}
+                          >
+                            {lastAction ? actionLabel(lastAction) : t('All-in')}
+                          </motion.div>
+                        )}
+                        {lastAction?.type === 'check' && <span className="table-paction table-paction--check">{t('Check')}</span>}
+                        </div>
+                        <CheckFeedback action={lastAction} handId={handId} />
+                        {strength && <div className="table-pstrength">{strength}</div>}
+                        {(p.broke || !p.connected || p.sittingOut) && (
+                          <div
+                            className={cn(
+                              'table-pstate',
+                              p.broke
+                                ? 'table-pstate--out'
+                                : !p.connected
+                                  ? 'table-pstate--off'
+                                  : 'table-pstate--sit',
+                            )}
+                          >
+                            {p.broke
+                              ? t('Out of chips')
+                              : !p.connected
+                                ? t('Offline')
+                                : t('Sitting out')}
+                          </div>
+                        )}
+                        {p.isToAct && <TurnProgress seat={p.seat} />}
+                      </div>
+                    </div>
+                    {/* pills ride BELOW the unit (rev-3); wrapped so the
+                            phone rule can collapse them to one capped row */}
+                    {(p.isToAct ||
+                      (p.won && !p.isToAct) ||
+                      (readyCheck &&
                         !p.won &&
                         !p.isToAct &&
-                        readyCheck.eligible.includes(p.userId) && (
+                        readyCheck.eligible.includes(p.userId)) ||
+                      (handLive && p.inHand && !p.folded && p.bankMs !== undefined) ||
+                      p.pendingBuy > 0 ||
+                      (!!p.bot && p.bot.status !== 'running')) && (
+                      <div className="table-pod-pills">
+                        {p.isToAct && (
                           <span
                             className={cn(
                               'table-pill',
-                              readyCheck.ready.includes(p.userId)
-                                ? 'table-pill--ready'
-                                : 'table-pill--wait',
+                              urgent ? 'table-pill--acting-hot' : 'table-pill--acting',
                             )}
                           >
-                            {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" />
+                            {t('playing')}
                           </span>
                         )}
-                      {handLive && p.inHand && !p.folded && p.bankMs !== undefined && (
-                        <div
-                          title={t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
-                          className={cn(
-                            'table-pill table-pill--bank',
-                            p.isToAct && 'table-pill--bank-loud',
-                            !p.isToAct && p.bankMs === 0 && 'table-pill--bank-quiet',
+                        {p.won && !p.isToAct && (
+                          <WinBadge
+                            amount={p.wonAmount}
+                            onShare={p.seat === shareSeat ? onShareHand : undefined}
+                          />
+                        )}
+                        {readyCheck &&
+                          !p.won &&
+                          !p.isToAct &&
+                          readyCheck.eligible.includes(p.userId) && (
+                            <span
+                              className={cn(
+                                'table-pill',
+                                readyCheck.ready.includes(p.userId)
+                                  ? 'table-pill--ready'
+                                  : 'table-pill--wait',
+                              )}
+                            >
+                              {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
+                            </span>
                           )}
-                        >
-                          <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />
-                          {Math.ceil(p.bankMs / 1000)}s
-                        </div>
-                      )}
-                      {p.pendingBuy > 0 && (
-                        <div
-                          title={t('Buy waiting for banker approval')}
-                          className="table-pill table-pill--buy"
-                        >
-                          {t('+{n} soon', { n: fmt(p.pendingBuy) })}
-                        </div>
-                      )}
-                      {/* a bot that is NOT actually playing says why: the
+                        {handLive && p.inHand && !p.folded && p.bankMs !== undefined && (
+                          <div
+                            title={t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
+                            className={cn(
+                              'table-pill table-pill--bank',
+                              p.isToAct && 'table-pill--bank-loud',
+                              !p.isToAct && p.bankMs === 0 && 'table-pill--bank-quiet',
+                            )}
+                          >
+                            <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />
+                            {Math.ceil(p.bankMs / 1000)}s
+                          </div>
+                        )}
+                        {p.pendingBuy > 0 && (
+                          <div
+                            title={t('Buy waiting for banker approval')}
+                            className="table-pill table-pill--buy"
+                          >
+                            {t('+{n} soon', { n: fmt(p.pendingBuy) })}
+                          </div>
+                        )}
+                        {/* a bot that is NOT actually playing says why: the
                             host sees waiting/starting/error at a glance */}
-                      {p.bot && p.bot.status !== 'running' && (
-                        <span
-                          className={cn(
-                            'table-pill table-pill--bot',
-                            botStatusTone(p.bot.status) === 'bad' && 'table-pill--bot-bad',
-                          )}
-                        >
-                          <Robot size={9} weight="fill" aria-hidden="true" />
-                          {botStatusLabel(p.bot.status)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {canKick && !isMe && (
-                    <button
-                      onClick={() => {
-                        if (kickArmed === p.userId) {
-                          setKickArmed(null);
-                          onKick(p.userId);
-                        } else {
-                          setKickArmed(p.userId);
-                          setTimeout(() => setKickArmed((v) => (v === p.userId ? null : v)), 3500);
+                        {p.bot && p.bot.status !== 'running' && (
+                          <span
+                            className={cn(
+                              'table-pill table-pill--bot',
+                              botStatusTone(p.bot.status) === 'bad' && 'table-pill--bot-bad',
+                            )}
+                          >
+                            <Robot size={9} weight="fill" aria-hidden="true" />
+                            {botStatusLabel(p.bot.status)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {canKick && !isMe && (
+                      <button
+                        onClick={() => {
+                          if (kickArmed === p.userId) {
+                            setKickArmed(null);
+                            onKick(p.userId);
+                          } else {
+                            setKickArmed(p.userId);
+                            setTimeout(
+                              () => setKickArmed((v) => (v === p.userId ? null : v)),
+                              3500,
+                            );
+                          }
+                        }}
+                        title={
+                          kickArmed === p.userId
+                            ? t('Tap again to stand them up')
+                            : t('Stand this player up')
                         }
-                      }}
-                      title={
-                        kickArmed === p.userId
-                          ? t('Tap again to stand them up')
-                          : t('Stand this player up')
-                      }
-                      className={cn(
-                        'absolute -right-2 -top-2 z-30 flex items-center justify-center rounded-full text-white shadow-sm transition-all',
-                        kickArmed === p.userId
-                          ? 'h-auto w-auto bg-[var(--table-red)] px-2 py-0.5 text-[0.62rem] font-bold'
-                          : 'h-5 w-5 bg-[var(--table-faint)] hover:bg-[var(--table-red)]',
-                      )}
-                    >
-                      {kickArmed === p.userId ? t('stand up?') : <X size={11} weight="bold" />}
-                    </button>
-                  )}
+                        className={cn(
+                          'absolute -right-2 -top-2 z-30 flex items-center justify-center rounded-full text-white shadow-sm transition-all',
+                          kickArmed === p.userId
+                            ? 'h-auto w-auto bg-[var(--table-red)] px-2 py-0.5 text-[0.62rem] font-bold'
+                            : 'h-5 w-5 bg-[var(--table-faint)] hover:bg-[var(--table-red)]',
+                        )}
+                      >
+                        {kickArmed === p.userId ? t('stand up?') : <X size={11} weight="bold" />}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -976,6 +1016,21 @@ export function RoundTable({
             />
           );
         })}
+      {hudRoomId && hudUserId !== null && <PlayerHud roomId={hudRoomId} userId={hudUserId} onClose={closeHud} opener={hudOpener.current} onData={setHud} />}
     </div>
   );
+}
+
+function CheckFeedback({ action, handId }: { action?: SeatView['lastAction']; handId: string | null }) {
+  const [run, setRun] = useState(0);
+  useEffect(() => {
+    if (action?.type !== 'check') return;
+    setRun((n) => n + 1);
+  }, [action, handId]);
+  useEffect(() => {
+    if (!run) return;
+    const timer = setTimeout(() => setRun(0), 1800);
+    return () => clearTimeout(timer);
+  }, [run]);
+  return run ? <span key={run} className="table-check-feedback" role="status">{t('Check')}</span> : null;
 }

@@ -10,6 +10,7 @@
 // 'Turn timer' / 'No limit' (lobby), 'Try again' (landing), 'Settings'
 // (settings), 'The table' (landing), 'Copy' (account).
 const tablePage: Record<string, string> = {
+  'Peek opponent cards · {amount}': '买看对手手牌 · {amount}',
   // ── Joining the room / connection states ──────────────────────────────
   'Could not join this table: {error}': '这张桌进不去：{error}',
   'Could not load room': '房间没能加载出来。',

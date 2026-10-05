@@ -25,6 +25,19 @@ export interface TableUtilityGroup {
   actions: TableUtilityAction[];
 }
 
+/** Remove actions surfaced as dedicated top-bar controls from the overflow menu. */
+export function filterDesktopMenuGroups(
+  groups: TableUtilityGroup[],
+  surfaced: TableUtilityAction[] = ['invite', 'watch'],
+): TableUtilityGroup[] {
+  return groups
+    .map((group) => ({
+      ...group,
+      actions: group.actions.filter((action) => !surfaced.includes(action)),
+    }))
+    .filter((group) => group.actions.length > 0);
+}
+
 export function tableUtilityGroups({
   amSpectator,
   isBankerHere,

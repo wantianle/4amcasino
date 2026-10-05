@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { tableUtilityGroups, unreadChatCount } from '../src/pages/table/tableUi.ts';
+import {
+  filterDesktopMenuGroups,
+  tableUtilityGroups,
+  unreadChatCount,
+} from '../src/pages/table/tableUi.ts';
 import {
   centerColumnBudgetPx,
   PHONE_CANVAS,
@@ -63,5 +67,44 @@ describe('table utility menu', () => {
       { id: 'records', actions: ['ledger', 'hands'] },
       { id: 'preferences', actions: ['preferences'] },
     ]);
+  });
+
+  it('keeps invite and watch available to the top bar without changing their permissions', () => {
+    const groups = tableUtilityGroups({
+      amSpectator: false,
+      isBankerHere: true,
+      isHost: false,
+      hasSeat: true,
+      hasMeetLink: false,
+    });
+    const menu = filterDesktopMenuGroups(groups);
+    expect(menu.flatMap((group) => group.actions)).not.toEqual(
+      expect.arrayContaining(['invite', 'watch']),
+    );
+    expect(groups.find((group) => group.id === 'people')?.actions).toEqual(['invite', 'watch']);
+  });
+
+  it('keeps the mobile invite/watch controls and filters the menu by permission', () => {
+    const cases = [
+      { amSpectator: true, isBankerHere: false, isHost: false, hasSeat: false, hasMeetLink: false },
+      { amSpectator: false, isBankerHere: false, isHost: false, hasSeat: false, hasMeetLink: true },
+      { amSpectator: false, isBankerHere: true, isHost: false, hasSeat: true, hasMeetLink: false },
+      { amSpectator: false, isBankerHere: true, isHost: true, hasSeat: true, hasMeetLink: true },
+    ];
+    for (const permissions of cases) {
+      const groups = tableUtilityGroups(permissions);
+      const menu = filterDesktopMenuGroups(groups);
+      expect(menu.flatMap((group) => group.actions)).not.toEqual(
+        expect.arrayContaining(['invite', 'watch']),
+      );
+      // These are the dedicated top-bar entries; their presence is governed by
+      // the same permissions as the source utility group.
+      expect(groups.flatMap((group) => group.actions)).toEqual(
+        expect.arrayContaining([
+          ...(permissions.amSpectator ? [] : ['invite']),
+          ...(permissions.isBankerHere ? ['watch'] : []),
+        ]),
+      );
+    }
   });
 });

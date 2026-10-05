@@ -1,0 +1,20 @@
+{
+  "gitHash": "7d9bf95",
+  "probeHash": "6335722a6b2a",
+  "locale": "zh-CN",
+  "generatedAt": "2026-10-05T05:06:49Z",
+  "pageErrors": [],
+  "assert": "PASS",
+  "source": "same probe run against clean HEAD; retained by review harness",
+  "textCov": {
+    "9p-myturn@1440x900": 0.9169,
+    "9p-myturn@1280x720": 0.8413,
+    "9p-myturn@390x844": 0.9004,
+    "2p-headsup-myturn@390x844": 0.9696,
+    "2p-headsup-myturn@667x375": 1
+  },
+  "podPairPx": {
+    "9p-myturn@1440x900": 0,
+    "9p-myturn@1280x720": 0
+  }
+}

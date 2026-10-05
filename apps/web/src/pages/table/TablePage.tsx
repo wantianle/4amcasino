@@ -77,7 +77,6 @@ import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
 import { ResultFlash } from '../../widgets/table/ResultFlash.tsx';
 import { TableDock } from '../../widgets/table/TableDock.tsx';
 import { TableQuickControls } from '../../widgets/table/TableQuickControls.tsx';
-import { PlayerHud } from '../../widgets/table/PlayerHud.tsx';
 import { PokerShortcutButton } from '../../features/settings/PokerShortcutButton.tsx';
 import { BrokeBuyInDialog } from '../../features/bank/BrokeBuyInDialog.tsx';
 import { InviteFriendsDialogBody } from '../../features/friends/FriendsPanel.tsx';
@@ -86,6 +85,7 @@ import { ShareHandDialog } from '../../features/share/ShareHandDialog.tsx';
 import { ShareRoom } from '../../features/share/ShareRoom.tsx';
 import type { ShareData } from '../../features/share/shareCard.ts';
 import {
+  filterDesktopMenuGroups,
   tableUtilityGroups,
   unreadChatCount,
   type TableUtilityAction,
@@ -248,7 +248,8 @@ function MultiRunPrompt({
     agreeRunCount(agree);
   };
 
-  const myEquity = mySeat === null ? null : (offer.equities.find((e) => e.seat === mySeat)?.bps ?? null);
+  const myEquity =
+    mySeat === null ? null : (offer.equities.find((e) => e.seat === mySeat)?.bps ?? null);
   const chosen = offer.requestedRuns !== undefined && offer.requestedRuns > 1;
 
   let headline: string;
@@ -338,7 +339,9 @@ function MultiRunPrompt({
       {!acting && (
         <span className="table-prompt-note">
           {offer.stage === 'choice'
-            ? t('Only the losing side chooses; dealing more than once needs the other side to agree.')
+            ? t(
+                'Only the losing side chooses; dealing more than once needs the other side to agree.',
+              )
             : t('Declining or running out of time means one run.')}
         </span>
       )}
@@ -595,7 +598,9 @@ export function TablePage() {
       useStore
         .getState()
         .pushError(
-          error instanceof Error ? tr(error.message) : t('That change did not go through. Try again.'),
+          error instanceof Error
+            ? tr(error.message)
+            : t('That change did not go through. Try again.'),
         );
     const existing = armedTriggers[feature];
     if (existing) {
@@ -920,16 +925,16 @@ export function TablePage() {
 
   const peekAmt = Math.max(1, parseInt(peekAmtStr, 10) || room.room.bb * 5);
   const peekEligible =
-    hand.result && !hand.abort
-      ? seatViews.filter(
-          (v) => v.inHand && v.seat !== mySeat && !v.revealed && !hand.peekResults[v.seat],
+    hand.result && !hand.abort && !handLive && !amSpectator && hand.seats.length === 2 && hand.seats.some((s) => s.seat === mySeat)
+        ? seatViews.filter(
+          (v) => hand.seats.some((s) => s.seat === v.seat) && v.seat !== mySeat && !v.revealed && !hand.peekResults[v.seat],
         )
       : [];
   const peekReveals = Object.entries(hand.peekResults);
   const hasPeekContent =
-    hand.peekOffers.length > 0 ||
+    !handLive && !amSpectator && hand.seats.length === 2 && (hand.peekOffers.length > 0 ||
     peekReveals.length > 0 ||
-    (!!hand.result && peekEligible.length > 0 && mySeat !== null);
+    (!!hand.result && peekEligible.length > 0 && mySeat !== null));
 
   const peekBody = (dark: boolean) => (
     <div className="space-y-2.5">
@@ -1002,7 +1007,10 @@ export function TablePage() {
     </div>
   );
 
-  const peekPanel = hasPeekContent && <Panel>{peekBody(false)}</Panel>;
+  const peekPanel = hasPeekContent && <details className="table-peek" key={hand.handId}>
+    <summary className="table-dock-chip">{t('Peek opponent cards · {amount}', { amount: fmt(peekAmt) })}{hand.peekOffers.length > 0 && ' · !'}</summary>
+    <div className="table-peek-body" data-poker-hotkeys-blocked>{peekBody(true)}</div>
+  </details>;
 
   // the reasoning behind the result: who won, with what, over what
   const reasoning = (() => {
@@ -1015,10 +1023,9 @@ export function TablePage() {
       const winner = hand.result.deltas.find((d) => d.delta > 0);
       if (!winner) return null;
       return {
-        headline: t(
-          '{name} takes the pot. Everyone else folded, so no cards had to be shown.',
-          { name: nameOf(winner.seat) },
-        ),
+        headline: t('{name} takes the pot. Everyone else folded, so no cards had to be shown.', {
+          name: nameOf(winner.seat),
+        }),
         winningFive: null,
       };
     }
@@ -1164,9 +1171,7 @@ export function TablePage() {
         <Eye size={16} /> {t('You are watching this table.')}
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        {t(
-          "You can see everything public, but not anyone's cards, the join code, or the chips.",
-        )}
+        {t("You can see everything public, but not anyone's cards, the join code, or the chips.")}
       </p>
       <Button
         className="mt-3"
@@ -1221,18 +1226,17 @@ export function TablePage() {
   };
   // The switches you touch every hand - and the two record pages (出牌记录,
   // 账本) - live on the top bar itself (TableQuickControls), so the desktop ⋮
-  // menu keeps only the remaining secondary items (invite, watch link,
-  // standings...). Phones have no room for that strip, so the menu carries the
-  // full set there.
-  const inlineSurfaced: TableUtilityAction[] = isPhone
-    ? []
-    : ['auto-deal', 'sit-out', 'timer', 'bots', 'preferences', 'hands', 'ledger'];
-  const desktopMenuGroups = utilityGroups
-    .map((group) => ({
-      ...group,
-      actions: group.actions.filter((action) => !inlineSurfaced.includes(action)),
-    }))
-    .filter((group) => group.actions.length > 0);
+  // Invite and watch are explicit top-bar entries on both desktop and phone;
+  // keep them out of ⋮ so the same action is never offered twice. The menu
+  // remains the home for secondary utilities and phone-only actions.
+  const inlineSurfaced: TableUtilityAction[] = [
+    'invite',
+    'watch',
+    ...(isPhone
+      ? []
+      : (['auto-deal', 'sit-out', 'timer', 'bots', 'preferences', 'hands', 'ledger'] as const)),
+  ];
+  const desktopMenuGroups = filterDesktopMenuGroups(utilityGroups, inlineSurfaced);
   const utilityItemClass =
     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white';
 
@@ -1240,9 +1244,7 @@ export function TablePage() {
     useStore
       .getState()
       .pushError(
-        error instanceof Error
-          ? error.message
-          : t('That change did not go through. Try again.'),
+        error instanceof Error ? error.message : t('That change did not go through. Try again.'),
       );
   const closeUtilityMenu = () => setMenuOpen(false);
   // Phone view controls (A11 + review fix #1): the ⋮ menu carries fullscreen
@@ -1431,7 +1433,8 @@ export function TablePage() {
   // server announcements — nothing here invents boards, antes or settlements.
   const feat = hand.featureStarted;
   const bombActive = !!feat?.bombPot?.enabled;
-  const bombBeforeFlop = bombActive && handLive && (!hand.betting || hand.betting.street === 'preflop');
+  const bombBeforeFlop =
+    bombActive && handLive && (!hand.betting || hand.betting.street === 'preflop');
   const featureRibbon =
     ((feat?.squid?.enabled || bombActive) && hand.handId !== null) || bombBeforeFlop ? (
       <div className="table-ribbon" role="status">
@@ -1446,7 +1449,10 @@ export function TablePage() {
             {feat?.squid?.enabled && (
               <span className="rb-squid">
                 <Skull size={12} weight="fill" />
-                {t('Squid Game · {n}× BB · {p} players', { n: feat.squid.penaltyBb, p: hand.seats.length })}
+                {t('Squid Game · {n}× BB · {p} players', {
+                  n: feat.squid.penaltyBb,
+                  p: hand.seats.length,
+                })}
               </span>
             )}
           </div>
@@ -1506,7 +1512,11 @@ export function TablePage() {
               key={n.seat}
               className={cn(
                 'table-squid-chip',
-                n.net > 0 ? 'table-squid-chip--pos' : n.net < 0 ? 'table-squid-chip--neg' : 'table-squid-chip--zero',
+                n.net > 0
+                  ? 'table-squid-chip--pos'
+                  : n.net < 0
+                    ? 'table-squid-chip--neg'
+                    : 'table-squid-chip--zero',
               )}
             >
               {seatName(n.seat)} {n.net >= 0 ? `+${fmt(n.net)}` : `−${fmt(-n.net)}`}
@@ -1578,9 +1588,7 @@ export function TablePage() {
             data-testid="gameplay-squid"
           >
             {armedTriggers.squid ? <X size={15} /> : <Skull size={15} />}
-            <span className={isPhone ? 'sr-only' : undefined}>
-              {t('Squid Game')}
-            </span>
+            <span className={isPhone ? 'sr-only' : undefined}>{t('Squid Game')}</span>
           </button>
         )}
         {features.bombPot.enabled && (
@@ -1598,9 +1606,7 @@ export function TablePage() {
             data-testid="gameplay-bomb"
           >
             {armedTriggers.bomb ? <X size={15} /> : <Bomb size={15} />}
-            <span className={isPhone ? 'sr-only' : undefined}>
-              {t('Bomb pot')}
-            </span>
+            <span className={isPhone ? 'sr-only' : undefined}>{t('Bomb pot')}</span>
           </button>
         )}
         {/* phones have no quick-controls strip - the 玩法规则 gear lives here */}
@@ -1628,18 +1634,19 @@ export function TablePage() {
       disabled={!wsConnected}
       className={cn(
         'm-0 min-w-0 border-0 p-0',
-        consoleFlow ? 'shrink-0' : 'table-cluster-host absolute bottom-2 right-2 z-30 md:bottom-3 md:right-3',
+        consoleFlow
+          ? 'shrink-0'
+          : 'table-cluster-host absolute bottom-2 right-2 z-30 md:bottom-3 md:right-3',
       )}
     >
-      <div
-        data-testid="betting-panel"
-      >
+      <div data-testid="betting-panel">
         <BettingPanel mySeat={mySeat} isHost={!!isHost} narrow={narrowCanvas} />
       </div>
     </fieldset>
   );
   const dockNode = (
     <TableDock
+      peek={peekPanel}
       flow={consoleFlow}
       phone={narrowCanvas}
       compact={isPhone || compactBar}
@@ -1802,7 +1809,9 @@ export function TablePage() {
         {standings === null ? (
           <Spinner label={t('Counting the chips…')} />
         ) : standings.length === 0 ? (
-          <p className="text-sm text-slate-500">{t('No completed hands yet. Deal one and check back.')}</p>
+          <p className="text-sm text-slate-500">
+            {t('No completed hands yet. Deal one and check back.')}
+          </p>
         ) : (
           <LeaderboardTable rows={standings} minHands={room.room.minSettleHands} />
         )}
@@ -1842,10 +1851,15 @@ export function TablePage() {
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
     >
       {/* ── compact top bar (A11) ─────────────────────────────────────────── */}
-      <header className={cn(
-        'relative shrink-0 rounded-xl bg-white/80 px-2 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70 dark:bg-slate-950/70 dark:ring-slate-800',
-        isPhone ? 'grid grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[2.75rem_2.75rem] gap-x-1' : 'flex h-12 items-center gap-2',
-      )} data-testid="table-header">
+      <header
+        className={cn(
+          'relative shrink-0 rounded-xl bg-white/80 px-2 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70 dark:bg-slate-950/70 dark:ring-slate-800',
+          isPhone
+            ? 'grid grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[2.75rem_2.75rem] gap-x-1'
+            : 'flex h-12 items-center gap-2',
+        )}
+        data-testid="table-header"
+      >
         <Link
           to="/lobby"
           className={cn(desktopIconClass, isPhone && 'row-span-2 h-11 w-11')}
@@ -1885,11 +1899,15 @@ export function TablePage() {
 
         {isPhone && (room.room.auditMode === 'strict-audit' || room.room.voided) && (
           <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-1 self-end truncate text-[0.62rem]">
-            {room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
+            {room.room.auditMode === 'strict-audit' && (
+              <Badge tone="amber">{t('strict audit')}</Badge>
+            )}
             {room.room.voided && <Badge tone="rose">{t('void table')}</Badge>}
           </div>
         )}
-        {!isPhone && room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
+        {!isPhone && room.room.auditMode === 'strict-audit' && (
+          <Badge tone="amber">{t('strict audit')}</Badge>
+        )}
         {!isPhone && room.room.voided && (
           <span title={t('The banker voided this table: results do not count anywhere')}>
             <Badge tone="rose">{t('void table')}</Badge>
@@ -1904,12 +1922,15 @@ export function TablePage() {
             <BankControls roomId={roomId!} compact />
           </div>
         )}
-        <div className={cn(
-          'flex items-center justify-end gap-1',
-          isPhone ? 'col-start-2 row-start-2 min-w-0 justify-start overflow-visible pl-1 pr-12' : 'ml-auto flex-nowrap',
-        )}>
+        <div
+          className={cn(
+            'flex items-center justify-end gap-1',
+            isPhone
+              ? 'col-start-2 row-start-2 min-w-0 justify-start overflow-visible pl-1 pr-12'
+              : 'ml-auto flex-nowrap',
+          )}
+        >
           {!isPhone && <BankControls roomId={roomId!} compact={compactBar} />}
-          {!amSpectator && <PlayerHud key={roomId} roomId={roomId!} />}
           {isPhone && (
             <Link
               to={`/room/${roomId}/hands`}
@@ -1924,7 +1945,11 @@ export function TablePage() {
           {isPhone && !amSpectator && (
             <DesktopIconButton
               label={isHost ? t('Auto-deal') : t('Only the host can change this room setting.')}
-              onClick={() => (isHost ? void api.setAutoDeal(roomId!, room.room.autoDeal === false).catch(reportError) : setAutoDealOpen(true))}
+              onClick={() =>
+                isHost
+                  ? void api.setAutoDeal(roomId!, room.room.autoDeal === false).catch(reportError)
+                  : setAutoDealOpen(true)
+              }
               className="h-11 w-11"
               data-testid="mobile-auto-deal"
             >
@@ -1932,17 +1957,32 @@ export function TablePage() {
             </DesktopIconButton>
           )}
           {isPhone && isHost && (
-            <DesktopIconButton label={t('Bot opponents')} onClick={() => setBotsOpen(true)} className="h-11 w-11" data-testid="mobile-bots">
+            <DesktopIconButton
+              label={t('Bot opponents')}
+              onClick={() => setBotsOpen(true)}
+              className="h-11 w-11"
+              data-testid="mobile-bots"
+            >
               <Robot size={18} />
             </DesktopIconButton>
           )}
           {isPhone && !amSpectator && (
-            <DesktopIconButton label={t('Invite friends')} onClick={() => setInviteOpen(true)} className="h-11 w-11" data-testid="mobile-invite">
+            <DesktopIconButton
+              label={t('Invite friends')}
+              onClick={() => setInviteOpen(true)}
+              className="h-11 w-11"
+              data-testid="mobile-invite"
+            >
               <UserPlus size={18} />
             </DesktopIconButton>
           )}
           {isPhone && isBankerHere && (
-            <DesktopIconButton label={t('Watch-only link')} onClick={() => setWatchOpen(true)} className="h-11 w-11" data-testid="mobile-watch">
+            <DesktopIconButton
+              label={t('Watch-only link')}
+              onClick={() => setWatchOpen(true)}
+              className="h-11 w-11"
+              data-testid="mobile-watch"
+            >
               <Eye size={18} />
             </DesktopIconButton>
           )}
@@ -1968,30 +2008,32 @@ export function TablePage() {
               botCount={bots.length}
             />
           )}
-          {!isPhone && <DesktopIconButton
-            label={
-              voiceState.joined
-                ? voiceState.muted
-                  ? t('Unmute voice')
-                  : t('Mute voice')
-                : t('Join voice')
-            }
-            onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
-            className={cn(
-              voiceState.joined &&
-                !voiceState.muted &&
-                '!bg-emerald-100 !text-emerald-700 dark:!bg-emerald-950 dark:!text-emerald-300',
-              voiceState.joined &&
-                voiceState.muted &&
-                '!bg-rose-100 !text-rose-700 dark:!bg-rose-950 dark:!text-rose-300',
-            )}
-          >
-            {voiceState.joined && voiceState.muted ? (
-              <MicrophoneSlash size={19} weight="bold" />
-            ) : (
-              <Microphone size={19} weight={voiceState.joined ? 'bold' : 'regular'} />
-            )}
-          </DesktopIconButton>}
+          {!isPhone && (
+            <DesktopIconButton
+              label={
+                voiceState.joined
+                  ? voiceState.muted
+                    ? t('Unmute voice')
+                    : t('Mute voice')
+                  : t('Join voice')
+              }
+              onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
+              className={cn(
+                voiceState.joined &&
+                  !voiceState.muted &&
+                  '!bg-emerald-100 !text-emerald-700 dark:!bg-emerald-950 dark:!text-emerald-300',
+                voiceState.joined &&
+                  voiceState.muted &&
+                  '!bg-rose-100 !text-rose-700 dark:!bg-rose-950 dark:!text-rose-300',
+              )}
+            >
+              {voiceState.joined && voiceState.muted ? (
+                <MicrophoneSlash size={19} weight="bold" />
+              ) : (
+                <Microphone size={19} weight={voiceState.joined ? 'bold' : 'regular'} />
+              )}
+            </DesktopIconButton>
+          )}
           {!isPhone && !amSpectator && (
             <DesktopIconButton label={t('Invite friends')} onClick={() => setInviteOpen(true)}>
               <UserPlus size={18} />
@@ -2107,7 +2149,11 @@ export function TablePage() {
                           closeUtilityMenu();
                         }}
                       >
-                        {voiceState.joined && voiceState.muted ? <MicrophoneSlash size={18} /> : <Microphone size={18} />}{' '}
+                        {voiceState.joined && voiceState.muted ? (
+                          <MicrophoneSlash size={18} />
+                        ) : (
+                          <Microphone size={18} />
+                        )}{' '}
                         {voiceState.joined
                           ? voiceState.muted
                             ? t('Unmute voice')
@@ -2123,11 +2169,19 @@ export function TablePage() {
         </div>
       </header>
 
-      <div className="flex shrink-0 items-center justify-between gap-2 px-1" data-testid="table-corner-controls">
+      <div
+        className="flex shrink-0 items-center justify-between gap-2 px-1"
+        data-testid="table-corner-controls"
+      >
         <div className={cn('min-w-0', isPhone && 'table-dock--phone')}>{hostGameplay}</div>
         <div className="flex shrink-0 items-center gap-1.5">
           <PokerShortcutButton className="!text-(--table-muted) hover:!text-(--table-ink)" />
-          <button type="button" onClick={() => setStandingsOpen(true)} className={dockChip} aria-haspopup="dialog">
+          <button
+            type="button"
+            onClick={() => setStandingsOpen(true)}
+            className={dockChip}
+            aria-haspopup="dialog"
+          >
             <Trophy size={15} /> {t('Standings')}
           </button>
         </div>
@@ -2201,203 +2255,197 @@ export function TablePage() {
               notInHand && 'opacity-60 saturate-50',
             )}
           >
-          <RoundTable
-            narrow={narrowCanvas}
-            centerCompact={centerCompact}
-            centerRaised={multiRunBoard}
-            centerBudget
-            ribbon={featureRibbon}
-            seats={seatViews}
-            mySeat={mySeat}
-            myUserId={auth.userId}
-            myCards={hand.myCards}
-            committedBySeat={Object.fromEntries(
-              (hand.betting?.seats ?? []).map((s) => [s.seat, s.committed]),
-            )}
-            handId={hand.handId}
-            urgent={urgent}
-            handLive={handLive}
-            canSit={mySeat === null && !amSpectator}
-            onSit={sit}
-            canKick={isBankerHere}
-            onKick={(userId) =>
-              void api
-                .standUp(roomId!, userId)
-                .catch((err) =>
-                  useStore
-                    .getState()
-                    .pushError(
-                      err instanceof Error ? err.message : tr('could not stand them up'),
-                    ),
-                )
-            }
-            bankerId={room.room.bankerId}
-            hostId={room.room.hostId}
-            coBankerId={room.room.coBankerId}
-            bb={room.room.bb}
-            readyCheck={!handLive ? hand.readyCheck : null}
-            onShareHand={shareData ? () => setShareOpen(true) : undefined}
-            handTypes={strengthLabels}
-          >
-            {/* A5/L3: the pot is ONE GG "Total Pot" gold pill centered above
+            <RoundTable
+              hudRoomId={!amSpectator ? roomId! : undefined}
+              narrow={narrowCanvas}
+              centerCompact={centerCompact}
+              centerRaised={multiRunBoard}
+              centerBudget
+              ribbon={featureRibbon}
+              seats={seatViews}
+              mySeat={mySeat}
+              myUserId={auth.userId}
+              myCards={hand.myCards}
+              committedBySeat={Object.fromEntries(
+                (hand.betting?.seats ?? []).map((s) => [s.seat, s.committed]),
+              )}
+              handId={hand.handId}
+              urgent={urgent}
+              handLive={handLive}
+              canSit={mySeat === null && !amSpectator}
+              onSit={sit}
+              canKick={isBankerHere}
+              onKick={(userId) =>
+                void api
+                  .standUp(roomId!, userId)
+                  .catch((err) =>
+                    useStore
+                      .getState()
+                      .pushError(
+                        err instanceof Error ? err.message : tr('could not stand them up'),
+                      ),
+                  )
+              }
+              bankerId={room.room.bankerId}
+              hostId={room.room.hostId}
+              coBankerId={room.room.coBankerId}
+              bb={room.room.bb}
+              readyCheck={!handLive ? hand.readyCheck : null}
+              onShareHand={shareData ? () => setShareOpen(true) : undefined}
+              handTypes={strengthLabels}
+            >
+              {/* A5/L3: the pot is ONE GG "Total Pot" gold pill centered above
                 the board row. (rev-3 dropped the pot chip pile + the 0-state
                 Coins icon — the number carries the value; the pulse motion
                 stays as-is, the motion pass is L5.) */}
-            {pot > 0 && (
-              <div className="table-pot-pill" title={t('POT')}>
-                <span className="sr-only">{t('POT')}</span>
-                <span className="table-pot-label">{t('POT')}</span>
-                <motion.span
-                  key={pot}
-                  initial={{ scale: 1.12 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 320, damping: 18 }}
-                  className="table-pot-val"
-                >
-                  <NumberFlow value={pot} />
-                </motion.span>
-              </div>
-            )}
-            {/* the felt keeps its layout while a result flashes over it */}
-            <>
-              {runTwice}
-              <div className="flex flex-col items-center gap-2">
-                {(() => {
-                  // P2 B4: render hand.boards - run 1 owns the felt's geometry
-                  // as before; run 2 / run 3 grow underneath.
-                  // EFFECTIVE MULTI-RUN (multiRunBoard: server-declared
-                  // runs > 1, or a non-empty extra run already dealt - a
-                  // trailing [] from a declined legacy rit is NOT one):
-                  // every row shares ONE card
-                  // size (xs) and ONE 5-slot structure (label + 5 cells, dealt
-                  // cards or matching empty placeholders) - GGPoker-style equal
-                  // rows, no 96px-vs-40px mismatch, no ragged widths.
-                  // Sizing math (design px, canvas 1180x660): the bare stack
-                  // pot ≈28 + column gap 8 + 3x40 + 2x8 = 172, centered on the
-                  // RAISED anchor (48% -> y ≈317), spans ≈231-403 - below the
-                  // far pods (bottom edge ≈197-207) and above the bet ellipse
-                  // (y ≈455). The hero pod's top edge is state-dependent
-                  // (≈412-440 at showdown), so the bottom gap is real but thin
-                  // in the worst case. This is sizing, NOT a guarantee:
-                  // banners/summaries stacked on 3 runs still exceed the
-                  // 204px budget and fall to the RoundTable clamp, which
-                  // scales the whole column uniformly (floor minScale 0.72) -
-                  // past that floor the column may still touch a pod.
-                  // Non-effective hands (single run, or a single run with a
-                  // legacy empty extra, banners included) keep the yPct anchor
-                  // and the untouched full/md tier.
-                  const [first, ...rest] = boardRuns;
-                  const boardSmall = narrowCanvas || centerCompact;
-                  // L3 tiers (mockup board = 84×120 'board'; desktop compact
-                  // falls to 'sm' 40×56; multi-run 'xs'). L6 measured the
-                  // phone 'md' idea and REVERTED it: five md cards span 359
-                  // of the 548 oval and the ±130° hole-card fans ate the end
-                  // cards — 'sm' (232 wide) is the widest tier the 9-seat
-                  // phone ring leaves free, and at k≈0.55-0.68 the corner
-                  // index still renders ~11px, above the legibility line.
-                  // Phone multi-run rows upgrade xs→sm (28 design px of card
-                  // is unreadable at the floor scale); desktop tiers are
-                  // untouched. The RoundTable clamp (centerBudget, now active
-                  // on the phone canvas too) keeps the stack inside the
-                  // seat-ring budget.
-                  const runSize = multiRunBoard
-                    ? narrowCanvas
-                      ? 'sm'
-                      : 'xs'
-                    : boardSmall
-                      ? 'sm'
-                      : 'board';
-                  const runGap = multiRunBoard ? 'gap-1' : boardSmall ? 'gap-1.5' : 'gap-3';
-                  const emptySlotClass =
-                    multiRunBoard && !narrowCanvas
-                      ? 'h-10 w-7 rounded-md'
-                      : boardSmall || multiRunBoard
-                        ? 'h-14 w-10 rounded-lg'
-                        : 'h-30 w-21 rounded-[13px]';
-                  const runLabel = (n: number) => (
-                    <span className="table-run-chip">{t('Run {n}', { n })}</span>
-                  );
-                  const emptySlot = (key: string, index: number) => (
-                    <div
-                      key={key}
-                      className={cn('table-slot', emptySlotClass)}
-                      role="img"
-                      aria-label={t('Empty community card {n}', { n: index + 1 })}
-                    />
-                  );
-                  return (
-                    <>
+              {pot > 0 && (
+                <div className="table-pot-pill" title={t('POT')}>
+                  <span className="sr-only">{t('POT')}</span>
+                  <span className="table-pot-label">{t('POT')}</span>
+                  <motion.span
+                    key={pot}
+                    initial={{ scale: 1.12 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 18 }}
+                    className="table-pot-val"
+                  >
+                    <NumberFlow value={pot} />
+                  </motion.span>
+                </div>
+              )}
+              {/* the felt keeps its layout while a result flashes over it */}
+              <>
+                {runTwice}
+                <div className="flex flex-col items-center gap-2">
+                  {(() => {
+                    // P2 B4: render hand.boards - run 1 owns the felt's geometry
+                    // as before; run 2 / run 3 grow underneath.
+                    // EFFECTIVE MULTI-RUN (multiRunBoard: server-declared
+                    // runs > 1, or a non-empty extra run already dealt - a
+                    // trailing [] from a declined legacy rit is NOT one):
+                    // every row shares ONE card
+                    // size (xs) and ONE 5-slot structure (label + 5 cells, dealt
+                    // cards or matching empty placeholders) - GGPoker-style equal
+                    // rows, no 96px-vs-40px mismatch, no ragged widths.
+                    // Sizing math (design px, canvas 1180x660): the bare stack
+                    // pot ≈28 + column gap 8 + 3x40 + 2x8 = 172, centered on the
+                    // RAISED anchor (48% -> y ≈317), spans ≈231-403 - below the
+                    // far pods (bottom edge ≈197-207) and above the bet ellipse
+                    // (y ≈455). The hero pod's top edge is state-dependent
+                    // (≈412-440 at showdown), so the bottom gap is real but thin
+                    // in the worst case. This is sizing, NOT a guarantee:
+                    // banners/summaries stacked on 3 runs still exceed the
+                    // 204px budget and fall to the RoundTable clamp, which
+                    // scales the whole column uniformly (floor minScale 0.72) -
+                    // past that floor the column may still touch a pod.
+                    // Non-effective hands (single run, or a single run with a
+                    // legacy empty extra, banners included) keep the yPct anchor
+                    // and the untouched full/md tier.
+                    const [first, ...rest] = boardRuns;
+                    const boardSmall = narrowCanvas || centerCompact;
+                    // L3 tiers (mockup board = 84×120 'board'; desktop compact
+                    // falls to 'sm' 40×56; multi-run 'xs'). L6 measured the
+                    // phone 'md' idea and REVERTED it: five md cards span 359
+                    // of the 548 oval and the ±130° hole-card fans ate the end
+                    // cards — 'sm' (232 wide) is the widest tier the 9-seat
+                    // phone ring leaves free, and at k≈0.55-0.68 the corner
+                    // index still renders ~11px, above the legibility line.
+                    // Phone multi-run rows upgrade xs→sm (28 design px of card
+                    // is unreadable at the floor scale); desktop tiers are
+                    // untouched. The RoundTable clamp (centerBudget, now active
+                    // on the phone canvas too) keeps the stack inside the
+                    // seat-ring budget.
+                    const runSize = multiRunBoard
+                      ? narrowCanvas
+                        ? 'sm'
+                        : 'xs'
+                      : boardSmall
+                        ? 'sm'
+                        : 'board';
+                    const runGap = multiRunBoard ? 'gap-1' : boardSmall ? 'gap-1.5' : 'gap-3';
+                    const emptySlotClass =
+                      multiRunBoard && !narrowCanvas
+                        ? 'h-10 w-7 rounded-md'
+                        : boardSmall || multiRunBoard
+                          ? 'h-14 w-10 rounded-lg'
+                          : 'h-30 w-21 rounded-[13px]';
+                    const runLabel = (n: number) => (
+                      <span className="table-run-chip">{t('Run {n}', { n })}</span>
+                    );
+                    const emptySlot = (key: string, index: number) => (
                       <div
-                        className={cn(
-                          'flex items-center justify-center',
-                          runGap,
-                        )}
-                      >
-                        {multiRunBoard && runLabel(1)}
-                        {[0, 1, 2, 3, 4].map((index) =>
-                          first![index] !== undefined ? (
-                            <PlayingCard
-                              key={`${index}-${first![index]}`}
-                              card={first![index]}
-                              size={runSize}
-                              deal
-                              // the three flop cards land together, so cascade them; the
-                              // turn and river arrive alone and flip immediately
-                              dealDelay={first!.length === 3 ? index * 0.16 : 0}
-                            />
-                          ) : (
-                            emptySlot(`r0-slot-${index}`, index)
-                          ),
-                        )}
-                      </div>
-                      {/* a run that has not opened a single card renders NO row
+                        key={key}
+                        className={cn('table-slot', emptySlotClass)}
+                        role="img"
+                        aria-label={t('Empty community card {n}', { n: index + 1 })}
+                      />
+                    );
+                    return (
+                      <>
+                        <div className={cn('flex items-center justify-center', runGap)}>
+                          {multiRunBoard && runLabel(1)}
+                          {[0, 1, 2, 3, 4].map((index) =>
+                            first![index] !== undefined ? (
+                              <PlayingCard
+                                key={`${index}-${first![index]}`}
+                                card={first![index]}
+                                size={runSize}
+                                deal
+                                // the three flop cards land together, so cascade them; the
+                                // turn and river arrive alone and flip immediately
+                                dealDelay={first!.length === 3 ? index * 0.16 : 0}
+                              />
+                            ) : (
+                              emptySlot(`r0-slot-${index}`, index)
+                            ),
+                          )}
+                        </div>
+                        {/* a run that has not opened a single card renders NO row
                           (legacy rit_result leaves a `[]` placeholder behind when
                           the ahead player declined - never show it as a ghost
                           row); a partly-dealt run pads to the same 5 slots as
                           run 1 so the visible rows stay equal width */}
-                      {rest.map((run, runIdx) =>
-                        run.length === 0 ? null : (
-                          <div
-                            key={`run-${runIdx}`}
-                            className={cn('flex items-center justify-center', runGap)}
-                          >
-                            {runLabel(runIdx + 2)}
-                            {[0, 1, 2, 3, 4].map((index) =>
-                              run[index] !== undefined ? (
-                                <PlayingCard
-                                  key={`r${runIdx}-${index}-${run[index]}`}
-                                  card={run[index]}
-                                  size={runSize}
-                                  deal
-                                />
-                              ) : (
-                                emptySlot(`r${runIdx}-slot-${index}`, index)
-                              ),
-                            )}
-                          </div>
-                        ),
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-              {multiRunOutcome}
-              {squidSummary}
-              {notInHand && (
-                <p className="table-notinhand">{t("You're in the next hand.")}</p>
-              )}
-              {!handLive && opponents.length === 0 && !amSpectator && (
-                <button
-                  type="button"
-                  onClick={() => setInviteOpen(true)}
-                  className="table-invite"
-                >
-                  <UserPlus size={15} /> {t('Invite friends')} · {t('code')}{' '}
-                  <span className="table-invite-code">{room.room.joinCode}</span>
-                </button>
-              )}
-            </>
-          </RoundTable>
+                        {rest.map((run, runIdx) =>
+                          run.length === 0 ? null : (
+                            <div
+                              key={`run-${runIdx}`}
+                              className={cn('flex items-center justify-center', runGap)}
+                            >
+                              {runLabel(runIdx + 2)}
+                              {[0, 1, 2, 3, 4].map((index) =>
+                                run[index] !== undefined ? (
+                                  <PlayingCard
+                                    key={`r${runIdx}-${index}-${run[index]}`}
+                                    card={run[index]}
+                                    size={runSize}
+                                    deal
+                                  />
+                                ) : (
+                                  emptySlot(`r${runIdx}-slot-${index}`, index)
+                                ),
+                              )}
+                            </div>
+                          ),
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+                {multiRunOutcome}
+                {squidSummary}
+                {notInHand && <p className="table-notinhand">{t("You're in the next hand.")}</p>}
+                {!handLive && opponents.length === 0 && !amSpectator && (
+                  <button
+                    type="button"
+                    onClick={() => setInviteOpen(true)}
+                    className="table-invite"
+                  >
+                    <UserPlus size={15} /> {t('Invite friends')} · {t('code')}{' '}
+                    <span className="table-invite-code">{room.room.joinCode}</span>
+                  </button>
+                )}
+              </>
+            </RoundTable>
           </div>
 
           {/* L4 (rev2 decision): the host's deal post + auto-deal clock + the
@@ -2415,15 +2463,12 @@ export function TablePage() {
           </div>
 
           {/* seat picker / spectator notice / buy-peek, as floating cards */}
-          {(!me || peekPanel) && (
+          {!me && (
             <div className="pointer-events-none absolute inset-x-0 top-1 z-20 flex flex-col items-center gap-2 px-2">
               {!me && (
                 <div className="pointer-events-auto w-[min(26rem,96%)]">
                   {amSpectator ? spectatorPanel : seatPicker}
                 </div>
-              )}
-              {peekPanel && (
-                <div className="pointer-events-auto w-[min(40rem,96%)]">{peekPanel}</div>
               )}
             </div>
           )}

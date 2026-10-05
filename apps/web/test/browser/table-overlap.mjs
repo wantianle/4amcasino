@@ -443,7 +443,41 @@ try {
       }
 
       /* ── the probe itself ─────────────────────────────────────────────── */
-      await page.waitForTimeout(400);
+      // BettingPanel deliberately holds its action buttons disabled for one
+      // settling beat whenever the live options change.  A fixed 400 ms sleep
+      // races the 400 ms guard (and made the fixture report "missing actions"
+      // even though the injected hand was live).  Wait for the actual live
+      // state and controls instead; this keeps the probe's assertion intact.
+      if (sc.kind === 'myturn') {
+        // The table page mounts its corner console after the room snapshot has
+        // produced a seated `me` view.  The hand store can be ready one render
+        // before that subtree exists, so do not sample the DOM in that gap.
+        await page.waitForFunction(async () => {
+          if (document.querySelector('[data-testid="betting-panel"]')) return true;
+          const storeUrl = performance
+            .getEntriesByType('resource')
+            .map((r) => r.name)
+            .find((url) => /\/src\/shared\/store\.ts(?:\?|$)/.test(url));
+          if (!storeUrl) return false;
+          const { useStore } = await import(storeUrl);
+          const state = useStore.getState();
+          return !!state.room && state.room.players.length > 0;
+        });
+        await page.waitForFunction(async ({ mySeat }) => {
+          const storeUrl = performance
+            .getEntriesByType('resource')
+            .map((r) => r.name)
+            .find((url) => /\/src\/shared\/store\.ts(?:\?|$)/.test(url));
+          const { useStore } = await import(storeUrl);
+          const hand = useStore.getState().hand;
+          const actions = document.querySelectorAll(
+            '[data-testid="betting-panel"] button:not([disabled])',
+          ).length;
+          return hand.betting?.toAct === mySeat && actions >= 2;
+        }, { mySeat: sc.mySeat });
+      } else {
+        await page.waitForTimeout(400);
+      }
       const scene = await page.evaluate(
         async ({ kind, mySeat, expectHero }) => {
           const storeUrl = performance
@@ -463,7 +497,9 @@ try {
             '[data-testid="betting-panel"] button:not([disabled])',
           ).length;
           if (kind === 'myturn' && (h.betting?.toAct !== mySeat || actions < 2))
-            throw new Error('Missing live betting actions');
+            throw new Error(
+              `Missing live betting actions: toAct=${h.betting?.toAct ?? 'null'} mySeat=${mySeat} actions=${actions} actionSeq=${h.actionSeq} ws=${useStore.getState().wsConnected} auth=${useStore.getState().auth.userId} players=${useStore.getState().room?.players.map((p) => `${p.userId}:${p.seat}`).join(',')} result=${!!h.result} abort=${!!h.abort} bettingPanel=${!!document.querySelector('[data-testid="betting-panel"]')} buttons=${[...document.querySelectorAll('[data-testid="betting-panel"] button')].map((b) => `${b.textContent?.trim()}:${b.disabled}`).join('|')}`,
+            );
           if (kind === 'showdown' && (faces !== 5 || !h.result || !h.showdown?.reveals.length))
             throw new Error('Missing showdown faces/result');
           if (kind === 'multirun' && (faces !== 15 || runs !== 3 || !h.result))
@@ -608,6 +644,7 @@ try {
             ]
           : [];
         const boardOcc = [
+          ...[...document.querySelectorAll('.table-hero-cards')].map(R),
           ...podSubtreeRects(),
           ...[
             ...document.querySelectorAll(
@@ -718,7 +755,23 @@ try {
           ? +Math.min(...dockChipEls.map((e) => e.getBoundingClientRect().height)).toFixed(1)
           : null;
 
+        const hero = document.querySelector('[data-testid="hero-hole-cards"]');
+        // Hero hole cards live outside the center column. Only community-board
+        // faces are part of this check; generic card-size selectors also catch
+        // center-column run/placeholder art and made clean HEAD report a false
+        // hero overlap.
+        const slots = [...(col?.querySelectorAll('[data-card-size="board"][role="img"]') ?? [])].map(R);
+        const heroRect = hero ? R(hero) : null;
+        const boardBottom = slots.length ? Math.max(...slots.map((r) => r.y + r.h)) : null;
+        // This is an intersection area, not a linear distance: units are px².
+        const heroBoardOverlapPx2 = heroRect
+          ? slots.reduce((sum, r) => sum + (inter(r, heroRect) ? area(inter(r, heroRect)) : 0), 0)
+          : 0;
         return {
+          heroTop: heroRect?.y ?? null,
+          boardBottom,
+          heroBoardGap: heroRect && boardBottom !== null ? heroRect.y - boardBottom : null,
+          heroBoardOverlapPx2,
           pods: pods.length,
           k,
           canvasW: canvasEl ? parseFloat(canvasEl.style.width) : null,
@@ -776,6 +829,8 @@ if (ASSERT) {
   const ASSERTED_VPS = ['390x844', '667x375'];
   const failures = [];
   for (const r of results) {
+    if (r.heroBoardOverlapPx2 > 0)
+      failures.push(`${r.scenario}@${r.vp} heroBoardOverlap=${r.heroBoardOverlapPx2}px²`);
     // Desktop hard gate, viewport-independent of ASSERTED_VPS: the desktop
     // geometry must have zero pairwise pod overlap.
     if ((r.vp === '1440x900' || r.vp === '1280x720') && r.podPairPx > 0)

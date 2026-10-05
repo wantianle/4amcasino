@@ -26,6 +26,7 @@
   box-shadow: var(--shadow-table-pod);
   text-align: center;
 }
+.table-pod-visual { position: static; }
 .table-canvas:not(.table-canvas--narrow) .table-pod-card {
   flex-direction: row;
   align-items: center;
@@ -47,14 +48,91 @@
 .table-pod-info .table-pstack {
   padding-left: 0;
 }
+.table-pod-name-row,
+.table-pod-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.table-pod-name-row .table-pname { flex: 1; min-width: 0; }
+.table-pod-detail-row .table-pstack { min-width: 0; flex-shrink: 1; }
+.table-pod-detail-row .table-paction { white-space: nowrap; }
+.table-seat-badges { display: inline-flex; flex: none; gap: 2px; }
+.table-vpip {
+  font: 700 10px/15px var(--font-table-num);
+  min-width: 18px;
+  padding: 0 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 15%, #10151c);
+  text-align: center;
+}
+.table-vpip--red { color: #ff929b; }
+.table-vpip--yellow { color: #f7d975; }
+.table-vpip--green { color: #84e5ac; }
+.table-vpip--blue { color: #8cc8ff; }
+.table-vpip--purple { color: #d6a2ff; }
+.table-paction--check { color: #a5f3d2; }
+.table-check-feedback {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  padding: 3px 10px;
+  border: 1px solid #a5f3d2;
+  border-radius: 999px;
+  background: #153c32;
+  color: #defff1;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: table-check-float 1.8s ease-out both;
+}
+.table-pod-card:has(.table-check-feedback) .table-avatar-ring {
+  animation: table-check-ring 1.2s ease-out both;
+}
+@keyframes table-check-float {
+  0% { opacity: 0; transform: translate(-50%, 6px); }
+  12%, 88% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
+}
+@keyframes table-check-ring {
+  0%, 70% { box-shadow: 0 0 0 3px #a5f3d2, 0 0 14px #79edba80; }
+  100% { box-shadow: var(--shadow-table-avatar); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-check-feedback { animation: none; transform: translateX(-50%); }
+  .table-pod-card:has(.table-check-feedback) .table-avatar-ring { animation: none; outline: 2px solid #a5f3d2; }
+}
+.table-peek { position: relative; max-width: calc(100vw - 24px); }
+.table-peek > summary { cursor: pointer; list-style: none; font-size: 11px; }
+.table-peek > summary::-webkit-details-marker { display: none; }
+.table-peek-body {
+  width: min(300px, calc(100vw - 24px));
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f1f5f9;
+}
 .table-canvas--narrow .table-pod-info {
+  /* Keep the phone plaque's original inline flow.  The two-row desktop
+     wrapper must not become a second flex formatting context on the narrow
+     canvas: it increases the plaque's painted box and lets neighbouring
+     pods cover the name/stack lines. */
   display: contents;
 }
+.table-canvas--narrow .table-pod-name-row,
+.table-canvas--narrow .table-pod-detail-row { display: contents; }
+.table-canvas--narrow .table-vpip { font-size: 10px; min-width: 15px; padding: 0 1px; }
 .table-hero-cards {
   position: absolute;
   z-index: 25;
   left: 50%;
-  bottom: calc(100% + 10px);
+  bottom: calc(100% + 6px);
   transform: translateX(-50%);
   display: flex;
   padding: 5px;
@@ -262,7 +340,7 @@
 .table-pod-holo--side {
   top: var(--table-holo-top-side);
 }
-.table-canvas--narrow .table-pod-holo--side {
+.table-canvas--narrow .table-pod-holo--side.table-pod-holo--hero {
   top: calc(var(--table-holo-top-side) - 94px);
 }
 .table-canvas--narrow .table-pod-holo--fan {
@@ -341,16 +419,16 @@
   font-weight: 700;
   font-size: var(--pod-caption-size, var(--text-table-caption));
   color: var(--table-muted-3);
-  animation: table-paction-show 0.82s var(--table-ease-standard) both;
+  animation: table-paction-show 1.2s var(--table-ease-standard) both;
 }
 
 @keyframes table-paction-show {
   0%,
-  18% {
+  70% {
     filter: brightness(1.45);
     text-shadow: 0 0 8px color-mix(in srgb, currentColor 65%, transparent);
   }
-  72%,
+  95%,
   100% {
     filter: brightness(1);
     text-shadow: none;

@@ -1,36 +1,53 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../shared/api.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { metricValue, type RoomHud } from '../../features/stats/types.ts';
+import { isValidHudPlayer } from './SeatBadges.tsx';
 
 /** Off by default. Closing unmounts the request consumer and clears all numbers. */
-export function PlayerHud({ roomId }: { roomId: string }) {
-  const [open, setOpen] = useState(false);
+export function PlayerHud({ roomId, userId, onClose, opener, onData }: { roomId: string; userId: number; onClose: () => void; opener?: HTMLElement | null; onData: (data: RoomHud | null) => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) return;
+      const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+      if (e.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))) { e.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', key);
+    document.addEventListener('keydown', trap, true);
+    return () => { document.removeEventListener('keydown', key); document.removeEventListener('keydown', trap, true); if (opener?.isConnected) opener.focus(); };
+  }, [onClose, opener]);
   return <div className="relative shrink-0">
-    <button type="button" aria-expanded={open} aria-controls="room-player-hud" onClick={() => setOpen(!open)} className="h-8 rounded-lg px-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 focus-visible:outline focus-visible:outline-indigo-400">HUD</button>
-    {open && <section id="room-player-hud" aria-label={t('Player HUD')} className="fixed right-3 top-36 z-50 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-slate-700 bg-slate-950 p-3 shadow-xl md:absolute md:top-10">
-      <header className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{t('Player HUD')}</h2><Button variant="ghost" onClick={() => setOpen(false)}>{t('Close')}</Button></header>
-      <HudContent key={roomId} roomId={roomId} />
-    </section>}
+    <div className="fixed inset-0 z-50 bg-black/20" onClick={onClose} />
+    <section ref={dialogRef} id="room-player-hud" role="dialog" aria-modal="true" data-poker-hotkeys-blocked aria-label={t('Player HUD')} className="fixed left-1/2 top-1/2 z-50 w-[min(22rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-700 bg-slate-950 p-3 text-slate-100 shadow-xl">
+      <header className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{t('Player HUD')}</h2><Button variant="ghost" onClick={onClose}>{t('Close')}</Button></header>
+      <HudContent key={`${roomId}-${userId}`} roomId={roomId} userId={userId} onData={onData} />
+    </section>
   </div>;
 }
 
-function HudContent({ roomId }: { roomId: string }) {
+function HudContent({ roomId, userId, onData }: { roomId: string; userId: number; onData: (data: RoomHud | null) => void }) {
   const [data, setData] = useState<RoomHud | null>(null);
   const [error, setError] = useState('');
   const [revision, refresh] = useState(0);
   useEffect(() => {
     let active = true;
-    setData(null); setError('');
-    api.roomHud(roomId).then((r) => { if (active) setData(r); }).catch((e: Error) => { if (active) setError(e.message); });
+    setData(null); setError(''); onData(null);
+    api.roomHud(roomId).then((r) => { if (!active) return; if (Array.isArray(r?.players)) { setData(r); onData(r); } else setError(t('Could not load statistics.')); }).catch((e: Error) => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [roomId, revision]);
+  }, [roomId, revision, onData]);
   if (error) return <div role="alert" className="space-y-2 text-sm"><p>{t('Could not load statistics.')}</p><p className="text-xs text-slate-400">{error}</p><Button onClick={() => refresh((n) => n + 1)}>{t('Retry')}</Button></div>;
   if (!data) return <div role="status"><Spinner label={t('Loading statistics…')} /></div>;
+  const players = Array.isArray(data.players) ? data.players.filter(isValidHudPlayer) : [];
   return <><p className="mb-3 text-xs text-slate-400">{t('This room only · minimum {n} hands', { n: data.minHands })}</p><div className="max-h-[50dvh] space-y-2 overflow-y-auto">
-    {data.players.length === 0 && <p role="status" className="text-sm text-slate-400">{t('No players yet.')}</p>}
-    {data.players.map((p) => <article key={p.userId} className="rounded-lg border border-slate-800 p-3" data-hud-player={p.userId}>
+    {players.length === 0 && <p role="status" className="text-sm text-slate-400">{t('No players yet.')}</p>}
+    {players.filter((p) => p.userId === userId).map((p) => <article key={p.userId} className="rounded-lg border border-slate-800 p-3" data-hud-player={p.userId}>
       <h3 className="truncate text-sm font-semibold">{p.displayName || p.username}</h3>
       {p.hidden ? <p className="mt-2 text-xs text-slate-400">{t('Statistics hidden')}</p>
         : !p.sufficient || p.sample < Math.max(data.minHands, p.minHands) || !p.stats ? <p className="mt-2 text-xs text-amber-400">{t('Low sample: {n} / {min} hands', { n: p.sample, min: Math.max(data.minHands, p.minHands) })}</p>

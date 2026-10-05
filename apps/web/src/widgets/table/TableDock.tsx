@@ -113,6 +113,7 @@ export function TableDock({
   unread,
   chatBody,
   hostGameplay,
+  peek,
 }: {
   /** L6 portrait phones: the dock rides the console strip below the canvas
    *  instead of overlaying the felt bottom-left. `relative` (not absolute)
@@ -141,6 +142,7 @@ export function TableDock({
    *  or a bomb pot for the next hand, open the 玩法规则 editor on phones).
    *  Rendered as a column above the balance chip; omitted for everyone else. */
   hostGameplay?: ReactNode;
+  peek?: ReactNode;
 }) {
   const chatTriggerRef = useRef<HTMLButtonElement>(null);
   // NOTE: the click-away catcher is NOT here - the page renders one over the
@@ -180,6 +182,7 @@ export function TableDock({
         {/* P2 Lane F: host-only 鱿鱼游戏/炸弹池 arming row, above everything
             else the dock stacks */}
         {hostGameplay}
+        {peek}
         {/* feedback #3: balance chip + the standalone 「快捷键」 button join the
             dock column, so everything the old bottom box carried is reachable */}
         {/* A9: sit-out for the next hand, bottom-left of the table area */}
