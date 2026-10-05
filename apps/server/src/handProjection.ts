@@ -21,15 +21,50 @@ export const HAND_PARSER_VERSION = 1;
 /**
  * RUNNING CONSTRAINT (void semantics, spec §7/P3): a `void-hand` ledger row only
  * reverses money - it does NOT delete the projection written at settlement.
- * Every stats query MUST therefore exclude hands whose `hand_id` has a
- * `void-hand` ledger row (P2 uses {@link VOIDED_HAND_EXCLUSION_SQL}).
- * `backfillHandStats()` clears such projections, but a real-time void can leave
- * a stale `status='settled'` row until the next backfill.
- * The void API (social.ts) writes `ref = handId`, so the correlation key is
- * `hands.hand_id` (not `source_head`).
+ * Every stats/read query MUST therefore exclude voided hands.
+ *
+ * Canonical correlation: a settlement ledger row's `ref` is the transcript
+ * `head` (see `applyHandSettlement`, game.ts), and the live client voids with
+ * that same `head`. Some callers/docs use the `hand_id` instead, and the two are
+ * NOT equal. A hand is voided when a `void-hand` row references EITHER key, so
+ * the helper takes both column expressions from the caller's `hands` row:
+ * `hand_id` and the settlement/head (`source_head` in the `hands` table, `head`
+ * in `transcripts`). This is the single place the mapping lives; do not
+ * re-derive it inline elsewhere.
  */
-export const VOIDED_HAND_EXCLUSION_SQL =
-  "NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = hands.room_id AND v.kind = 'void-hand' AND v.ref = hands.hand_id)";
+export function voidHandExistsSql(args: {
+  roomExpr: string;
+  handIdExpr: string;
+  headExpr: string;
+}): string {
+  return `EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = ${args.roomExpr} AND v.kind = 'void-hand' AND (v.ref = ${args.handIdExpr} OR v.ref = ${args.headExpr}))`;
+}
+
+/** Inverse of {@link voidHandExistsSql}, for `WHERE` clauses. */
+export function voidHandExclusionSql(args: {
+  roomExpr: string;
+  handIdExpr: string;
+  headExpr: string;
+}): string {
+  return `NOT ${voidHandExistsSql(args)}`;
+}
+
+/** The `hands`-aliased exclusion fragment used by the stats/HUD query layer. */
+export const VOIDED_HAND_EXCLUSION_SQL = voidHandExclusionSql({
+  roomExpr: 'hands.room_id',
+  handIdExpr: 'hands.hand_id',
+  headExpr: 'hands.source_head',
+});
+
+/**
+ * Exclusion for a settled `ledger` row aliased `ledgerAlias` (whose `ref` is the
+ * transcript head): the `void-hand` may reference that same ref, or the
+ * `hand_id` that `hand_settlements` maps the ref to. Used by `myHands` in
+ * rooms.ts so it agrees with {@link VOIDED_HAND_EXCLUSION_SQL}.
+ */
+export function settlementNotVoidedSql(ledgerAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = ${ledgerAlias}.room_id AND v.kind = 'void-hand' AND (v.ref = ${ledgerAlias}.ref OR v.ref = (SELECT hs.hand_id FROM hand_settlements hs WHERE hs.room_id = ${ledgerAlias}.room_id AND hs.head = ${ledgerAlias}.ref)))`;
+}
 
 export interface ProjectHandArgs {
   handId: string;
@@ -224,7 +259,57 @@ export function migrateHandStats(db: DB): void {
       first_seen_at INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL
     );
+
   `);
+
+  // Invariant the void OR-correlation relies on: within a room a transcript
+  // head identifies at most one hand, and a settlement maps one head to one
+  // hand_id. Preflight the duplicate rows BEFORE asking SQLite for the unique
+  // index, so a legacy duplicate produces a precise diagnostic instead of a
+  // bare "UNIQUE constraint failed" - and audit data is never auto-deduped.
+  // The indexes themselves are the migration marker: once both exist this scan
+  // is skipped on every later startup.
+  const hasIndex = (name: string): boolean =>
+    !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name);
+  if (
+    !hasIndex('idx_transcripts_room_head') ||
+    !hasIndex('idx_hand_settlements_room_head')
+  ) {
+    assertUniqueRoomHead(db);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripts_room_head ON transcripts(room_id, head);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_hand_settlements_room_head ON hand_settlements(room_id, head);
+    `);
+  }
+}
+
+/**
+ * Fail-closed preflight for the `(room_id, head)` uniqueness the void
+ * correlation assumes. Raises the offending groups (room, head, row count) so
+ * an operator can reconcile the audit data; it never deletes or rewrites rows.
+ */
+export function assertUniqueRoomHead(db: DB): void {
+  for (const table of ['transcripts', 'hand_settlements'] as const) {
+    const dupes = db
+      .prepare(
+        `SELECT room_id AS roomId, head, COUNT(*) AS n
+         FROM ${table}
+         GROUP BY room_id, head HAVING COUNT(*) > 1
+         ORDER BY n DESC, room_id, head`,
+      )
+      .all() as { roomId: string; head: string; n: number }[];
+    if (dupes.length > 0) {
+      const shown = dupes.slice(0, 20);
+      const detail = shown
+        .map((d) => `room=${d.roomId} head=${d.head} rows=${d.n}`)
+        .join('; ');
+      throw new Error(
+        `migrateHandStats: ${table} has ${dupes.length} duplicate (room_id, head) group(s); ` +
+          'void-hand correlation is ambiguous and the audit rows must be reconciled (never auto-deduped). ' +
+          `First ${shown.length}: ${detail}`,
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,8 +1384,7 @@ export function backfillHandStats(db: DB, opts: { force?: boolean } = {}): Backf
     .prepare(
       `SELECT t.hand_id, t.room_id, t.head, t.entries, t.ts,
               s.final_stacks AS final_stacks,
-              EXISTS(SELECT 1 FROM ledger l
-                     WHERE l.room_id = t.room_id AND l.kind = 'void-hand' AND l.ref = t.hand_id) AS voided,
+              ${voidHandExistsSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })} AS voided,
               (SELECT h.parser_version FROM hands h WHERE h.hand_id = t.hand_id) AS existing_version,
               (SELECT h.status FROM hands h WHERE h.hand_id = t.hand_id) AS existing_status,
               (SELECT h.source_head FROM hands h WHERE h.hand_id = t.hand_id) AS existing_head

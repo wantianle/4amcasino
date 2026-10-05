@@ -11,6 +11,7 @@ import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
 import { platformUserId } from './platform.js';
+import { settlementNotVoidedSql, voidHandExistsSql } from './handProjection.js';
 import {
   applyRoomFeatures,
   bombScheduleError,
@@ -35,6 +36,7 @@ export interface RoomRow {
   seven_deuce_bonus: number;
   voided: number;
   archived: number;
+  archived_at: number | null;
   deleted: number;
   meet_link: string | null;
   visibility: string;
@@ -101,6 +103,68 @@ function newJoinCode(): string {
 
 export function getRoom(db: DB, roomId: string): RoomRow | undefined {
   return db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as RoomRow | undefined;
+}
+
+export interface ArchiveTransition {
+  /** The room was already archived; nothing changed. */
+  alreadyClosed: boolean;
+  /** The stable archived_at (original on a repeat, new on the transition). */
+  archivedAt: number | null;
+  /** True only for the 0 -> 1 transition (callers emit `changed` only then). */
+  changed: boolean;
+}
+
+/**
+ * The archive state change, to be called INSIDE an open transaction. One
+ * implementation shared by `/api/rooms/:id/close`, the admin lifecycle
+ * approval and the admin archive route so they cannot drift:
+ *
+ *  - idempotent and race-safe: a conditional `WHERE archived = 0` update plus
+ *    its `changes` count means two overlapping archives transition once, and
+ *    `archived_at` is never overwritten;
+ *  - on the transition it clears every seat and marks everyone sitting out,
+ *    exactly like `/close`. A hand already in flight keeps its own seat
+ *    snapshot and still settles; nobody is dealt into the next one.
+ *
+ * CONTRACT - the three archive entry points differ ONLY in their pre-checks,
+ * never in the resulting state (all three funnel through this function):
+ *
+ *  1. `POST /api/rooms/:id/close` (host/platform): NO `activeHands` check. A
+ *     live hand is allowed to finish; close only guarantees nobody is dealt
+ *     into the next one. Immediate, no approval.
+ *  2. `POST /api/admin/rooms/:id/archive` (platform, toggling archived=true):
+ *     REFUSES while `activeHands` holds the room (400) - a stricter admin
+ *     guard. Unarchive has no such guard.
+ *  3. Lifecycle approval (`/api/rooms/:id/archive` request then
+ *     `POST /api/admin/lifecycle/:id`): NO `activeHands` check, because the
+ *     request was filed when the room was idle and a hand may legitimately
+ *     have started while it sat in the approval queue. Approving archives and
+ *     clears seats; any in-flight hand settles on its snapshot exactly as
+ *     `/close` would. This is deliberate and safe - `startHand` re-reads
+ *     `archived` inside its own claim transaction, so an approval that lands
+ *     first still prevents the next deal.
+ */
+export function archiveRoomTx(db: DB, roomId: string): ArchiveTransition {
+  const current = getRoom(db, roomId);
+  if (!current) return { alreadyClosed: true, archivedAt: null, changed: false };
+  if (current.archived)
+    return { alreadyClosed: true, archivedAt: current.archived_at ?? null, changed: false };
+  const now = Date.now();
+  const info = db
+    .prepare('UPDATE rooms SET archived = 1, archived_at = ? WHERE id = ? AND archived = 0')
+    .run(now, roomId);
+  if (info.changes === 0) {
+    const again = getRoom(db, roomId);
+    return { alreadyClosed: true, archivedAt: again?.archived_at ?? null, changed: false };
+  }
+  db.prepare('UPDATE room_players SET seat = NULL, sitting_out = 1 WHERE room_id = ?').run(roomId);
+  return { alreadyClosed: false, archivedAt: now, changed: true };
+}
+
+/** {@link archiveRoomTx} in its own IMMEDIATE transaction (the writer lock that
+ *  serializes against a concurrent `startHand` feature-claim). */
+export function archiveRoom(db: DB, roomId: string): ArchiveTransition {
+  return db.transaction(() => archiveRoomTx(db, roomId)).immediate();
 }
 
 export function isSpectator(db: DB, roomId: string, userId: number): boolean {
@@ -176,6 +240,7 @@ function roomJson(db: DB, room: RoomRow) {
     sevenDeuceBonus: room.seven_deuce_bonus,
     voided: !!room.voided,
     archived: !!room.archived,
+    archivedAt: room.archived_at,
     meetLink: room.meet_link,
     visibility: room.visibility,
     allowSpectators: !!room.allow_spectators,
@@ -297,6 +362,10 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       .prepare('SELECT * FROM rooms WHERE join_code = ?')
       .get(parsed.data.joinCode.toUpperCase()) as RoomRow | undefined;
     if (!room) return reply.code(404).send({ error: 'no such room' });
+    // A closed/archived (or deleted) table takes no new members: the join code
+    // stays on the client but must not resurrect access to hands/ledger.
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     db.prepare('INSERT OR IGNORE INTO room_players (room_id, user_id) VALUES (?, ?)').run(
       room.id,
       req.userId,
@@ -337,6 +406,8 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     if (!room) return reply.code(404).send({ error: 'no such room' });
     if (room.visibility !== 'public')
       return reply.code(403).send({ error: 'this table is private' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     db.prepare('INSERT OR IGNORE INTO room_players (room_id, user_id) VALUES (?, ?)').run(
       id,
       req.userId,
@@ -359,6 +430,11 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       })
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    {
+      const room = getRoom(db, id);
+      if (room && (room.archived || room.deleted))
+        return reply.code(409).send({ error: 'this table is closed' });
+    }
     // All buy semantics (pending cap, idempotency window, auto-approve, banker
     // attribution, ledger + stack move) live in the shared buy service so bots
     // cannot get a different deal from humans.
@@ -396,6 +472,11 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       .object({ requestId: z.number().int(), approve: z.boolean() })
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    {
+      const room = getRoom(db, id);
+      if (room && (room.archived || room.deleted))
+        return reply.code(409).send({ error: 'this table is closed' });
+    }
     try {
       approveRoomBuy(db, {
         roomId: id,
@@ -433,6 +514,8 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
     const room = getRoom(db, id);
     if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (!canBank(room, req.userId)) return reply.code(403).send({ error: 'banker only' });
     // Chips at risk in a live hand are held in memory, not deducted from the
     // stack, so a mid-hand revert passes its own solvency check and then settles
@@ -580,6 +663,80 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     return { rooms: rows };
   });
 
+  // "My results": every room this account has ever been part of - including
+  // archived/closed and deleted ones - with a per-room net and hand count, so a
+  // finished game can still be reviewed after the host closes the table. Reads
+  // only `room_players`, `rooms` and the hash-chained `ledger`, so it needs no
+  // new table and survives every lifecycle state (rows are never dropped).
+  // Query params are validated rather than silently clamped: a bad limit/offset
+  // ("abc", 0, 201, -1) is a client bug and gets a 400, not a normalized page.
+  const meRoomsQuerySchema = z.object({
+    archived: z.enum(['true', 'false']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  });
+
+  app.get('/api/me/rooms', authed, async (req, reply) => {
+    const parsed = meRoomsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    const where: string[] = [];
+    if (parsed.data.archived === 'true') where.push('r.archived = 1');
+    else if (parsed.data.archived === 'false') where.push('r.archived = 0');
+    const limit = parsed.data.limit ?? 100;
+    const offset = parsed.data.offset ?? 0;
+    const rows = db
+      .prepare(
+        `SELECT r.id AS roomId, r.name, r.sb, r.bb, r.created_at AS createdAt,
+                r.host_id AS hostId, COALESCE(hu.display_name, hu.username) AS hostName,
+                r.archived, r.archived_at AS closedAt, r.deleted, r.voided,
+                (rp.stack - COALESCE((
+                  SELECT SUM(l.delta) FROM ledger l
+                  WHERE l.room_id = r.id AND l.user_id = rp.user_id
+                    AND l.kind IN ('purchase', 'revert')
+                ), 0)) AS myNet,
+                -- Count settled hands, excluding voided ones. Uses the shared
+                -- void correlation helper so this agrees with handStats/HUD.
+                -- squid-game rows share the settlement ref but a different
+                -- kind, so they never add a count; aborted hands have no
+                -- settlement row.
+                (SELECT COUNT(DISTINCT l.ref) FROM ledger l
+                  WHERE l.room_id = r.id AND l.user_id = rp.user_id
+                    AND l.kind = 'hand-settlement' AND l.ref IS NOT NULL
+                    AND ${settlementNotVoidedSql('l')}) AS myHands
+         FROM room_players rp
+         JOIN rooms r ON r.id = rp.room_id
+         JOIN users hu ON hu.id = r.host_id
+         WHERE rp.user_id = ? ${where.length ? `AND ${where.join(' AND ')}` : ''}
+         ORDER BY COALESCE(r.archived_at, r.created_at) DESC, r.created_at DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(req.userId, limit, offset) as {
+      roomId: string;
+      name: string;
+      sb: number;
+      bb: number;
+      createdAt: number;
+      hostId: number;
+      hostName: string;
+      archived: number;
+      closedAt: number | null;
+      deleted: number;
+      voided: number;
+      myNet: number;
+      myHands: number;
+    }[];
+    return {
+      rooms: rows.map((r) => ({
+        ...r,
+        archived: !!r.archived,
+        closedAt: r.closedAt ?? null,
+        deleted: !!r.deleted,
+        voided: !!r.voided,
+        isHost: r.hostId === req.userId,
+      })),
+    };
+  });
+
   // Each hand carries YOUR result: net chips from the settlement ledger plus
   // how the hand ended for you (folded and where, showdown, quiet win, sat
   // out). Highly requested by siwans - see docs/FEATURES.md.
@@ -589,9 +746,11 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     if (!isMember(db, id, req.userId)) return reply.code(403).send({ error: 'not a member' });
     const rows = db
       .prepare(
-        'SELECT hand_id as handId, head, entries, ts FROM transcripts WHERE room_id = ? ORDER BY ts DESC',
+        `SELECT t.hand_id as handId, t.head, t.entries, t.ts,
+                ${voidHandExistsSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })} AS voided
+         FROM transcripts t WHERE t.room_id = ? ORDER BY t.ts DESC`,
       )
-      .all(id) as { handId: string; head: string; entries: string; ts: number }[];
+      .all(id) as { handId: string; head: string; entries: string; ts: number; voided: number }[];
     const nets = new Map(
       (
         db
@@ -601,13 +760,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
           )
           .all(id, req.userId) as { ref: string; net: number }[]
       ).map((r) => [r.ref, r.net]),
-    );
-    const voidedHeads = new Set(
-      (
-        db
-          .prepare(`SELECT DISTINCT ref FROM ledger WHERE room_id = ? AND kind = 'void-hand'`)
-          .all(id) as { ref: string | null }[]
-      ).map((r) => r.ref),
     );
     const STREETS = ['preflop', 'on the flop', 'on the turn', 'on the river'];
     const hands = rows.map((row) => {
@@ -659,7 +811,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         ts: row.ts,
         myNet: nets.get(row.head) ?? null,
         outcome,
-        voided: voidedHeads.has(row.head),
+        voided: !!row.voided,
       };
     });
     return { hands };

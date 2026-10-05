@@ -809,6 +809,10 @@ export class GameRoom {
         sevenDeuceBonus: room.seven_deuce_bonus,
         voided: !!room.voided,
         meetLink: room.meet_link,
+        // A closed/archived table is retired: the client should leave for the
+        // lobby. History and the ledger stay readable (see /api/me/rooms).
+        archived: !!room.archived,
+        archivedAt: room.archived_at,
       },
       players,
       handActive: this.hand !== null,
@@ -828,6 +832,14 @@ export class GameRoom {
     const full = JSON.stringify(state);
     publishRoomEvent(this.db, this.roomId, state);
     for (const [uid, ws] of this.sockets) ws.send(memberIds.has(uid) ? full : masked);
+  }
+
+  /** A closed/archived (or deleted) table is retired: seats are frozen and no
+   *  new hand may be dealt. Reads and settlement of an already-running hand are
+   *  unaffected. */
+  private isRoomClosed(): boolean {
+    const room = getRoom(this.db, this.roomId);
+    return !room || !!room.archived || !!room.deleted;
   }
 
   handleMessage(userId: number, msg: ClientMsg): void {
@@ -856,6 +868,8 @@ export class GameRoom {
         return;
       }
       case 'sit': {
+        if (this.isRoomClosed())
+          return this.send(userId, { t: 'error', message: 'this table is closed' });
         if (this.hand)
           return this.send(userId, { t: 'error', message: 'wait for the hand to end' });
         const taken = this.db
@@ -871,6 +885,8 @@ export class GameRoom {
         return;
       }
       case 'leave_seat': {
+        if (this.isRoomClosed())
+          return this.send(userId, { t: 'error', message: 'this table is closed' });
         if (this.hand)
           return this.send(userId, { t: 'error', message: 'wait for the hand to end' });
         if (
@@ -893,7 +909,7 @@ export class GameRoom {
         if (room.host_id !== userId)
           return this.send(userId, { t: 'error', message: 'only the host starts hands' });
         // an archived table is retired: history stays readable, play does not resume
-        if (room.archived)
+        if (room.archived || room.deleted)
           return this.send(userId, {
             t: 'error',
             message: 'this table is archived - unarchive it to deal again',
@@ -926,6 +942,8 @@ export class GameRoom {
         return this.onPostHandShow(userId, msg);
       }
       case 'sit_out': {
+        if (this.isRoomClosed())
+          return this.send(userId, { t: 'error', message: 'this table is closed' });
         this.db
           .prepare('UPDATE room_players SET sitting_out = ? WHERE room_id = ? AND user_id = ?')
           .run(msg.sittingOut ? 1 : 0, this.roomId, userId);
@@ -953,7 +971,7 @@ export class GameRoom {
     roomId: string,
     seats: HandSeatInfo[],
     handId: string,
-  ): HandFeatureSnapshot {
+  ): HandFeatureSnapshot | null {
     const room = getRoom(this.db, roomId)!;
     const settings = readRoomFeatures(room);
     const now = Date.now();
@@ -970,7 +988,14 @@ export class GameRoom {
       timeBank: null,
     };
 
-    const claim = this.db.transaction(() => {
+    const claim = this.db.transaction((): HandFeatureSnapshot | null => {
+      // Authoritative lifecycle gate. The `startHand` guard reads `archived`
+      // before this point; re-reading it inside the same IMMEDIATE transaction
+      // that claims triggers makes "close" and "new hand" mutually exclusive:
+      // whichever write commits first wins, and a close always leaves no
+      // claimed trigger and no hand behind. Returns null to abort the deal.
+      const current = getRoom(this.db, roomId);
+      if (!current || current.archived || current.deleted) return null;
       const pending = this.db
         .prepare(
           "SELECT id, kind, source FROM room_feature_triggers WHERE room_id = ? AND status = 'pending'",
@@ -1088,14 +1113,14 @@ export class GameRoom {
           hands,
         };
       }
+      return snapshot;
     });
-    claim.immediate();
-    return snapshot;
+    return claim.immediate();
   }
 
   private startHand(auto = false, onlyIds?: Set<number>): void {
     const room = getRoom(this.db, this.roomId)!;
-    if (this.hand || room.archived) return;
+    if (this.hand || room.archived || room.deleted) return;
     const eligible = this.eligiblePlayers().filter((p) => !onlyIds || onlyIds.has(p.userId));
     if (eligible.length < 2) {
       if (!auto)
@@ -1137,6 +1162,10 @@ export class GameRoom {
     // bound to the hand that will actually carry it through to a transcript.
     const handId = randomBytes(8).toString('hex');
     const features = this.claimHandFeatures(room.id, handSeats, handId);
+    // The room was closed between the guard read above and the claim
+    // transaction: the claim rolled back, nothing was claimed and no hand
+    // exists. Leave the table retired.
+    if (!features) return;
     activeHands.add(this.roomId);
     this.hand = new Hand(
       this,

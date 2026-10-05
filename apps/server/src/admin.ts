@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { DB } from './db.js';
 import { isPlatform, platformUserId, requirePlatform } from './platform.js';
 import { requireUser } from './auth.js';
-import { roomEvents } from './rooms.js';
+import { archiveRoom, archiveRoomTx, roomEvents } from './rooms.js';
 import { mergeAccounts } from './merge.js';
 import { rekey } from './account.js';
 import { activeHands } from './liveHands.js';
@@ -99,6 +99,10 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(400).send({ error: 'already decided' });
 
     const approve = parsed.data.approve;
+    // `changed` is true only when this approval actually moved the room's
+    // lifecycle state. Rejecting, re-approving an already-archived room, or
+    // unarchiving a live one changes nothing and must NOT notify the table.
+    let changed = false;
     const decide = db.transaction(() => {
       db.prepare(
         `UPDATE room_lifecycle_requests SET status = ?, decided_at = ?, decided_by = ? WHERE id = ?`,
@@ -106,25 +110,26 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
 
       if (approve) {
         if (lifecycleRequest.action === 'archive') {
-          db.prepare('UPDATE rooms SET archived = 1, archived_at = ? WHERE id = ?').run(
-            Date.now(),
-            lifecycleRequest.roomId,
-          );
+          // Same idempotent, seat-clearing transition as `/close`; a repeat
+          // approval (or a room already closed elsewhere) never overwrites
+          // archived_at and changes nothing. Runs inside this transaction.
+          changed = archiveRoomTx(db, lifecycleRequest.roomId).changed;
         } else if (lifecycleRequest.action === 'unarchive') {
-          db.prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ?').run(
-            lifecycleRequest.roomId,
-          );
+          const info = db
+            .prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ? AND archived = 1')
+            .run(lifecycleRequest.roomId);
+          changed = info.changes > 0;
         } else if (lifecycleRequest.action === 'delete') {
-          db.prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ?').run(
-            Date.now(),
-            lifecycleRequest.roomId,
-          );
+          const info = db
+            .prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0')
+            .run(Date.now(), lifecycleRequest.roomId);
+          changed = info.changes > 0;
         }
       }
     });
     decide();
 
-    roomEvents.emit('changed', lifecycleRequest.roomId);
+    if (changed) roomEvents.emit('changed', lifecycleRequest.roomId);
     return { ok: true, status: approve ? 'approved' : 'rejected' };
   });
 
@@ -370,12 +375,22 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     }
 
     if (archived) {
-      db.prepare('UPDATE rooms SET archived = 1, archived_at = ? WHERE id = ?').run(Date.now(), id);
-    } else {
-      db.prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ?').run(id);
+      // Unified with `/close`: idempotent, conditional, clears seats on the
+      // 0->1 transition and preserves the original archived_at on a repeat.
+      const result = archiveRoom(db, id);
+      if (result.changed) roomEvents.emit('changed', id);
+      return {
+        ok: true,
+        archived: true,
+        alreadyClosed: result.alreadyClosed,
+        archivedAt: result.archivedAt,
+      };
     }
-    roomEvents.emit('changed', id);
-    return { ok: true, archived };
+    const info = db
+      .prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ? AND archived = 1')
+      .run(id);
+    if (info.changes > 0) roomEvents.emit('changed', id);
+    return { ok: true, archived: false, changed: info.changes > 0 };
   });
 
   /** Delete a room directly - always refuses mid-hand, same as the
@@ -390,9 +405,14 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(400).send({ error: 'a hand is in progress - wait for it to finish' });
     }
 
-    db.prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ?').run(Date.now(), id);
-    roomEvents.emit('changed', id);
-    return { ok: true };
+    // Idempotent like archive/close: the conditional guards the 0->1
+    // transition, so a repeat delete neither overwrites deleted_at nor emits a
+    // redundant room change. `changed` mirrors the unarchive response shape.
+    const info = db
+      .prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0')
+      .run(Date.now(), id);
+    if (info.changes > 0) roomEvents.emit('changed', id);
+    return { ok: true, changed: info.changes > 0 };
   });
 
   /** Force-disable an account outright, no merge involved (a spam signup, a

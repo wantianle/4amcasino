@@ -5,6 +5,7 @@ import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { isPlatform, platformUserId } from './platform.js';
 import { canBank, getRoom, isMember } from './rooms.js';
+import { settlementNotVoidedSql, voidHandExclusionSql, voidHandExistsSql } from './handProjection.js';
 import {
   DEFAULT_POKER_HOTKEYS,
   parsePokerHotkeys,
@@ -120,7 +121,7 @@ const LEADERBOARD_SQL = `
     FROM ledger l JOIN rooms r ON r.id = l.room_id
     WHERE l.kind IN ('hand-settlement', 'squid-game')
       AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-      AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref) %ROOM%
+      AND ${settlementNotVoidedSql('l')} %ROOM%
     GROUP BY l.room_id, l.ref, l.user_id
   )
   SELECT u.id as userId, u.username, u.display_name as displayName, u.avatar_version as avatarVersion,
@@ -338,7 +339,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
            FROM ledger l JOIN rooms r ON r.id = l.room_id
            WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
              AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-             AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+             AND ${settlementNotVoidedSql('l')}
            GROUP BY l.room_id, l.ref
          )
          SELECT COALESCE(SUM(net), 0) as net,
@@ -348,28 +349,40 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       )
       .get(id) as { net: number; handsPlayed: number; biggestWin: number };
 
-    // rivals: everyone who shared a settled hand (same ref) — hands together + this user's net in those hands
+    // rivals: everyone who shared a settled hand — hands together + this user's
+    // net in those hands. Keyed by (room, ref), never ref alone: the same ref
+    // string can appear in two rooms, and a voided hand must count for neither
+    // side. Both queries therefore carry the shared void exclusion.
     const mine = db
       .prepare(
-        `SELECT ref, SUM(delta) as delta FROM ledger
-         WHERE user_id = ? AND kind IN ('hand-settlement', 'squid-game') AND ref IS NOT NULL
-         GROUP BY ref`,
+        `SELECT l.room_id AS roomId, l.ref AS ref, SUM(l.delta) AS delta
+         FROM ledger l
+         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game') AND l.ref IS NOT NULL
+           AND ${settlementNotVoidedSql('l')}
+         GROUP BY l.room_id, l.ref`,
       )
-      .all(id) as { ref: string; delta: number }[];
-    const myDelta = new Map(mine.map((m) => [m.ref, m.delta]));
+      .all(id) as { roomId: string; ref: string; delta: number }[];
+    const rivalKey = (roomId: string, ref: string) => `${roomId}\u0000${ref}`;
+    const myDelta = new Map(mine.map((m) => [rivalKey(m.roomId, m.ref), m.delta]));
     const rivalAgg = new Map<number, { handsTogether: number; netVs: number }>();
     if (mine.length > 0) {
       const others = db
         .prepare(
-          `SELECT DISTINCT user_id as userId, ref FROM ledger
-           WHERE kind IN ('hand-settlement', 'squid-game') AND user_id != ?
-             AND ref IN (SELECT ref FROM ledger WHERE user_id = ? AND kind IN ('hand-settlement', 'squid-game'))`,
+          `SELECT DISTINCT l.user_id AS userId, l.room_id AS roomId, l.ref AS ref
+           FROM ledger l
+           JOIN (
+             SELECT m.room_id, m.ref FROM ledger m
+             WHERE m.user_id = ? AND m.kind IN ('hand-settlement', 'squid-game') AND m.ref IS NOT NULL
+               AND ${settlementNotVoidedSql('m')}
+           ) mine ON mine.room_id = l.room_id AND mine.ref = l.ref
+           WHERE l.kind IN ('hand-settlement', 'squid-game') AND l.user_id != ?
+             AND ${settlementNotVoidedSql('l')}`,
         )
-        .all(id, id) as { userId: number; ref: string }[];
+        .all(id, id) as { userId: number; roomId: string; ref: string }[];
       for (const o of others) {
         const agg = rivalAgg.get(o.userId) ?? { handsTogether: 0, netVs: 0 };
         agg.handsTogether++;
-        agg.netVs += myDelta.get(o.ref) ?? 0;
+        agg.netVs += myDelta.get(rivalKey(o.roomId, o.ref)) ?? 0;
         rivalAgg.set(o.userId, agg);
       }
     }
@@ -437,7 +450,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         `SELECT l.ts, l.delta FROM ledger l JOIN rooms r ON r.id = l.room_id
          WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
            AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-           AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+           AND ${settlementNotVoidedSql('l')}
          ORDER BY l.ts LIMIT 2000`,
       )
       .all(req.userId) as { ts: number; delta: number }[];
@@ -455,6 +468,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         `SELECT t.entries FROM transcripts t JOIN rooms r ON r.id = t.room_id
          WHERE r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND t.room_id IN (SELECT room_id FROM room_players WHERE user_id = ?)
+           AND ${voidHandExclusionSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })}
          ORDER BY t.ts DESC LIMIT 500`,
       )
       .all(id) as { entries: string }[];
@@ -545,14 +559,18 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     if (!getRoom(db, id)) return reply.code(404).send({ error: 'no such room' });
     if (!isMember(db, id, req.userId)) return reply.code(403).send({ error: 'not a member' });
     const span = db
-      .prepare('SELECT COUNT(*) as hands, MIN(ts) as firstTs, MAX(ts) as lastTs FROM transcripts WHERE room_id = ?')
+      .prepare(
+        `SELECT COUNT(*) as hands, MIN(t.ts) as firstTs, MAX(t.ts) as lastTs
+         FROM transcripts t WHERE t.room_id = ?
+           AND ${voidHandExclusionSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })}`,
+      )
       .get(id) as { hands: number; firstTs: number | null; lastTs: number | null };
     const pot = db
       .prepare(
         `SELECT MAX(potSum) as biggestPot FROM (
            SELECT SUM(CASE WHEN l.delta > 0 THEN l.delta ELSE 0 END) as potSum
            FROM ledger l WHERE l.room_id = ? AND l.kind = 'hand-settlement'
-             AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+             AND ${settlementNotVoidedSql('l')}
            GROUP BY l.ref
          )`,
       )
@@ -585,7 +603,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
                     SUM(l.delta) as net,
                     MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) as settled
              FROM ledger l WHERE l.room_id = @roomId AND l.kind IN ('hand-settlement', 'squid-game')
-               AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+               AND ${settlementNotVoidedSql('l')}
              GROUP BY l.room_id, l.ref, l.user_id
            ) ph
            GROUP BY ph.user_id
@@ -631,9 +649,13 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       )
       .all(req.userId) as { handId: string; roomId: string; roomName: string; head: string; entries: string; ts: number }[];
     const netStmt = db.prepare(
-      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND ref = ? AND kind IN ('hand-settlement', 'squid-game')",
+      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND room_id = ? AND ref = ? AND kind IN ('hand-settlement', 'squid-game')",
     );
-    const voidStmt = db.prepare("SELECT 1 FROM ledger WHERE kind = 'void-hand' AND ref = ? LIMIT 1");
+    // Room-scoped and key-agnostic: a void may carry the settlement head or the
+    // hand id. Reuses the shared correlation helper (never the bare ref only).
+    const voidStmt = db.prepare(
+      `SELECT ${voidHandExistsSql({ roomExpr: '@roomId', handIdExpr: '@handId', headExpr: '@head' })} AS voided`,
+    );
     const hands: unknown[] = [];
     for (const row of rows) {
       if (hands.length >= 30) break;
@@ -677,7 +699,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             (e.payload.action as { type: string }).type === 'fold') ||
           (e.type === 'timeout_fold' && (e.payload.seat as number) === mine.seat),
       );
-      const net = (netStmt.get(req.userId, row.head) as { net: number }).net;
+      const net = (netStmt.get(req.userId, row.roomId, row.head) as { net: number }).net;
       const outcome = !settlement
         ? 'aborted'
         : reveal
@@ -701,7 +723,11 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         myCards,
         label: myCards ? labelOf(myCards) : null,
         opponents,
-        voided: !!voidStmt.get(row.head),
+        voided: !!(
+          voidStmt.get({ roomId: row.roomId, handId: row.handId, head: row.head }) as {
+            voided: number;
+          }
+        ).voided,
       });
     }
     return { hands };
@@ -723,14 +749,14 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         `SELECT l.delta, l.ref, l.room_id as roomId, r.name as roomName
          FROM ledger l JOIN rooms r ON r.id = l.room_id
          WHERE l.user_id = ? AND l.kind = 'hand-settlement' AND l.delta > 0 AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-           AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+           AND ${settlementNotVoidedSql('l')}
          ORDER BY l.delta DESC LIMIT 1`,
       )
       .get(id) as { delta: number; ref: string; roomId: string; roomName: string } | undefined;
     if (!best) return { hidden: !user.showBestHand, hand: null };
     const t = db
-      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE head = ?')
-      .get(best.ref) as { handId: string; entries: string; ts: number } | undefined;
+      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND head = ?')
+      .get(best.roomId, best.ref) as { handId: string; entries: string; ts: number } | undefined;
     if (!t) return { hidden: !user.showBestHand, hand: null };
     let board: number[] = [];
     let myCards: number[] | null = null;

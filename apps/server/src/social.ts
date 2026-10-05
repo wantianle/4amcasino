@@ -2,12 +2,20 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DB } from './db.js';
 import { ONLINE_WINDOW_MS, requireUser } from './auth.js';
-import { canBank, getRoom, isMember, isSpectator, roomEvents, roomPlayers } from './rooms.js';
+import {
+  archiveRoom,
+  canBank,
+  getRoom,
+  isMember,
+  isSpectator,
+  roomEvents,
+  roomPlayers,
+} from './rooms.js';
 import { appendLedger } from './ledger.js';
 import { activeHands } from './liveHands.js';
 import { LIMITS } from './limits.js';
 import { decodeProof, registerSettleRoutes } from './settle.js';
-import { platformUserId } from './platform.js';
+import { platformUserId, isPlatform } from './platform.js';
 import { randomBytes } from 'node:crypto';
 
 /** Friends, presence, room invites, and banker invalidation. */
@@ -118,6 +126,8 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
     const room = getRoom(db, id);
     if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (!isMember(db, id, req.userId)) return reply.code(403).send({ error: 'not a member' });
     if (!areFriends(req.userId, parsed.data.userId))
       return reply.code(400).send({ error: 'you can only invite friends' });
@@ -176,6 +186,14 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       .prepare("SELECT room_id FROM invites WHERE id = ? AND to_id = ? AND status = 'pending'")
       .get(inviteId, req.userId) as { room_id: string } | undefined;
     if (!invite) return reply.code(404).send({ error: 'no such invite' });
+    // Accepting after close must not add a member. Check before touching the
+    // invite so the failure leaves no room_players row behind; declining is
+    // still allowed.
+    if (parsed.data.accept) {
+      const room = getRoom(db, invite.room_id);
+      if (!room || room.archived || room.deleted)
+        return reply.code(409).send({ error: 'this table is closed' });
+    }
     db.prepare('UPDATE invites SET status = ? WHERE id = ?').run(
       parsed.data.accept ? 'accepted' : 'declined',
       inviteId,
@@ -199,6 +217,10 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     const { id } = req.params as { id: string };
     const room = getRoom(db, id);
     if (!room) return reply.code(404).send({ error: 'no such room' });
+    // A closed table cannot change who may watch it - the watch surface is
+    // frozen along with seats and money.
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (room.host_id !== req.userId && !canBank(room, req.userId))
       return reply.code(403).send({ error: 'host or banker only' });
     let token = room.spectate_token;
@@ -217,10 +239,17 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/watch/:token', authed, async (req, reply) => {
     const { token } = req.params as { token: string };
     const room = db.prepare('SELECT * FROM rooms WHERE spectate_token = ?').get(token) as
-      | { id: string; name: string; allow_spectators: number }
+      | { id: string; name: string; allow_spectators: number; archived: number; deleted: number }
       | undefined;
     if (!room) return reply.code(404).send({ error: 'no such watch link' });
     if (isMember(db, room.id, req.userId)) return { roomId: room.id, name: room.name, member: true };
+    // A closed table takes no NEW spectators, but an existing one keeps
+    // read-only access to the room it was already watching.
+    if (room.archived || room.deleted) {
+      if (isSpectator(db, room.id, req.userId))
+        return { roomId: room.id, name: room.name, member: false };
+      return reply.code(403).send({ error: 'this table is closed' });
+    }
     if (!room.allow_spectators)
       return reply.code(403).send({ error: 'the host turned watching off for this table' });
     db.prepare('INSERT OR IGNORE INTO spectators (room_id, user_id, ts) VALUES (?, ?, ?)').run(
@@ -234,7 +263,10 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
   // a spectator can raise a hand; the host or a banker lets them in
   app.post('/api/rooms/:id/ask-join', authed, async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!getRoom(db, id)) return reply.code(404).send({ error: 'no such room' });
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (!isSpectator(db, id, req.userId)) return reply.code(403).send({ error: 'watchers only' });
     const pending = db
       .prepare("SELECT 1 FROM join_requests WHERE room_id = ? AND user_id = ? AND status = 'pending'")
@@ -273,6 +305,10 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     if (!room) return reply.code(404).send({ error: 'no such room' });
     if (room.host_id !== req.userId && !canBank(room, req.userId))
       return reply.code(403).send({ error: 'host or banker only' });
+    // Admitting after close must not add a member: gate before the request row
+    // is marked accepted so a rejected admit leaves no half state.
+    if (parsed.data.accept && (room.archived || room.deleted))
+      return reply.code(409).send({ error: 'this table is closed' });
     db.prepare("UPDATE join_requests SET status = ? WHERE room_id = ? AND user_id = ? AND status = 'pending'").run(
       parsed.data.accept ? 'accepted' : 'declined',
       id,
@@ -329,6 +365,8 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     const { id } = req.params as { id: string };
     const room = getRoom(db, id);
     if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (!isMember(db, id, req.userId) || !isMember(db, id, parsed.data.toUserId))
       return reply.code(403).send({ error: 'both players must be at this table' });
     if (parsed.data.toUserId === req.userId)
@@ -446,6 +484,51 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     return { pending: true, requestId };
   });
 
+  /** Close (archive) a table on the spot, no approval step.
+   *
+   *  The host, or a platform admin, can end a game immediately - the red
+   *  confirmation on the client is the only gate. This is the same archived
+   *  semantics as the request-only /archive path above (nothing is dropped; the
+   *  ledger and every transcript stay readable; the room leaves the active
+   *  listings), plus two things:
+   *
+   *   - every seat is cleared and set sitting out, so a hand already in flight
+   *     finishes and settles normally (it holds its own seat snapshot) but no
+   *     one can be dealt into the next one. Stacks and ledger rows are never
+   *     touched - "my results" still shows what each player won or lost;
+   *   - `rooms.archived`/`archived_at` are set inside the transaction and the
+   *     live table is notified through the roomEvents change, so clients get a
+   *     `room_state` whose `room.archived` is now true and can leave for the
+   *     lobby.
+   *
+   *  Idempotent: closing an already-closed room returns 200 with
+   *  `alreadyClosed: true` instead of erroring. Request/response:
+   *  POST /api/rooms/:id/close  ->  { ok, roomId, archived, closedAt, alreadyClosed }
+   *  404 no such room, 403 caller is neither the host nor the platform account. */
+  app.post('/api/rooms/:id/close', authed, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.host_id !== req.userId && !isPlatform(db, req.userId))
+      return reply.code(403).send({ error: 'only the host or a platform admin can close a table' });
+    // One shared, idempotent, atomic transition (see archiveRoom): two
+    // concurrent closes serialize, the first writes `archived_at` and clears
+    // the seats, the second returns the unchanged timestamp with
+    // alreadyClosed=true. The close event is emitted exactly once.
+    const result = archiveRoom(db, id);
+    // The hub listens for this and rebroadcasts room_state (now archived=true),
+    // which also cancels any pending auto-deal / open ready check. Emitted only
+    // on the transition, never by the idempotent second close.
+    if (result.changed) roomEvents.emit('changed', id);
+    return {
+      ok: true,
+      roomId: id,
+      archived: true,
+      closedAt: result.archivedAt,
+      alreadyClosed: result.alreadyClosed,
+    };
+  });
+
   /** Request that a table be permanently retired.
    *
    *  Like archiving, this never touches a row - it only queues a request for
@@ -493,9 +576,22 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     if (activeHands.has(id)) {
       return reply.code(400).send({ error: 'wait for the hand to finish' });
     }
+    // Unify the correlation key before touching anything. A settlement ledger
+    // row's ref is the transcript head; the client voids with that head, but a
+    // caller may pass the hand id. Resolve either to the canonical settlement
+    // ref so the duplicate guard, the reversed rows and the read-side exclusion
+    // (handProjection's shared helper) all agree.
+    const resolved = db
+      .prepare('SELECT hand_id, head FROM hand_settlements WHERE room_id = ? AND (head = ? OR hand_id = ?) LIMIT 1')
+      .get(id, parsed.data.handId, parsed.data.handId) as { hand_id: string; head: string } | undefined;
+    const ref = resolved?.head ?? parsed.data.handId;
+    const handId = resolved?.hand_id ?? parsed.data.handId;
+    // Duplicate guard matches BOTH historical conventions (ref = head, the live
+    // client, or ref = hand_id), scoped to the room, so a legacy void written
+    // with the hand id still blocks a second reversal passed as the head.
     const already = db
-      .prepare("SELECT 1 FROM ledger WHERE room_id = ? AND kind = 'void-hand' AND ref = ?")
-      .get(id, parsed.data.handId);
+      .prepare("SELECT 1 FROM ledger WHERE room_id = ? AND kind = 'void-hand' AND (ref = ? OR ref = ?)")
+      .get(id, ref, handId);
     if (already) return reply.code(400).send({ error: 'that hand was already voided' });
     // The commission rides the same ref as the settlement. Reversing only the
     // settlements made every player whole while the banker kept the rake, so
@@ -504,7 +600,7 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       .prepare(
         "SELECT user_id, delta FROM ledger WHERE room_id = ? AND kind IN ('hand-settlement', 'commission') AND ref = ?",
       )
-      .all(id, parsed.data.handId) as { user_id: number; delta: number }[];
+      .all(id, ref) as { user_id: number; delta: number }[];
     if (entries.length === 0) return reply.code(404).send({ error: 'no settled hand with that id' });
     // winners must still hold enough chips to give the pot back
     for (const e of entries) {
@@ -524,7 +620,7 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
           delta: -e.delta,
           kind: 'void-hand',
           approvedBy: req.userId,
-          ref: parsed.data.handId,
+          ref,
           note: 'hand voided by the banker',
         });
         db.prepare('UPDATE room_players SET stack = stack - ? WHERE room_id = ? AND user_id = ?').run(

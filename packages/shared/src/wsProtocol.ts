@@ -223,6 +223,10 @@ export type ServerMsg =
         autoDeal?: boolean;
         autoDealerId?: number | null;
         commissionBps?: number;
+        /** The table was closed/archived: the client should leave for the lobby.
+         *  Optional so an older server that predates close frames still type-checks. */
+        archived?: boolean;
+        archivedAt?: number | null;
       };
       players: RoomStatePlayer[];
       handActive: boolean;

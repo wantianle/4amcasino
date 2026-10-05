@@ -10,6 +10,7 @@ import {
 } from './platformSettings.js';
 import { platformDues } from './house.js';
 import { roomEvents } from './rooms.js';
+import { settlementNotVoidedSql, voidHandExclusionSql } from './handProjection.js';
 
 export function registerPlatformControl(app: FastifyInstance, db: DB): void {
   const platformOnly = { preHandler: requirePlatform(db) };
@@ -63,7 +64,7 @@ export function registerPlatformControl(app: FastifyInstance, db: DB): void {
         `SELECT strftime('%Y-%m-%d', l.ts / 1000, 'unixepoch') AS date, SUM(l.delta) AS commission
       FROM ledger l JOIN rooms r ON r.id = l.room_id
       WHERE l.kind = 'commission' AND l.ts >= ? AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-      AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.ref = l.ref AND v.kind = 'void-hand')
+      AND ${settlementNotVoidedSql('l')}
       GROUP BY date`,
       )
       .all(Date.parse(days[0]! + 'T00:00:00Z')) as { date: string; commission: number }[];
@@ -76,7 +77,7 @@ export function registerPlatformControl(app: FastifyInstance, db: DB): void {
       ),
       hands: count(`SELECT COUNT(*) AS n FROM transcripts t JOIN rooms r ON r.id = t.room_id
         WHERE r.deleted = 0 AND r.archived = 0 AND r.voided = 0
-        AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.room_id = t.room_id AND l.ref = t.head AND l.kind = 'void-hand')`),
+        AND ${voidHandExclusionSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })}`),
       pendingRequests:
         count("SELECT COUNT(*) AS n FROM room_lifecycle_requests WHERE status = 'pending'") +
         count("SELECT COUNT(*) AS n FROM account_merge_requests WHERE status = 'pending'"),

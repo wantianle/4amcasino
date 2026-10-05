@@ -1,6 +1,7 @@
 import type { HouseDues, HouseRoom, PlatformDuesReport, PlatformDuesUser } from '@4am/shared';
 import type { DB } from './db.js';
 import { platformUserId } from './platform.js';
+import { settlementNotVoidedSql } from './handProjection.js';
 
 /** One source for personal dues and the platform's receivables. Allocation keeps
  * the established rule (net winners share each hand's commission), but assigns
@@ -17,7 +18,7 @@ export function platformDues(db: DB, onlyUserId: number | null = null): Platform
       FROM ledger l JOIN rooms r ON r.id = l.room_id
       LEFT JOIN hand_commission_rates h ON h.room_id = l.room_id AND h.ref = l.ref
       WHERE l.kind = 'commission' AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-        AND NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = l.room_id AND v.kind = 'void-hand' AND v.ref = l.ref)
+        AND ${settlementNotVoidedSql('l')}
         AND (@userId IS NULL OR EXISTS (
           SELECT 1 FROM ledger m WHERE m.room_id = l.room_id AND m.ref = l.ref
             AND m.kind = 'hand-settlement' AND m.user_id = @userId))
