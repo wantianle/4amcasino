@@ -684,11 +684,54 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     else if (parsed.data.archived === 'false') where.push('r.archived = 0');
     const limit = parsed.data.limit ?? 100;
     const offset = parsed.data.offset ?? 0;
+    const whereSql = where.length ? `AND ${where.join(' AND ')}` : '';
+    // `total` is the filtered room count, so the client can page through every
+    // room the caller was part of instead of silently truncating at one page.
+    const total = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM room_players rp JOIN rooms r ON r.id = rp.room_id
+           WHERE rp.user_id = ? ${whereSql}`,
+        )
+        .get(req.userId) as { n: number }
+    ).n;
+    // Career totals over the whole filtered set (not just the current page):
+    // the history header must not shrink when the user pages or filters.
+    const totals = db
+      .prepare(
+        `SELECT COALESCE(SUM(t.myHands), 0) AS hands, COALESCE(SUM(t.myNet), 0) AS net
+         FROM (
+           SELECT
+             (rp.stack - COALESCE((
+               SELECT SUM(l.delta) FROM ledger l
+               WHERE l.room_id = r.id AND l.user_id = rp.user_id
+                 AND l.kind IN ('purchase', 'revert')
+             ), 0)) AS myNet,
+             (SELECT COUNT(DISTINCT l.ref) FROM ledger l
+               WHERE l.room_id = r.id AND l.user_id = rp.user_id
+                 AND l.kind = 'hand-settlement' AND l.ref IS NOT NULL
+                 AND ${settlementNotVoidedSql('l')}) AS myHands
+           FROM room_players rp JOIN rooms r ON r.id = rp.room_id
+           WHERE rp.user_id = ? ${whereSql}
+         ) t`,
+      )
+      .get(req.userId) as { hands: number; net: number };
     const rows = db
       .prepare(
         `SELECT r.id AS roomId, r.name, r.sb, r.bb, r.created_at AS createdAt,
                 r.host_id AS hostId, COALESCE(hu.display_name, hu.username) AS hostName,
-                r.archived, r.archived_at AS closedAt, r.deleted, r.voided,
+                r.archived, r.archived_at AS archivedAt, r.archived_at AS closedAt
+                  /* closedAt kept for the closing-room consumers; archivedAt is
+                     the documented alias. updatedAt is the last money movement
+                     in the room, falling back to when it was retired or created,
+                     so the history list can sort by real activity. */,
+                MAX(
+                  COALESCE((SELECT MAX(l2.ts) FROM ledger l2 WHERE l2.room_id = r.id), 0),
+                  COALESCE(r.archived_at, 0), r.created_at
+                ) AS updatedAt,
+                r.deleted, r.voided,
+                (SELECT COUNT(*) FROM room_players rp2 WHERE rp2.room_id = r.id
+                   AND rp2.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) AS playerCount,
                 (rp.stack - COALESCE((
                   SELECT SUM(l.delta) FROM ledger l
                   WHERE l.room_id = r.id AND l.user_id = rp.user_id
@@ -706,8 +749,15 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
          FROM room_players rp
          JOIN rooms r ON r.id = rp.room_id
          JOIN users hu ON hu.id = r.host_id
-         WHERE rp.user_id = ? ${where.length ? `AND ${where.join(' AND ')}` : ''}
-         ORDER BY COALESCE(r.archived_at, r.created_at) DESC, r.created_at DESC
+         WHERE rp.user_id = ? ${whereSql}
+         -- Product semantics: most recently active room first. The sort must use
+         -- the same expression as the updatedAt column (latest ledger movement,
+         -- archive or creation), not archived_at/created_at, or a fresh hand on
+         -- an old table would sink below idle archived rooms.
+         ORDER BY MAX(
+           COALESCE((SELECT MAX(l2.ts) FROM ledger l2 WHERE l2.room_id = r.id), 0),
+           COALESCE(r.archived_at, 0), r.created_at
+         ) DESC, r.created_at DESC, r.id DESC
          LIMIT ? OFFSET ?`,
       )
       .all(req.userId, limit, offset) as {
@@ -719,9 +769,12 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       hostId: number;
       hostName: string;
       archived: number;
+      archivedAt: number | null;
       closedAt: number | null;
+      updatedAt: number;
       deleted: number;
       voided: number;
+      playerCount: number;
       myNet: number;
       myHands: number;
     }[];
@@ -729,11 +782,17 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       rooms: rows.map((r) => ({
         ...r,
         archived: !!r.archived,
+        archivedAt: r.archivedAt ?? null,
         closedAt: r.closedAt ?? null,
         deleted: !!r.deleted,
         voided: !!r.voided,
         isHost: r.hostId === req.userId,
       })),
+      total,
+      limit,
+      offset,
+      hasMore: offset + rows.length < total,
+      totals,
     };
   });
 
@@ -744,13 +803,32 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     const { id } = req.params as { id: string };
     if (!getRoom(db, id)) return reply.code(404).send({ error: 'no such room' });
     if (!isMember(db, id, req.userId)) return reply.code(403).send({ error: 'not a member' });
+    // Paginated like /api/me/rooms: transcripts are the largest per-room table,
+    // so pagination is validated rather than silently clamped (a bad limit is a
+    // client bug and gets a 400). Default 100 keeps the response bounded while
+    // covering any realistic session in one page.
+    const handsQuerySchema = z.object({
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+      offset: z.coerce.number().int().min(0).optional(),
+    });
+    const parsed = handsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    const limit = parsed.data.limit ?? 100;
+    const offset = parsed.data.offset ?? 0;
+    const total = (
+      db.prepare('SELECT COUNT(*) AS n FROM transcripts WHERE room_id = ?').get(id) as { n: number }
+    ).n;
     const rows = db
       .prepare(
         `SELECT t.hand_id as handId, t.head, t.entries, t.ts,
                 ${voidHandExistsSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })} AS voided
-         FROM transcripts t WHERE t.room_id = ? ORDER BY t.ts DESC`,
+         FROM transcripts t WHERE t.room_id = ?
+         -- Stable newest-first: multiple hands can share a millisecond, and
+         -- without the hand_id tie-breaker OFFSET paging could duplicate or
+         -- skip rows when the sort order is not total.
+         ORDER BY t.ts DESC, t.hand_id DESC LIMIT ? OFFSET ?`,
       )
-      .all(id) as { handId: string; head: string; entries: string; ts: number; voided: number }[];
+      .all(id, limit, offset) as { handId: string; head: string; entries: string; ts: number; voided: number }[];
     const nets = new Map(
       (
         db
@@ -814,7 +892,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         voided: !!row.voided,
       };
     });
-    return { hands };
+    return { hands, total, limit, offset };
   });
 
   app.get('/api/rooms/:id/hands/:handId', authed, async (req, reply) => {

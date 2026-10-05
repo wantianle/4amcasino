@@ -36,6 +36,14 @@ const LeaderboardPage = lazy(() =>
 const PlayerPage = lazy(() =>
   import('../pages/player/PlayerPage.tsx').then((module) => ({ default: module.PlayerPage })),
 );
+const HistoryPage = lazy(() =>
+  import('../pages/history/HistoryPage.tsx').then((module) => ({ default: module.HistoryPage })),
+);
+const HistoryRoomPage = lazy(() =>
+  import('../pages/history/HistoryRoomPage.tsx').then((module) => ({
+    default: module.HistoryRoomPage,
+  })),
+);
 const ReplayPage = lazy(() =>
   import('../pages/replay/ReplayPage.tsx').then((module) => ({ default: module.ReplayPage })),
 );
@@ -318,6 +326,26 @@ export function App() {
                   <RequireAuth>
                     <AppShell>
                       <PlayerPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/history"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <HistoryPage />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/history/:roomId"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <HistoryRoomPage />
                     </AppShell>
                   </RequireAuth>
                 }

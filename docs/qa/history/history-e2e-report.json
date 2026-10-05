@@ -1,0 +1,58 @@
+{
+  "runId": "2026-10-05T10:10:26.431Z",
+  "dbPath": "/tmp/4am-history-4777ae2d2b.db",
+  "baseUrl": "http://127.0.0.1:43269",
+  "roomId": "e0b632c47508",
+  "voidedHandId": "be990e104ede5b7f",
+  "config": {
+    "HANDS": 3,
+    "BOTS": 2
+  },
+  "api": {
+    "myHands": 2,
+    "myNet": 40,
+    "total": 3,
+    "pageNet": 40,
+    "voidedFlagged": true,
+    "handCount": 3
+  },
+  "pagination": {
+    "roomTotal": 25,
+    "firstPageCount": 20,
+    "firstPageHasMore": true,
+    "secondPageCount": 5,
+    "secondPageHasMore": false
+  },
+  "tieBreak": {
+    "page1": [
+      "t5",
+      "t4"
+    ],
+    "page2": [
+      "t3",
+      "t2"
+    ],
+    "page3": [
+      "t1"
+    ]
+  },
+  "roomSwitchOffsetReset": true,
+  "filters": {
+    "archived": true,
+    "active": true
+  },
+  "browser": {
+    "historyRowText": "History QA房主3 名玩家 · 刚刚 · 盲注 10/202 手+40账本",
+    "roomHasVoidBadge": true
+  },
+  "screenshots": [
+    "docs/qa/history/01-history-list.png",
+    "docs/qa/history/02-history-room-voided.png",
+    "docs/qa/history/03-history-room-switch.png",
+    "docs/qa/history/04-history-paged.png",
+    "docs/qa/history/05-history-archived-filter.png",
+    "docs/qa/history/06-history-active-filter.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": []
+}

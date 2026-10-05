@@ -354,7 +354,9 @@ describe('GET /api/me/rooms', () => {
         hostName: string;
         isHost: boolean;
         archived: boolean;
+        archivedAt: number | null;
         closedAt: number | null;
+        updatedAt: number;
         myNet: number;
         myHands: number;
       }[];
@@ -370,6 +372,10 @@ describe('GET /api/me/rooms', () => {
     expect(mine.isHost).toBe(false);
     expect(mine.archived).toBe(true);
     expect(typeof mine.closedAt).toBe('number');
+    // archivedAt is the documented alias of the close timestamp
+    expect(mine.archivedAt).toBe(mine.closedAt);
+    expect(typeof mine.updatedAt).toBe('number');
+    expect(mine.updatedAt).toBe(mine.closedAt);
     // 500 bought, 100 lost to the hand, 300 left on the table
     expect(mine.myNet).toBe(300 - 500);
     expect(mine.myHands).toBe(1);
@@ -394,6 +400,78 @@ describe('GET /api/me/rooms', () => {
     const hostRes = await ctx.app.inject({ method: 'GET', url: '/api/me/rooms', headers: auth(host.token) });
     const hostIds = (hostRes.json() as { rooms: { roomId: string }[] }).rooms.map((r) => r.roomId);
     expect(hostIds).toContain(joined.id);
+
+    await ctx.app.close();
+  });
+
+  it('orders by real last activity (updatedAt) and returns total/hasMore/totals', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'merooms_sort_host');
+    const idle = await createRoom(ctx, host.token, 'Idle Old');
+    const archived = await createRoom(ctx, host.token, 'Archived Mid');
+    const active = await createRoom(ctx, host.token, 'Active New');
+
+    // Created long ago and never touched: updatedAt = created_at.
+    ctx.db.prepare('UPDATE rooms SET created_at = 1000 WHERE id = ?').run(idle.id);
+    // Retired in between: updatedAt = archived_at.
+    ctx.db
+      .prepare('UPDATE rooms SET created_at = 2000, archived = 1, archived_at = 3000 WHERE id = ?')
+      .run(archived.id);
+    // Fresh ledger movement later than everything, even though it was created
+    // after the other two: it must sort first on real activity.
+    ctx.db.prepare('UPDATE rooms SET created_at = 4000 WHERE id = ?').run(active.id);
+    seat(ctx, active.id, host.userId, 0, 100);
+    appendLedger(ctx.db, { roomId: active.id, userId: host.userId, delta: 100, kind: 'purchase' });
+    ctx.db.prepare('UPDATE ledger SET ts = 5000 WHERE room_id = ?').run(active.id);
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?limit=2&offset=0',
+      headers: auth(host.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      rooms: { roomId: string; updatedAt: number }[];
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      totals: { hands: number; net: number };
+    };
+    // Sorted by the `updatedAt` expression, not archived_at/created_at: a hand
+    // played on an old table outranks an idle archived room.
+    expect(body.rooms.map((r) => r.roomId)).toEqual([active.id, archived.id]);
+    expect(body.rooms.map((r) => r.updatedAt)).toEqual([5000, 3000]);
+    expect(body.total).toBe(3);
+    expect(body.limit).toBe(2);
+    expect(body.offset).toBe(0);
+    expect(body.hasMore).toBe(true);
+    // Career totals cover the whole filtered set, not just this page.
+    expect(body.totals).toEqual({ hands: 0, net: 0 });
+
+    const second = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?limit=2&offset=2',
+      headers: auth(host.token),
+    });
+    const body2 = second.json() as { rooms: { roomId: string }[]; hasMore: boolean };
+    expect(body2.rooms.map((r) => r.roomId)).toEqual([idle.id]);
+    expect(body2.hasMore).toBe(false);
+
+    // The archived filter is applied server-side, so total tracks the filter.
+    const onlyArchived = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?archived=true',
+      headers: auth(host.token),
+    });
+    const archivedBody = onlyArchived.json() as {
+      rooms: { roomId: string }[];
+      total: number;
+      hasMore: boolean;
+    };
+    expect(archivedBody.rooms.map((r) => r.roomId)).toEqual([archived.id]);
+    expect(archivedBody.total).toBe(1);
+    expect(archivedBody.hasMore).toBe(false);
 
     await ctx.app.close();
   });

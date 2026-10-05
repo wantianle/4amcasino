@@ -17,6 +17,7 @@ import {
   RiArrowRightSLine,
   RiRobot2Line,
   RiFlag2Line,
+  RiHistoryLine,
 } from '@remixicon/react';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
@@ -116,6 +117,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
       badge: (pending?.settlementsAwaitingMe ?? 0) + (pending?.iOweCount ?? 0),
     },
     { to: '/players/' + auth.userId, label: 'My stats', icon: RiBarChartBoxLine },
+    { to: '/history', label: 'History', icon: RiHistoryLine },
   ];
   const secondary: Destination[] = [
     { to: '/settings', label: 'Settings', icon: RiSettings3Line },
@@ -130,7 +132,11 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   const all = [...primary, ...tableLinks, ...secondary];
   const pageName =
     all.find((item) => item.to === loc.pathname)?.label ??
-    (loc.pathname.startsWith('/tournaments/') ? 'Tournament' : 'Table');
+    (loc.pathname.startsWith('/tournaments/')
+      ? 'Tournament'
+      : loc.pathname.startsWith('/history/')
+        ? 'History'
+        : 'Table');
   const waiting = (pending?.invites ?? 0) + (pending?.friendRequests ?? 0);
   // Match either the English source or its translation, so both languages
   // find the same destination in the ⌘K dialog.
@@ -158,9 +164,12 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
     }
   }
   const row = (item: Destination, rail = false) => {
+    // Section links stay active on their sub-pages (e.g. /history/:roomId keeps
+    // History highlighted), matching how /tournaments/:id behaves.
     const active =
       loc.pathname === item.to ||
-      (item.to === '/tournaments' && loc.pathname.startsWith('/tournaments/'));
+      (item.to === '/tournaments' && loc.pathname.startsWith('/tournaments/')) ||
+      (item.to === '/history' && loc.pathname.startsWith('/history/'));
     const Icon = item.icon;
     const label = t(item.label);
     const name = item.badge ? t('{label} ({n} waiting)', { label, n: item.badge }) : label;

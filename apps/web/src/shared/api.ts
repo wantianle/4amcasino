@@ -38,6 +38,42 @@ export interface AdminAuditPage {
   hasMore: boolean;
 }
 
+/** One row of `GET /api/me/rooms`: a room this account has ever been part of,
+ *  including archived/closed ones, with the caller's own net and hand count.
+ *  `myHands` already excludes voided hands; `myNet` is the net chip result. */
+export interface MyRoomSummary {
+  roomId: string;
+  name: string;
+  sb: number;
+  bb: number;
+  createdAt: number;
+  hostId: number;
+  hostName: string;
+  archived: boolean;
+  archivedAt: number | null;
+  /** Legacy alias of `archivedAt`, kept for the closing-room consumers. */
+  closedAt: number | null;
+  /** Last activity in the room (latest ledger movement, archive or creation). */
+  updatedAt: number;
+  deleted: boolean;
+  voided: boolean;
+  /** Participants excluding the platform/bank account. */
+  playerCount: number;
+  myNet: number;
+  myHands: number;
+  isHost: boolean;
+}
+
+/** One hand in `GET /api/rooms/:id/hands`, already carrying YOUR result. */
+export interface MyHandRef {
+  handId: string;
+  head: string;
+  ts: number;
+  myNet: number | null;
+  outcome: string;
+  voided: boolean;
+}
+
 /** ── Table bots (apps/server/src/botRoutes.ts) ───────────────────────────────
  * The PUBLIC, sanitized view of a bot opponent: the server never ships the
  * encrypted seed or a runner grant on these routes. Mirrors
@@ -271,6 +307,26 @@ export const api = {
   login: (username: string, authKey: string) => req('/api/login', { username, authKey }),
   me: () => req('/api/me'),
   myRooms: () => req('/api/my-rooms'),
+  /** My results: every room this account was ever part of, including archived
+   *  ones, with `myNet` / `myHands` per room. Paged like the hand history:
+   *  `total`/`hasMore` describe the filtered set, and `archived` filters
+   *  server-side, so `/history` never silently loses rooms past one page.
+   *  `totals` are career aggregates over the whole filtered set. */
+  meRooms: (opts: { archived?: boolean; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.archived !== undefined) q.set('archived', String(opts.archived));
+    if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+    if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+    const qs = q.toString();
+    return req(`/api/me/rooms${qs ? `?${qs}` : ''}`) as Promise<{
+      rooms: MyRoomSummary[];
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      totals: { hands: number; net: number };
+    }>;
+  },
   platformSettings: () =>
     req('/api/platform/settings') as Promise<
       Pick<CommissionSettings, 'commissionBps' | 'revision' | 'updatedAt'>
@@ -374,7 +430,18 @@ export const api = {
     req(`/api/rooms/${roomId}/settings`, { meetLink }, 'PUT'),
   voidHand: (roomId: string, handId: string) => req(`/api/rooms/${roomId}/void-hand`, { handId }),
   ledger: (roomId: string) => req(`/api/rooms/${roomId}/ledger`),
-  hands: (roomId: string) => req(`/api/rooms/${roomId}/hands`),
+  hands: (roomId: string, opts: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+    if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+    const qs = q.toString();
+    return req(`/api/rooms/${roomId}/hands${qs ? `?${qs}` : ''}`) as Promise<{
+      hands: MyHandRef[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>;
+  },
   hand: (roomId: string, handId: string) => req(`/api/rooms/${roomId}/hands/${handId}`),
   // account security: every one of these re-derives your signing identity in the
   // browser, so they all carry a fresh publicKey (requested by notpritam)
