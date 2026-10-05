@@ -23,6 +23,22 @@ import { t } from '../../shared/i18n/index.ts';
 const bbOf = (amount: number, bb: number): number =>
   Math.max(0, Math.round(amount / Math.max(1, bb)));
 
+export function clampRaiseAmount(value: number, min: number, max: number, fallback = min): number {
+  const safeFallback = Number.isFinite(fallback) ? fallback : min;
+  const safeValue = Number.isFinite(value) ? value : safeFallback;
+  return Math.max(min, Math.min(max, Math.round(safeValue)));
+}
+
+export function isRaiseAmountValid(value: number, min: number, max: number): boolean {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= min && value <= max;
+}
+
+/** Explicit keyboard/wheel movement; the native range step stays at one so
+ * every legal integer (including an off-grid All-in max) remains representable. */
+export function adjustRaiseByStep(value: number, delta: number, sb: number, min: number, max: number): number {
+  return clampRaiseAmount(value + delta * sb, min, max, min);
+}
+
 /** The action-clock ring next to the amount: the window is `actionSecs` PLUS
  *  the acting seat's bank, the base clock drains first, and once
  *  `baseDeadline` passes the remaining arc turns amber - you are visibly
@@ -265,15 +281,25 @@ export function BettingPanel({
     `${hand.handId}:${hand.actionSeq}:${myTurn}:${la?.canCheck ?? '-'}:${la?.callAmount ?? '-'}:${st?.currentBet ?? '-'}`,
   );
 
-  const amountValid =
-    !!la && Number.isInteger(raiseTo) && raiseTo >= la.minRaiseTo && raiseTo <= la.maxRaiseTo;
-  // A range input's step is measured from min. Use whole chips rather than the
-  // small blind so every legal raise-to value, including max, remains reachable.
+  const amountValid = !!la && isRaiseAmountValid(raiseTo, la.minRaiseTo, la.maxRaiseTo);
+  const legalRaiseTo = la && Number.isFinite(raiseTo) ? raiseTo : (la?.minRaiseTo ?? 0);
+  // Keep keyboard and wheel adjustments on the same small-blind increment. The
+  // range is anchored at the legal minimum; the All-in pill remains the exact
+  // escape hatch for a max value that is not an even step from that minimum.
   const raiseRangeStep = 1;
   const raiseRangeCollapsed = !!la && la.maxRaiseTo - la.minRaiseTo < raiseRangeStep;
   const submitRaise = () => {
-    if (!myTurn || !la?.canRaise || !st || !amountValid) return;
-    send({ type: st.currentBet === 0 ? 'bet' : 'raise', amount: raiseTo });
+    if (!myTurn || !la?.canRaise || !st) return;
+    const amount = clampRaiseAmount(raiseTo, la.minRaiseTo, la.maxRaiseTo);
+    setRaiseTo(amount);
+    // An invalid edit is repaired on the first click, but is deliberately not
+    // submitted until the user confirms the now-legal whole-chip value.
+    if (!Number.isFinite(raiseTo) || !amountValid) return;
+    send({ type: st.currentBet === 0 ? 'bet' : 'raise', amount });
+  };
+  const setRaiseClamped = (value: number) => {
+    if (!la) return;
+    setRaiseTo(clampRaiseAmount(value, la.minRaiseTo, la.maxRaiseTo, raiseTo));
   };
   const { binding, amountInput } = usePokerHotkeys({
     mySeat,
@@ -387,7 +413,7 @@ export function BettingPanel({
       )}
 
       {rc ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
           {/* L4 (rev2 decision): the host's deal post + auto-deal clock share
               this card with the ready check - one corner, one card, both
               between-hand states. */}
@@ -449,10 +475,10 @@ export function BettingPanel({
             {t('Pot {n}', { n: fmt(pot) })}
           </p>
           {/* amount (chips + BB) */}
-          <div className="flex items-end justify-between gap-2">
+          <div className="flex items-end justify-between gap-1.5">
             <label className="min-w-0 text-[0.62rem] uppercase tracking-wide text-[var(--table-faint)]">
               {st.currentBet === 0 ? t('Bet amount') : t('Raise to')}
-              <span className="mt-0.5 flex items-baseline gap-1.5 normal-case tracking-normal">
+              <span className="mt-0 flex items-baseline gap-1 normal-case tracking-normal">
                 <input
                   ref={amountRef}
                   type="number"
@@ -460,15 +486,18 @@ export function BettingPanel({
                   min={la.minRaiseTo}
                   max={la.maxRaiseTo}
                   step={1}
-                  value={Number.isNaN(raiseTo) ? '' : raiseTo}
+                  value={Number.isFinite(raiseTo) ? raiseTo : ''}
                   aria-label={t('Bet or raise amount')}
                   aria-keyshortcuts={binding('raise')}
                   disabled={pending || settling}
                   {...amountInput}
                   onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : +e.target.value)}
+                  onBlur={() => setRaiseClamped(raiseTo)}
                   className="table-amt min-h-8 w-24 min-w-0 px-2 py-1 text-sm text-right font-bold outline-none"
                 />
-                <span className="table-bb text-[0.7rem]">{bbOf(raiseTo, bb)} BB</span>
+                <span className="table-bb text-[0.7rem]">
+                  {bbOf(legalRaiseTo, bb)} BB
+                </span>
               </span>
             </label>
           </div>
@@ -481,7 +510,7 @@ export function BettingPanel({
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex min-h-9 items-center gap-1.5">
               <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
                 {bbOf(la.minRaiseTo, bb)}
               </span>
@@ -490,9 +519,28 @@ export function BettingPanel({
                 min={la.minRaiseTo}
                 max={la.maxRaiseTo}
                 step={raiseRangeStep}
-                value={raiseTo}
-                onChange={(e) => setRaiseTo(+e.target.value)}
-                className="table-slider h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
+                value={clampRaiseAmount(legalRaiseTo, la.minRaiseTo, la.maxRaiseTo)}
+                onChange={(e) => setRaiseClamped(+e.target.value)}
+                onKeyDown={(e) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+                  e.preventDefault();
+                  setRaiseClamped(
+                    adjustRaiseByStep(
+                      legalRaiseTo,
+                      e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 1,
+                      sb,
+                      la.minRaiseTo,
+                      la.maxRaiseTo,
+                    ),
+                  );
+                }}
+                onWheel={(e) => {
+                  e.preventDefault();
+                  setRaiseClamped(
+                    adjustRaiseByStep(legalRaiseTo, e.deltaY < 0 ? 1 : -1, sb, la.minRaiseTo, la.maxRaiseTo),
+                  );
+                }}
+                className="table-slider h-2 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
                 aria-label={t('Raise amount')}
               />
               <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
@@ -501,19 +549,20 @@ export function BettingPanel({
             </div>
           )}
           {/* percentage quick pills (A10-configurable slots, % of pot) */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             {quicks.map((q) => (
               <button
                 key={q.label}
+                type="button"
                 disabled={pending || settling}
-                onClick={() =>
-                  send(
-                    st.currentBet === 0
-                      ? { type: 'bet', amount: q.value }
-                      : { type: 'raise', amount: q.value },
-                  )
-                }
-                className={cn('table-quick', q.label === t('All-in') && 'table-quick--allin')}
+                onClick={() => setRaiseTo(q.value)}
+                aria-pressed={raiseTo === q.value}
+                className={cn(
+                  'table-quick',
+                  q.label === t('All-in') && 'table-quick--allin',
+                  raiseTo === q.value &&
+                    'border-[var(--table-commit)]! bg-[var(--table-commit)]! text-black! shadow-[0_0_0_2px_color-mix(in_srgb,var(--table-commit)_35%,transparent)]',
+                )}
               >
                 {q.label}
               </button>
@@ -585,10 +634,10 @@ export function BettingPanel({
               <span className="flex flex-col items-center leading-tight">
                 <span>
                   {st.currentBet === 0
-                    ? t('Bet {n}', { n: fmt(raiseTo) })
-                    : t('Raise to {n}', { n: fmt(raiseTo) })}
+                    ? t('Bet {n}', { n: fmt(legalRaiseTo) })
+                    : t('Raise to {n}', { n: fmt(legalRaiseTo) })}
                 </span>
-                <span className="table-btn-sub text-[0.6rem]">{bbOf(raiseTo, bb)} BB</span>
+                <span className="table-btn-sub text-[0.6rem]">{bbOf(legalRaiseTo, bb)} BB</span>
               </span>
             </Button>
           </div>
