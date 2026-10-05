@@ -11,6 +11,8 @@
 // (settings), 'The table' (landing), 'Copy' (account).
 const tablePage: Record<string, string> = {
   'Peek opponent cards · {amount}': '买看对手手牌 · {amount}',
+  'Peek results': '买看结果',
+  '{n} people want to peek at your cards': '{n} 人想看你的牌',
   // ── Joining the room / connection states ──────────────────────────────
   'Could not join this table: {error}': '这张桌进不去：{error}',
   'Could not load room': '房间没能加载出来。',
@@ -58,8 +60,13 @@ const tablePage: Record<string, string> = {
   'only you can see this': '只有你能看到',
   'Pay to peek at': '付费买看',
   'Asked {name}': '已问过 {name}',
+  'Peek at {name}': '看 {name} 的牌',
   'Peek offer amount': '买看报价金额',
   'chips, paid only if they agree to show you': '筹码，对方同意亮牌才支付',
+  '1 BB, paid only if they agree to show you': '1 BB，对方同意亮牌才支付',
+  'Your peek offer expired.': '你的买看已过期。',
+  'Your peek offer failed.': '你的买看没成功。',
+  'Rake received': '收到抽水',
 
   // ── Result headlines（牌力措辞由 pokerLabels.tScore 产出）─────────────
   '{name} takes the pot. Everyone else folded, so no cards had to be shown.':

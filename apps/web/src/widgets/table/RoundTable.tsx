@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import type { RoomHud } from '../../features/stats/types.ts';
 import { PlayerHud } from './PlayerHud.tsx';
 import { isValidHudPlayer, SeatBadges } from './SeatBadges.tsx';
-import { Crown, Coins, MicrophoneSlash, Play, Robot, Timer, X } from '@phosphor-icons/react';
+import { Crown, Coins, Eye, MicrophoneSlash, Play, Robot, Timer, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
@@ -15,6 +15,7 @@ import { BetFlight, ChipFlight, StackValue, WinBadge, useWinnerFx } from './Winn
 import { TurnProgress } from './TurnProgress.tsx';
 import { DealCard } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
+import type { PeekResult } from '../../shared/store.ts';
 import {
   anchorOf,
   angleOf,
@@ -120,6 +121,7 @@ function HoleCards({
   delay = 0,
   handId = null,
   motionPrefix = 'hole:opponent',
+  reveal = false,
 }: {
   size: 'xs' | 'sm' | 'pod' | 'md';
   cards?: CardId[];
@@ -128,6 +130,7 @@ function HoleCards({
   delay?: number;
   handId?: string | null;
   motionPrefix?: string;
+  reveal?: boolean;
 }) {
   // L2 (rev-3 mockup): opponents' face-down cards ride the avatar's top edge
   // as a small-angle GG fan — two burgundy backs tilted ±6° with a slight
@@ -149,7 +152,7 @@ function HoleCards({
   return (
     <div className={cn('flex items-center', narrow ? 'gap-0.5' : 'gap-[5px]')}>
       {cards.slice(0, 2).map((c, i) => (
-        <DealCard key={`${i}-${c}`} delay={delay + i * 90} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace /></DealCard>
+        <DealCard key={`${i}-${c}`} reveal={reveal} delay={delay + i * 90} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace /></DealCard>
       ))}
     </div>
   );
@@ -200,6 +203,9 @@ export function RoundTable({
   centerBudget = false,
   ribbon,
   handTypes,
+  collectSeats,
+  peekTargets,
+  peekResults,
   hudRoomId,
   children,
 }: {
@@ -255,6 +261,13 @@ export function RoundTable({
   ribbon?: React.ReactNode;
   /** Hand type (牌型) to show at the bottom of each pod, keyed by seat. */
   handTypes?: Record<number, string>;
+  /** Public pot awards can begin their flight before hand_end supplies game nets. */
+  collectSeats?: number[];
+  /** Between-hand private peek controls. The page only supplies these to the
+   * requester; spectators and targets therefore cannot render the eye. */
+  peekTargets?: Record<number, { sent: boolean; onPeek: () => void }>;
+  /** Cards received in a buyer-only peek_result, keyed by target seat. */
+  peekResults?: Record<number, PeekResult>;
   hudRoomId?: string;
   children: React.ReactNode;
 }) {
@@ -275,7 +288,8 @@ export function RoundTable({
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
   const winners = seats.filter((s) => s.won);
-  const fxLit = useWinnerFx(winners.length > 0);
+  const collectors = collectSeats ?? winners.map((s) => s.seat);
+  const fxLit = useWinnerFx(collectors.length > 0);
   const potRef = useRef<HTMLDivElement | null>(null);
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});
   const betEls = useRef<Record<number, HTMLDivElement | null>>({});
@@ -518,8 +532,14 @@ export function RoundTable({
             const isMe = p.userId === myUserId;
             const bbCount = Math.round(p.stack / Math.max(1, bb));
             const strength = handTypes?.[seat] ?? null;
+            const peekTarget = !isMe ? peekTargets?.[seat] : undefined;
+            const peekResult = peekResults?.[seat];
+            const peekCards = !isMe && peekResult?.targetSeat === seat && peekResult.targetUserId === p.userId
+              ? peekResult.cards : undefined;
+            const privatePeekVisible = !isMe && !!peekCards?.length;
             const cardsVisible =
-              p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed);
+              (p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed)) ||
+              privatePeekVisible;
 
             const isBanker = p.userId === bankerId;
             const isHost = hostId != null && p.userId === hostId;
@@ -684,7 +704,21 @@ export function RoundTable({
                       rev-3 rules: one hairline + one shadow, ≤1 role corner
                       (merged tooltip), dimmed folded/offline/sitting-out. */}
 
-                  <div className="table-pod-visual">
+                   <div className="table-pod-visual" data-testid={`seat-pod-${seat}`}>
+                     {peekTarget && !privatePeekVisible && (
+                       <button
+                         type="button"
+                         className="table-peek-eye"
+                         aria-label={t('Peek at {name}', { name: p.displayName })}
+                         title={t('Peek at {name}', { name: p.displayName })}
+                         disabled={peekTarget.sent}
+                         onClick={peekTarget.onPeek}
+                         data-testid={`peek-eye-${seat}`}
+                       >
+                         <Eye size={17} weight="bold" aria-hidden="true" />
+                         <span className="sr-only">{t('1 BB, paid only if they agree to show you')}</span>
+                       </button>
+                     )}
                     {isMe && myCards.length > 0 && (
                       <div
                         className={cn(
@@ -720,7 +754,7 @@ export function RoundTable({
                         <div
                           className={cn(
                             'table-pod-holo',
-                            isMe || p.revealed ? 'table-pod-holo--side' : 'table-pod-holo--fan',
+                             isMe || p.revealed || peekCards ? 'table-pod-holo--side' : 'table-pod-holo--fan',
                           )}
                         >
                           <HoleCards
@@ -728,10 +762,11 @@ export function RoundTable({
                             delay={i * 45}
                             size={holeSize}
                             narrow={narrow}
-                            cards={isMe ? myCards : p.revealed}
-                            faceDown={!isMe && !p.revealed}
+                              cards={isMe ? myCards : peekCards ?? p.revealed}
+                              faceDown={!isMe && !peekCards && !p.revealed}
                             handId={handId}
-                            motionPrefix={`hole:seat:${p.seat}`}
+                              motionPrefix={peekCards ? `peek:${p.seat}` : p.revealed ? `reveal:${p.seat}` : `hole:seat:${p.seat}`}
+                              reveal={!!p.revealed || !!peekCards}
                           />
                         </div>
                       )}
@@ -1007,13 +1042,14 @@ export function RoundTable({
           stack number only bumps once they land (see StackValue). Measured in
           viewport space, so the canvas scale is transparent to it. */}
       {fxLit &&
-        winners.map((w) => (
+        collectors.map((seat) => (
           <ChipFlight
-            key={`fly-${w.seat}`}
+            key={`fly-${handId}-${seat}`}
             run={fxLit}
-            discs={winners.length === 1 ? 6 : 4}
+            discs={collectors.length === 1 ? 6 : 4}
+            delay={collectSeats && collectSeats.length > 0 ? 1500 : 0}
             getFrom={() => potRef.current}
-            getTo={() => podEls.current[w.seat] ?? null}
+            getTo={() => podEls.current[seat] ?? null}
           />
         ))}
 

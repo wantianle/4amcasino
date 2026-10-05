@@ -485,7 +485,6 @@ export function TablePage() {
   // did THIS hand ever show a multi-run decision? gates the outcome line so a
   // plain one-run hand never mentions 发牌次数.
   const sawRunOfferRef = useRef<string | null>(null);
-  const [peekAmtStr, setPeekAmtStr] = useState('');
   const [peekSent, setPeekSent] = useState<Record<number, boolean>>({});
   const [shareOpen, setShareOpen] = useState(false);
   const [standingsOpen, setStandingsOpen] = useState(false);
@@ -927,45 +926,37 @@ export function TablePage() {
   const seatName = (seat: number) =>
     seatViews.find((s) => s.seat === seat)?.displayName ?? t('Seat {n}', { n: seat + 1 });
 
-  const peekAmt = Math.max(1, parseInt(peekAmtStr, 10) || room.room.bb * 5);
+  const peekAmt = room.room.bb;
+  // Every seated player may request a look. The target is any participant in
+  // the just-ended hand whose cards are still private; the server is the final
+  // authority for the hand's terminal eligibility and fixed 1bb settlement.
+  const amSeated = room.players.some((p) => p.userId === auth.userId && p.seat !== null);
   const peekEligible =
-    hand.result && !hand.abort && !handLive && !amSpectator && hand.seats.length === 2 && hand.seats.some((s) => s.seat === mySeat)
+    hand.result && !hand.abort && !handLive && amSeated
         ? seatViews.filter(
-          (v) => hand.seats.some((s) => s.seat === v.seat) && v.seat !== mySeat && !v.revealed && !hand.peekResults[v.seat],
+          (v) => hand.seats.some((s) => s.seat === v.seat && s.userId === v.userId) && v.seat !== mySeat && !v.revealed && !hand.peekResults[v.seat],
         )
       : [];
   const peekReveals = Object.entries(hand.peekResults);
-  const hasPeekContent =
-    !handLive && !amSpectator && hand.seats.length === 2 && (hand.peekOffers.length > 0 ||
-    peekReveals.length > 0 ||
-    (!!hand.result && peekEligible.length > 0 && mySeat !== null));
-
+  // The eye is deliberately part of the opponent pod, not the dock. The
+  // result drawer below is only a secondary history affordance for cards the
+  // requester already received; spectators never get either object.
+  const peekTargets = Object.fromEntries(
+    peekEligible.map((v) => [v.seat, {
+      sent: !!peekSent[v.seat] || (myRoomStack ?? 0) < peekAmt,
+      onPeek: () => {
+        if (peekSent[v.seat] || (myRoomStack ?? 0) < peekAmt) return;
+        setPeekSent((m) => ({ ...m, [v.seat]: true }));
+        offerPeek(v.seat, peekAmt);
+      },
+    }]),
+  );
   const peekBody = (dark: boolean) => (
     <div className="space-y-2.5">
-      {hand.peekOffers.map((o) => (
-        <div key={o.offerId} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>
-            {tNode('{name} offers {amount} to privately see the cards you just had.', {
-              name: <b>{o.fromName}</b>,
-              amount: <b className="font-display">{fmt(o.amount)}</b>,
-            })}
-          </span>
-          <Button
-            variant="success"
-            disabled={hand.myCardPoints.length === 0}
-            onClick={() => answerPeek(o.offerId, true)}
-          >
-            {t('Accept {amount}', { amount: fmt(o.amount) })}
-          </Button>
-          <Button variant="secondary" onClick={() => answerPeek(o.offerId, false)}>
-            {t('Decline')}
-          </Button>
-        </div>
-      ))}
-      {peekReveals.map(([seat, cards]) => (
+      {peekReveals.map(([seat, result]) => (
         <div key={seat} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>{tNode('{name} had', { name: <b>{seatName(+seat)}</b> })}</span>
-          {cards.map((c) => (
+          <span>{tNode('{name} had', { name: <b>{result.targetName}</b> })}</span>
+          {result.cards.map((c) => (
             <PlayingCard key={c} card={c} size="xs" />
           ))}
           <span className={dark ? 'text-white/50' : 'text-slate-400'}>
@@ -973,46 +964,14 @@ export function TablePage() {
           </span>
         </div>
       ))}
-      {hand.result && peekEligible.length > 0 && mySeat !== null && (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className={dark ? 'text-white/60' : 'text-slate-500'}>{t('Pay to peek at')}</span>
-          {peekEligible.map((v) => (
-            <Button
-              key={v.seat}
-              variant="secondary"
-              disabled={!!peekSent[v.seat] || (myRoomStack ?? 0) < peekAmt}
-              onClick={() => {
-                setPeekSent((m) => ({ ...m, [v.seat]: true }));
-                offerPeek(v.seat, peekAmt);
-              }}
-            >
-              {peekSent[v.seat] ? t('Asked {name}', { name: v.displayName }) : v.displayName}
-            </Button>
-          ))}
-          <input
-            type="number"
-            min={1}
-            value={peekAmtStr}
-            placeholder={String(room.room.bb * 5)}
-            onChange={(e) => setPeekAmtStr(e.target.value)}
-            aria-label={t('Peek offer amount')}
-            className={cn(
-              'w-24 rounded-lg border px-2.5 py-1.5 font-display text-sm',
-              dark
-                ? 'border-white/20 bg-slate-800 text-white'
-                : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800',
-            )}
-          />
-          <span className={dark ? 'text-white/60' : 'text-slate-400'}>
-            {t('chips, paid only if they agree to show you')}
-          </span>
-        </div>
-      )}
     </div>
   );
 
-  const peekPanel = hasPeekContent && <details className="table-peek" key={hand.handId}>
-    <summary className="table-dock-chip">{t('Peek opponent cards · {amount}', { amount: fmt(peekAmt) })}{hand.peekOffers.length > 0 && ' · !'}</summary>
+  const peekPanel = peekReveals.length > 0 && <details className="table-peek" key={hand.handId} open>
+    <summary className="table-dock-chip" aria-label={t('Peek results')}>
+      <Eye size={15} weight="bold" />
+      <span className="sr-only">{t('Peek results')}</span>
+    </summary>
     <div className="table-peek-body" data-poker-hotkeys-blocked>{peekBody(true)}</div>
   </details>;
 
@@ -1129,6 +1088,12 @@ export function TablePage() {
   // (see WinnerFx / RoundTable). This pill remains for voided hands. The
   // full story lives in the last-hand strip and in hand history (出牌记录).
   const resultWinners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
+  const showdownCollectors = hand.showdown
+    ? (hand.showdown.multiRun?.awards.flat() ?? hand.showdown.runTwice?.awards.flat() ?? hand.showdown.awards)
+        .filter((a) => a.amount > 0)
+        .map((a) => a.seat)
+        .filter((seat, i, all) => all.indexOf(seat) === i)
+    : [];
   const winnersLine = resultWinners.length
     ? resultWinners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
     : t('chips stayed put');
@@ -2298,9 +2263,12 @@ export function TablePage() {
               coBankerId={room.room.coBankerId}
               bb={room.room.bb}
               readyCheck={!handLive ? hand.readyCheck : null}
-              onShareHand={shareData ? () => setShareOpen(true) : undefined}
-              handTypes={strengthLabels}
-            >
+               onShareHand={shareData ? () => setShareOpen(true) : undefined}
+               handTypes={strengthLabels}
+               collectSeats={showdownCollectors}
+               peekTargets={peekTargets}
+               peekResults={!amSpectator ? hand.peekResults : undefined}
+             >
               {/* A5/L3: the pot is ONE GG "Total Pot" gold pill centered above
                 the board row. (rev-3 dropped the pot chip pile + the 0-state
                 Coins icon — the number carries the value; the pulse motion
@@ -2464,6 +2432,50 @@ export function TablePage() {
               <LastHandStrip roomId={roomId!} />
             </div>
           </div>
+
+          {/* Incoming peek offers are a one-line overlay, not a layout slot: a
+              slot above the felt would shrink the explicit table stage and can
+              move every pod on desktop and phone. The top inset is reserved
+              chrome, so this compact banner does not intersect table elements. */}
+          {hand.peekOffers.length > 0 && (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-1 z-30 flex justify-center px-2"
+              data-testid="peek-incoming-banner"
+            >
+              <details className="peek-incoming-banner pointer-events-auto w-[min(27rem,calc(100%-1rem))] rounded-xl px-2.5 py-1 text-[0.7rem] shadow-lg">
+                <summary className="cursor-pointer list-none truncate text-center font-semibold [&::-webkit-details-marker]:hidden">
+                  {t('{n} people want to peek at your cards', { n: hand.peekOffers.length })}
+                </summary>
+                <div className="peek-incoming-list">
+                  {hand.peekOffers.map((offer) => (
+                    <div key={offer.offerId} className="flex min-w-0 items-center gap-2 border-t border-white/10 py-1.5">
+                      <span className="min-w-0 flex-1 truncate">
+                        {tNode('{name} offers {amount} to privately see the cards you just had.', {
+                          name: <b>{offer.fromName}</b>,
+                          amount: <b className="font-display">{fmt(offer.amount)}</b>,
+                        })}
+                      </span>
+                      <Button
+                        variant="success"
+                        className="shrink-0 !px-2 !py-0.5 !text-[0.68rem]"
+                        disabled={hand.myCardPoints.length === 0}
+                        onClick={() => answerPeek(offer.offerId, true)}
+                      >
+                        {t('Accept {amount}', { amount: fmt(offer.amount) })}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 !px-2 !py-0.5 !text-[0.68rem]"
+                        onClick={() => answerPeek(offer.offerId, false)}
+                      >
+                        {t('Decline')}
+                      </Button>
+                    </div>
+                  ))}
+               </div>
+              </details>
+            </div>
+          )}
 
           {/* seat picker / spectator notice / buy-peek, as floating cards */}
           {!me && (

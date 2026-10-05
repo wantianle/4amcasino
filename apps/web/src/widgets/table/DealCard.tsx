@@ -32,8 +32,8 @@ function cancelRecord(key: string, record: ActiveDeal): void {
 
 /** Animate the real card, not a duplicate. A registry owns the animation,
  * listener and DOM marker so StrictMode replay can reuse all three safely. */
-export function DealCard({ children, delay = 0, handId = null, motionKey, epoch = 0 }: {
-  children: ReactNode; delay?: number; handId?: string | null; motionKey?: string; epoch?: number;
+export function DealCard({ children, delay = 0, handId = null, motionKey, epoch = 0, reveal = false }: {
+  children: ReactNode; delay?: number; handId?: string | null; motionKey?: string; epoch?: number; reveal?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -69,12 +69,15 @@ export function DealCard({ children, delay = 0, handId = null, motionKey, epoch 
     const from = deck.getBoundingClientRect();
     const scale = to.width / el.offsetWidth || 1;
     const style = getComputedStyle(el);
-    const animation = el.animate([
+    const animation = el.animate(reveal ? [
+      { transform: 'perspective(600px) rotateY(90deg)', opacity: 0 },
+      { transform: 'perspective(600px) rotateY(0deg)', opacity: 1 },
+    ] : [
       { transform: `translate(${(from.x + from.width / 2 - to.x - to.width / 2) / scale}px, ${(from.y + from.height / 2 - to.y - to.height / 2) / scale}px) scale(.55) rotate(-8deg)`, opacity: 0.3 },
       { transform: 'none', opacity: 1 },
     ], {
-      duration: parseFloat(style.getPropertyValue('--table-dur-highlight')) * 1000 || 620,
-      delay, easing: style.getPropertyValue('--table-ease-decelerate').trim(), fill: 'backwards',
+      duration: reveal ? 700 : parseFloat(style.getPropertyValue('--table-dur-highlight')) * 1000 || 620,
+      delay: reveal ? 0 : delay, easing: style.getPropertyValue('--table-ease-decelerate').trim(), fill: 'backwards',
     });
     const record: ActiveDeal = {
       animation, element: el, media, onMediaChange: () => cancelRecord(key, record),
@@ -97,6 +100,6 @@ export function DealCard({ children, delay = 0, handId = null, motionKey, epoch 
       record.cancelTimer = window.setTimeout(() => cancelRecord(key, record), 0);
     };
     return cleanup;
-  }, [epoch, handId, motionKey]);
+  }, [epoch, handId, motionKey, reveal]);
   return <div ref={ref} className="table-dealt-card">{children}</div>;
 }

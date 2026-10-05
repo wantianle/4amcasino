@@ -10,7 +10,7 @@ import { t } from '../../shared/i18n/index.ts';
  *  their stack, and only then does the stack number bump. The whole thing
  *  is a ~2.6s glance; the full recap lives in 出牌记录 / the last-hand strip. */
 
-export const WIN_FX_MS = 2600;
+export const WIN_FX_MS = 3000;
 // L5: the collect burst leads within the first frame (spec sync rule: glow /
 // collect / sound within ±50ms) and its last disc lands ~0.91s in (0.04 lead +
 // 5x70ms stagger + 0.52 travel), so the stack reveal meets it there.
@@ -18,7 +18,7 @@ const STACK_LAND_MS = 910;
 
 /** True from the moment a settled hand shows winners until the celebration
  *  has played out; drops again the instant no seat is marked won (next deal). */
-export function useWinnerFx(anyWon: boolean): boolean {
+export function useWinnerFx(anyWon: boolean, handId: string | null = null): boolean {
   const [lit, setLit] = useState(anyWon);
   useEffect(() => {
     if (!anyWon) {
@@ -28,7 +28,7 @@ export function useWinnerFx(anyWon: boolean): boolean {
     setLit(true);
     const timer = setTimeout(() => setLit(false), WIN_FX_MS);
     return () => clearTimeout(timer);
-  }, [anyWon]);
+  }, [anyWon, handId]);
   return lit;
 }
 
@@ -107,11 +107,14 @@ export function ChipFlight({
   getFrom,
   getTo,
   discs = 6,
+  delay = 0,
 }: {
   run: boolean;
   getFrom: () => HTMLElement | null;
   getTo: () => HTMLElement | null;
   discs?: number;
+  /** Leave room for the reveal to land before the collection beat begins. */
+  delay?: number;
 }) {
   const reduce = useReducedMotion();
   const [path, setPath] = useState<{
@@ -158,7 +161,7 @@ export function ChipFlight({
               opacity: [0, 1, 1, 0],
               scale: [0.5, 1.05, 0.95, 0.4],
             }}
-            transition={{ duration: 0.52, delay: 0.04 + i * 0.07, ease: [0.2, 0, 0, 1] }}
+            transition={{ duration: 1.4, delay: delay / 1000 + 0.04 + i * 0.07, ease: [0.2, 0, 0, 1] }}
           />
         );
       })}

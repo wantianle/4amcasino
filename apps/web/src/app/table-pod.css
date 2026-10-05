@@ -27,6 +27,43 @@
   text-align: center;
 }
 .table-pod-visual { position: static; }
+.table-peek-eye {
+  position: absolute;
+  z-index: 35;
+  left: 50%;
+  top: calc(var(--table-holo-top) - 34px);
+  display: flex;
+  height: 30px;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--table-gold-hi) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--table-felt-core) 88%, #05070a 12%);
+  color: var(--table-gold-hi);
+  font-size: 22px;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
+  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+.table-peek-eye:hover:not(:disabled),
+.table-peek-eye:focus-visible {
+  transform: translateX(-50%) scale(1.1);
+  background: var(--table-gold);
+  color: #201707;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--table-gold-hi) 30%, transparent), 0 6px 16px rgba(0, 0, 0, .4);
+}
+.table-peek-eye:disabled { cursor: wait; opacity: .55; }
+.table-peek-eye span[aria-hidden] { transform: rotate(-18deg); }
+.table-canvas--narrow .table-peek-eye {
+  /* Phone opponents lift their card fan much farther above the compact pod;
+     keep the eye above that lifted fan too, rather than merely non-overlapping. */
+  top: calc(var(--table-holo-top) - 100px);
+  height: 27px;
+  width: 27px;
+  font-size: 19px;
+}
 .table-canvas:not(.table-canvas--narrow) .table-pod-card {
   flex-direction: row;
   align-items: center;
@@ -117,6 +154,22 @@
   border-radius: 12px;
   background: #0f172a;
   color: #f1f5f9;
+}
+.peek-incoming-banner {
+  border: 1px solid color-mix(in srgb, var(--table-gold-hi) 55%, transparent);
+  background: color-mix(in srgb, var(--table-felt-core) 78%, #0f172a 22%);
+  color: var(--table-text-bright, #f8fafc);
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.28);
+  max-height: 9rem;
+}
+.peek-incoming-banner button { min-height: 22px; }
+.peek-incoming-list { max-height: 7rem; overflow-y: auto; overscroll-behavior: contain; }
+@media (prefers-reduced-motion: no-preference) {
+  .peek-incoming-banner { animation: peek-incoming-in 180ms ease-out both; }
+}
+@keyframes peek-incoming-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .table-canvas--narrow .table-pod-info {
   /* Keep the phone plaque's original inline flow.  The two-row desktop

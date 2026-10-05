@@ -718,14 +718,61 @@ export function handle(msg: ServerMsg): void {
       return;
     }
 
+    case 'peek_offer_closed': {
+      const h = useStore.getState().hand;
+      if (h.handId !== msg.handId) return;
+      // This is the target-side receipt. It only closes an incoming banner;
+      // peek_offers_snapshot likewise describes incoming offers only and must
+      // never be used to reconcile the user's own outgoing request UI.
+      if (!h.peekOffers.some((o) => o.offerId === msg.offerId)) return;
+      if (msg.status === 'accepted') {
+        play('flip');
+        window.dispatchEvent(new CustomEvent('4am-peek-accepted'));
+      }
+      store.patchHand({ peekOffers: h.peekOffers.filter((o) => o.offerId !== msg.offerId) });
+      return;
+    }
+
+    case 'peek_offers_snapshot': {
+      const h = useStore.getState().hand;
+      // The server snapshot is the authoritative set of still-open INCOMING
+      // offers after reconnect. It says nothing about our outgoing offers.
+      const live = new Set(msg.incomingOfferIds);
+      store.patchHand({ peekOffers: h.peekOffers.filter((o) => live.has(o.offerId)) });
+      return;
+    }
+
     case 'peek_result': {
       const h = useStore.getState().hand;
       if (h.handId !== msg.handId) return;
+      // peek_result is buyer-only. Keep the client defensive as well: a
+      // spectator has no current room seat and must never retain/render cards.
+      // Do not consult h.seats here: it is the previous hand's participants,
+      // while the server also allows a currently seated non-participant to buy.
+      const room = useStore.getState().room;
+      const currentUserId = useStore.getState().auth.userId;
+      if (
+        currentUserId === null ||
+        !room?.players.some((player) => player.userId === currentUserId && player.seat !== null)
+      ) return;
       if (msg.status === 'accepted' && msg.cards) {
+        // The hand snapshot, never the current seat occupant, owns these cards.
+        const target = h.seats.find((seat) => seat.seat === msg.targetSeat);
+        if (!target) return;
         play('flip');
-        store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: msg.cards } });
+        store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: {
+          targetSeat: msg.targetSeat,
+          targetUserId: target.userId,
+          targetName: room?.players.find((player) => player.userId === target.userId)?.displayName ?? target.username,
+          cards: msg.cards,
+        } } });
       } else {
-        store.pushError(t('Your peek offer was declined.'));
+        const message = msg.status === 'expired'
+          ? t('Your peek offer expired.')
+          : msg.status === 'failed'
+            ? t('Your peek offer failed.')
+            : t('Your peek offer was declined.');
+        store.pushError(message);
       }
       return;
     }
@@ -745,12 +792,17 @@ export function handle(msg: ServerMsg): void {
     }
 
     case 'showdown': {
+      const current = useStore.getState().hand;
+      if (current.handId !== msg.handId || current.showdown) return;
+      for (const reveal of msg.reveals) {
+        reveal.cards.forEach((_, i) => noteDealMotion(msg.handId, `reveal:${reveal.seat}:${i}`));
+      }
       // the big reveal: thunder + a lightning flash across the table
       // (requested by notpritam, docs/FEATURES.md)
       play('thunder');
       window.dispatchEvent(new CustomEvent('4am-thunder'));
       endedHands.add(msg.handId);
-      store.patchHand({ showdown: msg });
+      store.patchHand({ showdown: msg, deadline: null, baseDeadline: null });
       return;
     }
 
@@ -787,6 +839,7 @@ export function handle(msg: ServerMsg): void {
         reveals: h.showdown?.reveals ?? [],
         shown: h.shown,
         deltas: msg.deltas,
+        commissionDeltas: msg.commissionDeltas,
         runTwice: showdownTwice,
         names: Object.fromEntries(h.seats.map((s) => [s.seat, nameOf(s.seat)])),
       });

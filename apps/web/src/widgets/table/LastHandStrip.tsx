@@ -25,6 +25,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
   };
   const nameOf = (seat: number) => last.names[seat] ?? t('Seat {n}', { n: seat + 1 });
   const winners = last.deltas.filter((d) => d.delta > 0);
+  const commissionDeltas = last.commissionDeltas ?? [];
   const top = [...last.reveals].sort((a, b) => b.score - a.score)[0];
   // Every run the snapshot froze. New snapshots carry the canonical `boards`
   // (1-3 runs); older persisted recaps only have the legacy board/board2 pair.
@@ -123,6 +124,11 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
             nameOf={nameOf}
             light={light}
           />
+          {commissionDeltas.length > 0 && (
+            <p className={cn('text-xs', light ? 'text-white/60' : 'text-slate-500')}>
+              {t('Rake received')}: {commissionDeltas.map((d) => `${nameOf(d.seat)} +${fmt(d.delta)}`).join(' · ')}
+            </p>
+          )}
           {last.reveals.length === 0 && Object.keys(last.shown).length === 0 && (
             <p className={cn('lh-txt text-xs', light && 'text-white/50')}>
               {t('No cards were shown - the pot went to the last player standing.')}

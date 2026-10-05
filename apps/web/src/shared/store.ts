@@ -114,6 +114,14 @@ export interface AuthState {
   leaderboardRank?: number | null;
 }
 
+export interface PeekResult {
+  targetSeat: number;
+  targetUserId: number;
+  /** Frozen at receipt, so leaving or reusing a seat cannot rename this result. */
+  targetName: string;
+  cards: CardId[];
+}
+
 interface HandView {
   handId: string | null;
   seats: HandStartMsg['seats'];
@@ -134,7 +142,7 @@ interface HandView {
   preActionCallAt: number | null;
   /** Paid-peek offers waiting for my answer, and reveals only I can see. */
   peekOffers: { offerId: string; fromUserId: number; fromName: string; amount: number }[];
-  peekResults: Record<number, CardId[]>;
+  peekResults: Record<number, PeekResult>;
   /** When the server opens the next automatic ready check. */
   autoDealAt: number | null;
   /** Pre-deal ready check: nobody is dealt in without clicking I'm ready. */
@@ -185,6 +193,8 @@ export interface LastHandSnap {
   reveals: { seat: number; cards: CardId[]; score: number }[];
   shown: Record<number, CardId[]>;
   deltas: { seat: number; delta: number }[];
+  /** Account-level rake leg when the recipient is also seated in this hand. */
+  commissionDeltas?: { seat: number; delta: number }[];
   runTwice: {
     boards: [CardId[], CardId[]];
     awards: [{ seat: number; amount: number }[], { seat: number; amount: number }[]];
