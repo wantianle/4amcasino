@@ -14,6 +14,12 @@ const profile: Record<string, string> = {
   'Change photo': '更换头像',
   Remove: '移除',
   'Display name': '昵称',
+  'Up to {n} columns wide — Chinese counts as two. Leave empty to use your username.':
+    '最多 {n} 个字符宽——中文算两个。留空则使用你的用户名。',
+  'Nicknames may only use Chinese, Latin letters, digits, _ @ - · and emoji.':
+    '昵称只能使用中文、英文字母、数字、_ @ - · 和 emoji。',
+  'Nickname must be 16 characters wide or fewer (Chinese counts as two).':
+    '昵称最宽 16 个字符（中文算两个）。',
   Bio: '个性签名',
   'Tight is right.': '紧得稳，赢得狠。',
   'Your quick chat phrases (one per line, max 8)': '快捷聊天短语（每行一条，最多 8 条）',

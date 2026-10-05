@@ -45,6 +45,13 @@ const account: Record<string, string> = {
   'could not set it up': '没能设置好，再试一次。',
   'could not turn it off': '没能关闭，再试一次。',
 
+  // Recovery code row (read-only: codes are minted at signup)
+  'Your recovery code is generated automatically when you create your account and shown exactly once. It cannot be viewed or changed here.':
+    '恢复码在创建账号时自动生成，并且只显示一次。这里无法查看或修改。',
+  '✓ A recovery code is on file for this account.': '✓ 这个账号已有恢复码存档。',
+  '⚠ No recovery code on file. If you get locked out, ask the platform to reset your password.':
+    '⚠ 这个账号还没有恢复码。如果被锁在外面，请联系平台重置密码。',
+
   // Downloaded recovery file (the code line and the filename stay as-is)
   '4AM Casino recovery code': '4AM Casino 恢复码',
   'Account: {name}': '账号：{name}',

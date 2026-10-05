@@ -15,6 +15,7 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { cardFromName } from '@4am/shared';
 import { adminDestination, isAdminSite } from '../../shared/adminSite.ts';
 import { authDestination } from '../../shared/authDestination.ts';
+import { issuedRecoveryCode as recoveryCodeFrom } from './issuedRecovery.ts';
 
 type Mode = 'login' | 'register' | 'recover';
 
@@ -32,6 +33,10 @@ export function LoginPage() {
   // a share link sent us here; the code is also parked in sessionStorage
   const [joinCode] = useState(() => new URLSearchParams(window.location.search).get('join'));
   const [error, setError] = useState<string | null>(null);
+  // The registration response carries the recovery code exactly once. We hold
+  // the success screen on it until the user confirms they saved it.
+  const [issuedRecoveryCode, setIssuedRecoveryCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
   const setAuth = useStore((s) => s.setAuth);
   const nav = useNavigate();
   const onwardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,6 +71,14 @@ export function LoginPage() {
     nav(authDestination(window.location.search) ?? '/lobby');
   }
 
+  function copyRecoveryCode() {
+    if (!issuedRecoveryCode) return;
+    void navigator.clipboard.writeText(issuedRecoveryCode).then(() => {
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1800);
+    });
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -95,6 +108,12 @@ export function LoginPage() {
             : await api.login(username, authKey);
       setAuth({ token: res.token, userId: res.userId, username, identity });
       setPhase('success');
+      const oneTimeCode = recoveryCodeFrom(mode, res);
+      if (oneTimeCode) {
+        // Show the one-time code and wait: navigating away would make it unseeable.
+        setIssuedRecoveryCode(oneTimeCode);
+        return;
+      }
       if (admin) nav(adminNext, { replace: true });
       else onwardTimer.current = setTimeout(() => void goOnwards(), 650);
     } catch (err) {
@@ -170,6 +189,30 @@ export function LoginPage() {
             </div>
           )}
 
+          {issuedRecoveryCode ? (
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                {t('Save this now — you will not see it again')}
+              </p>
+              <code className="block select-all break-all rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-center font-mono text-sm font-bold tracking-wider text-slate-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-slate-100">
+                {issuedRecoveryCode}
+              </code>
+              <p className="text-xs leading-relaxed text-slate-500">
+                {t(
+                  'This is your recovery code, shown only once. It is the only way back in if you forget your password. Store it somewhere safe — it cannot be shown again.',
+                )}
+              </p>
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" onClick={copyRecoveryCode}>
+                  {codeCopied ? t('✓ Copied') : t('Copy')}
+                </Button>
+                <Button type="button" className="flex-1" onClick={() => void goOnwards()}>
+                  {joinCode ? t('✓ I saved it — seat me') : t('✓ I saved it — continue')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
           {mode === 'recover' && (
             <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
               {t(
@@ -277,6 +320,8 @@ export function LoginPage() {
           >
             {mode === 'recover' ? t('← Back to log in') : t('Forgot your password?')}
           </button>
+            </>
+          )}
 
           <p className="mt-3 text-xs leading-relaxed text-slate-400">
             {t(

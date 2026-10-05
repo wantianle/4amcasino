@@ -27,6 +27,11 @@ const login: Record<string, string> = {
   'Recovery code (XXXXXX-XXXXXX-…)': '恢复码（XXXXXX-XXXXXX-…）',
   'Enter the recovery code you saved when you set up the account. It works once, and it issues you a brand-new signing key — your old hands stay verifiable either way.':
     '输入建号时保存的恢复码。它只能用一次，会为你签发一把全新的签名密钥——旧的牌局依旧可以验证。',
+  'Save this now — you will not see it again': '现在就存好——之后不会再显示了',
+  'This is your recovery code, shown only once. It is the only way back in if you forget your password. Store it somewhere safe — it cannot be shown again.':
+    '这是你的恢复码，只显示这一次。万一忘了密码，它是唯一的回头路。请存到安全的地方——之后无法再次查看。',
+  '✓ I saved it — continue': '✓ 我存好了，继续',
+  '✓ I saved it — seat me': '✓ 我存好了，带我入席',
 
   'Deriving your keys…': '正在推导你的密钥…',
   'Creating account…': '正在创建账号…',

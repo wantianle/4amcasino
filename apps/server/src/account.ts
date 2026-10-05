@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DB } from './db.js';
@@ -20,6 +20,36 @@ import { forgive, hitNamed, rateLimit } from './limits.js';
 const authKey = z.string().length(64).regex(/^[0-9a-f]+$/);
 const pubKey = z.string().length(64).regex(/^[0-9a-f]+$/);
 const usernameSchema = z.string().min(2).max(24).regex(/^[a-zA-Z0-9_]+$/);
+
+// ── Recovery codes ───────────────────────────────────────────────────────────
+// A recovery code is minted by the server once, at signup, and returned in the
+// registration response only. Only its salted hash is kept. The client turns
+// the readable code into a `recoveryAuthKey` with scrypt domain-separation;
+// replicating that derivation here is what lets the server arm the code at
+// registration without ever storing a plaintext secret.
+const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const RECOVERY_SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 128 * 1024 * 1024 } as const;
+
+/** 120 bits, grouped 6×4 for legibility. Same alphabet/shape as the web client. */
+export function generateRecoveryCode(): string {
+  const bytes = randomBytes(24);
+  const chars = Array.from(bytes, (b) => RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length]!);
+  return [0, 6, 12, 18].map((i) => chars.slice(i, i + 6).join('')).join('-');
+}
+
+/** Mirror of the browser's deriveRecoveryAuthKey (apps/web/src/shared/crypto.ts). */
+export function deriveRecoveryAuthKey(code: string): string {
+  const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return scryptSync(normalized, '4am/recover', 32, RECOVERY_SCRYPT).toString('hex');
+}
+
+/** Stores the salted hash of a freshly minted code against an existing user. */
+export function armRecoveryCode(db: DB, userId: number, code: string): void {
+  const salt = randomBytes(16).toString('hex');
+  db.prepare(
+    'UPDATE users SET recovery_hash = ?, recovery_salt = ?, recovery_set_at = ? WHERE id = ?',
+  ).run(hashAuthKey(deriveRecoveryAuthKey(code), salt), salt, Date.now(), userId);
+}
 
 interface UserSecrets {
   auth_hash: string;
@@ -83,6 +113,62 @@ export function rekey(
     }
   });
   apply();
+}
+
+/** Outcome of a recovery-code redemption attempt. */
+export type RecoveryOutcome =
+  | { kind: 'ok'; userId: number }
+  | { kind: 'invalid' }
+  | { kind: 'seated' }
+  | { kind: 'used' };
+
+/** Validates a recovery code, re-keys the account and burns the code in ONE
+ *  immediate (write-locked) transaction.
+ *
+ *  The old flow did SELECT -> compare -> rekey -> NULL as four separate steps,
+ *  so two concurrent requests could both read the same stored hash and both
+ *  succeed: the same one-use code redeemed twice, the second call also
+ *  revoking the session the first had just issued. Here `BEGIN IMMEDIATE`
+ *  serializes the whole redemption (waiting up to busy_timeout), the code's
+ *  hash is NULLed with a conditional `WHERE recovery_hash = <read value>`, and
+ *  the re-key/session purge rides the same transaction. A loser therefore
+ *  either sees `recovery_hash IS NULL` (`invalid`) or changes 0 rows (`used`);
+ *  only one caller can ever return `ok`. */
+export function consumeRecoveryCode(
+  db: DB,
+  username: string,
+  recoveryAuthKey: string,
+  newAuthKey: string,
+  newPublicKey: string,
+): RecoveryOutcome {
+  const consume = db.transaction((): RecoveryOutcome => {
+    const row = db
+      .prepare('SELECT id, recovery_hash, recovery_salt FROM users WHERE username = ?')
+      .get(username) as
+      | { id: number; recovery_hash: string | null; recovery_salt: string | null }
+      | undefined;
+    // same shape and roughly the same cost whether the account exists, has no
+    // code, or the code is wrong - none of those should be distinguishable
+    const salt = row?.recovery_salt ?? 'f'.repeat(32);
+    const candidate = hashAuthKey(recoveryAuthKey, salt);
+    if (!row?.recovery_hash || !sameHash(candidate, row.recovery_hash)) {
+      return { kind: 'invalid' };
+    }
+    if (seatedSomewhere(db, row.id)) return { kind: 'seated' };
+    // Burn conditionally: if another redemption already consumed this exact
+    // hash, this changes nothing and the caller is the loser.
+    const burned = db
+      .prepare(
+        `UPDATE users SET recovery_hash = NULL, recovery_salt = NULL, recovery_set_at = NULL
+         WHERE id = ? AND recovery_hash = ?`,
+      )
+      .run(row.id, row.recovery_hash);
+    if (burned.changes !== 1) return { kind: 'used' };
+    // one use only, and every existing session dies - same transaction
+    rekey(db, row.id, newAuthKey, newPublicKey, null);
+    return { kind: 'ok', userId: row.id };
+  });
+  return consume.immediate();
 }
 
 function bearer(req: { headers: Record<string, unknown> }): string | null {
@@ -182,39 +268,17 @@ export function registerAccountRoutes(app: FastifyInstance, db: DB): void {
     return { enabled: !!me?.recovery_hash, setAt: me?.recovery_set_at ?? null };
   });
 
-  /** Arm (or clear) the recovery code. Re-authenticates, because an attacker on a
-   *  borrowed session must not be able to mint themselves a permanent back door. */
-  app.put(
-    '/api/me/recovery',
-    {
-      preHandler: [
-        requireUser(db),
-        rateLimit({ name: 'recovery-set', limit: 10, windowMs: 60 * 60_000, by: 'user' }),
-      ],
-    },
-    async (req, reply) => {
-      const parsed = z
-        .object({ currentAuthKey: authKey, recoveryAuthKey: authKey.nullable() })
-        .safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
-      const me = secretsFor(db, req.userId);
-      if (!me) return reply.code(404).send({ error: 'no such user' });
-      if (!sameHash(hashAuthKey(parsed.data.currentAuthKey, me.auth_salt), me.auth_hash)) {
-        return reply.code(403).send({ error: 'wrong password' });
-      }
-      if (parsed.data.recoveryAuthKey === null) {
-        db.prepare(
-          'UPDATE users SET recovery_hash = NULL, recovery_salt = NULL, recovery_set_at = NULL WHERE id = ?',
-        ).run(req.userId);
-        return { ok: true, enabled: false };
-      }
-      const salt = randomBytes(16).toString('hex');
-      db.prepare(
-        'UPDATE users SET recovery_hash = ?, recovery_salt = ?, recovery_set_at = ? WHERE id = ?',
-      ).run(hashAuthKey(parsed.data.recoveryAuthKey, salt), salt, Date.now(), req.userId);
-      return { ok: true, enabled: true };
-    },
-  );
+  /** Recovery codes are issued automatically at signup and cannot be re-set
+   *  from inside the app: the code is shown exactly once, the server keeps only
+   *  its hash, and a self-serve re-arm would either rotate a code the user may
+   *  not have saved or hand a borrowed session a fresh back door. Kept as a
+   *  route (rather than deleted) so an old client gets a clear 403 instead of a
+   *  blind 404. `GET` still answers whether a code is on file. */
+  app.put('/api/me/recovery', authed, async (_req, reply) => {
+    return reply
+      .code(403)
+      .send({ error: 'recovery codes are issued automatically at signup and cannot be changed' });
+  });
 
   /** The forgotten-password door. Unauthenticated by nature, so it is throttled
    *  by IP and by the name being targeted, and answers identically whether or not
@@ -240,35 +304,33 @@ export function registerAccountRoutes(app: FastifyInstance, db: DB): void {
           .send({ error: `too many attempts - try again in ${perName.retryAfterSecs}s` });
       }
 
-      const row = db
-        .prepare('SELECT id, recovery_hash, recovery_salt FROM users WHERE username = ?')
-        .get(parsed.data.username) as
-        | { id: number; recovery_hash: string | null; recovery_salt: string | null }
-        | undefined;
-
-      // same shape and roughly the same cost whether the account exists, has no
-      // code, or the code is wrong - none of those should be distinguishable
-      const salt = row?.recovery_salt ?? 'f'.repeat(32);
-      const candidate = hashAuthKey(parsed.data.recoveryAuthKey, salt);
-      const good = !!row?.recovery_hash && sameHash(candidate, row.recovery_hash);
-      if (!good) {
+      // Validate + re-key + burn atomically; only one concurrent caller wins.
+      const consumed = consumeRecoveryCode(
+        db,
+        parsed.data.username,
+        parsed.data.recoveryAuthKey,
+        parsed.data.newAuthKey,
+        parsed.data.newPublicKey,
+      );
+      if (consumed.kind === 'invalid') {
         return reply.code(403).send({ error: 'that recovery code does not match' });
       }
-      if (seatedSomewhere(db, row!.id)) {
+      if (consumed.kind === 'seated') {
         return reply
           .code(409)
           .send({ error: 'you are seated at a table - leave the seat before recovering' });
       }
+      if (consumed.kind === 'used') {
+        return reply.code(409).send({ error: 'that recovery code was already used' });
+      }
 
-      // burn the code: one use only, and every existing session dies
-      const userId = row!.id;
-      rekey(db, userId, parsed.data.newAuthKey, parsed.data.newPublicKey, null);
-      db.prepare(
-        'UPDATE users SET recovery_hash = NULL, recovery_salt = NULL, recovery_set_at = NULL WHERE id = ?',
-      ).run(userId);
       forgive(`recover-name|n:${parsed.data.username.toLowerCase()}`);
       forgive(`recover-ip|ip:${req.ip}`);
-      return { userId, username: parsed.data.username, token: createSession(db, userId) };
+      return {
+        userId: consumed.userId,
+        username: parsed.data.username,
+        token: createSession(db, consumed.userId),
+      };
     },
   );
 

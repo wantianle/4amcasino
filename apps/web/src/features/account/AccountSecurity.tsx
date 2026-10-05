@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../shared/api.ts';
-import {
-  deriveAuthKey,
-  deriveIdentity,
-  deriveRecoveryAuthKey,
-  generateRecoveryCode,
-} from '../../shared/crypto.ts';
+import { deriveAuthKey, deriveIdentity } from '../../shared/crypto.ts';
 import { useStore } from '../../shared/store.ts';
 import { Button, Input, Spinner } from '../../shared/ui/index.tsx';
 import { t } from '../../shared/i18n/index.ts';
@@ -215,14 +210,11 @@ function ChangeUsername() {
   );
 }
 
-function RecoveryCode() {
-  const auth = useStore((s) => s.auth);
+/** Recovery codes are minted by the server when the account is created and
+ *  shown once, then only their hash is kept. There is nothing to configure
+ *  here: this row only reports whether a code is on file. */
+function RecoveryInfo() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [code, setCode] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
 
   useEffect(() => {
     void api
@@ -231,141 +223,28 @@ function RecoveryCode() {
       .catch(() => setEnabled(false));
   }, []);
 
-  async function generate(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg(null);
-    const username = auth.username;
-    if (!username) return;
-    setBusy(true);
-    try {
-      await yieldFrame();
-      const fresh = generateRecoveryCode();
-      const currentAuthKey = deriveAuthKey(username, password);
-      const recoveryAuthKey = deriveRecoveryAuthKey(fresh);
-      await api.setRecovery(currentAuthKey, recoveryAuthKey);
-      setCode(fresh);
-      setEnabled(true);
-      setPassword('');
-    } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not set it up') });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function disable() {
-    setMsg(null);
-    const username = auth.username;
-    if (!username || !password) {
-      return setMsg({ kind: 'bad', text: t('enter your password first') });
-    }
-    setBusy(true);
-    try {
-      await yieldFrame();
-      await api.setRecovery(deriveAuthKey(username, password), null);
-      setEnabled(false);
-      setCode(null);
-      setPassword('');
-      setMsg({ kind: 'ok', text: t('Recovery code turned off.') });
-    } catch (err) {
-      setMsg({ kind: 'bad', text: err instanceof Error ? err.message : t('could not turn it off') });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function copy() {
-    if (!code) return;
-    void navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
-  }
-
-  function download() {
-    if (!code) return;
-    const body = `${t('4AM Casino recovery code')}\n${t('Account: {name}', { name: auth.username ?? '' })}\n\n${code}\n\n${t(
-      'Keep this somewhere safe and private. It is the only way back into your account if you forget your password, and it works exactly once.',
-    )}\n`;
-    const url = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `4am-recovery-${auth.username}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
     <Row
       title={t('Recovery code')}
       hint={t(
-        'Nobody can reset your password for you - your key lives only in your browser. A recovery code is the one way back in. Generate it now, store it somewhere safe, and it works exactly once.',
+        'Your recovery code is generated automatically when you create your account and shown exactly once. It cannot be viewed or changed here.',
       )}
     >
-      {code ? (
-        <div className="max-w-md rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-            {t('Save this now — you will not see it again')}
-          </p>
-          <code className="mt-2 block select-all break-all rounded-lg bg-white/80 px-3 py-2 font-mono text-sm font-bold tracking-wider text-slate-900 dark:bg-slate-900/70 dark:text-slate-100">
-            {code}
-          </code>
-          <div className="mt-3 flex gap-2">
-            <Button type="button" variant="secondary" onClick={copy}>
-              {copied ? t('✓ Copied') : t('Copy')}
-            </Button>
-            <Button type="button" variant="secondary" onClick={download}>
-              {t('Download')}
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setCode(null)}>
-              {t('I saved it')}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <form onSubmit={generate} className="grid max-w-md gap-2">
-          <p className="text-xs">
-            {enabled === null ? (
-              <Spinner />
-            ) : enabled ? (
-              <span className="text-emerald-600 dark:text-emerald-400">
-                {t('✓ A recovery code is armed on this account.')}
-              </span>
-            ) : (
-              <span className="text-amber-600 dark:text-amber-400">
-                {t('⚠ No recovery code. Forget your password and the account is gone for good.')}
-              </span>
+      <p className="text-xs">
+        {enabled === null ? (
+          <Spinner />
+        ) : enabled ? (
+          <span className="text-emerald-600 dark:text-emerald-400">
+            {t('✓ A recovery code is on file for this account.')}
+          </span>
+        ) : (
+          <span className="text-amber-600 dark:text-amber-400">
+            {t(
+              '⚠ No recovery code on file. If you get locked out, ask the platform to reset your password.',
             )}
-          </p>
-          <Input
-            type="password"
-            aria-label={t('Your password')}
-            placeholder={t('Your password')}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-            disabled={busy}
-          />
-          <div className="flex gap-2">
-            <Button type="submit" disabled={busy}>
-              {busy ? (
-                <Spinner label={t('Working…')} />
-              ) : enabled ? (
-                t('Generate a new code')
-              ) : (
-                t('Generate code')
-              )}
-            </Button>
-            {enabled && (
-              <Button type="button" variant="danger" onClick={disable} disabled={busy}>
-                {t('Turn off')}
-              </Button>
-            )}
-          </div>
-        </form>
-      )}
-      {msg && <Note kind={msg.kind}>{msg.text}</Note>}
+          </span>
+        )}
+      </p>
     </Row>
   );
 }
@@ -410,7 +289,7 @@ export function AccountSecurity() {
     <div>
       <ChangePassword />
       <ChangeUsername />
-      <RecoveryCode />
+      <RecoveryInfo />
       <Devices />
     </div>
   );

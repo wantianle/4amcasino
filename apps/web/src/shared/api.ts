@@ -353,8 +353,6 @@ export const api = {
     newPublicKey: string,
   ) => req('/api/me/username', { username, currentAuthKey, newAuthKey, newPublicKey }),
   recoveryStatus: () => req('/api/me/recovery'),
-  setRecovery: (currentAuthKey: string, recoveryAuthKey: string | null) =>
-    req('/api/me/recovery', { currentAuthKey, recoveryAuthKey }, 'PUT'),
   recover: (username: string, recoveryAuthKey: string, newAuthKey: string, newPublicKey: string) =>
     req('/api/recover', { username, recoveryAuthKey, newAuthKey, newPublicKey }),
   logout: () => req('/api/logout', {}),

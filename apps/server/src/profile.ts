@@ -5,10 +5,26 @@ import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { isPlatform, platformUserId } from './platform.js';
 import { canBank, getRoom, isMember } from './rooms.js';
-import { DEFAULT_POKER_HOTKEYS, parsePokerHotkeys, describeScore, evaluate7 } from '@4am/shared';
+import {
+  DEFAULT_POKER_HOTKEYS,
+  parsePokerHotkeys,
+  describeScore,
+  evaluate7,
+  DISPLAY_NAME_MAX_WIDTH,
+  displayNameError,
+  displayNameWidth,
+} from '@4am/shared';
 
 const MAX_AVATAR_BYTES = 300_000;
 const AVATAR_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+
+// ── Nickname (display name) rules ─────────────────────────────────────────────
+// The login name (`username`) stays strict ASCII. The nickname rule - a real
+// allowlist plus a real East_Asian_Width W/F table - lives in
+// `@4am/shared/displayName`, so the browser settings form and this server
+// enforce exactly the same thing. Re-exported here because the server (and its
+// tests) import the rule by this module's name.
+export { DISPLAY_NAME_MAX_WIDTH, displayNameError, displayNameWidth } from '@4am/shared';
 
 function storedPokerHotkeys(raw: string | null) {
   if (raw === null) return DEFAULT_POKER_HOTKEYS;
@@ -70,7 +86,13 @@ const profileSchema = z.object({
     .unknown()
     .refine((value) => parsePokerHotkeys(value) !== null, 'Invalid keyboard shortcuts')
     .optional(),
-  displayName: z.string().trim().min(1).max(24).optional(),
+  // Empty is allowed (clears the nickname); the width/spacing rules live in
+  // displayNameError so the same predicate can be unit-tested and mirrored by
+  // the web client. Anything else is a 400.
+  displayName: z
+    .string()
+    .refine((value) => displayNameError(value) === null, 'Invalid display name')
+    .optional(),
   bio: z.string().trim().max(280).optional(),
   cardBack: z.enum(CARD_BACKS).optional(),
   fourColor: z.boolean().optional(),
@@ -208,8 +230,17 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         JSON.stringify(quickPhrases),
         req.userId,
       );
-    if (displayName !== undefined)
-      db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, req.userId);
+    if (displayName !== undefined) {
+      // Only the true empty string clears the nickname; NULL is what makes
+      // COALESCE(display_name, username) fall back to the login name. Anything
+      // else is stored exactly as sent - the schema already refused whitespace,
+      // so there is nothing to trim and `' abc '` can never be silently stored
+      // as `'abc'`.
+      db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(
+        displayName === '' ? null : displayName,
+        req.userId,
+      );
+    }
     if (bio !== undefined) db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, req.userId);
     if (cardBack !== undefined)
       db.prepare('UPDATE users SET card_back = ? WHERE id = ?').run(cardBack, req.userId);

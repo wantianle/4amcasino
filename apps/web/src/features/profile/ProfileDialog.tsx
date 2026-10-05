@@ -14,6 +14,7 @@ import { Button, Input } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { SettingsCard } from '../settings/SettingsCard.tsx';
+import { DISPLAY_NAME_MAX_WIDTH, displayNameError } from '../account/displayName.ts';
 import { cardFromName } from '@4am/shared';
 import { t } from '../../shared/i18n/index.ts';
 
@@ -65,6 +66,8 @@ export function ProfileEditor({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Instant feedback; the server re-checks with the same rule and is the referee.
+  const nameError = displayNameError(displayName);
 
   async function pickAvatar(file: File | undefined) {
     if (!file) return;
@@ -78,6 +81,10 @@ export function ProfileEditor({
   }
 
   async function save() {
+    if (nameError) {
+      setError(nameError);
+      return;
+    }
     setSaving(true);
     setError(null);
     const quickPhrases = phrasesText
@@ -88,7 +95,10 @@ export function ProfileEditor({
       .map((s) => s.slice(0, 60));
     try {
       await api.updateProfile({
-        displayName: displayName.trim() || auth.username,
+        // Sent exactly as typed: only the true empty string clears the column
+        // (so the table falls back to the login name). We never trim - a value
+        // with leading/trailing whitespace already failed `nameError` above.
+        displayName,
         bio,
         cardBack: prefs.cardBack,
         fourColor: prefs.fourColor,
@@ -97,7 +107,7 @@ export function ProfileEditor({
         autoReady: prefs.autoReady,
         quickPhrases,
       });
-      setPrefs({ displayName: displayName.trim() || (auth.username ?? ''), bio, quickPhrases });
+      setPrefs({ displayName: displayName || (auth.username ?? ''), bio, quickPhrases });
       setSoundsEnabled(sounds);
       if (onSaved) {
         onSaved();
@@ -151,11 +161,16 @@ export function ProfileEditor({
 
       <label className="block text-sm">
         <span className="mb-1 block text-slate-500">{t('Display name')}</span>
-        <Input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          maxLength={24}
-        />
+        <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        {nameError ? (
+          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{t(nameError)}</p>
+        ) : (
+          <p className="mt-1 text-xs text-slate-400">
+            {t('Up to {n} columns wide — Chinese counts as two. Leave empty to use your username.', {
+              n: DISPLAY_NAME_MAX_WIDTH,
+            })}
+          </p>
+        )}
       </label>
       <label className="block text-sm">
         <span className="mb-1 block text-slate-500">{t('Bio')}</span>
@@ -349,7 +364,7 @@ export function ProfileEditor({
         {/* follows you down the page so a change three sections up is never
             stranded behind a scroll */}
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/90 px-4 py-3 shadow-lg backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/90">
-          <Button onClick={() => void save()} disabled={saving}>
+          <Button onClick={() => void save()} disabled={saving || !!nameError}>
             {saving ? t('Saving…') : t('Save profile')}
           </Button>
           {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -372,7 +387,7 @@ export function ProfileEditor({
         <Button
           className={wide ? 'w-full sm:w-auto' : 'w-full'}
           onClick={() => void save()}
-          disabled={saving}
+          disabled={saving || !!nameError}
         >
           {saving ? t('Saving…') : t('Save profile')}
         </Button>

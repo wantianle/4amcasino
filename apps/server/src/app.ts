@@ -12,7 +12,7 @@ import { registerBotRoutes, type BotControl } from './botRoutes.js';
 import { leaderboardRankOf, registerProfileRoutes } from './profile.js';
 import { registerHandStatsRoutes } from './handStats.js';
 import { registerSocialRoutes } from './social.js';
-import { registerAccountRoutes } from './account.js';
+import { registerAccountRoutes, armRecoveryCode, generateRecoveryCode } from './account.js';
 import { registerAdminRoutes } from './admin.js';
 import { forgive, hitNamed, LIMITS, rateLimit } from './limits.js';
 import { isPlatform } from './platform.js';
@@ -148,8 +148,25 @@ export function createApp(
       if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
       const { username, authKey, publicKey } = parsed.data;
       try {
-        const { userId, joinNumber } = createUser(db, username, authKey, publicKey);
-        return { userId, joinNumber, token: createSession(db, userId) };
+        // The recovery code is minted here and returned exactly once; only its
+        // salted hash is stored. There is no way to view or re-set it later.
+        const recoveryCode = generateRecoveryCode();
+        // Create the user AND arm the code in one transaction: if arming throws
+        // the INSERT rolls back, so a failed signup can never leave behind a
+        // registered account with no recovery code.
+        const { userId, joinNumber } = db
+          .transaction(() => {
+            const created = createUser(db, username, authKey, publicKey);
+            armRecoveryCode(db, created.userId, recoveryCode);
+            return created;
+          })
+          .immediate();
+        return {
+          userId,
+          joinNumber,
+          token: createSession(db, userId),
+          recoveryCode,
+        };
       } catch (e) {
         if (e instanceof Error && e.message.includes('UNIQUE')) {
           return reply.code(409).send({ error: 'username taken' });

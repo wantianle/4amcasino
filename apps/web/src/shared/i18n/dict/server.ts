@@ -141,6 +141,9 @@ const server: Record<string, string> = {
   'that is not your current password': '这不是你现在的密码。',
   'that is already your password': '新密码和现在用的一样。',
   'that recovery code does not match': '恢复码不正确。',
+  'that recovery code was already used': '这个恢复码已经被用过了。',
+  'recovery codes are issued automatically at signup and cannot be changed':
+    '恢复码在注册时自动生成，无法修改。',
   'stand up from your seat first - changing your password re-keys your cards':
     '先起身离座。改密码会重新签发你的签名密钥。',
   'stand up from your seat first - renaming re-keys your cards':

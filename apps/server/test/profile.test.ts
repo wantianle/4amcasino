@@ -342,7 +342,7 @@ describe('profile', () => {
       method: 'PUT',
       url: '/api/profile',
       headers: auth(alice.token),
-      payload: { displayName: 'Ace Alice', bio: 'river rat since 2020' },
+      payload: { displayName: 'AceAlice', bio: 'river rat since 2020' },
     });
     expect(put.statusCode).toBe(200);
     const me = (
@@ -350,7 +350,7 @@ describe('profile', () => {
     ).json();
     expect(me).toMatchObject({
       username: 'alice',
-      displayName: 'Ace Alice',
+      displayName: 'AceAlice',
       bio: 'river rat since 2020',
       hasAvatar: false,
     });
