@@ -7,6 +7,8 @@
   "scripts": {
     "test": "vitest run",
     "test:fast": "vitest run --exclude '**/evalInfra.test.mjs' --exclude '**/node_modules/**' --exclude '**/dist/**' --exclude '.slim/**'",
+    "test:server": "vitest run apps/server/test --exclude '**/evalInfra.test.mjs'",
+    "test:core": "vitest run packages/agent-core/test",
     "test:bench": "RUN_BENCH=1 vitest run packages/agent-core/test/postflopPolicy.test.ts",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present",

@@ -164,6 +164,10 @@ export async function runEvalMatch({
     actionTimeoutMs: actionMs,
     autoDealMs: 3_600_000,
     readyCheckMs: readyMs,
+    // Eval matches drive every hand explicitly and measure poker strength, not
+    // animation: skip the web-facing holds so throughput is unchanged.
+    showdownHoldMs: 0,
+    settleHoldMs: 0,
   });
   const baseUrl = await ctx.app.listen({ host: '127.0.0.1', port: 0 });
 

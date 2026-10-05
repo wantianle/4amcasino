@@ -449,6 +449,9 @@ async function main() {
     actionTimeoutMs: ACTION_MS,
     autoDealMs: 3_600_000, // harness starts every hand explicitly
     readyCheckMs: READY_MS,
+    // Playtest drives every hand explicitly; skip the web-facing animation holds.
+    showdownHoldMs: 0,
+    settleHoldMs: 0,
   });
   const baseUrl = await ctx.app.listen({ host: '127.0.0.1', port: 0 });
 
