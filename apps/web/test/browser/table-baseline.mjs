@@ -43,7 +43,7 @@ function makeRoom(count, mySeat) {
       minSettleHands: 0,
       sevenDeuceBonus: 0,
       voided: false,
-      meetLink: null,
+       meetLink: 'https://meet.example.test/baseline',
       autoApproveBuys: false,
       tvReplays: false,
       commissionBps: 50,
@@ -97,7 +97,11 @@ const PHONE_VIEWS = [
 ];
 const VIEW_MODE = process.env.VIEWS || 'desktop';
 const VIEWPORTS =
-  VIEW_MODE === 'phone' ? PHONE_VIEWS : VIEW_MODE === 'both' ? [...DESKTOP_VIEWS, ...PHONE_VIEWS] : DESKTOP_VIEWS;
+  VIEW_MODE === 'phone'
+    ? PHONE_VIEWS
+    : VIEW_MODE === 'both'
+      ? [...DESKTOP_VIEWS, ...PHONE_VIEWS]
+      : DESKTOP_VIEWS;
 
 const browser = await chromium.launch({
   headless: true,
@@ -112,14 +116,16 @@ try {
     for (const vp of VIEWPORTS) {
       const ctx = await browser.newContext({
         viewport: { width: vp.width, height: vp.height },
-        reducedMotion: 'reduce',
+        reducedMotion: process.env.MOTION_EVIDENCE === '1' ? 'no-preference' : 'reduce',
       });
       await ctx.addInitScript(
         (uid) =>
           localStorage.setItem(
             '4am-auth',
             JSON.stringify({
-              state: { auth: { token: 'baseline-fixture', userId: uid, username: 'alex', identity: null } },
+              state: {
+                auth: { token: 'baseline-fixture', userId: uid, username: 'alex', identity: null },
+              },
               version: 0,
             }),
           ),
@@ -156,7 +162,12 @@ try {
             fourColor: true,
             features: {
               squid: { enabled: true, penaltyBb: 100, minPlayers: 2 },
-              timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
+              timeBank: {
+                enabled: true,
+                initialSeconds: 30,
+                refillEveryHands: 30,
+                refillSeconds: 30,
+              },
               bombPot: { enabled: true, anteBb: 3, schedule: { mode: 'hands', value: 10 } },
               multiRun: { enabled: true, maxRuns: 3 },
             },
@@ -170,7 +181,14 @@ try {
             ws.send(JSON.stringify(room));
             if (sc.kind === 'myturn') {
               const seats = room.players.map((player) => ({ ...player }));
-              const order = [0, 1, sc.mySeat, ...seats.map((player) => player.seat).filter((seat) => ![0, 1, sc.mySeat].includes(seat))];
+              const order = [
+                0,
+                1,
+                sc.mySeat,
+                ...seats
+                  .map((player) => player.seat)
+                  .filter((seat) => ![0, 1, sc.mySeat].includes(seat)),
+              ];
               const bettingSeats = order.map((seat) => ({
                 seat,
                 stack: 2000 - seat * 137,
@@ -181,27 +199,29 @@ try {
                 lastActedAt: null,
               }));
               setTimeout(() => {
-                ws.send(JSON.stringify({
-                  t: 'betting_state',
-                  handId: 'baseline',
-                  actionSeq: 0,
-                  state: {
-                    street: 'preflop',
-                    seats: bettingSeats,
-                    buttonSeat: 0,
-                    sb: 10,
-                    bb: 20,
-                    currentBet: 20,
-                    lastRaiseSize: 20,
-                    lastFullRaiseAt: 20,
-                    toAct: sc.mySeat,
-                    needToAct: [sc.mySeat, ...order.filter((seat) => seat !== sc.mySeat)],
-                    winnerByFold: null,
-                  },
-                  board: [],
-                  deadline: Date.now() + 30000,
-                  baseDeadline: Date.now() + 30000,
-                }));
+                ws.send(
+                  JSON.stringify({
+                    t: 'betting_state',
+                    handId: 'baseline',
+                    actionSeq: 0,
+                    state: {
+                      street: 'preflop',
+                      seats: bettingSeats,
+                      buttonSeat: 0,
+                      sb: 10,
+                      bb: 20,
+                      currentBet: 20,
+                      lastRaiseSize: 20,
+                      lastFullRaiseAt: 20,
+                      toAct: sc.mySeat,
+                      needToAct: [sc.mySeat, ...order.filter((seat) => seat !== sc.mySeat)],
+                      winnerByFold: null,
+                    },
+                    board: [],
+                    deadline: Date.now() + 30000,
+                    baseDeadline: Date.now() + 30000,
+                  }),
+                );
               }, 700);
             }
           }
@@ -214,13 +234,17 @@ try {
       );
       // Let the real room_state effect settle first. Injecting the visual hand
       // before that effect runs lets the websocket's empty hand win the race.
-      await page.waitForFunction(async ({ count }) => {
-        const { useStore } = await import('/src/shared/store.ts');
-        return useStore.getState().room?.players.length === count;
-      }, { count: sc.count });
+      await page.waitForFunction(
+        async ({ count }) => {
+          const { useStore } = await import('/src/shared/store.ts');
+          return useStore.getState().room?.players.length === count;
+        },
+        { count: sc.count },
+      );
       await page.evaluate(
-        async ({ path, count, mySeat, kind, feature, roomFixture }) => {
-          const { useStore, emptyHand } = await import('/src/shared/store.ts');
+        async ({ path, count, mySeat, kind, feature, motionEvidence, roomFixture }) => {
+           const { useStore, emptyHand } = await import('/src/shared/store.ts');
+           const { noteDealMotion } = await import('/src/shared/gameClient.ts');
           const { startHand, evaluate7 } = await import('/@fs' + path);
           const { deriveIdentity } = await import('/src/shared/crypto.ts');
 
@@ -307,22 +331,22 @@ try {
               10,
               20,
             );
-          hand = {
-            ...baseHand,
-            betting,
-            deadline: Date.now() + 30000,
-            baseDeadline: Date.now() + 30000,
-            // L2 evidence: time-bank pills — loud on the acting seat, a normal
-            // value on one opponent, and the 0s quiet variant on another.
-            timeBanks: {
-              [meSeat]: 60000,
-              [others[0]]: 45000,
-              ...(others[1] !== undefined ? { [others[1]]: 0 } : {}),
-            },
-            lastActions: Object.fromEntries(
-              order.slice(0, 2).map((seat) => [seat, { type: 'call' }]),
-            ),
-          };
+            hand = {
+              ...baseHand,
+              betting,
+              deadline: Date.now() + 30000,
+              baseDeadline: Date.now() + 30000,
+              // L2 evidence: time-bank pills — loud on the acting seat, a normal
+              // value on one opponent, and the 0s quiet variant on another.
+              timeBanks: {
+                [meSeat]: 60000,
+                [others[0]]: 45000,
+                ...(others[1] !== undefined ? { [others[1]]: 0 } : {}),
+              },
+              lastActions: Object.fromEntries(
+                order.slice(0, 2).map((seat) => [seat, { type: 'call' }]),
+              ),
+            };
           } else {
             const b1 = [20, 25, 29, 33, 41];
             const reveals = players.map((p, i) => {
@@ -373,34 +397,252 @@ try {
             }
           }
 
-          useStore.getState().resetHand(hand);
-          useStore.getState().setWsConnected(true);
+           if (motionEvidence) {
+             // The evidence run models a fresh server deal after the snapshot:
+             // mount the empty hand first, then deliver the cards under a new
+             // local deal epoch. This keeps the production rule (snapshots do
+             // not animate) while making the capture deterministic.
+             useStore.getState().resetHand({ ...hand, myCards: [], myCardPoints: [] });
+             useStore.getState().resetHand(hand);
+           } else {
+             useStore.getState().resetHand(hand);
+           }
+           useStore.getState().setWsConnected(true);
         },
         {
           path: sharedPath,
           count: sc.count,
           mySeat: sc.mySeat,
           kind: sc.kind,
-          feature: process.env.FEATURE === '1',
-          roomFixture: room,
+           feature: process.env.FEATURE === '1',
+           motionEvidence:
+             process.env.MOTION_EVIDENCE === '1' || process.env.MOTION_REDUCED_EVIDENCE === '1',
+           roomFixture: room,
         },
       );
 
       await page.evaluate(async () => {
         for (let i = 0; i < 5; i++) await new Promise(requestAnimationFrame);
       });
-      await page.waitForFunction(async ({ kind, mySeat }) => {
-        const { useStore } = await import('/src/shared/store.ts');
-        const hand = useStore.getState().hand;
-        if (kind === 'myturn') {
-          return hand.handId !== null && hand.betting !== null && hand.betting.toAct === mySeat &&
-            hand.seats.some((seat) => seat.seat === mySeat) && hand.myCards.length >= 2;
-        }
-        if (kind === 'waiting') return hand.betting !== null;
-        if (kind === 'idle') return hand.betting === null;
-        if (kind === 'showdown' || kind === 'multirun') return hand.result !== null;
-        return false;
-      }, { kind: sc.kind, mySeat: sc.mySeat });
+      if (process.env.MOTION_EVIDENCE === '1' && sc.name === 'desktop-9p-myturn' && vp.width === 1440) {
+        const probe = await page.evaluate(async () => {
+          const ReactModule = await import('/node_modules/.vite/deps/react.js');
+          const React = ReactModule.default ?? ReactModule;
+          const ReactDomModule = await import('/node_modules/.vite/deps/react-dom_client.js');
+          const { createRoot } = ReactDomModule.default ?? ReactDomModule;
+          const { DealCard, activeDealRegistrySize } = await import('/src/widgets/table/DealCard.tsx');
+          const { noteDealMotion } = await import('/src/shared/gameClient.ts');
+          const canvas = document.querySelector('.table-canvas');
+          if (!canvas) throw new Error('StrictMode probe: table canvas missing');
+          let probeDeck = null;
+          if (!canvas.querySelector('[data-table-deck]')) {
+            probeDeck = document.createElement('div');
+            probeDeck.setAttribute('data-table-deck', '');
+            canvas.append(probeDeck);
+          }
+          const host = document.createElement('div');
+          canvas.append(host);
+          let animations = 0;
+          const animationsSeen = [];
+          const mediaQueries = [];
+          let mediaAdds = 0;
+          let mediaRemoves = 0;
+          let mediaActive = 0;
+          const originalMatchMedia = window.matchMedia;
+          window.matchMedia = (query) => {
+            const media = originalMatchMedia.call(window, query);
+            if (query.includes('prefers-reduced-motion')) {
+              mediaQueries.push(media);
+              const listeners = new Set();
+              const add = media.addEventListener.bind(media);
+              const remove = media.removeEventListener.bind(media);
+              media.addEventListener = (...args) => {
+                if (!listeners.has(args[1])) { listeners.add(args[1]); mediaAdds += 1; mediaActive += 1; }
+                return add(...args);
+              };
+              media.removeEventListener = (...args) => {
+                if (listeners.delete(args[1])) { mediaRemoves += 1; mediaActive -= 1; }
+                return remove(...args);
+              };
+            }
+            return media;
+          };
+           const originalAnimate = Element.prototype.animate;
+          Element.prototype.animate = function () {
+            const animation = originalAnimate.apply(this, arguments);
+            if (host.contains(this)) {
+              animations += 1;
+              animationsSeen.push(animation);
+            }
+            return animation;
+          };
+           const probeEpoch = noteDealMotion('strict-probe', 'hole:hero:0');
+          const props = { handId: 'strict-probe', motionKey: 'hole:hero:0', epoch: probeEpoch, children: React.createElement('span', null, 'card') };
+          const root = createRoot(host);
+          root.render(React.createElement(React.StrictMode, null, React.createElement(DealCard, props)));
+          await new Promise((resolve) => setTimeout(resolve, 50));
+           const afterStrictMount = animations;
+          const runningState = animationsSeen[0]?.playState;
+          const lateOldFinish = animationsSeen[0]?.onfinish;
+          root.render(React.createElement(React.StrictMode, null, React.createElement(DealCard, props)));
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const afterRerender = animations;
+          mediaQueries.forEach((media) => media.dispatchEvent(new Event('change')));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const afterReducedState = animationsSeen[0]?.playState;
+           root.unmount();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          const afterUnmountState = animationsSeen[0]?.playState;
+          const registryAfterUnmount = activeDealRegistrySize();
+          const remount = createRoot(host);
+          remount.render(React.createElement(React.StrictMode, null, React.createElement(DealCard, props)));
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const afterLateRemount = animations;
+          remount.unmount();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          const registryAfterRemount = activeDealRegistrySize();
+          const nextEpoch = noteDealMotion('strict-probe', 'hole:hero:0');
+          const nextRoot = createRoot(host);
+          nextRoot.render(React.createElement(React.StrictMode, null, React.createElement(DealCard, {
+            ...props,
+            epoch: nextEpoch,
+          })));
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const afterNewEpoch = animations;
+          const oldAnimationAfterNewEpoch = animationsSeen[0]?.playState;
+          const newElement = host.querySelector('.table-dealt-card');
+          const newMarkerBeforeLateFinish = newElement?.dataset.dealing === 'true';
+          const registryBeforeLateFinish = activeDealRegistrySize();
+          lateOldFinish?.();
+          const newMarkerAfterLateFinish = newElement?.dataset.dealing === 'true';
+          const registryAfterLateFinish = activeDealRegistrySize();
+          nextRoot.unmount();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+           const registryAfterNewEpoch = activeDealRegistrySize();
+           Element.prototype.animate = originalAnimate;
+          window.matchMedia = originalMatchMedia;
+          host.remove();
+          probeDeck?.remove();
+          return {
+            afterStrictMount,
+            afterRerender,
+            afterLateRemount,
+            afterReducedState,
+            afterNewEpoch,
+            oldAnimationAfterNewEpoch,
+            runningState,
+            afterUnmountState,
+            registryAfterUnmount,
+            registryAfterRemount,
+            registryAfterNewEpoch,
+            mediaActive,
+            mediaAdds,
+            mediaRemoves,
+            newMarkerBeforeLateFinish,
+            newMarkerAfterLateFinish,
+            registryBeforeLateFinish,
+            registryAfterLateFinish,
+          };
+          });
+        if (probe.afterStrictMount !== 1 || probe.afterRerender !== 1 || probe.afterLateRemount !== 1)
+          throw new Error(`${sc.name}: StrictMode motion probe failed ${JSON.stringify(probe)}`);
+        if (!(probe.mediaAdds > 0) || probe.mediaAdds !== probe.mediaRemoves || probe.mediaActive !== 0)
+          throw new Error(`${sc.name}: media listener probe failed ${JSON.stringify({ mediaAdds: probe.mediaAdds, mediaRemoves: probe.mediaRemoves, mediaActive: probe.mediaActive })}`);
+        if (probe.runningState !== 'running' || !['idle', 'finished'].includes(probe.afterReducedState) || !['idle', 'finished'].includes(probe.afterUnmountState) || probe.afterNewEpoch !== 2 || !['idle', 'finished'].includes(probe.oldAnimationAfterNewEpoch) || probe.registryAfterUnmount !== 0 || probe.registryAfterRemount !== 0 || probe.registryAfterNewEpoch !== 0 || probe.mediaActive !== 0 || !probe.newMarkerBeforeLateFinish || !probe.newMarkerAfterLateFinish || probe.registryBeforeLateFinish !== 1 || probe.registryAfterLateFinish !== 1)
+          throw new Error(`${sc.name}: animation lifecycle probe failed ${JSON.stringify(probe)}`);
+        const boardProbe = await page.evaluate(async () => {
+          const { useStore } = await import('/src/shared/store.ts');
+          const { handle, dealMotionEpoch, boardMotionKey } = await import('/src/shared/gameClient.ts');
+          const saved = useStore.getState().hand;
+          try {
+            useStore.getState().resetHand({ ...saved, handId: 'board-handler-probe', boards: [[30,32,31], [30,32,31]] });
+            const send = (card, deckIndex, run = 1) => handle({ t: 'board_open', handId: 'board-handler-probe', card, deckIndex, run });
+            const snapshotEpochs = [];
+            for (const run of [1, 2]) {
+              for (const [card, deckIndex] of [[31, 12], [30, 10], [32, 11]]) {
+                send(card, deckIndex, run);
+                const epoch = dealMotionEpoch('board-handler-probe', boardMotionKey('board-handler-probe', run - 1, card));
+                snapshotEpochs.push({ run, card, epoch });
+                if (epoch !== 0)
+                  throw new Error(`snapshot replay advanced epoch ${JSON.stringify({ run, card, epoch })}`);
+              }
+            }
+            useStore.getState().resetHand({ ...useStore.getState().hand, handId: 'board-handler-probe', boards: [[30,32,31], [30,32,31]] });
+            send(33,13);
+            send(34,15,2);
+            const boards = useStore.getState().hand.boards;
+            if (JSON.stringify(boards) !== '[[30,32,31,33],[30,32,31,34]]') throw new Error(JSON.stringify(boards));
+            useStore.getState().resetHand({ ...saved, handId: 'board-order-probe', boards: [[], []] });
+            const sendOrder = (card, deckIndex, run = 1) => handle({ t: 'board_open', handId: 'board-order-probe', card, deckIndex, run });
+            sendOrder(31,12); sendOrder(30,10); sendOrder(32,11); sendOrder(34,15,2);
+            const ordered = useStore.getState().hand.boards;
+            if (JSON.stringify(ordered) !== '[[30,32,31],[34]]') throw new Error(`unordered handler result ${JSON.stringify(ordered)}`);
+            handle({ t: 'betting_state', handId: 'board-handler-probe', actionSeq: 1, state: {
+              street: 'turn', seats: [], buttonSeat: 0, sb: 10, bb: 20, currentBet: 20,
+              lastRaiseSize: 20, lastFullRaiseAt: 20, toAct: null, needToAct: [], winnerByFold: null,
+            }, board: [30,32,31,33,35], deadline: null });
+            const corrected = useStore.getState().hand.boards[0];
+            if (JSON.stringify(corrected) !== '[30,32,31,33,35]') throw new Error('authoritative correction failed');
+            return { boards, corrected, snapshotEpochs };
+          } finally { useStore.getState().resetHand(saved); }
+        });
+        console.log(`board handler probe ${JSON.stringify(boardProbe)}`);
+        console.log(`motion contract probe ${JSON.stringify(probe)}`);
+      }
+      if (process.env.MOTION_EVIDENCE === '1' && sc.kind === 'myturn') {
+        await page.evaluate(async () => {
+          const { useStore } = await import('/src/shared/store.ts');
+          const { noteDealMotion } = await import('/src/shared/gameClient.ts');
+          noteDealMotion('baseline', 'hole:hero:0');
+          noteDealMotion('baseline', 'hole:hero:1');
+          const current = useStore.getState().hand;
+          useStore.getState().patchHand({ myCards: [...current.myCards] });
+          useStore.getState().patchHand({ featureStarted: { bombPot: { enabled: true, anteBb: 3 } } });
+        });
+        await page.waitForSelector('[data-testid="bomb-pot-intro"]', { state: 'visible' });
+         if (!(await page.locator('[data-testid="bomb-pot-intro"]').getByText(/炸弹池|Bomb pot/i).count()))
+          throw new Error(`${sc.name}: bomb-pot intro text is missing`);
+        if ((await page.locator('[data-dealing="true"]').count()) === 0)
+          throw new Error(`${sc.name}: no deal animation was in progress`);
+        await page.screenshot({ path: `${out}/motion-in-progress.png` });
+      }
+      if (process.env.MOTION_REDUCED_EVIDENCE === '1' && sc.kind === 'myturn') {
+        await page.evaluate(async () => {
+          const { useStore } = await import('/src/shared/store.ts');
+          const { noteDealMotion } = await import('/src/shared/gameClient.ts');
+          noteDealMotion('baseline', 'hole:hero:0');
+          noteDealMotion('baseline', 'hole:hero:1');
+          const current = useStore.getState().hand;
+          useStore.getState().patchHand({ myCards: [...current.myCards] });
+          useStore.getState().patchHand({ featureStarted: { bombPot: { enabled: true, anteBb: 3 } } });
+        });
+        await page.waitForSelector('[data-testid="bomb-pot-intro"]', { state: 'visible' });
+         if (!(await page.locator('[data-testid="bomb-pot-intro"]').getByText(/炸弹池|Bomb pot/i).count()))
+          throw new Error(`${sc.name}: bomb-pot prompt missing in reduced-motion mode`);
+        if ((await page.locator('[data-dealing="true"]').count()) !== 0)
+          throw new Error(`${sc.name}: reduced-motion still has an active deal animation`);
+        await page.screenshot({ path: `${out}/reduced-motion-static.png` });
+      }
+      await page.waitForFunction(
+        async ({ kind, mySeat }) => {
+          const { useStore } = await import('/src/shared/store.ts');
+          const hand = useStore.getState().hand;
+          if (kind === 'myturn') {
+            return (
+              hand.handId !== null &&
+              hand.betting !== null &&
+              hand.betting.toAct === mySeat &&
+              hand.seats.some((seat) => seat.seat === mySeat) &&
+              hand.myCards.length >= 2
+            );
+          }
+          if (kind === 'waiting') return hand.betting !== null;
+          if (kind === 'idle') return hand.betting === null;
+          if (kind === 'showdown' || kind === 'multirun') return hand.result !== null;
+          return false;
+        },
+        { kind: sc.kind, mySeat: sc.mySeat },
+      );
       await page.waitForTimeout(1500);
       if (sc.kind === 'myturn') {
         // Clone the already-valid snapshot once more after the page effects
@@ -417,7 +659,9 @@ try {
             betting: state.hand.betting
               ? {
                   ...state.hand.betting,
-                  toAct: state.room?.players.find((p) => p.userId === 2)?.seat ?? state.hand.betting.toAct,
+                  toAct:
+                    state.room?.players.find((p) => p.userId === 2)?.seat ??
+                    state.hand.betting.toAct,
                 }
               : null,
           };
@@ -435,7 +679,10 @@ try {
         const handStateBeforeShot = await page.evaluate(async () => {
           const { useStore } = await import('/src/shared/store.ts');
           const state = useStore.getState();
-          return { hand: state.hand, mySeat: state.room?.players.find((p) => p.userId === 2)?.seat };
+          return {
+            hand: state.hand,
+            mySeat: state.room?.players.find((p) => p.userId === 2)?.seat,
+          };
         });
         if (
           handStateBeforeShot.hand.betting === null ||
@@ -445,21 +692,37 @@ try {
         }
         await page.waitForSelector('[data-testid="gameplay-squid"]');
         await page.waitForSelector('[data-testid="gameplay-bomb"]');
-        await page.waitForSelector('[data-testid="betting-panel"] button:not([disabled])');
-        if (!(await page.getByText(/轮到你了|Your turn/i).count())) {
-          throw new Error(`${sc.name}: turn prompt is missing; body=${(await page.locator('body').innerText()).slice(-1200)}`);
+         const bombIntroVisible = await page.locator('[data-testid="bomb-pot-intro"]').isVisible().catch(() => false);
+         // Bomb-pot preflop intentionally has no action buttons: the hand goes
+         // straight to the flop. The intro itself is the contract for this path.
+          const motionBombPath = process.env.MOTION_EVIDENCE === '1';
+          if (!bombIntroVisible && !motionBombPath) await page.waitForSelector('[data-testid="betting-panel"] button:not([disabled])');
+          if (!bombIntroVisible && !motionBombPath && !(await page.getByText(/轮到你了|Your turn/i).count())) {
+          throw new Error(
+            `${sc.name}: turn prompt is missing; body=${(await page.locator('body').innerText()).slice(-1200)}`,
+          );
         }
-        const actionText = (await page.locator('[data-testid="betting-panel"] button:not([disabled])').allTextContents()).join(' ');
-        if (!/弃牌|Fold/i.test(actionText) || !/跟|过牌|Call|Check/i.test(actionText)) {
-          throw new Error(`${sc.name}: usable fold/call-or-check actions are missing: ${actionText}`);
+          const actionText = bombIntroVisible || motionBombPath ? 'Bomb pot' : (
+          await page
+            .locator('[data-testid="betting-panel"] button:not([disabled])')
+            .allTextContents()
+         ).join(' ');
+          if (!bombIntroVisible && !motionBombPath && (!/弃牌|Fold/i.test(actionText) || !/跟|过牌|Call|Check/i.test(actionText))) {
+          throw new Error(
+            `${sc.name}: usable fold/call-or-check actions are missing: ${actionText}`,
+          );
         }
       }
       if (vp.width === 390) {
         const bounds = await page.evaluate(() => {
           const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
-          const labels = [...document.querySelectorAll('[data-testid="table-header"] button, [data-testid="table-header"] a')]
-            .map((el) => ({
-            label: el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent?.trim(),
+          const labels = [
+            ...document.querySelectorAll(
+              '[data-testid="table-header"] button, [data-testid="table-header"] a',
+            ),
+          ].map((el) => ({
+            label:
+              el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent?.trim(),
             rect: el.getBoundingClientRect().toJSON(),
           }));
           const menu = rect('[data-testid="table-more"]');
@@ -467,52 +730,91 @@ try {
           const chips = rect('[aria-label="Chips"]');
           return { width: innerWidth, labels, menu, history, chips };
         });
-        const required = ['mobile-history', 'mobile-auto-deal', 'mobile-bots', 'mobile-invite', 'mobile-watch', 'table-more'];
-        const controls = await page.evaluate((selectors) => selectors.map((selector) => {
-          const el = document.querySelector(`[data-testid="${selector}"]`);
-          const rect = el?.getBoundingClientRect();
-          if (!el || !rect) return { selector, missing: true };
-          const cx = rect.left + rect.width / 2;
-          const cy = rect.top + rect.height / 2;
-          const hit = document.elementFromPoint(cx, cy);
-          return { selector, missing: false, width: rect.width, height: rect.height, inViewport: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight, hit: hit === el || hit?.closest(`[data-testid="${selector}"]`) === el };
-        }), required);
-        if (controls.some((control) => control.missing || !control.inViewport || !control.hit || control.width < 44 || control.height < 44)) {
+        const required = [
+          'mobile-history',
+          'mobile-auto-deal',
+          'mobile-bots',
+          'mobile-invite',
+          'mobile-watch',
+        ];
+        const controls = await page.evaluate(
+          (selectors) =>
+            selectors.map((selector) => {
+              const el = document.querySelector(`[data-testid="${selector}"]`);
+              const rect = el?.getBoundingClientRect();
+              if (!el || !rect) return { selector, missing: true };
+              const cx = rect.left + rect.width / 2;
+              const cy = rect.top + rect.height / 2;
+              const hit = document.elementFromPoint(cx, cy);
+              return {
+                selector,
+                missing: false,
+                width: rect.width,
+                height: rect.height,
+                inViewport:
+                  rect.left >= 0 &&
+                  rect.top >= 0 &&
+                  rect.right <= innerWidth &&
+                  rect.bottom <= innerHeight,
+                hit: hit === el || hit?.closest(`[data-testid="${selector}"]`) === el,
+              };
+            }),
+          required,
+        );
+        if (
+          controls.some(
+            (control) =>
+              control.missing ||
+              !control.inViewport ||
+              !control.hit ||
+              control.width < 44 ||
+              control.height < 44,
+          )
+        ) {
           throw new Error(`${sc.name}: mobile header bounds invalid ${JSON.stringify(bounds)}`);
         }
-        await page.locator('[data-testid="table-more"]').click();
-        const menu = page.locator('[role="menu"]').last();
-        await menu.waitFor();
-        const menuBounds = await menu.boundingBox();
-        if (!menuBounds || menuBounds.x < 0 || menuBounds.x + menuBounds.width > bounds.width) {
-          throw new Error(`${sc.name}: more menu bounds invalid ${JSON.stringify(menuBounds)}`);
-        }
-        const menuItems = menu.locator('[role="menuitem"]');
-        const menuHitResults = [];
-        for (let i = 0; i < await menuItems.count(); i++) {
-          const item = menuItems.nth(i);
-          await menu.evaluate((el, index) => {
-            const item = el.querySelectorAll('[role="menuitem"]')[index];
-            if (item) el.scrollTop = item.offsetTop - 8;
-          }, i);
-          const box = await item.boundingBox();
-          const hit = box
-            ? await item.evaluate((el, pt) => {
-                const found = document.elementFromPoint(pt.x, pt.y);
-                return !!found && (found === el || el.contains(found));
-              }, { x: box.x + box.width / 2, y: box.y + box.height / 2 })
-            : false;
-          await item.click({ trial: true });
-          menuHitResults.push({ text: await item.textContent(), hit, visible: !!box && box.width > 0 && box.height > 0 });
-        }
-        if (menuHitResults.some((result) => !result.visible || !result.hit)) {
-          throw new Error(`${sc.name}: menu item hit test failed ${JSON.stringify(menuHitResults)}`);
-        }
-        await page.keyboard.press('Escape');
+         const moreCount = await page.locator('[data-testid="table-more"]').count();
+         if (moreCount !== 0) {
+           throw new Error(`${sc.name}: mobile must not render the desktop table-more entry`);
+          }
+          await page.locator('[data-testid="mobile-table-utilities"]').click();
+          await page.locator('[role="menu"]').waitFor({ state: 'visible' });
+          for (const action of ['auto-deal', 'sit-out', 'bots']) {
+            const count = await page.locator(`[data-testid="mobile-utility-${action}"]`).count();
+            if (count !== 0) throw new Error(`${sc.name}: duplicate mobile ${action} utility count=${count}`);
+          }
+          for (const action of ['video', 'timer', 'preferences', 'fullscreen', 'voice']) {
+            const entry = page.locator(`[data-testid="mobile-utility-${action}"]`);
+            if (!(await entry.count())) {
+              throw new Error(`${sc.name}: mobile ${action} utility entry missing`);
+            }
+            const target = action === 'timer'
+              ? entry.locator('select')
+              : action === 'fullscreen' || action === 'voice'
+                ? entry.locator('button').or(entry.and(page.locator('button')))
+                : entry.locator('a,button');
+            if (!(await target.count()) || !(await target.isVisible()))
+              throw new Error(`${sc.name}: mobile ${action} utility must be visible`);
+            // Timer belongs to the utility group, but is deliberately disabled
+            // during a live hand. Idle fixtures assert the complete enabled
+            // contract; live fixtures assert timer presence plus disabled state.
+            const timerIsLive = action === 'timer' && ['myturn', 'waiting'].includes(sc.kind);
+            if (timerIsLive ? !(await target.isDisabled()) : !(await target.isEnabled()))
+              throw new Error(
+                `${sc.name}: mobile ${action} utility must be ${timerIsLive ? 'disabled' : 'enabled'}`,
+              );
+          }
+         await page.keyboard.press('Escape');
         await page.locator('[data-testid="chips-trigger"]').click();
         const chipsMenuBounds = await page.locator('[role="menu"]').first().boundingBox();
-        if (!chipsMenuBounds || chipsMenuBounds.x < 0 || chipsMenuBounds.x + chipsMenuBounds.width > bounds.width) {
-          throw new Error(`${sc.name}: chips menu bounds invalid ${JSON.stringify(chipsMenuBounds)}`);
+        if (
+          !chipsMenuBounds ||
+          chipsMenuBounds.x < 0 ||
+          chipsMenuBounds.x + chipsMenuBounds.width > bounds.width
+        ) {
+          throw new Error(
+            `${sc.name}: chips menu bounds invalid ${JSON.stringify(chipsMenuBounds)}`,
+          );
         }
         await page.keyboard.press('Escape');
       }
@@ -523,7 +825,10 @@ try {
         const handStateAfterShot = await page.evaluate(async () => {
           const { useStore } = await import('/src/shared/store.ts');
           const state = useStore.getState();
-          return { hand: state.hand, mySeat: state.room?.players.find((p) => p.userId === 2)?.seat };
+          return {
+            hand: state.hand,
+            mySeat: state.room?.players.find((p) => p.userId === 2)?.seat,
+          };
         });
         if (
           handStateAfterShot.hand.betting === null ||
@@ -539,7 +844,9 @@ try {
       const menuCount = await menuTriggers.count();
       if (menuCount > 0) {
         await menuTriggers.nth(0).click();
-        await page.screenshot({ path: `${out}/${sc.name}-${vp.width}x${vp.height}-chips-menu.png` });
+        await page.screenshot({
+          path: `${out}/${sc.name}-${vp.width}x${vp.height}-chips-menu.png`,
+        });
         await page.keyboard.press('Escape');
       }
       if (menuCount > 1) {
