@@ -40,21 +40,32 @@ export function isCardBack(value: unknown): value is CardBack {
 
 /** Quick-bet ratios (A10, docs/table-redesign-spec.md). A slot is either a
  *  fraction of the pot (0.25 … 2) or the ALL_IN_RATIO sentinel meaning
- *  "shove the whole stack". The Settings → Bet sizing card edits four of
- *  these; the table's action bar reads them instead of hardcoded values. */
+ *  "shove the whole stack". The Settings → Bet sizing card edits these; the
+ *  table's action bar reads them instead of hardcoded values. */
 export const ALL_IN_RATIO = -1;
-export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 2, ALL_IN_RATIO] as const;
-export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 1, ALL_IN_RATIO];
+export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2, ALL_IN_RATIO] as const;
+/** How many quick-bet slots a fresh account gets and the Settings card shows.
+ *  Stored accounts may still carry the older four-slot list (see
+ *  `sanitizeBetRatios`) - that is read back untouched, never rewritten. */
+export const BET_RATIO_SLOTS = 5;
+/** 33% / 50% / 75% / 100% / 150% of the pot. All-in stays selectable in the
+ *  settings options but is no longer one of the defaults. */
+export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 0.75, 1, 1.5];
 
-/** Four slots, each one of the allowed options - anything else falls back to
- *  the defaults (the same defensive job isCardBack does for the server copy). */
+/** Each slot must be one of the allowed options, and the list must be the
+ *  current five-slot shape or the legacy four-slot one. A legacy four-slot
+ *  pick is returned as-is (backward compatibility: an account that saved
+ *  before the fifth slot existed keeps its buttons); anything else falls back
+ *  to the defaults (the same defensive job isCardBack does for the server
+ *  copy). */
 export function sanitizeBetRatios(raw: unknown): number[] {
-  if (!Array.isArray(raw) || raw.length !== 4) return [...DEFAULT_BET_RATIOS];
+  if (!Array.isArray(raw) || (raw.length !== BET_RATIO_SLOTS && raw.length !== 4))
+    return [...DEFAULT_BET_RATIOS];
   const clean = raw.filter(
     (r): r is number =>
       typeof r === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(r),
   );
-  return clean.length === 4 ? clean : [...DEFAULT_BET_RATIOS];
+  return clean.length === raw.length ? clean : [...DEFAULT_BET_RATIOS];
 }
 
 export interface Prefs {

@@ -3,7 +3,7 @@ import NumberFlow from '@number-flow/react';
 import { legalActions, type PokerHotkeyAction, type PlayerAction } from '@4am/shared';
 import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
-import { ALL_IN_RATIO } from '../../shared/store.ts';
+import { presetLabel, presetRaiseTo } from '../../features/table/betPresets.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
 import { HourglassMedium, Bomb, Timer, Play } from '@phosphor-icons/react';
@@ -309,32 +309,27 @@ export function BettingPanel({
   }, [rc !== null]); // eslint-disable-line react-hooks/exhaustive-deps
   const readySecs = rc ? Math.max(0, Math.ceil((rc.deadlineTs - nowTick) / 1000)) : 0;
 
-  /** Sensible raise-to for a fraction of the pot (pot counted after our call). */
-  const potRaise = (frac: number): number => {
-    if (!la || !st) return 0;
-    const target = st.currentBet + Math.round((pot + la.callAmount) * frac);
-    const snapped = Math.round(target / sb) * sb;
-    return Math.min(Math.max(snapped, la.minRaiseTo), la.maxRaiseTo);
-  };
-
-  // GGPoker-style pills: the ADDED bet as % of the post-call pot. All-in keeps
-  // its word label; clamped duplicates collapse like on the action bar.
+  // GGPoker-style pills: each label shows the CONFIGURED pot ratio (All-in
+  // keeps its word label), while the amount is snapped to the blind and
+  // clamped into the legal window. Slots a clamp collapses onto the same
+  // amount share one button, like on the action bar.
   const quicks = (() => {
     if (!la || !st) return [];
-    const base = Math.max(1, pot + la.callAmount);
     const seen = new Set<number>();
     const out: { label: string; value: number }[] = [];
     for (const frac of betRatios) {
-      const value = frac === ALL_IN_RATIO ? la.maxRaiseTo : potRaise(frac);
+      const value = presetRaiseTo({
+        frac,
+        pot,
+        callAmount: la.callAmount,
+        currentBet: st.currentBet,
+        sb,
+        minRaiseTo: la.minRaiseTo,
+        maxRaiseTo: la.maxRaiseTo,
+      });
       if (seen.has(value)) continue;
       seen.add(value);
-      out.push({
-        label:
-          frac === ALL_IN_RATIO
-            ? t('All-in')
-            : `${Math.max(1, Math.round(((value - la.callAmount) / base) * 100))}%`,
-        value,
-      });
+      out.push({ label: presetLabel(frac) ?? t('All-in'), value });
     }
     return out;
   })();

@@ -23,24 +23,33 @@ function storedPokerHotkeys(raw: string | null) {
 
 export const CARD_BACKS = ['indigo', 'crimson', 'emerald', 'slate'] as const;
 
-/** Quick-bet ratios (A10). Mirrors apps/web/src/shared/store.ts: four slots,
+/** Quick-bet ratios (A10). Mirrors apps/web/src/shared/store.ts: five slots,
  *  each either a fraction of the pot or the ALL_IN_RATIO sentinel. Kept local
  *  so the server never has to import the web bundle. */
 export const ALL_IN_RATIO = -1;
-export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 2, ALL_IN_RATIO] as const;
-export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 1, ALL_IN_RATIO];
+export const BET_RATIO_OPTIONS = [0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2, ALL_IN_RATIO] as const;
+/** Current slot count; stored accounts may still carry the legacy four. */
+export const BET_RATIO_SLOTS = 5;
+export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 0.75, 1, 1.5];
 
 function isBetRatio(value: unknown): value is number {
   return typeof value === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(value);
 }
 
+function isBetRatioSlots(length: number): boolean {
+  return length === BET_RATIO_SLOTS || length === 4;
+}
+
 /** Reads back the stored JSON array, sanitizing a damaged or foreign value back
- *  to the defaults rather than letting it reach the action bar. */
+ *  to the defaults rather than letting it reach the action bar. A legacy
+ *  four-slot list is read back untouched so an account that saved before the
+ *  fifth slot existed keeps its buttons. */
 function storedBetRatios(raw: string | null): number[] {
   if (raw === null) return [...DEFAULT_BET_RATIOS];
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed) && parsed.length === 4 && parsed.every(isBetRatio)) return parsed;
+    if (Array.isArray(parsed) && isBetRatioSlots(parsed.length) && parsed.every(isBetRatio))
+      return parsed;
   } catch {
     /* A damaged preference must not break the rest of the profile. */
   }
@@ -54,7 +63,7 @@ const betRatiosSchema = z
       .refine((value) => isBetRatio(value), 'Invalid bet ratio')
       .describe('a pot fraction or the all-in sentinel'),
   )
-  .length(4);
+  .refine((ratios) => isBetRatioSlots(ratios.length), 'expected four or five bet ratios');
 
 const profileSchema = z.object({
   pokerHotkeys: z

@@ -1,0 +1,39 @@
+{
+ "viewport": "1440x900",
+ "expected": [
+  "33%",
+  "50%",
+  "75%",
+  "100%",
+  "150%"
+ ],
+ "pills": [
+  {
+   "label": "33%",
+   "width": 30,
+   "height": 24
+  },
+  {
+   "label": "50%",
+   "width": 31,
+   "height": 24
+  },
+  {
+   "label": "75%",
+   "width": 30,
+   "height": 24
+  },
+  {
+   "label": "100%",
+   "width": 37,
+   "height": 24
+  },
+  {
+   "label": "150%",
+   "width": 36,
+   "height": 24
+  }
+ ],
+ "pageErrors": [],
+ "generatedAt": "2026-10-05T02:23:14.723Z"
+}

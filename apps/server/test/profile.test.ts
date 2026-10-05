@@ -9,6 +9,12 @@ import { createApp } from '../src/app.js';
 import { createUser } from '../src/auth.js';
 import { openDb } from '../src/db.js';
 import { appendLedger } from '../src/ledger.js';
+import {
+  ALL_IN_RATIO,
+  BET_RATIO_OPTIONS,
+  BET_RATIO_SLOTS,
+  DEFAULT_BET_RATIOS,
+} from '../src/profile.js';
 
 // Two real processes (not two connections in one process - better-sqlite3 is
 // synchronous and cannot interleave) opening the same file, used to prove the
@@ -405,6 +411,64 @@ describe('profile', () => {
     expect(huge.statusCode).toBe(400);
   });
 });
+
+describe('quick-bet ratio slots', () => {
+  const getProfile = async (token: string) =>
+    (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(token) })).json();
+  const putRatios = (token: string, betRatios: number[]) =>
+    ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(token),
+      payload: { betRatios },
+    });
+
+  it('defaults to the current five-slot list, 150% included', () => {
+    expect(BET_RATIO_SLOTS).toBe(5);
+    expect(DEFAULT_BET_RATIOS).toEqual([1 / 3, 0.5, 0.75, 1, 1.5]);
+    expect(BET_RATIO_OPTIONS).toContain(1.5);
+    expect(BET_RATIO_OPTIONS).toContain(ALL_IN_RATIO);
+  });
+
+  it('round-trips five slots including the 150% preset', async () => {
+    const alice = await user('bets5');
+    // Never saved: the GET omits the field so the client keeps its local pick.
+    expect((await getProfile(alice.token)).betRatios).toBeUndefined();
+    const five = [1 / 3, 0.5, 0.75, 1, 1.5];
+    expect((await putRatios(alice.token, five)).statusCode).toBe(200);
+    expect((await getProfile(alice.token)).betRatios).toEqual(five);
+    const raw = ctx.db
+      .prepare('SELECT bet_ratios FROM users WHERE id = ?')
+      .get(alice.userId) as { bet_ratios: string };
+    expect(JSON.parse(raw.bet_ratios)).toEqual(five);
+  });
+
+  it('keeps a legacy four-slot list readable', async () => {
+    const alice = await user('bets4');
+    const four = [0.5, 1, 1.5, ALL_IN_RATIO];
+    expect((await putRatios(alice.token, four)).statusCode).toBe(200);
+    expect((await getProfile(alice.token)).betRatios).toEqual(four);
+  });
+
+  it('accepts an all-in slot in the five-slot shape', async () => {
+    const alice = await user('betsallin');
+    const five = [1 / 3, 0.5, 1.5, 2, ALL_IN_RATIO];
+    expect((await putRatios(alice.token, five)).statusCode).toBe(200);
+    expect((await getProfile(alice.token)).betRatios).toEqual(five);
+  });
+
+  it('rejects a list that is neither four nor five slots', async () => {
+    const alice = await user('betsbad');
+    expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75])).statusCode).toBe(400);
+    expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75, 1, 1.5, 2])).statusCode).toBe(400);
+  });
+
+  it('rejects a foreign ratio', async () => {
+    const alice = await user('betsbad2');
+    expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75, 1, 99])).statusCode).toBe(400);
+  });
+});
+
 describe('leaderboards', () => {
   it('ranks players by net hand winnings with hands played and biggest win', async () => {
     const host = await user('host');

@@ -15,6 +15,7 @@ import { loadPrefs, saveBetRatios } from '../../shared/prefs.ts';
 import {
   ALL_IN_RATIO,
   BET_RATIO_OPTIONS,
+  BET_RATIO_SLOTS,
   DEFAULT_BET_RATIOS,
   useStore,
 } from '../../shared/store.ts';
@@ -44,10 +45,18 @@ const SECTIONS = [
 ] as const;
 
 /** A10 (docs/table-redesign-spec.md): the quick-bet buttons at the table are
- *  four configurable pot ratios. The list applies instantly and is saved to
- *  the account; the table's betting panel reads it from the store. */
+ *  five configurable pot ratios. The list applies instantly and is saved to
+ *  the account; the table's betting panel reads it from the store. A legacy
+ *  four-slot pick is padded for display only - editing any slot writes the
+ *  full five-slot shape. */
 function BetSizingSettings() {
   const ratios = useStore((s) => s.prefs.betRatios);
+  // Legacy accounts still carry four slots. Show the full set so the fifth one
+  // is editable; until the player changes a slot the stored list is untouched.
+  const slots =
+    ratios.length >= BET_RATIO_SLOTS
+      ? ratios
+      : [...ratios, ...DEFAULT_BET_RATIOS.slice(ratios.length)];
   const [saved, setSaved] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,9 +78,9 @@ function BetSizingSettings() {
 
   // review fix #12: duplicates would just collapse into one button at the
   // table, so picking an already-used ratio SWAPS the two slots instead - the
-  // four quick buttons stay four distinct buttons.
+  // five quick buttons stay five distinct buttons.
   const changeSlot = (index: number, value: number) => {
-    const next = [...ratios];
+    const next = [...slots];
     const moved = next[index] ?? value;
     const clash = next.indexOf(value);
     if (clash !== -1 && clash !== index) next[clash] = moved;
@@ -83,7 +92,7 @@ function BetSizingSettings() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        {ratios.map((frac, index) => (
+        {slots.map((frac, index) => (
           <label key={index} className="block text-sm">
             <span className="mb-1 block text-slate-500">{t('Bet button {n}', { n: index + 1 })}</span>
             <select
