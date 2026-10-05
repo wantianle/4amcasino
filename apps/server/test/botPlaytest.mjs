@@ -89,6 +89,12 @@ const READY_MS = Math.floor(cfg('ready_ms', 800));
 // use a 30s action clock, so their settle budget grows to match.
 const HAND_MS = Math.floor(cfg('hand_ms', LLM_ENABLED ? 600_000 : 90_000));
 const KEY = cfgStr('bot_identity_key', 'ab'.repeat(32));
+// The harness measures policy/ledger behaviour, not human timing: force the
+// runner's think delay off (it is off under NODE_ENV=test too, but this is a
+// plain node script). An empty value counts as unset (production would treat it
+// as on), so `if (!...)` also normalises ''. Set BOT_THINK_ENABLED=1 to
+// exercise the delay here.
+if (!process.env.BOT_THINK_ENABLED) process.env.BOT_THINK_ENABLED = '0';
 
 // ---------------------------------------------------------------- helpers ---
 

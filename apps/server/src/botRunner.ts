@@ -2,13 +2,14 @@ import {
   HeadlessClient,
   SessionTracker,
   buildDecisionView,
+  type DecisionView,
   type Policy,
 } from '@4am/agent-core';
 import type { Street } from '@4am/shared';
 import type { DB } from './db.js';
 import { activeHands } from './liveHands.js';
 import { markBotError, type ClaimedBot } from './botRoutes.js';
-import { resolveBotPolicyDetailed, type BotLlmOptions } from './botPolicy.js';
+import { isLlmPolicyKind, resolveBotPolicyDetailed, type BotLlmOptions } from './botPolicy.js';
 
 /**
  * Phase 1b: a single bot runner.
@@ -103,6 +104,20 @@ export interface BotRunnerOptions {
   memory?: boolean;
   log?: (line: string) => void;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Human-like pre-action delay. Overrides the env-derived defaults
+   * (`BOT_THINK_*`); pass `{ enabled: false }` to disable it outright.
+   */
+  think?: Partial<ThinkConfig>;
+  /** Injection seam for the think delay's randomness; defaults to `Math.random`. */
+  rng?: () => number;
+  /**
+   * Explicit type marker for an *injected* policy: `true` means "this is an LLM
+   * policy, do not add the local display wait". Production derives this from the
+   * resolved kind; for an injected policy it falls back to the persisted claim
+   * kind only - there is no name-based heuristic.
+   */
+  policyIsLlm?: boolean;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -114,6 +129,179 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
  * Checked both before and after the policy call (a slow policy can outlast it).
  */
 const DEADLINE_GUARD_MS = 200;
+
+/**
+ * Extra slack (ms) kept on top of `DEADLINE_GUARD_MS` when planning a think
+ * delay to fit the action clock. A timer can fire slightly late.
+ */
+const THINK_DEADLINE_MARGIN_MS = 100;
+
+/**
+ * The think wait is sliced so `stop()`/fatal and a mid-wait reconnect/turn
+ * change are observed within this window instead of after the whole sleep.
+ */
+const THINK_SLICE_MS = 100;
+
+/**
+ * Budget contract for the *display* wait that now sits AFTER `policy.decide`
+ * and BEFORE `act()`. Because the decision is already computed, the wait only
+ * has to leave room for the guard plus the send itself; no assumption is made
+ * about how long the policy took (a slow/async policy delays the whole turn on
+ * its own, exactly as it would without this feature). The wait may consume at
+ * most `remaining - (guard + margin)` and at most `remaining * remainingRatio`.
+ */
+export interface ThinkBudget {
+  /** Server action-clock guard; never send inside this window. */
+  guardMs: number;
+  /** Slack for the `act()` send and event-loop scheduling / timer overshoot. */
+  marginMs: number;
+  /** The wait may consume at most this fraction of the remaining clock. */
+  remainingRatio: number;
+}
+
+export const DEFAULT_THINK_BUDGET: ThinkBudget = {
+  guardMs: DEADLINE_GUARD_MS,
+  marginMs: THINK_DEADLINE_MARGIN_MS,
+  remainingRatio: 0.5,
+};
+
+/**
+ * Human-like pre-action timing. Local policies (scripted/rules/style) answer in
+ * milliseconds, which reads as robotic; this is a *decorative* display wait put
+ * between the decision and the send. It is bounded by a budget contract
+ * (`planThinkWaitMs`): when the clock cannot spare `guard + margin` it drops to
+ * zero and the decision is sent immediately.
+ *
+ * All fields are injectable via `BotRunnerOptions.think`; production defaults
+ * come from `thinkConfigFromEnv()` (`BOT_THINK_*`).
+ */
+export interface ThinkConfig {
+  /** Master switch; when false no delay is ever applied. */
+  enabled: boolean;
+  /** Lower bound of the uniform base delay (ms). */
+  minMs: number;
+  /** Upper bound of the uniform base delay (ms). */
+  maxMs: number;
+  /** Extra uniform 0..extraMaxMs added on a big decision (raise/all-in/big pot). */
+  extraMaxMs: number;
+  /** A pot this many big blinds or larger counts as "big". */
+  bigPotBB: number;
+  /** Multiplier applied to the base delay on a trivially easy spot (a free check). */
+  easyFactor: number;
+}
+
+export const DEFAULT_THINK_CONFIG: ThinkConfig = {
+  enabled: true,
+  minMs: 800,
+  maxMs: 2600,
+  extraMaxMs: 2000,
+  bigPotBB: 10,
+  easyFactor: 0.5,
+};
+
+function parseNonNegative(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+/**
+ * Read the think-delay configuration from env only.
+ *
+ * `BOT_THINK_ENABLED` wins when set (`0`/`false`/`off`/`no` disables). When it
+ * is unset the feature is ON in production but OFF under `NODE_ENV=test`, so the
+ * vitest suite and E2E harnesses are never slowed down unless a test opts in.
+ * The playtest harness (a plain node script, not vitest) sets it explicitly.
+ */
+export function thinkConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ThinkConfig {
+  const raw = env.BOT_THINK_ENABLED;
+  const enabled =
+    raw === undefined || raw === ''
+      ? env.NODE_ENV !== 'test'
+      : !['0', 'false', 'off', 'no'].includes(raw.trim().toLowerCase());
+  return {
+    ...DEFAULT_THINK_CONFIG,
+    enabled,
+    minMs: parseNonNegative(env.BOT_THINK_MIN_MS, DEFAULT_THINK_CONFIG.minMs),
+    maxMs: parseNonNegative(env.BOT_THINK_MAX_MS, DEFAULT_THINK_CONFIG.maxMs),
+  };
+}
+
+/**
+ * The planned think delay (ms) for one decision, as a pure function of the view,
+ * the config and an injectable `rng`. Kept free of timers so the range, the
+ * big-decision bonus and the easy-spot shortening are unit-testable directly.
+ *
+ * - base: uniform in `[minMs, maxMs]` (the two are ordered defensively);
+ * - big decision (facing a bet, committing the stack, or a pot >= `bigPotBB`
+ *   big blinds): add a second uniform `0..extraMaxMs`;
+ * - easy decision (a free check, no bet to face): scale the base by `easyFactor`.
+ */
+export function computeThinkDelayMs(
+  view: DecisionView,
+  cfg: ThinkConfig,
+  rng: () => number = Math.random,
+): number {
+  if (!cfg.enabled) return 0;
+  const lo = Math.min(cfg.minMs, cfg.maxMs);
+  const hi = Math.max(cfg.minMs, cfg.maxMs);
+  const span = hi - lo;
+  let delay = lo + Math.round(rng() * span);
+
+  const la = view.legalActions;
+  const pot = view.hand?.pot ?? 0;
+  const bb = view.room?.bb ?? 0;
+  const bigPot = bb > 0 && pot >= bb * cfg.bigPotBB;
+  // "Facing a bet": there is a price to continue (a check is not available).
+  const facingBet = !!la && !la.canCheck && la.callAmount > 0;
+  // Calling commits the whole stack (an opponent shove). A merely *available*
+  // max raise is not treated as a big decision: every stack has a max raise.
+  const callIsAllIn = !!la && !!view.me && la.callAmount > 0 && la.callAmount >= view.me.stack;
+
+  if (facingBet || callIsAllIn || bigPot) {
+    delay += Math.round(rng() * cfg.extraMaxMs);
+  } else if (la?.canCheck) {
+    delay = Math.round(delay * cfg.easyFactor);
+  }
+  return Math.max(0, delay);
+}
+
+/**
+ * Plan the actual think wait (ms) for one decision under the budget contract.
+ * Returns the wait to perform, or 0 when the decorative delay must be skipped
+ * because the clock cannot afford it without endangering a decision that a
+ * no-delay run would have sent.
+ *
+ * The wait is constrained by BOTH:
+ *  - a fixed reserve: `remaining - (guard + margin)`, so the send and
+ *    event-loop scheduling always have time; and
+ *  - a proportional cap: `remaining * remainingRatio`, so a short clock (e.g. a
+ *    5s room) is never more than half consumed by decoration.
+ *
+ * The decision is already computed when this is called, so no policy-runtime
+ * budget is involved; `remainingMs = null` means an untimed decision and the
+ * full planned wait applies.
+ */
+export function planThinkWaitMs(
+  plannedMs: number,
+  remainingMs: number | null,
+  budget: ThinkBudget = DEFAULT_THINK_BUDGET,
+): number {
+  const planned = Math.max(0, Math.floor(plannedMs));
+  if (planned === 0) return 0;
+  if (remainingMs === null || remainingMs === undefined) return planned;
+  const fixedCap = remainingMs - budget.guardMs - budget.marginMs;
+  const ratioCap = Math.floor(remainingMs * budget.remainingRatio);
+  const cap = Math.min(fixedCap, ratioCap);
+  if (cap <= 0) return 0;
+  return Math.min(planned, cap);
+}
+
+/** What a think wait resolved to; see `BotRunner.thinkBeforeSend`. */
+export type ThinkWaitOutcome = 'proceed' | 'abort' | 'reconnect' | 'stale' | 'deadline';
+
+/** A send gate can never `abort` (that is a stop, handled separately). */
+export type SendGateOutcome = Exclude<ThinkWaitOutcome, 'abort'>;
 
 export class BotRunner {
   readonly botId: string;
@@ -128,6 +316,16 @@ export class BotRunner {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly log: (line: string) => void;
   private readonly onActionEvent: (event: RunnerActionEvent) => void;
+  private readonly think: ThinkConfig;
+  private readonly rng: () => number;
+  /** LLM policies carry their own multi-second latency, so they are never delayed. */
+  private readonly policyIsLlm: boolean;
+  /**
+   * A turn key whose display wait was already spent. If the decision for that
+   * turn is abandoned mid-wait (reconnect/turn change) and the same turn is
+   * re-evaluated, the retry skips the wait instead of looping it.
+   */
+  private thinkAttemptedKey: string | null = null;
 
   private task: Promise<void> | null = null;
   private readonly ready: Promise<void>;
@@ -160,6 +358,9 @@ export class BotRunner {
     );
     if (opts.policy) {
       this.policy = opts.policy;
+      // An injected policy has no resolved kind: prefer the explicit marker,
+      // then fall back to the persisted claim kind only (no name heuristic).
+      this.policyIsLlm = opts.policyIsLlm ?? isLlmPolicyKind(claim.policyKind);
     } else {
       // Resolve the persisted kind + difficulty through the server resolver: the
       // four styles (aliases/overrides validated), the Phase 3 `llm` kind and the
@@ -173,6 +374,7 @@ export class BotRunner {
         claim.difficulty,
       );
       this.policy = resolved.policy;
+      this.policyIsLlm = opts.policyIsLlm ?? resolved.kind === 'llm';
       // Log the concrete policy name (e.g. `rules-v1`) so the difficulty
       // dispatch is observable, not just the normalised kind.
       this.log(
@@ -192,6 +394,16 @@ export class BotRunner {
     this.settleMs = opts.settleMs ?? 1_000;
     this.pollMs = opts.pollMs ?? 100;
     this.sleep = opts.sleep ?? defaultSleep;
+    const envThink = thinkConfigFromEnv();
+    this.think = {
+      enabled: opts.think?.enabled ?? envThink.enabled,
+      minMs: opts.think?.minMs ?? envThink.minMs,
+      maxMs: opts.think?.maxMs ?? envThink.maxMs,
+      extraMaxMs: opts.think?.extraMaxMs ?? envThink.extraMaxMs,
+      bigPotBB: opts.think?.bigPotBB ?? envThink.bigPotBB,
+      easyFactor: opts.think?.easyFactor ?? envThink.easyFactor,
+    };
+    this.rng = opts.rng ?? Math.random;
     this.onActionEvent = opts.onActionEvent ?? (() => {});
     this.ready = new Promise<void>((resolve) => {
       this.readyResolve = resolve;
@@ -341,7 +553,15 @@ export class BotRunner {
         await this.sleep(25);
         return;
       }
+      // The decision epoch is captured before the (possibly async) policy call:
+      // a reconnect during the policy OR the later display wait must void this
+      // decision rather than let it act on stale state.
       const epoch = this.client.connectionEpoch;
+      // Decide FIRST. The policy may be slow (Monte Carlo / LLM); doing the
+      // decision before the display wait keeps the two independent - the wait
+      // only has to fit the send, not a hypothetical policy runtime. A policy
+      // that outlives the clock is dropped by `checkSendable` exactly as it
+      // would be with the feature disabled.
       const decision = await this.policy.decide(view);
       // A stop may have been requested while the policy was thinking: fold
       // instead of continuing to play the hand out.
@@ -349,32 +569,28 @@ export class BotRunner {
         this.foldIfMyTurn();
         return;
       }
-      // A reconnect (or a drop) during the policy await voids the result: the
-      // resynced state may repeat the same hand/actionSeq, so only the epoch
-      // proves the result belongs to the live connection.
-      if (!this.client.connected || this.client.connectionEpoch !== epoch) {
-        this.emitAction({ kind: 'discarded', handId, actionSeq, seat, source: decision.source, reason: 'reconnect' });
+      // Classify a stale/too-late policy result before spending display time.
+      let gate = this.checkSendable(epoch, key, handId);
+      if (gate !== 'proceed') {
+        await this.emitDiscard(gate, handId, actionSeq, seat, decision.source);
         return;
       }
-      // The hand may have ended/become a new hand while the policy was
-      // thinking. Classify that as stale first: reading `client.deadline` now
-      // could belong to the NEXT hand and be misreported as a deadline drop.
-      if (this.client.handId !== handId) {
-        this.emitAction({ kind: 'discarded', handId, actionSeq, seat, source: decision.source, reason: 'stale' });
+      // Decorative human timing after the decision. The wait is sliced and
+      // cancellable; a mid-wait stop/reconnect/turn change abandons it, and a
+      // retry of this same turn skips the wait (no delay loop).
+      const planned = computeThinkDelayMs(view, this.think, this.rng);
+      const waitOutcome = await this.thinkBeforeSend(planned, epoch, key);
+      if (waitOutcome === 'abort') return;
+      if (waitOutcome !== 'proceed') {
+        await this.emitDiscard(waitOutcome, handId, actionSeq, seat, decision.source);
         return;
       }
-      // Re-read the clock AFTER the policy: a slow decision (Monte Carlo) can
-      // consume the remaining time, and sending now would be rejected as late.
-      // Read the client clock directly - no need to rebuild a whole DecisionView.
-      if (this.deadlineTooClose(this.client.deadline)) {
-        this.emitAction({ kind: 'discarded', handId, actionSeq, seat, source: decision.source, reason: 'deadline' });
-        await this.sleep(25);
-        return;
-      }
-      if (!this.client.myTurn() || this.turnKey() !== key) {
-        // The turn advanced (or the table moved on) while the policy was
-        // thinking: the result is stale and must not be sent.
-        this.emitAction({ kind: 'discarded', handId, actionSeq, seat, source: decision.source, reason: 'stale' });
+      // Authoritative pre-send gate. The wait may have been skipped (0ms / LLM)
+      // and `deadline` is an absolute timestamp, so re-validate the live state
+      // once more before sending.
+      gate = this.checkSendable(epoch, key, handId);
+      if (gate !== 'proceed') {
+        await this.emitDiscard(gate, handId, actionSeq, seat, decision.source);
         return;
       }
       this.client.act(decision.action);
@@ -395,6 +611,108 @@ export class BotRunner {
   /** True when the action clock has no useful time left to send an action. */
   private deadlineTooClose(deadline: number | null): boolean {
     return deadline !== null && deadline !== undefined && deadline - Date.now() < DEADLINE_GUARD_MS;
+  }
+
+  /**
+   * Pre-send gate. Returns `proceed` only when the captured turn is still the
+   * live, actionable one; otherwise the reason to discard. The epoch proves the
+   * result belongs to the live connection (a reconnect may replay the same
+   * hand/actionSeq), the hand check classifies a hand change as stale before
+   * reading the next hand's clock, and the deadline check is the same guard the
+   * no-delay path uses.
+   */
+  private checkSendable(epoch: number, key: string, handId: string): SendGateOutcome {
+    if (
+      !this.client.connected ||
+      !this.client.isResynced ||
+      this.client.connectionEpoch !== epoch
+    ) {
+      return 'reconnect';
+    }
+    if (this.client.handId !== handId) return 'stale';
+    if (!this.client.myTurn() || this.turnKey() !== key) return 'stale';
+    if (this.deadlineTooClose(this.client.deadline)) return 'deadline';
+    return 'proceed';
+  }
+
+  /**
+   * Wait out a human-like *display* delay between `policy.decide` and the send,
+   * which may be cancelled. Returns:
+   *  - `proceed`   - the wait finished (or was skipped); re-verify then send;
+   *  - `abort`     - a stop/fatal landed: already folded, caller just returns;
+   *  - `reconnect` - the connection epoch changed or the socket dropped;
+   *  - `stale`     - the turn moved on;
+   *  - `deadline`  - the clock ran out during the wait.
+   *
+   * The wait is sliced (`THINK_SLICE_MS`) so those conditions are observed
+   * promptly. It is bounded by the `planThinkWaitMs` budget contract (guard +
+   * margin only, because the decision is already computed); when the clock
+   * cannot spare that, the wait is dropped and the caller sends immediately. A
+   * retry of a turn whose wait was already spent skips it (`thinkAttemptedKey`),
+   * so a reconnect during the wait cannot loop the delay.
+   */
+  private async thinkBeforeSend(
+    plannedMs: number,
+    epoch: number,
+    key: string,
+  ): Promise<ThinkWaitOutcome> {
+    if (!this.think.enabled) return 'proceed';
+    if (this.policyIsLlm) return 'proceed';
+    // The wait for this turn was already spent once: do not loop it.
+    if (this.thinkAttemptedKey === key) return 'proceed';
+    // Too close to the deadline to wait at all: send (or drop) right away.
+    if (this.deadlineTooClose(this.client.deadline)) return 'proceed';
+    const wait = planThinkWaitMs(plannedMs, this.remainingMs(), DEFAULT_THINK_BUDGET);
+    if (wait <= 0) return 'proceed';
+    this.thinkAttemptedKey = key;
+    let left = wait;
+    while (left > 0) {
+      if (this.stopping) {
+        this.foldIfMyTurn();
+        return 'abort';
+      }
+      if (this.fatal) return 'abort';
+      await this.sleep(Math.min(left, THINK_SLICE_MS));
+      left -= THINK_SLICE_MS;
+      if (this.stopping) {
+        this.foldIfMyTurn();
+        return 'abort';
+      }
+      if (this.fatal) return 'abort';
+      if (
+        !this.client.connected ||
+        !this.client.isResynced ||
+        this.client.connectionEpoch !== epoch
+      ) {
+        return 'reconnect';
+      }
+      if (!this.client.myTurn() || this.turnKey() !== key) return 'stale';
+      if (this.deadlineTooClose(this.client.deadline)) return 'deadline';
+    }
+    return 'proceed';
+  }
+
+  /**
+   * Emit a discard for a failed send gate and, on a deadline miss, yield so a
+   * near-deadline skip cannot spin the event loop while the server's timeout
+   * auto-action fires.
+   */
+  private async emitDiscard(
+    outcome: SendGateOutcome,
+    handId: string,
+    actionSeq: number,
+    seat: number | null,
+    source?: 'model' | 'fallback',
+  ): Promise<void> {
+    if (outcome === 'proceed') return;
+    this.emitAction({ kind: 'discarded', handId, actionSeq, seat, source, reason: outcome });
+    if (outcome === 'deadline') await this.sleep(25);
+  }
+
+  /** Remaining action-clock time (ms), or null when the decision is untimed. */
+  private remainingMs(): number | null {
+    const deadline = this.client.deadline;
+    return deadline === null || deadline === undefined ? null : deadline - Date.now();
   }
 
   /** Report one decision's routing without ever letting a sink break the loop. */
