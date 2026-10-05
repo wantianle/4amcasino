@@ -2075,9 +2075,20 @@ export class GameRoom {
       return this.send(userId, { t: 'error', message: 'invalid card reveal' });
     }
     const buyerRow = this.db
-      .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
-      .get(this.roomId, offer.fromUserId) as { stack: number } | undefined;
-    if (!buyerRow || buyerRow.stack < offer.amount) {
+      .prepare('SELECT stack, seat FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(this.roomId, offer.fromUserId) as
+      | { stack: number; seat: number | null }
+      | undefined;
+    // Re-check the buyer's CURRENT seat, not just its balance: a requester may
+    // leave their seat while the offer is pending, and the client drops a
+    // reveal once `seat` is null - charging there would burn the 1bb for cards
+    // the buyer never sees. This is the final authorization check; the
+    // creation-time seat gate alone cannot see a later `leave_seat`.
+    if (!buyerRow || buyerRow.seat === null) {
+      finish('failed');
+      return this.send(userId, { t: 'error', message: 'the buyer is no longer seated' });
+    }
+    if (buyerRow.stack < offer.amount) {
       finish('failed');
       return this.send(userId, { t: 'error', message: 'the buyer no longer has enough chips' });
     }

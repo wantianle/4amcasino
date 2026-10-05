@@ -156,6 +156,12 @@ that just ended. The rules are server-authoritative and enforced in
   fails the offer (`peek_result: 'failed'`, `peek_offer_closed: 'failed'`, no
   ledger/stack change). Both gates call the shared `peekTargetIsPublic()` helper
   so creation and acceptance can never drift apart.
+- **The buyer must still hold a seat at settlement.** Seat is re-checked on
+  `onPeekAnswer` too, not only when the offer is created: a requester may
+  `leave_seat` while the offer is pending, and the client drops a reveal once
+  `seat` is null, so `buyerRow.seat === null` fails the offer before any ledger
+  row (`peek_result: 'failed'`, `peek_offer_closed: 'failed'`). The balance check
+  still follows, but seat is the authorization.
 - **Mutual consent, ledger transfer.** The target must accept (signed
   `peek_accept` with unmask shares verified against the finished hand's snapshot);
   only then does the 1bb move, through two `kind: 'peek'` ledger rows that net to

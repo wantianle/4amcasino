@@ -1835,6 +1835,55 @@ describe('full hand integration', () => {
     expect(peekLedger()).toBe(0);
   }, 25000);
 
+  it('refuses a peek accepted after the buyer left their seat, moving no money', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    const peekLedger = () =>
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
+          .get(room.id) as { n: number }
+      ).n;
+    const stacks = () =>
+      ctx.db
+        .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+        .all(room.id) as { user_id: number; stack: number }[];
+    const before = stacks();
+
+    // host (the requester) offers to see bob's still-private cards
+    h.send({ t: 'peek_offer', handId: h.handId, targetSeat: bob.seat! });
+    await bob.waitFor(() => bob.peekOffers.length > 0);
+    const offerId = bob.peekOffers[0]!.offerId;
+
+    // host leaves their seat while the offer is pending: the client will drop a
+    // reveal once `seat` is null, so the server must not charge it
+    h.send({ t: 'leave_seat' });
+    await h.waitFor(
+      () => h.roomState?.players.find((p) => p.userId === h.userId)?.seat === null,
+      5000,
+    );
+
+    // bob (the target) accepts within the 5s TTL: the seat re-check fails it
+    bob.errors = [];
+    bob.acceptPeek(offerId);
+    await h.waitFor(() => h.peekResults.length > 0);
+    expect(h.peekResults.at(-1)!.status).toBe('failed');
+    expect(h.peekResults.at(-1)!.cards).toBeUndefined();
+    await bob.waitFor(() => bob.peekClosures.length > 0);
+    expect(bob.peekClosures.at(-1)!.status).toBe('failed');
+    await bob.waitFor(() => bob.errors.length > 0);
+    expect(bob.errors[0]).toMatch(/no longer seated/i);
+
+    // no transfer, no stack change
+    expect(peekLedger()).toBe(0);
+    expect(stacks()).toEqual(before);
+  }, 25000);
+
   it('replays the showdown to a client that reconnects during the hold', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
     clock.freeze();
