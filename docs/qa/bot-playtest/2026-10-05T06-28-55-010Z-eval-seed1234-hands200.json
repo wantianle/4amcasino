@@ -1,0 +1,193 @@
+{
+  "runId": "2026-10-05T06-28-55-010Z-eval-seed1234-hands200",
+  "kind": "bot-eval-round-robin",
+  "config": {
+    "seed": 1234,
+    "shuffleSeed": 1234,
+    "duplicate": true,
+    "tvReplaysProbe": true,
+    "hands": 200,
+    "strategies": [
+      "always-fold",
+      "equity-threshold"
+    ],
+    "anchor": "always-call",
+    "sb": 10,
+    "bb": 20,
+    "buyIn": 4000,
+    "bootstrapIters": 10000
+  },
+  "startedAt": "2026-10-05T06:28:55.010Z",
+  "durationMs": 315006,
+  "pairs": [
+    {
+      "a": "always-fold",
+      "b": "equity-threshold",
+      "hands": 200,
+      "duplicate": true,
+      "cardsReplayed": true,
+      "cards": {
+        "handIdsMatch": true,
+        "fingerprintsComplete": true,
+        "firstMismatch": null
+      },
+      "delta": {
+        "label": "bb/100 (always-fold - equity-threshold)",
+        "bb100": -107.987,
+        "ci95": [
+          -139.512,
+          -76.537
+        ],
+        "width": 62.975,
+        "sd": 228.416,
+        "ciExcludesZero": true,
+        "direction": "equity-threshold > always-fold",
+        "hands": 200
+      },
+      "nonDuplicate": {
+        "label": "bb/100 (always-fold - equity-threshold) without seat swap",
+        "bb100": -107.85,
+        "ci95": [
+          -149.35,
+          -65.55
+        ],
+        "width": 83.8,
+        "sd": 304.504,
+        "ciExcludesZero": true,
+        "hands": 200
+      },
+      "runs": [
+        {
+          "seatPolicies": {
+            "1": "always-fold",
+            "2": "equity-threshold"
+          },
+          "hands": 200,
+          "aborts": 0,
+          "rejected": 0,
+          "botErrors": 0,
+          "ledgerOk": true,
+          "policyFallbacks": 0,
+          "policyIllegalDecisions": 0,
+          "cardsFingerprintComplete": true
+        },
+        {
+          "seatPolicies": {
+            "1": "equity-threshold",
+            "2": "always-fold"
+          },
+          "hands": 200,
+          "aborts": 0,
+          "rejected": 0,
+          "botErrors": 0,
+          "ledgerOk": true,
+          "policyFallbacks": 0,
+          "policyIllegalDecisions": 0,
+          "cardsFingerprintComplete": true
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "Deterministic deal: BOT_TEST_SHUFFLE_SEED makes the mental-poker deal a pure function of the seed, so every run replays the same hand ids and cards.",
+    "Card-level replay proof: each run enables the room TV-replay/audit probe (harness-only DB flag) so the transcript carries every seat hole_cards plus the settlement board; cardsReplayed requires equal hand ids AND equal, complete per-hand card fingerprints (seat-ordered hole cards + board order), not just equal labels.",
+    "Duplicate: each pair is played twice with the two strategies swapped between seat 1 and seat 2; the per-hand observation is the average strategy delta over both seatings, cancelling card luck.",
+    "Policy accounting: policyFallbacks / policyIllegalDecisions count any decision a baseline had to repair or that was illegal before substitution, so a silent fallback can no longer hide behind 0 server action_rejected; baselines must stay at 0.",
+    "nonDuplicate uses only the first seating (A@seat1, B@seat2) at the same hand count, for a like-for-like CI-width comparison.",
+    "CI95 is a seeded percentile bootstrap over per-hand bb/100 deltas (reproducible). CI width shrinks ~1/sqrt(n); doubling hands narrows it by ~1.41x.",
+    "The seat-0 anchor plays a fixed always-call policy in every match and is never itself compared.",
+    "ISOLATION: BOT_TEST_SHUFFLE_SEED (and the derived hand ids) are only safe on a throwaway DB; transcripts.hand_id is a PRIMARY KEY, so a reused seed on a non-empty DB collides."
+  ],
+  "checks": [
+    {
+      "name": "always-fold/equity-threshold: run no aborts",
+      "ok": true,
+      "detail": "aborts=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no action_rejected",
+      "ok": true,
+      "detail": "rejected=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no bot errors",
+      "ok": true,
+      "detail": "errors=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run ledger conserved",
+      "ok": true,
+      "detail": "ledgerOk=true"
+    },
+    {
+      "name": "always-fold/equity-threshold: completed hands",
+      "ok": true,
+      "detail": "200/200"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no policy fallbacks",
+      "ok": true,
+      "detail": "policyFallbacks=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no illegal policy decisions",
+      "ok": true,
+      "detail": "policyIllegalDecisions=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no aborts",
+      "ok": true,
+      "detail": "aborts=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no action_rejected",
+      "ok": true,
+      "detail": "rejected=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no bot errors",
+      "ok": true,
+      "detail": "errors=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run ledger conserved",
+      "ok": true,
+      "detail": "ledgerOk=true"
+    },
+    {
+      "name": "always-fold/equity-threshold: completed hands",
+      "ok": true,
+      "detail": "200/200"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no policy fallbacks",
+      "ok": true,
+      "detail": "policyFallbacks=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: run no illegal policy decisions",
+      "ok": true,
+      "detail": "policyIllegalDecisions=0"
+    },
+    {
+      "name": "always-fold/equity-threshold: duplicate replayed the same cards",
+      "ok": true,
+      "detail": "cardsReplayed=true handIdsMatch=true fingerprintsComplete=true"
+    },
+    {
+      "name": "always-fold/equity-threshold: duplicate card fingerprints complete",
+      "ok": true,
+      "detail": "fingerprintsComplete=true"
+    },
+    {
+      "name": "always-fold/equity-threshold: duplicate CI95 excludes 0",
+      "ok": true,
+      "detail": "ci95=[-139.512, -76.537]"
+    },
+    {
+      "name": "always-fold/equity-threshold: duplicate CI at least as narrow as no-swap",
+      "ok": true,
+      "detail": "duplicate=62.975 vs no-swap=83.8"
+    }
+  ]
+}

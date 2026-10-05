@@ -32,6 +32,19 @@ import {
 } from '../src/botPolicy.js';
 import { HeadlessClient, buildDecisionView } from '@4am/agent-core';
 import { humanLlmTookEffect, joinActionAttribution } from './helpers/actionAttribution.js';
+import { installDeterministicShuffle } from './helpers/deterministicShuffle.mjs';
+
+// -------------------------------------------------- deterministic shuffle ---
+// Opt-in only (`BOT_TEST_SHUFFLE_SEED=<n>`): makes the mental-poker deal a pure
+// function of the seed, so two runs with the same seed see identical decks.
+// Unset => the stock crypto shuffle, byte-for-byte unchanged.
+// ISOLATION: the seed mints server hand ids from (seed, ordinal) and
+// transcripts.hand_id is a PRIMARY KEY, so this is safe ONLY against the fresh
+// tmpdir() DB this harness always boots - never a reused/non-empty one.
+const SHUFFLE_SEED_RAW = process.env.BOT_TEST_SHUFFLE_SEED;
+const DETERMINISTIC_SHUFFLE = SHUFFLE_SEED_RAW !== undefined && SHUFFLE_SEED_RAW !== '';
+const SHUFFLE_SEED = DETERMINISTIC_SHUFFLE ? Number(SHUFFLE_SEED_RAW) >>> 0 : null;
+if (DETERMINISTIC_SHUFFLE) installDeterministicShuffle(SHUFFLE_SEED);
 
 // ---------------------------------------------------------------- config ----
 
@@ -1245,6 +1258,9 @@ async function main() {
       config: {
         hands: HANDS,
         seed: SEED,
+        shuffleSeed: SHUFFLE_SEED,
+        deterministicShuffle: DETERMINISTIC_SHUFFLE,
+        duplicate: false,
         bots: BOTS,
         styles: STYLES,
         humanStyle: HUMAN_STYLE,
@@ -1270,7 +1286,9 @@ async function main() {
       },
       startedAt: new Date(startedAt).toISOString(),
       notes: [
-        'SEED seeds the policy RNG only; the deal uses server randomness, so hands are not reproducible run to run.',
+        DETERMINISTIC_SHUFFLE
+          ? `BOT_TEST_SHUFFLE_SEED=${SHUFFLE_SEED} is set: the deal is a deterministic function of the seed (per-client seeded Fisher-Yates over the mental-poker shuffle), so two runs with the same seed deal identical hands and hand ids.`
+          : 'SEED seeds the policy RNG only; the deal uses crypto randomness, so hands are not reproducible run to run (set BOT_TEST_SHUFFLE_SEED to opt into a reproducible deal).',
         'Top-ups (reloads) are part of the experiment; netChips excludes buy-ins (it is the sum of hand deltas).',
         'avgCommit = average per hand of the seat final committed total (chips put into the pot).',
         'action*Share denominator is that style total actions; bb/100 is descriptive only at this sample size.',
@@ -1282,6 +1300,7 @@ async function main() {
         'On a short action clock the policy degrades proactively: `deadline_skips` counts decisions that never fired a request (below LLM_MIN_BUDGET_MS, default 6000ms), which is distinct from `llm_fallbacks.timeout` (a request that was sent and cut off).',
         'The decision view carries `historyComplete` (false after a mid-hand disconnect gap) and a bounded `sessionMemory` (<=8 recentHands + <=8 opponents over their last complete hands); reconnectDiscards counts policy results dropped because the connection epoch changed during the await.',
         '`LLM_EXPECT=model` (default) demands a server-accepted action whose decision source was the model - not merely a legal model result, so a shadow run cannot satisfy it; `LLM_EXPECT=fallback` demands a server-accepted action from the local fallback. Attribution joins transcript actions to routed decisions on the server-authoritative (handId, actionSeq) + seat; acceptedWithoutRoute/routeWithoutAccepted/duplicateRoute/seatMismatch/acceptedMissingActionSeq must all be 0, and latency.samples and sum(outcomes) must equal llm_calls.',
+        'ISOLATION: BOT_TEST_SHUFFLE_SEED mints hand ids from (seed, per-room ordinal) in the server; because transcripts.hand_id is a PRIMARY KEY, it is ONLY safe against a throwaway DB. This harness always boots a fresh tmpdir() DB; never point the seed at a reused/non-empty database.',
       ],
       globals,
       execution,

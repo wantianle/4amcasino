@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import type { WebSocket } from 'ws';
 import {
@@ -472,6 +472,28 @@ function verifySnapshotShares(
   return cards;
 }
 
+/**
+ * Deterministic hand id for the bot playtest harness only.
+ *
+ * The deal randomness itself lives client-side (mental-poker `randomPerm`), but
+ * the hand id is minted here on the server, so the harness cannot make its
+ * sequence reproducible on its own. When `BOT_TEST_SHUFFLE_SEED` is set we
+ * derive the id from `(seed, per-room hand ordinal)` instead of CSPRNG bytes;
+ * the default path (`randomBytes`) is byte-for-byte unchanged.
+ *
+ * ISOLATION: because the id is a pure function of `(seed, ordinal)`,
+ * `BOT_TEST_SHUFFLE_SEED` must ONLY be used against a throwaway/temp database.
+ * `transcripts.hand_id` is a PRIMARY KEY, so pointing the same seed at a
+ * non-empty DB (a reused room, or a restart) re-mints ids that already exist and
+ * collides on insert. The eval/playtest harnesses boot a fresh `tmpdir()` DB.
+ */
+function testHandId(seed: string, ordinal: number): string {
+  return createHash('sha256')
+    .update(`4am-test-hand:${seed}:${ordinal}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
 export class GameRoom {
   private sockets = new Map<number, WebSocket>();
   private hand: Hand | null = null;
@@ -500,6 +522,8 @@ export class GameRoom {
     ready: Set<number>;
   } | null = null;
   private hostHandover: NodeJS.Timeout | null = null;
+  /** Monotonic per-room hand counter used only to mint reproducible test ids. */
+  private testHandSeq = 0;
   private lookup = cardLookup();
 
   constructor(
@@ -1160,7 +1184,10 @@ export class GameRoom {
     this.peekOffers.clear();
     // The hand id is minted before feature claiming so a claimed trigger can be
     // bound to the hand that will actually carry it through to a transcript.
-    const handId = randomBytes(8).toString('hex');
+    const testSeed = process.env.BOT_TEST_SHUFFLE_SEED;
+    const handId = testSeed
+      ? testHandId(testSeed, this.testHandSeq++)
+      : randomBytes(8).toString('hex');
     const features = this.claimHandFeatures(room.id, handSeats, handId);
     // The room was closed between the guard read above and the claim
     // transaction: the claim rolled back, nothing was claimed and no hand
