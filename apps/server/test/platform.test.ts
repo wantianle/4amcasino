@@ -4,7 +4,7 @@ import { platformUserId, setPlatformUserId, isPlatform, ensurePlatformAccount } 
 import { createApp } from '../src/app.js';
 import { appendLedger } from '../src/ledger.js';
 import { createUser } from '../src/auth.js';
-import { derivePlatformCredentials } from '../scripts/platform-crypto.js';
+import { derivePlatformCredentials } from '../src/platform-crypto.js';
 
 describe('platform state', () => {
   it('is unset until written, then round-trips', () => {

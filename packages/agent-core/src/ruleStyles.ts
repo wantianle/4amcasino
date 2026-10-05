@@ -1,0 +1,162 @@
+import { normalizePolicyKind, type PolicyKind } from './policyStyles.js';
+
+/**
+ * Rules-v1 engine: the style knobs that scale the baseline preflop charts.
+ *
+ * These are deliberately coarse multipliers on frequencies derived from the
+ * range tables, not equity thresholds. `tight-aggressive` is the reference
+ * preset and the default when `policy_kind` names one of the four styles.
+ *
+ *   - `preflopScale`        scales flat-call frequency and, via its fractional
+ *                           part (`preflopScale - 1`), opens the marginal RFI
+ *                           hands — so >1 is genuinely wider, not just clamped;
+ *   - `threeBetScale`       scales 3-bet/4-bet frequencies;
+ *   - `bluffScale`          scales weighted "blocker" bluff entries;
+ *   - `valueBetScale`       scales the postflop value-bet probability;
+ *   - `multiwayBluffScale`  extra discount on aggression in multiway pots;
+ *   - `maxOverbetFrequency` cap on the postflop overbet frequency.
+ */
+
+export const RULES_ENGINE = 'rules-v1';
+
+export interface RuleParams {
+  preflopScale: number;
+  threeBetScale: number;
+  bluffScale: number;
+  valueBetScale: number;
+  multiwayBluffScale: number;
+  maxOverbetFrequency: number;
+}
+
+export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
+  'tight-aggressive': {
+    preflopScale: 1,
+    threeBetScale: 1,
+    bluffScale: 1,
+    valueBetScale: 1,
+    multiwayBluffScale: 0.5,
+    maxOverbetFrequency: 0.15,
+  },
+  'loose-aggressive': {
+    preflopScale: 1.5,
+    threeBetScale: 1.3,
+    bluffScale: 1.6,
+    valueBetScale: 1.15,
+    multiwayBluffScale: 0.8,
+    maxOverbetFrequency: 0.35,
+  },
+  // A station opens a touch wide (but far less than a LAG) and almost never
+  // 3-bets or bluffs.
+  'calling-station': {
+    preflopScale: 1.15,
+    threeBetScale: 0.35,
+    bluffScale: 0.1,
+    valueBetScale: 1,
+    multiwayBluffScale: 0.2,
+    maxOverbetFrequency: 0,
+  },
+  'constrained-random': {
+    preflopScale: 1.1,
+    threeBetScale: 1,
+    bluffScale: 1.2,
+    valueBetScale: 1,
+    multiwayBluffScale: 0.7,
+    maxOverbetFrequency: 0.25,
+  },
+};
+
+const PARAM_RANGES: Record<keyof RuleParams, [number, number]> = {
+  preflopScale: [0, 2],
+  threeBetScale: [0, 2],
+  bluffScale: [0, 2],
+  valueBetScale: [0, 2],
+  multiwayBluffScale: [0, 1],
+  maxOverbetFrequency: [0, 1],
+};
+
+const PARAM_KEYS = Object.keys(PARAM_RANGES) as (keyof RuleParams)[];
+
+/** Read the `engine` field without throwing, for the resolver's dispatch. */
+export function detectRulesEngine(json: string | null | undefined): string | null {
+  if (json === null || json === undefined || json.trim() === '') return null;
+  try {
+    const raw: unknown = JSON.parse(json);
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+    const engine = (raw as Record<string, unknown>).engine;
+    return typeof engine === 'string' ? engine : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface RuleConfigResult {
+  /** Preset explicitly selected by an optional `rules` field, if valid. */
+  presetKind: PolicyKind | null;
+  params: RuleParams;
+  errors: string[];
+  applied: boolean;
+}
+
+/**
+ * Parse a rules-v1 `policy_json` blob. Invalid JSON / shapes / values never
+ * throw: offending fields keep their preset default and are reported. Unknown
+ * keys are reported too (`engine` and `rules` are consumed here).
+ */
+export function parseRuleConfig(kind: PolicyKind, json: string | null | undefined): RuleConfigResult {
+  const errors: string[] = [];
+  let presetKind: PolicyKind | null = null;
+  const params: RuleParams = { ...RULE_PRESETS[kind] };
+  if (json === null || json === undefined || json.trim() === '') {
+    return { presetKind, params, errors, applied: false };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    errors.push('policy_json is not valid JSON; using rules preset defaults');
+    return { presetKind, params, errors, applied: false };
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    errors.push('policy_json must be a JSON object; using rules preset defaults');
+    return { presetKind, params, errors, applied: false };
+  }
+  const obj = raw as Record<string, unknown>;
+  let applied = false;
+
+  // Phase 1: resolve the preset. This must happen before explicit parameters so
+  // the result does not depend on JSON key order.
+  const rulesValue = obj.rules;
+  if (rulesValue !== undefined) {
+    if (typeof rulesValue === 'string') {
+      const preset = normalizePolicyKind(rulesValue);
+      if (preset) {
+        presetKind = preset;
+        Object.assign(params, RULE_PRESETS[preset]);
+        applied = true;
+      } else {
+        errors.push(`unknown rules preset "${rulesValue}" ignored`);
+      }
+    } else {
+      errors.push('"rules" must be a string preset name; kept default');
+    }
+  }
+
+  // Phase 2: explicit parameters always win over the preset, whatever order the
+  // keys appear in.
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === 'engine' || key === 'rules') continue;
+    if (!(PARAM_KEYS as readonly string[]).includes(key)) {
+      errors.push(`unknown rules parameter "${key}" ignored`);
+      continue;
+    }
+    const name = key as keyof RuleParams;
+    const [lo, hi] = PARAM_RANGES[name];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < lo || value > hi) {
+      errors.push(`rules parameter "${key}" must be a number in [${lo}, ${hi}]; kept default`);
+      continue;
+    }
+    params[name] = value;
+    applied = true;
+  }
+  return { presetKind, params, errors, applied };
+}

@@ -1,0 +1,83 @@
+/* Set data-table-skin on the room root (.table-app-bg), above RoundTable.
+ * Only table materials change; cards, seats, status and controls retain their
+ * own tokens. Missing/unknown attributes keep the original :root palette.
+ * gg-green repeats the original values deliberately: it can also reset a
+ * nested preview inside another skin. No geometry or global theme overrides.
+ */
+.table-app-bg[data-table-skin='gg-green'] {
+  --table-room-1: #16130f;
+  --table-room-2: #0d0b08;
+  --table-room-glow: #201c16;
+  --table-felt-core: #33692c;
+  --table-felt-mid: #265222;
+  --table-felt-edge: #16391a;
+  --table-felt-inset-shadow: inset 0 8px 24px rgba(0, 0, 0, 0.38);
+  --table-felt-noise-opacity: 0.04;
+  --table-felt-watermark-ink: #eafce0;
+  --table-felt-watermark-opacity: 0.028;
+  --table-rail-hi: #453f34;
+  --table-rail: #2a2620;
+  --table-rail-lo: #17140f;
+  --table-rail-gold: rgba(109, 90, 43, 0.35);
+  --table-rail-texture: linear-gradient(transparent, transparent);
+}
+
+/* Midnight blue cloth, brushed pewter edge and a pale champagne hairline. */
+.table-app-bg[data-table-skin='sapphire'] {
+  --table-room-1: #101823;
+  --table-room-2: #080c13;
+  --table-room-glow: #1d2b3b;
+  --table-felt-core: #234f70;
+  --table-felt-mid: #193d5c;
+  --table-felt-edge: #0d243c;
+  --table-felt-inset-shadow: inset 0 8px 26px rgba(0, 5, 16, 0.44);
+  --table-felt-noise-opacity: 0.05;
+  --table-felt-watermark-ink: #dcefff;
+  --table-felt-watermark-opacity: 0.04;
+  --table-rail-hi: #63717c;
+  --table-rail: #35414b;
+  --table-rail-lo: #18222c;
+  --table-rail-gold: rgba(208, 202, 165, 0.48);
+  --table-rail-texture: linear-gradient(transparent, transparent);
+}
+
+/* Oxblood velvet, espresso leather, restrained antique brass. */
+.table-app-bg[data-table-skin='burgundy'] {
+  --table-room-1: #1d1115;
+  --table-room-2: #10090b;
+  --table-room-glow: #302023;
+  --table-felt-core: #722e40;
+  --table-felt-mid: #562130;
+  --table-felt-edge: #34131e;
+  --table-felt-inset-shadow: inset 0 8px 28px rgba(17, 0, 5, 0.46);
+  --table-felt-noise-opacity: 0.055;
+  --table-felt-watermark-ink: #ffe4d5;
+  --table-felt-watermark-opacity: 0.04;
+  --table-rail-hi: #624b37;
+  --table-rail: #38281d;
+  --table-rail-lo: #1c130e;
+  --table-rail-gold: rgba(190, 145, 65, 0.5);
+  --table-rail-texture: linear-gradient(transparent, transparent);
+}
+
+/* Bottle-green baize and walnut. Original procedural grain: no image download,
+ * no third-party assets. Fine rings bend around an off-center wood knot. */
+.table-app-bg[data-table-skin='classic-casino'] {
+  --table-room-1: #1d1811;
+  --table-room-2: #100d09;
+  --table-room-glow: #332a1c;
+  --table-felt-core: #237747;
+  --table-felt-mid: #195c35;
+  --table-felt-edge: #0c3c24;
+  --table-felt-inset-shadow: inset 0 7px 22px rgba(0, 17, 6, 0.43);
+  --table-felt-noise-opacity: 0.065;
+  --table-felt-watermark-ink: #f2edcc;
+  --table-felt-watermark-opacity: 0.035;
+  --table-rail-hi: #98693e;
+  --table-rail: #624026;
+  --table-rail-lo: #302015;
+  --table-rail-gold: rgba(218, 178, 95, 0.5);
+  --table-rail-texture:
+    repeating-radial-gradient(ellipse at 24% 140%, transparent 0 4px, rgba(28, 12, 3, 0.22) 5px 6px, transparent 7px 11px),
+    repeating-linear-gradient(3deg, transparent 0 3px, rgba(244, 188, 116, 0.09) 4px, transparent 5px 9px);
+}

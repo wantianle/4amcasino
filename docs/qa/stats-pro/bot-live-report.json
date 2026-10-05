@@ -1,0 +1,268 @@
+{
+  "runId": "2026-10-05T00-27-54-403Z",
+  "base": "http://127.0.0.1:8797",
+  "roomId": "d1ce28f82531",
+  "account": {
+    "username": "qamuuiczf5954d",
+    "userId": 2,
+    "humanSeat": 0,
+    "token": "9ef5196dc0a12f6755aaa63f9937ec1a4c523246b53ddbb944fc57ce64a80d68",
+    "publicKey": "e7192e39b7204a2c1d22d45acb3019e425cd390e2ac5e207e8cbbc4f6426eaec",
+    "secretKey": "361fa93ff050d24339d4b7f708108a0751edef244fa58022edb9ba9bb21d0ae9"
+  },
+  "config": {
+    "HANDS": 25,
+    "BOTS": 2,
+    "BUYIN": 1000,
+    "ACTION_MS": 5000,
+    "HAND_MS": 30000,
+    "HAND_BUDGET_MS": 900000,
+    "POLL_MS": 1000
+  },
+  "botsRunning": [
+    {
+      "id": "ad8424efcba1c81c6654048c",
+      "seat": 1,
+      "kind": "scripted",
+      "status": "running"
+    },
+    {
+      "id": "d4c896255902aa022ec6466f",
+      "seat": 2,
+      "kind": "scripted",
+      "status": "running"
+    }
+  ],
+  "botsAfterStop": [
+    {
+      "id": "ad8424efcba1c81c6654048c",
+      "seat": 1,
+      "status": "stopped"
+    },
+    {
+      "id": "d4c896255902aa022ec6466f",
+      "seat": 2,
+      "status": "stopped"
+    }
+  ],
+  "result": {
+    "settledHands": 25,
+    "aborts": 0,
+    "botTranscriptActions": 175,
+    "humanTranscriptActions": 95,
+    "humanAutoFolds": 0,
+    "humanActionHands": [
+      "700520984f4fc780",
+      "092a26cdf3ee6446",
+      "84f3d2ae4a840df8",
+      "b2f51e1e15dfa2d7",
+      "3592e4ac222330e5",
+      "d22cc1d9f6c9954e",
+      "bf48c455d4c8b901",
+      "7569ad5f8dfa72e0",
+      "5132d14c38c8e625",
+      "43d48314bce6f0a1",
+      "6fc29fac9cf620c1",
+      "92134900a8974a96",
+      "fa8c3d9faf4ac504",
+      "495616a750c222d5",
+      "b6637dfc6527f4bd",
+      "c1e8adae8bf858c9",
+      "2f9c114f76b80f3c",
+      "18d75aaa5b602220"
+    ],
+    "clickAttempts": 95,
+    "botPods": 2,
+    "ledgerVerified": true,
+    "pageErrors": [],
+    "consoleErrors": []
+  },
+  "hands": [
+    {
+      "handId": "700520984f4fc780",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "719edfb46c64ff80",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "092a26cdf3ee6446",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "eb448831490d4b6f",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "84f3d2ae4a840df8",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "2de4078da853b570",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "b2f51e1e15dfa2d7",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "74d0b1856a8dd1d8",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "3592e4ac222330e5",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "d22cc1d9f6c9954e",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "bf48c455d4c8b901",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "b14e5389191f2078",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "7569ad5f8dfa72e0",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "5132d14c38c8e625",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "43d48314bce6f0a1",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "6fc29fac9cf620c1",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "92134900a8974a96",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "2bcb21a9c6b9ff2f",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "fa8c3d9faf4ac504",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "495616a750c222d5",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "b6637dfc6527f4bd",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 5,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "594746ea847a316b",
+      "abort": false,
+      "botActions": 1,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "c1e8adae8bf858c9",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "2f9c114f76b80f3c",
+      "abort": false,
+      "botActions": 4,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "18d75aaa5b602220",
+      "abort": false,
+      "botActions": 100,
+      "humanActions": 26,
+      "humanAutoFolds": 0
+    }
+  ],
+  "screenshots": [
+    "docs/qa/stats-pro/01-room-entry.png",
+    "docs/qa/stats-pro/02-bots-dialog.png",
+    "docs/qa/stats-pro/03-bots-seated.png",
+    "docs/qa/stats-pro/04-playing.png",
+    "docs/qa/stats-pro/05-after-hands.png"
+  ],
+  "notes": [
+    "The test account and room are left on the (ephemeral) server; storage resets on restart, and this script has no account-delete API.",
+    "Human actions are read from the signed transcript, so a server timeout auto-fold can never be mistaken for real play."
+  ]
+}

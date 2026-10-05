@@ -3,7 +3,7 @@
 // 底牌 / 摊牌 / 公共牌 / 作废 / 全下 / 跑两次牌 / N 号位. host → 房主,
 // banker → 账房 (never 庄家), the house → 平台.
 // Style: 一律「你」, 按钮/徽章不加句号, 状态长句加; ellipsis 用「…」; 品牌
-// 「4AM Casino」、房间码、用户名、URL、键名（Esc/WASD）原样透传，绝不进译文.
+// 「4AM Casino」、房间码、用户名、URL、键名（如 Esc）原样透传，绝不进译文.
 // Hand-strength wording is produced by shared/i18n/pokerLabels.ts (tScore),
 // not by keys here. Persisted server prose (abort reasons) renders through
 // tr() with keys in dict/server.ts. Reused keys owned elsewhere: 'Retry' /
@@ -184,7 +184,7 @@ const tablePage: Record<string, string> = {
   // ── Header / chrome（aria-label 与 title 同源）────────────────────────
   'Leave table': '离开牌桌',
   'Table menu': '牌桌菜单',
-  // 手机 ⋮ 菜单里的视图组（3D / 全屏收进来，见 table-redesign-spec A1）
+  // 手机 ⋮ 菜单里的视图组（全屏收进来，见 table-redesign-spec A1）
   View: '视图',
   'Not available': '不可用',
   'Open chat': '打开聊天',
@@ -193,7 +193,6 @@ const tablePage: Record<string, string> = {
   Close: '关闭',
   'Toggle chat': '打开或关闭聊天',
   'Toggle chat, {n} unread messages': '打开或关闭聊天，{n} 条未读',
-  '3D table': '3D 牌桌',
   'Full screen': '全屏',
   'Exit full screen': '退出全屏',
   'Table controls': '牌桌控制',

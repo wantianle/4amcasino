@@ -124,8 +124,10 @@ describe('automatic dealer lifecycle', () => {
       'INSERT INTO rooms (id,name,join_code,host_id,banker_id,sb,bb,created_at) VALUES (?,?,?,?,?,?,?,?)',
     ).run('auto', 'Auto', 'AUTODE', 1, 1, 10, 20, Date.now());
     for (let id = 1; id <= 4; id++) {
+      // These tests exercise the MANUAL ready check, so pin the users to the
+      // legacy (opted-out) default; auto-ready is covered by its own test below.
       db.prepare(
-        'INSERT INTO users (id,username,auth_hash,auth_salt,pubkey,created_at) VALUES (?,?,?,?,?,?)',
+        'INSERT INTO users (id,username,auth_hash,auth_salt,pubkey,created_at,auto_ready) VALUES (?,?,?,?,?,?,0)',
       ).run(id, `player${id}`, 'test', 'test', genIdentity().publicKey, Date.now());
       db.prepare('INSERT INTO room_players (room_id,user_id,seat,stack) VALUES (?,?,?,?)').run(
         'auto',
@@ -204,6 +206,18 @@ describe('automatic dealer lifecycle', () => {
     expect(state().handActive).toBe(true);
     expect(kinds('hand_abort')).toHaveLength(0);
     expect(state().room.autoDeal).toBe(false);
+  });
+
+  it('auto-readies opted-in players the moment the ready window opens', () => {
+    db.prepare('UPDATE users SET auto_ready = 1 WHERE id = 1').run();
+    vi.advanceTimersByTime(1000);
+    const rc = kinds('ready_check')[0] as Extract<ServerMsg, { t: 'ready_check' }>;
+    expect(rc.ready).toContain(1);
+    expect(rc.ready).not.toContain(2);
+    expect(kinds('hand_start')).toHaveLength(0); // still waiting on players 2 and 3
+    room.handleMessage(2, { t: 'im_ready' });
+    room.handleMessage(3, { t: 'im_ready' });
+    expect(kinds('hand_start')).toHaveLength(1);
   });
 
   it.each(['sit-out', 'busted', 'standing'])(

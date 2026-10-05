@@ -43,10 +43,7 @@ value:
 
 Also: `proof.z`, `reveal_key.key` and `fold_key.key` were unbounded hex feeding
 `BigInt('0x'+…)` — one frame could freeze every table on the instance. All are
-pinned to 64 characters. Emote kinds are a closed enum and the lookup table is
-null-prototyped, because `__proto__` resolved to a truthy object with no `apply`
-and the throw landed inside the render loop, permanently freezing the 3D table
-for everyone in the room.
+pinned to 64 characters.
 
 **Transport and accounts**
 

@@ -362,7 +362,7 @@ const server: Record<string, string> = {
   'invalid deck': '牌堆无效。',
   'no opponent can call': '没有对手能跟注。',
 
-  // ── WS: table & lounge toasts ({ t: 'error', message }) ─────────────────
+  // ── WS: table toasts ({ t: 'error', message }) ───────────────────────────
   'invalid json': 'JSON 格式无效。',
   'invalid message': '消息格式无效。',
   'slow down': '太快了，缓一缓。',
@@ -404,14 +404,7 @@ const server: Record<string, string> = {
   // validation. `maxRuns` is min(3, features.multiRun.maxRuns) — template key.
   'the action clock expired': '你的行动时间用完了。',
   'run count must be between 1 and {n}': '跑牌次数只能是 1 到 {n}。',
-  'Join this table as a member to explore the lounge.': '先以成员身份入桌，才能去酒廊逛逛。',
   'Only table members have a seat to leave.': '只有桌上的成员才有座可离。',
-  'Take a break before leaving your chair.': '要先申请休息，才能离座。',
-  'Finish this hand before walking away. Your break is saved.':
-    '先打完这手再走，你的休息已经排上了。',
-  'Choose an open seat to return to the table.': '选个空位坐下，回到牌桌。',
-  'Choose a clear spot on the lounge floor.': '在酒廊里挑块空地站。',
-  'That part of the lounge is full. Choose another spot.': '酒廊那块位置满了，换一个。',
 
   // ── WS: betting-rule rejections thrown by @4am/shared, forwarded here ───
   'not your turn': '还没轮到你。',
@@ -475,6 +468,34 @@ const server: Record<string, string> = {
   'Squid Game penalty/payout': '鱿鱼游戏罚金/赔付',
   'Squid Game penalty': '鱿鱼游戏罚金',
   'Squid Game payout': '鱿鱼游戏赔付',
+
+  // ── HTTP: table bots (apps/server/src/botRoutes.ts) ──────────────────────
+  'no such bot': '没有这个机器人。',
+  'that seat is taken': '那个座位已经有人了。',
+  'bot username collision - try again': '机器人账号名撞车了，再试一次。',
+  'room is not active': '这张桌已经不在开局状态。',
+  'bot has been removed': '这个机器人已被移除。',
+  'BOT_IDENTITY_KEY is not configured; refusing to create a bot':
+    '服务器没有配置 BOT_IDENTITY_KEY，无法创建机器人。',
+  'server is shutting down; cannot start bots': '服务器正在关闭，暂时不能启动机器人。',
+  'bot identity is not recoverable; refusing to start':
+    '机器人的身份密钥无法恢复，已拒绝启动。',
+  'bot runner capacity reached; stop a running bot first':
+    '机器人运行位已满；先停下一个在跑的机器人。',
+  'bot state changed; retry the start': '机器人状态刚有变化，请重试开始。',
+  'bot state changed; retry the stop': '机器人状态刚有变化，请重试停止。',
+  // status-specific start refusals; the template is the catch-all
+  'bot cannot start from waiting_buy_approval': '机器人还在等买入审批，还不能开始。',
+  'bot cannot start from running': '机器人已经在打牌了；先停止再重新开始。',
+  'bot cannot start from created': '机器人还没准备就绪，稍等再试。',
+  'bot cannot start from stopping': '机器人正在收尾，等它停下后再开始。',
+  'bot cannot start from {status}': '机器人当前是 {status} 状态，不能开始。',
+  // status-specific stop refusals (stopping/stopped answer 200, removed has
+  // its own message above - only the non-stoppable states reach this prose)
+  'bot cannot stop from created': '机器人还没准备就绪，不用停止。',
+  'bot cannot stop from waiting_buy_approval': '机器人还没开始打牌，不用停止。',
+  'bot cannot stop from error': '机器人已经停下了，只是出了点问题。',
+  'bot cannot stop from {status}': '机器人当前是 {status} 状态，不能停止。',
 
   // ── Client-generated prose at the same display boundary ─────────────────
   'request failed ({status})': '请求失败（{status}）',

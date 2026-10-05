@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { tableUtilityGroups, unreadChatCount } from '../src/pages/table/tableUi.ts';
+import {
+  centerColumnBudgetPx,
+  PHONE_CANVAS,
+  SEAT_ANCHOR_PHONE,
+  TABLE_CANVAS,
+} from '../src/widgets/table/geometry.ts';
+
+describe('table center-column geometry', () => {
+  it('reserves the visible desktop hero holo overhang only when requested', () => {
+    const baseline = centerColumnBudgetPx(TABLE_CANVAS);
+    expect(baseline).toBeCloseTo(204, 5);
+    expect(centerColumnBudgetPx(TABLE_CANVAS, undefined, 38)).toBeCloseTo(128, 5);
+    expect(centerColumnBudgetPx(TABLE_CANVAS, undefined, 0)).toBe(baseline);
+  });
+
+  it('uses the phone holo overhang without changing the no-card path', () => {
+    const baseline = centerColumnBudgetPx(PHONE_CANVAS, SEAT_ANCHOR_PHONE);
+    // The phone's ±40° neighbour is the limiting edge, so its distinct
+    // 13px holo allowance is already inside the existing budget here.
+    expect(centerColumnBudgetPx(PHONE_CANVAS, SEAT_ANCHOR_PHONE, 13)).toBeCloseTo(baseline, 5);
+    expect(centerColumnBudgetPx(PHONE_CANVAS, SEAT_ANCHOR_PHONE, 0)).toBe(baseline);
+  });
+});
 
 describe('table chat drawer', () => {
   it('counts only messages received while the drawer is closed', () => {
@@ -21,8 +44,8 @@ describe('table utility menu', () => {
       }),
     ).toEqual([
       { id: 'people', actions: ['invite', 'watch', 'video'] },
-      { id: 'records', actions: ['standings', 'ledger', 'hands'] },
-      { id: 'table', actions: ['auto-deal', 'sit-out', 'timer'] },
+      { id: 'records', actions: ['ledger', 'hands'] },
+      { id: 'table', actions: ['auto-deal', 'sit-out', 'timer', 'bots'] },
       { id: 'preferences', actions: ['preferences'] },
     ]);
   });
@@ -37,7 +60,7 @@ describe('table utility menu', () => {
         hasMeetLink: false,
       }),
     ).toEqual([
-      { id: 'records', actions: ['standings', 'ledger', 'hands'] },
+      { id: 'records', actions: ['ledger', 'hands'] },
       { id: 'preferences', actions: ['preferences'] },
     ]);
   });

@@ -1,0 +1,94 @@
+{
+  "real": true,
+  "base": "http://127.0.0.1:8797",
+  "roomId": "d1ce28f82531",
+  "accounts": {
+    "main": 2,
+    "low": 5,
+    "hidden": 6
+  },
+  "apiAssertions": {
+    "sample": 25,
+    "stats": {
+      "vpip": {
+        "hits": 15,
+        "opportunities": 18,
+        "pct": 83.33,
+        "unit": "pct"
+      },
+      "pfr": {
+        "hits": 0,
+        "opportunities": 18,
+        "pct": 0,
+        "unit": "pct"
+      }
+    },
+    "byPosition": [
+      "BTN",
+      "SB",
+      "BB"
+    ],
+    "byStreet": [
+      "preflop",
+      "flop",
+      "turn",
+      "river"
+    ],
+    "byIpOop": [
+      "ip",
+      "oop"
+    ],
+    "trendPoints": 25,
+    "dataQuality": {
+      "exact": 25,
+      "legacy": 0,
+      "partial": 0,
+      "total": 25
+    }
+  },
+  "hud": [
+    {
+      "userId": 5,
+      "hidden": false,
+      "sample": 0,
+      "sufficient": false,
+      "confidence": "insufficient"
+    },
+    {
+      "userId": 6,
+      "hidden": true,
+      "sample": 0,
+      "sufficient": false,
+      "confidence": "insufficient"
+    },
+    {
+      "userId": 2,
+      "hidden": false,
+      "sample": 25,
+      "sufficient": true,
+      "confidence": "low"
+    },
+    {
+      "userId": 3,
+      "hidden": false,
+      "sample": 1,
+      "sufficient": false,
+      "confidence": "insufficient"
+    },
+    {
+      "userId": 4,
+      "hidden": false,
+      "sample": 25,
+      "sufficient": true,
+      "confidence": "low"
+    }
+  ],
+  "pageErrors": [],
+  "screenshots": [
+    "real-overview-1440.png",
+    "real-position-1440.png",
+    "real-street-1440.png",
+    "real-ip-1440.png",
+    "real-hud-1440.png"
+  ]
+}

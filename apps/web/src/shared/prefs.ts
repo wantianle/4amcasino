@@ -2,12 +2,6 @@ import { parsePokerHotkeys, type PokerHotkeys } from '@4am/shared';
 import { api } from './api.ts';
 import { isCardBack, sanitizeBetRatios, useStore } from './store.ts';
 
-export function applyAppearance(): void {
-  // Appearance is a device preference; a profile refresh must not reset it.
-  document.documentElement.classList.remove('cyber');
-  document.documentElement.classList.add('zeus');
-}
-
 /** Quick-bet ratios (A10) live in the persisted auth store so they ride with
  *  the signed-in account across reloads. `loadPrefs` only overwrites them when
  *  the server actually returns a `betRatios` field - until the profile endpoint
@@ -20,7 +14,7 @@ export function saveBetRatios(ratios: number[]): void {
   void api.updateProfile({ betRatios: clean }).catch(() => {});
 }
 
-/** Pull profile prefs from the server into the store (and apply the Zeus appearance). */
+/** Pull profile prefs from the server into the store. */
 let prefsRevision = 0;
 export function savePokerHotkeysLocally(pokerHotkeys: PokerHotkeys, userId: number): void {
   prefsRevision++;
@@ -61,7 +55,6 @@ export async function loadPrefs({
       betRatios:
         p.betRatios !== undefined ? sanitizeBetRatios(p.betRatios) : useStore.getState().prefs.betRatios,
     });
-    applyAppearance();
   } catch {
     /* not logged in yet */
   }

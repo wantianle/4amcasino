@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../src/app.js';
+import { createUser } from '../src/auth.js';
+import { openDb } from '../src/db.js';
 import { appendLedger } from '../src/ledger.js';
 
 let ctx: ReturnType<typeof createApp>;
@@ -25,6 +31,140 @@ const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 describe('profile', () => {
+  it('creates new accounts on the crimson four-color deck', async () => {
+    const alice = await user('decknew');
+    const me = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(me.cardBack).toBe('crimson');
+    expect(me.fourColor).toBe(true);
+  });
+
+  it('defaults autoReady to true for a new account and keeps an explicit opt-out', async () => {
+    const alice = await user('readynew');
+    const stored = ctx.db
+      .prepare('SELECT auto_ready FROM users WHERE id = ?')
+      .get(alice.userId) as { auto_ready: number };
+    expect(stored.auto_ready).toBe(1);
+
+    const first = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(first.autoReady).toBe(true);
+
+    // The player can still turn it off; that stored false must stick.
+    const put = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { autoReady: false },
+    });
+    expect(put.statusCode).toBe(200);
+    const off = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(off.autoReady).toBe(false);
+
+    // And back on again.
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { autoReady: true },
+    });
+    const on = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(on.autoReady).toBe(true);
+  });
+
+  it('writes autoReady=1 for new accounts on a legacy database without touching old rows', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-ready-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      // An existing database whose auto_ready column predates the flip and still
+      // defaults to 0, with one user explicitly opted out.
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        auto_ready INTEGER NOT NULL DEFAULT 0)`);
+      old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, auto_ready) VALUES (?,?,?,?,?,0)',
+      ).run('legacyoff', 'h', 's', 'p', 1);
+      old.close();
+
+      const db = openDb(path);
+      try {
+        const { userId } = createUser(db, 'readyfresh', 'a'.repeat(64), 'p');
+        const legacy = db
+          .prepare("SELECT auto_ready FROM users WHERE username = 'legacyoff'")
+          .get() as { auto_ready: number };
+        expect(legacy.auto_ready).toBe(0); // old row never rewritten
+        const fresh = db
+          .prepare('SELECT auto_ready FROM users WHERE id = ?')
+          .get(userId) as { auto_ready: number };
+        expect(fresh.auto_ready).toBe(1); // new account gets the new default
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an already-stored card preference instead of forcing the new default', async () => {
+    const alice = await user('deckold');
+    // An account that explicitly saved the old look must survive the flip.
+    ctx.db
+      .prepare("UPDATE users SET card_back = 'indigo', four_color = 0 WHERE id = ?")
+      .run(alice.userId);
+    const me = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(me.cardBack).toBe('indigo');
+    expect(me.fourColor).toBe(false);
+  });
+
+  it('adds the card columns without rewriting an existing database', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-card-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      // An old database: the columns already exist with the retired defaults,
+      // and one user explicitly saved the old look.
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        card_back TEXT NOT NULL DEFAULT 'indigo', four_color INTEGER NOT NULL DEFAULT 0)`);
+      old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, card_back, four_color) VALUES (?,?,?,?,?,?,?)',
+      ).run('legacy', 'h', 's', 'p', 1, 'indigo', 0);
+      old.close();
+
+      const db = openDb(path);
+      try {
+        const legacy = db
+          .prepare("SELECT card_back, four_color FROM users WHERE username = 'legacy'")
+          .get() as { card_back: string; four_color: number };
+        expect(legacy.card_back).toBe('indigo');
+        expect(legacy.four_color).toBe(0);
+
+        // A new account on this old database still gets the current default.
+        const { userId } = createUser(db, 'fresh', 'a'.repeat(64), 'p');
+        const fresh = db
+          .prepare('SELECT card_back, four_color FROM users WHERE id = ?')
+          .get(userId) as { card_back: string; four_color: number };
+        expect(fresh.card_back).toBe('crimson');
+        expect(fresh.four_color).toBe(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('updates display name and bio, and returns them', async () => {
     const alice = await user('alice');
     const put = await ctx.app.inject({

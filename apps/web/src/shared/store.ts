@@ -5,7 +5,6 @@ import type {
   BettingState,
   CardId,
   FeatureStartedPayload,
-  LoungePosition,
   PlayerAction,
   ServerMsg,
 } from '@4am/shared';
@@ -83,12 +82,13 @@ export const defaultPrefs: Prefs = {
   bio: '',
   hasAvatar: false,
   avatarVersion: 0,
-  cardBack: 'indigo',
-  fourColor: false,
+  cardBack: 'crimson',
+  fourColor: true,
   quickPhrases: [],
   privateMode: false,
   autoJoinInvites: false,
-  autoReady: false,
+  // Default on: the server now auto-readies every hand; the player can opt out.
+  autoReady: true,
   betRatios: [...DEFAULT_BET_RATIOS],
 };
 
@@ -239,8 +239,6 @@ interface Store {
   logout: () => void;
 
   room: RoomStateMsg | null;
-  lounge: Record<number, LoungePosition>;
-  setLoungePosition: (roomId: string, userId: number, position: LoungePosition | null) => void;
   setRoom: (r: RoomStateMsg | null) => void;
   chat: ChatMsg[];
   pushChat: (m: ChatMsg) => void;
@@ -290,23 +288,13 @@ export const useStore = create<Store>()(
         set({
           auth: { token: null, userId: null, username: null, identity: null },
           room: null,
-          lounge: {},
           chat: [],
           hand: emptyHand,
           pokerHotkeysFor: null,
         }),
 
       room: null,
-      lounge: {},
-      setRoom: (room) => set({ room, lounge: room?.lounge ?? {} }),
-      setLoungePosition: (roomId, userId, position) =>
-        set((s) => {
-          if (s.room?.room.id !== roomId) return s;
-          const lounge = { ...s.lounge };
-          if (position) lounge[userId] = position;
-          else delete lounge[userId];
-          return { lounge, room: { ...s.room, lounge } };
-        }),
+      setRoom: (room) => set({ room }),
       chat: [],
       pushChat: (m) => set((s) => ({ chat: [...s.chat.slice(-199), m] })),
       setChat: (chat) => set({ chat }),

@@ -1,0 +1,437 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * table-controls.css — control-area paint
+ *
+ * The bottom-right action cluster, the merged host deal post + ready check,
+ * and the bottom-left dock chips. Palette uses table tokens; a few structural
+ * alpha highlights (rgba white/black) stay literal. All layout hooks (widths,
+ * anchors) stay in the components; this file is color/border/shadow/type.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the cluster card (mockup .betpanel) ── */
+.table-cluster {
+  border-radius: var(--radius-table-cluster);
+  background: var(--table-surface-cluster);
+  border: 1px solid var(--table-hairline-2);
+  box-shadow: var(--shadow-table-cluster);
+  color: var(--table-ink);
+}
+.table-cluster--mine {
+  border-color: color-mix(in srgb, var(--table-gold-hi) 30%, transparent);
+}
+
+/* YOUR TURN header + to-call/pot sub line */
+.table-turn {
+  font-family: var(--font-table-display);
+  font-size: var(--text-table-display);
+  line-height: var(--text-table-display--line-height, 19px);
+  letter-spacing: 0.04em;
+  color: var(--table-gold-hi);
+}
+.table-sub {
+  font-size: var(--text-table-sub);
+  color: var(--table-muted-2);
+}
+.table-sub b {
+  font-weight: 600;
+  color: var(--table-ink-soft);
+}
+
+/* ── countdown ring (mockup .ring) ── */
+.table-ring-track {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+.table-ring-arc {
+  stroke: var(--table-gold-hi);
+  transition: stroke 0.3s;
+}
+.table-ring-arc--spending {
+  stroke: var(--table-commit);
+}
+.table-ring-arc--hot {
+  stroke: var(--table-red);
+}
+.table-ring-num {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--table-ink);
+}
+.table-ring-num--spending {
+  color: #fde68a;
+}
+.table-ring-num--hot {
+  color: var(--table-allin);
+}
+
+/* ── amount input + BB (mockup .ab-amt / .ab-bb) ── */
+.table-amt {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--table-gold-hi);
+  background: var(--table-surface-input);
+  border: 1px solid color-mix(in srgb, var(--table-gold) 45%, transparent);
+  border-radius: var(--radius-table-input);
+}
+.table-amt:focus {
+  outline: none;
+  border-color: var(--table-gold);
+}
+.table-bb {
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  color: var(--table-stack);
+}
+.table-bb--quiet {
+  color: var(--table-faint-2);
+}
+
+/* slider (mockup .ab-slider): gold accent + quiet track */
+.table-slider {
+  accent-color: var(--table-gold);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* ── % presets (mockup .ab-pill): borderless gold text ── */
+.table-quick {
+  font-family: var(--font-table-num);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--table-gold);
+  background: none;
+  border: none;
+  border-radius: var(--radius-table-pill);
+  padding: 3px 4px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.table-quick:hover {
+  color: var(--table-gold-hi);
+}
+.table-quick--allin {
+  color: var(--table-allin);
+}
+.table-quick:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── the big three (mockup .abtn) ── */
+.table-btn {
+  border: none;
+  border-radius: var(--radius-table-btn);
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    opacity 0.15s;
+}
+.table-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.table-btn--fold {
+  background: var(--table-surface-btn);
+  color: var(--table-muted);
+}
+.table-btn--fold:not(:disabled):hover {
+  color: var(--table-ink);
+}
+.table-btn--call {
+  background: var(--table-surface-btn);
+  color: var(--table-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--table-gold-hi) 30%, transparent);
+}
+.table-btn--call .table-btn-amt {
+  color: var(--table-gold-hi);
+}
+.table-btn--raise {
+  background: linear-gradient(
+    var(--table-gold-pale),
+    var(--table-gold) 55%,
+    var(--table-gold-mid)
+  );
+  color: var(--table-gold-ink);
+  box-shadow: var(--shadow-table-gold-cta);
+}
+.table-btn--raise:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+.table-btn-sub {
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* ── pre-action chips (mockup .ab-pre) ── */
+.table-pre {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--table-muted-2);
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--table-muted) 25%, transparent);
+  border-radius: var(--radius-table-pill);
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.table-pre:hover {
+  color: var(--table-ink-soft);
+}
+.table-pre--armed {
+  color: var(--table-gold-hi);
+  border: 1px solid color-mix(in srgb, var(--table-gold-hi) 55%, transparent);
+  background: color-mix(in srgb, var(--table-gold) 10%, transparent);
+}
+
+/* ── ghost button (Show cards) ── */
+.table-ghost {
+  background: var(--table-surface-btn);
+  color: var(--table-muted);
+  border: 1px solid var(--table-hairline);
+  border-radius: var(--radius-table-btn);
+}
+.table-ghost:hover {
+  color: var(--table-ink);
+}
+
+/* ── host deal post (mockup .dealbox / .btn-deal / .db-clock) ── */
+.table-deal-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--table-ink-soft);
+  text-align: center;
+}
+.table-deal-btn {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 46px;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: var(--font-table-num);
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  color: var(--table-gold-ink);
+  background: linear-gradient(
+    var(--table-gold-pale),
+    var(--table-gold) 55%,
+    var(--table-gold-mid)
+  );
+  box-shadow: var(--shadow-table-gold-cta);
+}
+.table-deal-btn:hover {
+  filter: brightness(1.06);
+}
+.table-deal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.table-deal-clock {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--table-label-2);
+  text-align: center;
+}
+.table-deal-clock b {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--table-gold-hi);
+}
+
+/* ── ready check (idle) ── */
+.table-ready-done {
+  font-weight: 700;
+  color: var(--table-ready);
+}
+
+/* ── time-bank chip (mockup .pill.bank) ── */
+.table-bank {
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--table-surface-bank);
+  color: var(--table-commit);
+  border-radius: var(--radius-table-pill);
+}
+.table-bank--loud {
+  background: var(--table-commit);
+  color: var(--table-gold-ink);
+}
+.table-bank--quiet {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--table-muted-2);
+}
+
+/* ── dock chips (mockup .dchip) — one quiet glass row, gold icons ── */
+.table-dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-table-pill);
+  background: var(--table-surface-dock);
+  border: 1px solid var(--table-hairline-3);
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--table-muted);
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s;
+}
+button.table-dock-chip,
+a.table-dock-chip {
+  cursor: pointer;
+}
+.table-dock-chip svg {
+  color: var(--table-gold);
+}
+.table-dock-chip:hover {
+  color: var(--table-ink);
+}
+.table-dock-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.table-dock-chip--active {
+  color: var(--table-gold-hi);
+  border-color: color-mix(in srgb, var(--table-gold) 40%, transparent);
+  background: color-mix(in srgb, var(--table-gold) 8%, var(--table-surface-dock));
+}
+.table-dock-chip--squid {
+  color: var(--table-squid);
+  border-color: color-mix(in srgb, var(--table-squid) 45%, transparent);
+  background: color-mix(in srgb, var(--table-squid) 8%, var(--table-surface-dock));
+}
+.table-dock-chip--squid svg {
+  color: var(--table-squid);
+}
+.table-dock-num {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--table-ink);
+}
+.table-dock-net-up {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  color: var(--table-up);
+}
+.table-dock-net-down {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  color: var(--table-down);
+}
+.table-dock-badge {
+  background: var(--table-red);
+  color: #fff;
+  font-family: var(--font-table-num);
+  font-size: 9px;
+  font-weight: 900;
+  border-radius: var(--radius-table-pill);
+  padding: 1px 6px;
+}
+
+/* ══ L6: the phone cluster ═══════════════════════════════════════════════
+ * Portrait: the cluster shares the console strip with the dock — its width
+ * is the viewport minus the dock column (--table-phone-dock-w) and a cap.
+ * Short landscape: it stays a corner overlay in the gutter beside the
+ * centred oval — capped to half the gutter ((100vw − widest phone canvas
+ * at the floor scale ~20rem) / 2) so it can never reach a bottom seat.
+ * --table-phone-hit is the touch minimum for the cluster's amount input, %
+ * pills and pre-action chips (36px — space-constrained; the big three ride
+ * h-11 = 44px, as do the slider box and the phone dock chips). */
+.table-cluster--phone {
+  --table-phone-hit: 2.25rem;
+  --table-phone-dock-w: 9.25rem;
+  width: min(17rem, calc(100vw - var(--table-phone-dock-w)));
+}
+@media (orientation: landscape) and (max-height: 479px) {
+  .table-cluster--phone {
+    /* The gutter beside the centred phone oval; the nav rail eats ~5rem of
+       the viewport at these widths. The panel keeps a usable minimum width
+       (10.75rem — below it the three-column bet grid stops being tappable) and
+       caps at the gutter, so on very short landscape it may overlap a bottom
+       seat rather than collapse to an unusable sliver. `max-height` +
+       overflow keep the panel fully reachable instead of clipping off the top
+       (568×320). Short landscape below ~667px wide is a degraded target. */
+    width: clamp(10.75rem, calc((100vw - 21rem) / 2 - 0.5rem), 11.5rem);
+  }
+  /* Pin the host to the section box: the panel's scrollport must sit INSIDE
+     the section's overflow-hidden clip, otherwise its top controls start
+     above the visible area and scrolling can never bring them back (the
+     earlier 100dvh max-height did exactly that). */
+  .table-cluster-host {
+    top: 0.5rem;
+    bottom: 0.5rem;
+  }
+  .table-cluster-host .table-cluster--phone {
+    max-height: 100%;
+    overflow-y: auto;
+  }
+}
+.table-cluster--phone .table-amt {
+  min-height: var(--table-phone-hit);
+}
+.table-cluster--phone .table-quick {
+  min-height: var(--table-phone-hit);
+  padding: 4px 12px;
+}
+.table-cluster--phone .table-pre {
+  min-height: var(--table-phone-hit);
+  padding: 6px 12px;
+}
+/* the slider reads as a finger rail on the phone: taller track, visible
+   gold thumb (the desktop instance keeps its native rendering untouched) */
+.table-cluster--phone .table-slider {
+  /* 44px click/touch box (iOS HIG); padding + content-box clip keep the
+     visible track at 18px while the whole bar is thumb-friendly. */
+  height: 2.75rem;
+  padding-block: 0.625rem;
+  background-clip: content-box;
+  border-radius: var(--radius-table-pill);
+}
+.table-cluster--phone .table-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--table-gold-pale),
+    var(--table-gold) 60%,
+    var(--table-gold-lo)
+  );
+  border: none;
+  box-shadow: var(--shadow-table-disc);
+  cursor: pointer;
+}
+.table-cluster--phone .table-slider::-moz-range-thumb {
+  width: 1.375rem;
+  height: 1.375rem;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--table-gold-pale),
+    var(--table-gold) 60%,
+    var(--table-gold-lo)
+  );
+  border: none;
+  box-shadow: var(--shadow-table-disc);
+  cursor: pointer;
+}
+
+/* L6 phone dock: every chip grows to the 44px touch minimum. */
+.table-dock--phone .table-dock-chip {
+  min-height: 2.75rem;
+}

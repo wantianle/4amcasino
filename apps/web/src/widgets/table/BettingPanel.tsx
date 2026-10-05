@@ -5,7 +5,8 @@ import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts
 import { useStore } from '../../shared/store.ts';
 import { ALL_IN_RATIO } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
-import { HourglassMedium, Bomb, Timer } from '@phosphor-icons/react';
+import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
+import { HourglassMedium, Bomb, Timer, Play } from '@phosphor-icons/react';
 import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
 import { usePokerHotkeys } from '../../features/table/usePokerHotkeys.ts';
@@ -13,19 +14,17 @@ import { pokerActionLatch } from '../../features/table/pokerHotkeys.ts';
 import { useSettling } from '../../features/table/useSettling.ts';
 import { t } from '../../shared/i18n/index.ts';
 
-/** A8 (docs/table-redesign-spec.md), the user's GGPoker reference: the betting
- *  area is a COMPACT widget anchored bottom-right of the table area -
+/** The betting area: a COMPACT widget anchored bottom-right of the table -
  *  percentage quick-size pills, slider + numeric amount (chips AND BB), the
  *  big 弃牌 / 跟注 N / 加注至 N buttons, and a circular action-timer ring.
- *  This is layout only: the act()/latch/settling/hotkey flow mirrors
- *  ActionBar.tsx (which the 3D lounge still owns) rule for rule. */
+ *  Layout only: the act()/latch/settling/hotkey flow is the single table
+ *  betting implementation. */
 
 const bbOf = (amount: number, bb: number): number =>
   Math.max(0, Math.round(amount / Math.max(1, bb)));
 
-/** The action-clock ring next to the amount. P2 B2 (docs/p2-gameplay-design.md)
- *  grew this into the time-bank dial: the window is `actionSecs` PLUS the
- *  acting seat's bank, the base clock drains first in indigo, and once
+/** The action-clock ring next to the amount: the window is `actionSecs` PLUS
+ *  the acting seat's bank, the base clock drains first, and once
  *  `baseDeadline` passes the remaining arc turns amber - you are visibly
  *  spending banked thinking time. The bank balance itself rides as a small
  *  chip under the ring so it is readable even while the base clock runs. */
@@ -46,12 +45,30 @@ function CountdownRing({
     const iv = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(iv);
   }, [deadline]);
-  if (!deadline || actionSecs <= 0) return null;
+  const arcRef = useRef<SVGCircleElement | null>(null);
+  // shared by the rAF drain and the static arc: the ring circumference and the
+  // full turn budget. The bank this turn is spending = however far the final
+  // deadline reaches past the base clock (zero for rooms without a time bank).
+  const CIRC = 2 * Math.PI * 15;
   const baseMs = actionSecs * 1000;
-  // The bank this turn is spending = however far the final deadline reaches
-  // past the base clock. Zero for rooms without the time bank.
-  const bankWindow = baseDeadline ? Math.max(0, deadline - baseDeadline) : 0;
+  const bankWindow = baseDeadline !== null && deadline !== null ? Math.max(0, deadline - baseDeadline) : 0;
   const totalMs = baseMs + bankWindow;
+  // L5 (spec row 7): the arc itself drains on requestAnimationFrame -
+  // stroke-dashoffset only, linear, endAt = the server deadline. The 250ms
+  // interval above still drives the readout digits; the ring never waits on
+  // React. Reduced motion keeps this drain (it is required information).
+  useEffect(() => {
+    if (!deadline || actionSecs <= 0) return;
+    let raf = 0;
+    const tick = () => {
+      const f = Math.max(0, Math.min(1, (deadline - Date.now()) / totalMs));
+      if (arcRef.current) arcRef.current.style.strokeDashoffset = String(CIRC * (1 - f));
+      if (Date.now() < deadline) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [deadline, baseDeadline, actionSecs, totalMs]);
+  if (!deadline || actionSecs <= 0) return null;
   const baseLeft = Math.max(0, Math.min((baseDeadline ?? deadline) - now, baseMs));
   const bankLeft = baseDeadline ? Math.max(0, deadline - Math.max(now, baseDeadline)) : 0;
   const remainMs = Math.max(0, deadline - now);
@@ -59,7 +76,6 @@ function CountdownRing({
   const secs = Math.max(0, Math.ceil(remainMs / 1000));
   const hot = secs <= 10;
   const spending = baseLeft === 0 && bankWindow > 0;
-  const CIRC = 2 * Math.PI * 15;
   const bankSecs = Math.ceil((spending ? bankLeft : bankMs) / 1000);
   return (
     <span className="relative inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center">
@@ -78,25 +94,32 @@ function CountdownRing({
         }
       >
         <svg viewBox="0 0 36 36" className="h-10 w-10 -rotate-90" aria-hidden="true">
-          <circle cx="18" cy="18" r="15" fill="none" strokeWidth="3.5" className="stroke-white/15" />
           <circle
             cx="18"
             cy="18"
             r="15"
             fill="none"
             strokeWidth="3.5"
+            className="table-ring-track"
+          />
+          <circle
+            ref={arcRef}
+            cx="18"
+            cy="18"
+            r="15"
+            fill="none"
+            strokeWidth="3.5"
             strokeLinecap="round"
-            strokeDasharray={`${frac * CIRC} ${CIRC}`}
-            className={cn(
-              'transition-[stroke] duration-300',
-              hot ? 'stroke-rose-400' : spending ? 'stroke-amber-400' : 'stroke-indigo-300',
-            )}
+            strokeDasharray={`${CIRC} ${CIRC}`}
+            style={{ strokeDashoffset: CIRC * (1 - frac) }}
+            className={cn('table-ring-arc', hot && 'table-ring-arc--hot', spending && !hot && 'table-ring-arc--spending')}
           />
         </svg>
         <span
           className={cn(
-            'absolute font-display text-[0.7rem] font-bold tabular-nums',
-            hot ? 'text-rose-300' : spending ? 'text-amber-200' : 'text-white/90',
+            'table-ring-num absolute text-[0.7rem] font-bold',
+            hot && 'table-ring-num--hot',
+            spending && !hot && 'table-ring-num--spending',
           )}
         >
           {secs}
@@ -105,8 +128,8 @@ function CountdownRing({
       {bankSecs > 0 && (
         <span
           className={cn(
-            'absolute -bottom-2.5 rounded-full px-1.5 font-display text-[0.58rem] font-bold tabular-nums leading-[1.15] shadow-sm',
-            spending ? 'bg-amber-400 text-amber-950' : 'bg-amber-400/20 text-amber-300',
+            'table-bank absolute -bottom-2.5 px-1.5 text-[0.58rem] font-bold leading-[1.15]',
+            spending && 'table-bank--loud',
           )}
         >
           {bankSecs}s
@@ -116,21 +139,39 @@ function CountdownRing({
   );
 }
 
+/** v3 feedback #7a: with auto-deal on, the server dwells between hands before
+ *  the next ready check. This clock makes that wait legible - L4 moved it into
+ *  the cluster alongside the host's deal post. */
+function AutoDealClock({ autoDealAt }: { autoDealAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!autoDealAt) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [autoDealAt]);
+  if (!autoDealAt) return null;
+  const secs = Math.max(0, Math.ceil((autoDealAt - now) / 1000));
+  return (
+    <p className="table-deal-clock">{t('Next hand in {n}s', { n: secs })}</p>
+  );
+}
+
 export function BettingPanel({
   mySeat,
   isHost,
-  urgent,
-  hideIdleStart = false,
+  narrow = false,
 }: {
   mySeat: number | null;
   isHost: boolean;
-  urgent: boolean;
-  hideIdleStart?: boolean;
+  /** L6: the phone instance of the cluster. Narrower (it shares the console
+   *  strip with the dock on portrait phones) and touch-first: table-controls.
+   *  css grows the amount input / slider / % pills to full finger hit areas. */
+  narrow?: boolean;
 }) {
   const hand = useStore((s) => s.hand);
   const room = useStore((s) => s.room);
   const myUserId = useStore((s) => s.auth.userId);
-  // A10: quick sizes come from the account's pot-ratio slots, like ActionBar.
+  // A10: quick sizes come from the account's pot-ratio slots.
   const betRatios = useStore((s) => s.prefs.betRatios);
   const connected = useStore((s) => s.wsConnected);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -149,6 +190,11 @@ export function BettingPanel({
   const bb = room?.room.bb ?? 1;
   const handIdle = !hand.handId || handOver;
   const sb = room?.room.sb ?? 1;
+  // L4: the merged deal post shows 「Invite a friend to deal.」 vs 「Deal
+  // when ready.」 on the opponent count - same rule the old top-right box used.
+  const opponentsHere = room
+    ? room.players.filter((p) => p.seat !== null && p.userId !== myUserId).length
+    : 0;
 
   useEffect(() => {
     if (myTurn && la) setRaiseTo(la.minRaiseTo);
@@ -221,6 +267,10 @@ export function BettingPanel({
 
   const amountValid =
     !!la && Number.isInteger(raiseTo) && raiseTo >= la.minRaiseTo && raiseTo <= la.maxRaiseTo;
+  // A range input's step is measured from min. Use whole chips rather than the
+  // small blind so every legal raise-to value, including max, remains reachable.
+  const raiseRangeStep = 1;
+  const raiseRangeCollapsed = !!la && la.maxRaiseTo - la.minRaiseTo < raiseRangeStep;
   const submitRaise = () => {
     if (!myTurn || !la?.canRaise || !st || !amountValid) return;
     send({ type: st.currentBet === 0 ? 'bet' : 'raise', amount: raiseTo });
@@ -326,30 +376,49 @@ export function BettingPanel({
       role="group"
       aria-label={t('Betting controls')}
       className={cn(
-        'poker-action-bar poker-betting-panel w-[min(18.5rem,calc(100vw-6.5rem))] rounded-2xl bg-slate-900/90 p-2.5 text-white shadow-[0_16px_44px_rgba(2,6,23,0.5)] ring-1 ring-white/10 backdrop-blur-sm',
-        myTurn && 'ring-indigo-300/50',
-        myTurn && urgent && 'animate-urgent',
+        'poker-action-bar poker-betting-panel table-cluster p-2.5 text-white',
+        // L6: portrait phones size the cluster through `.table-cluster--phone`
+        // in table-controls.css (shared row with the dock); landscape/desktop
+        // keep the corner width formula.
+        narrow ? 'table-cluster--phone' : 'w-[min(18.5rem,calc(100vw-6.5rem))]',
+        myTurn && 'table-cluster--mine',
       )}
     >
       {pending && (
-        <p className="mb-1.5 flex items-center justify-center gap-1.5 text-[0.68rem] text-indigo-200">
+        <p className="mb-1.5 flex items-center justify-center gap-1.5 text-[0.68rem] text-[var(--table-muted)]">
           <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           {t('Sending…')}
         </p>
       )}
 
       {rc ? (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
+          {/* L4 (rev2 decision): the host's deal post + auto-deal clock share
+              this card with the ready check - one corner, one card, both
+              between-hand states. */}
+          {isHost && mySeat !== null && (
+            <div className="flex flex-col gap-1.5">
+              <p className="table-deal-title">
+                {opponentsHere === 0 ? t('Invite a friend to deal.') : t('Deal when ready.')}
+              </p>
+              {opponentsHere > 0 && (
+                <button type="button" className="table-deal-btn" disabled={!connected} onClick={() => startHand()}>
+                  <Play size={15} weight="fill" aria-hidden="true" /> {t('Deal hand')}
+                </button>
+              )}
+              <AutoDealClock autoDealAt={hand.autoDealAt} />
+            </div>
+          )}
           {amEligible && !amReady ? (
             <Button variant="success" className="w-full animate-pulse" onClick={imReady}>
               {t("I'm ready · {n}s", { n: readySecs })}
             </Button>
           ) : (
-            <p className="text-xs font-semibold text-emerald-300">
+            <p className="table-ready-done text-center text-xs font-semibold">
               {amReady ? t('✓ You are ready') : t('Ready check')}
             </p>
           )}
-          <p className="text-[0.68rem] leading-snug text-white/60">
+          <p className="table-sub text-center">
             {t('{a}/{b} ready · deals in {n}s, without the rest', {
               a: rc.ready.length,
               b: rc.eligible.length,
@@ -359,16 +428,34 @@ export function BettingPanel({
         </div>
       ) : bombNoPreflop ? (
         <div className="flex flex-col gap-1.5">
-          <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-amber-300">
+          <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-[var(--table-commit)]">
             <Bomb size={14} weight="fill" aria-hidden="true" />
             {t('Bomb pot ante posted - straight to the flop.')}
           </p>
         </div>
       ) : myTurn && la && st ? (
         <div className="flex flex-col gap-2">
-          {/* amount (chips + BB) with the action-clock ring */}
+          {/* L4 header: YOUR TURN + the action-clock ring (mockup .bp-head) */}
+          <div className="flex items-center justify-between gap-2">
+            <p className="table-turn">{t('Your turn.')}</p>
+            <CountdownRing
+              deadline={hand.deadline}
+              baseDeadline={hand.baseDeadline}
+              bankMs={mySeat !== null ? (hand.timeBanks[mySeat] ?? 0) : 0}
+              actionSecs={room?.room.actionSecs ?? ACTION_TIMEOUT_SECS}
+            />
+          </div>
+          <p className="table-sub">
+            {la.callAmount > 0 && (
+              <>
+                {t('To call {n}', { n: fmt(la.callAmount) })} ·{' '}
+              </>
+            )}
+            {t('Pot {n}', { n: fmt(pot) })}
+          </p>
+          {/* amount (chips + BB) */}
           <div className="flex items-end justify-between gap-2">
-            <label className="min-w-0 text-[0.62rem] uppercase tracking-wide text-white/55">
+            <label className="min-w-0 text-[0.62rem] uppercase tracking-wide text-[var(--table-faint)]">
               {st.currentBet === 0 ? t('Bet amount') : t('Raise to')}
               <span className="mt-0.5 flex items-baseline gap-1.5 normal-case tracking-normal">
                 <input
@@ -384,41 +471,42 @@ export function BettingPanel({
                   disabled={pending || settling}
                   {...amountInput}
                   onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : +e.target.value)}
-                  className="min-h-8 w-24 min-w-0 rounded-lg border border-white/25 bg-white/10 px-2 py-1 font-display text-sm font-bold outline-none focus:ring-2 focus:ring-white/60"
+                  className="table-amt min-h-8 w-24 min-w-0 px-2 py-1 text-sm text-right font-bold outline-none"
                 />
-                <span className="font-display text-[0.7rem] font-semibold text-white/60">
-                  {bbOf(raiseTo, bb)} BB
-                </span>
+                <span className="table-bb text-[0.7rem]">{bbOf(raiseTo, bb)} BB</span>
               </span>
             </label>
-            <CountdownRing
-              deadline={hand.deadline}
-              baseDeadline={hand.baseDeadline}
-              bankMs={mySeat !== null ? (hand.timeBanks[mySeat] ?? 0) : 0}
-              actionSecs={room?.room.actionSecs ?? 45}
-            />
           </div>
           {/* slider, min/max marked in BB (GGPoker-style) */}
-          <div className="flex items-center gap-2">
-            <span className="font-display text-[0.62rem] text-white/50">
-              {bbOf(la.minRaiseTo, bb)}
-            </span>
-            <input
-              type="range"
-              min={la.minRaiseTo}
-              max={la.maxRaiseTo}
-              step={sb}
-              value={raiseTo}
-              onChange={(e) => setRaiseTo(+e.target.value)}
-              className="h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-indigo-400/60 accent-white"
-              aria-label={t('Raise amount')}
-            />
-            <span className="font-display text-[0.62rem] text-white/50">
-              {bbOf(la.maxRaiseTo, bb)}
-            </span>
-          </div>
+          {raiseRangeCollapsed ? (
+            <div className="flex items-center justify-between gap-2" role="status">
+              <span className="table-bb table-bb--quiet font-display text-[0.62rem]">{t('All-in')}</span>
+              <span className="table-bb table-bb--quiet text-[0.62rem]">
+                {fmt(la.maxRaiseTo)} {t('chips')}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
+                {bbOf(la.minRaiseTo, bb)}
+              </span>
+              <input
+                type="range"
+                min={la.minRaiseTo}
+                max={la.maxRaiseTo}
+                step={raiseRangeStep}
+                value={raiseTo}
+                onChange={(e) => setRaiseTo(+e.target.value)}
+                className="table-slider h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
+                aria-label={t('Raise amount')}
+              />
+              <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
+                {bbOf(la.maxRaiseTo, bb)}
+              </span>
+            </div>
+          )}
           {/* percentage quick pills (A10-configurable slots, % of pot) */}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             {quicks.map((q) => (
               <button
                 key={q.label}
@@ -430,26 +518,27 @@ export function BettingPanel({
                       : { type: 'raise', amount: q.value },
                   )
                 }
-                className="rounded-full bg-white/12 px-2.5 py-1 font-display text-[0.72rem] font-bold text-white/90 transition-colors hover:bg-white hover:text-indigo-700 disabled:opacity-50"
+                className={cn('table-quick', q.label === t('All-in') && 'table-quick--allin')}
               >
                 {q.label}
               </button>
             ))}
           </div>
           {!amountValid && (
-            <p role="status" className="text-[0.68rem] leading-snug text-rose-300">
+            <p role="status" className="text-[0.68rem] leading-snug text-[var(--table-allin)]">
               {t('Enter a whole-chip amount from {min} to {max}.', {
                 min: fmt(la.minRaiseTo),
                 max: fmt(la.maxRaiseTo),
               })}
             </p>
           )}
-          {/* the big three */}
+          {/* the big three (mockup .abtn): Fold dark, Call dark + gold amount,
+              Raise the single bright gold CTA */}
           <div className="grid grid-cols-3 gap-1.5">
             <Button
               variant="secondary"
               disabled={settling}
-              className="h-11! min-h-11! border-0 bg-white/12! text-white! text-sm! hover:bg-white/20!"
+              className="table-btn table-btn--fold h-11! min-h-11! border-0! text-sm!"
               aria-keyshortcuts={binding('fold')}
               title={binding('fold') ? t('Fold ({key})', { key: binding('fold')! }) : t('Fold')}
               onClick={() => send({ type: 'fold' })}
@@ -462,9 +551,9 @@ export function BettingPanel({
               </span>
             </Button>
             <Button
-              variant="success"
+              variant="secondary"
               disabled={settling}
-              className="h-11! min-h-11! text-sm!"
+              className="table-btn table-btn--call h-11! min-h-11! border-0! text-sm!"
               aria-keyshortcuts={binding(la.canCheck ? 'check' : 'call')}
               title={
                 binding(la.canCheck ? 'check' : 'call')
@@ -477,20 +566,24 @@ export function BettingPanel({
             >
               <span className="flex flex-col items-center leading-tight">
                 <span>
-                  {la.canCheck ? t('Check') : t('Call {n}', { n: fmt(la.callAmount) })}
+                  {la.canCheck ? (
+                    t('Check')
+                  ) : (
+                    <>
+                      {t('Call')} <span className="table-btn-amt">{fmt(la.callAmount)}</span>
+                    </>
+                  )}
                   {hint(la.canCheck ? 'check' : 'call')}
                 </span>
                 {!la.canCheck && (
-                  <span className="text-[0.6rem] font-semibold opacity-80">
-                    {bbOf(la.callAmount, bb)} BB
-                  </span>
+                  <span className="table-btn-sub text-[0.6rem]">{bbOf(la.callAmount, bb)} BB</span>
                 )}
               </span>
             </Button>
             <Button
               variant="secondary"
               disabled={settling || !la.canRaise || !amountValid}
-              className="h-11! min-h-11! border-0 bg-amber-400! text-[0.8rem]! text-slate-900! hover:bg-amber-300!"
+              className="table-btn table-btn--raise h-11! min-h-11! border-0! text-[0.8rem]!"
               title={la.canRaise ? undefined : t('Raising unlocks on your turn')}
               onClick={submitRaise}
             >
@@ -500,9 +593,7 @@ export function BettingPanel({
                     ? t('Bet {n}', { n: fmt(raiseTo) })
                     : t('Raise to {n}', { n: fmt(raiseTo) })}
                 </span>
-                <span className="text-[0.6rem] font-semibold opacity-80">
-                  {bbOf(raiseTo, bb)} BB
-                </span>
+                <span className="table-btn-sub text-[0.6rem]">{bbOf(raiseTo, bb)} BB</span>
               </span>
             </Button>
           </div>
@@ -510,7 +601,7 @@ export function BettingPanel({
       ) : (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
-            <p className="min-w-0 break-words text-xs font-medium text-white/75">{statusMsg}</p>
+            <p className="table-sub min-w-0 break-words text-xs font-medium">{statusMsg}</p>
             {/* v3 feedback #5: your time-bank balance stays on screen even while
                 you are not the one facing action - the ring only runs on your
                 turn, this chip is always honest about what you have banked. */}
@@ -518,10 +609,8 @@ export function BettingPanel({
               <span
                 title={t('Bank {n}s', { n: Math.ceil(hand.timeBanks[mySeat]! / 1000) })}
                 className={cn(
-                  'flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-display text-[0.62rem] font-bold tabular-nums',
-                  hand.timeBanks[mySeat] === 0
-                    ? 'bg-white/10 text-white/45'
-                    : 'bg-amber-400/20 text-amber-300',
+                  'table-bank flex shrink-0 items-center gap-1 px-1.5 py-0.5 text-[0.62rem]',
+                  hand.timeBanks[mySeat] === 0 && 'table-bank--quiet',
                 )}
               >
                 <Timer size={9} weight="fill" aria-hidden="true" />
@@ -529,18 +618,33 @@ export function BettingPanel({
               </span>
             )}
           </div>
+          {/* L4 (rev2 decision): idle + host → the deal post lives right here,
+              same card as everything else (the old top-right box is gone). */}
+          {handIdle && isHost && mySeat !== null && (
+            <div className="flex flex-col gap-1.5">
+              {opponentsHere === 0 && (
+                <p className="table-deal-title">{t('Invite a friend to deal.')}</p>
+              )}
+              {opponentsHere > 0 && (
+                <button
+                  type="button"
+                  className="table-deal-btn"
+                  disabled={!connected}
+                  onClick={() => startHand()}
+                >
+                  <Play size={15} weight="fill" aria-hidden="true" /> {t('Deal hand')}
+                </button>
+              )}
+              <AutoDealClock autoDealAt={hand.autoDealAt} />
+            </div>
+          )}
           {canPreAct && st && mySeat !== null && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <HourglassMedium size={14} className="text-white/40" aria-label={t('Ahead of turn')} />
+              <HourglassMedium size={14} className="text-[var(--table-faint)]" aria-label={t('Ahead of turn')} />
               <button
                 onClick={() => !settling && togglePreAction('call-any', st, mySeat)}
                 disabled={settling}
-                className={cn(
-                  'rounded-full px-2.5 py-1 text-[0.68rem] font-semibold transition-colors',
-                  hand.preAction === 'call-any'
-                    ? 'bg-indigo-500 text-white'
-                    : 'bg-white/10 text-white/70 hover:bg-white/20',
-                )}
+                className={cn('table-pre', hand.preAction === 'call-any' && 'table-pre--armed')}
                 title={t('Arms now, acts on your turn')}
               >
                 {t('Call any')}
@@ -548,12 +652,7 @@ export function BettingPanel({
               <button
                 onClick={() => !settling && togglePreAction('check-fold', st, mySeat)}
                 disabled={settling}
-                className={cn(
-                  'rounded-full px-2.5 py-1 text-[0.68rem] font-semibold transition-colors',
-                  hand.preAction === 'check-fold'
-                    ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
-                    : 'bg-white/10 text-white/70 hover:bg-white/20',
-                )}
+                className={cn('table-pre', hand.preAction === 'check-fold' && 'table-pre--armed')}
                 title={t('Arms now, acts on your turn')}
               >
                 {myToCall(st, mySeat) === 0 ? t('Check / Fold') : t('Fold')}
@@ -564,10 +663,8 @@ export function BettingPanel({
                 }
                 disabled={settling}
                 className={cn(
-                  'rounded-full px-2.5 py-1 text-[0.68rem] font-semibold transition-colors',
-                  hand.preAction === 'call' || hand.preAction === 'check'
-                    ? 'bg-emerald-500 text-white ring-2 ring-emerald-300'
-                    : 'bg-white/10 text-white/70 hover:bg-white/20',
+                  'table-pre',
+                  (hand.preAction === 'call' || hand.preAction === 'check') && 'table-pre--armed',
                 )}
                 title={t('Arms now, acts on your turn')}
               >
@@ -580,7 +677,7 @@ export function BettingPanel({
           {canShow && (
             <Button
               variant="secondary"
-              className="w-full border-0 bg-white/12! text-white! hover:bg-white/20!"
+              className="table-btn table-ghost w-full border-0! text-sm!"
               disabled={showSentFor === hand.handId}
               onClick={() => {
                 setShowSentFor(hand.handId);
@@ -588,15 +685,6 @@ export function BettingPanel({
               }}
             >
               {t('Show cards')}
-            </Button>
-          )}
-          {handIdle && isHost && !hideIdleStart && (
-            <Button
-              variant="secondary"
-              className="poker-start-button w-full border-0 bg-white! text-indigo-700! hover:bg-indigo-50!"
-              onClick={startHand}
-            >
-              {t('Start hand')}
             </Button>
           )}
         </div>

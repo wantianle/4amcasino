@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { useAsyncGuard } from '../../shared/lib/useAsyncGuard.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Badge, Button, Dialog, Input } from '../../shared/ui/index.tsx';
-import { CaretDown, Coins, HandCoins, Tray } from '@phosphor-icons/react';
+import { CaretDown, Coins, HandCoins, Receipt, Tray } from '@phosphor-icons/react';
 import { MAX_QUALIFYING_HANDS } from '@4am/shared';
 
 interface BuyRequest {
@@ -19,11 +20,9 @@ interface BuyRequest {
 
 export function BankControls({
   roomId,
-  mode = 'expanded',
   compact = false,
 }: {
   roomId: string;
-  mode?: 'expanded' | 'hub';
   /** A1: under the label threshold the hub trigger keeps icon + badge only. */
   compact?: boolean;
 }) {
@@ -129,8 +128,7 @@ export function BankControls({
 
   return (
     <>
-      {mode === 'hub' ? (
-        <div className="relative">
+      <div className="relative">
           <button
             ref={hubTriggerRef}
             type="button"
@@ -138,12 +136,13 @@ export function BankControls({
               'relative inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-900 transition-[color,background-color,transform] duration-200',
               'hover:bg-slate-50 active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600',
               'dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700',
-              compact ? 'w-10 px-0' : 'px-3',
+              compact ? 'h-11 w-11 px-0' : 'px-3',
             )}
             onClick={() => setHubOpen((open) => !open)}
             aria-haspopup="menu"
             aria-expanded={hubOpen}
             aria-label={t('Chips')}
+            data-testid="chips-trigger"
           >
             <Coins size={17} weight="bold" />
             {!compact && t('Chips')}
@@ -171,7 +170,7 @@ export function BankControls({
               <div
                 role="menu"
                 aria-label={t('Chip controls')}
-                className="absolute right-0 top-12 z-30 w-56 rounded-2xl bg-white p-1.5 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+                className="fixed right-2 top-[9rem] z-30 max-h-[calc(100dvh-10rem)] w-[min(14rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 sm:absolute sm:right-0 sm:top-12 sm:max-h-none sm:w-56"
               >
                 <button
                   ref={firstHubActionRef}
@@ -190,6 +189,14 @@ export function BankControls({
                 >
                   <HandCoins size={18} /> {t('Send chips')}
                 </button>
+                <Link
+                  to={`/room/${roomId}/ledger`}
+                  role="menuitem"
+                  onClick={() => setHubOpen(false)}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 dark:hover:bg-slate-800"
+                >
+                  <Receipt size={18} /> {t('Ledger')}
+                </Link>
                 {isBanker && (
                   <button
                     type="button"
@@ -210,26 +217,6 @@ export function BankControls({
             </>
           )}
         </div>
-      ) : (
-        <>
-          <Button variant="secondary" onClick={() => setBuyOpen(true)}>
-            <Coins size={17} /> {t('Buy points')}
-          </Button>
-          <Button variant="secondary" onClick={() => setSendOpen(true)}>
-            <HandCoins size={17} /> {t('Send chips')}
-          </Button>
-          {isBanker && (
-            <Button variant="secondary" onClick={() => setInboxOpen(true)} className="relative">
-              <Tray size={17} /> {t('Bank inbox')}
-              {requests.length > 0 && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[0.65rem] font-bold text-white">
-                  {requests.length}
-                </span>
-              )}
-            </Button>
-          )}
-        </>
-      )}
 
       <Dialog open={buyOpen} onClose={() => setBuyOpen(false)} title={t('Buy points from the bank')}>
         {sent ? (
@@ -275,6 +262,8 @@ export function BankControls({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              // narrows sendTo (number | '') to number; `required` + the
+              // disabled button are UI hints, not a runtime invariant.
               if (sendTo === '') return;
               sendGuard.run(() =>
                 api

@@ -4,8 +4,10 @@
 // hash-to-point, the hex digests, and the card tokens ('As', 'Td', …) —
 // they ride inside the translated prose as code-level text.
 // Reused, NOT redefined: 'You' → 你 (dict/table.ts), 'Next step' → 下一步
-// (dict/tournaments.ts), 'flop' → 翻牌 (dict/table3d.ts).
+// (dict/tournaments.ts), 'flop' → 翻牌 (now owned here).
 const fair: Record<string, string> = {
+  // Chapter 7's block labels reuse the bare street name.
+  flop: '翻牌',
   // ── Page chrome ──────────────────────────────────────────────────────────
   'How can this be fair?': '这怎么就公平了？',
   'Mental poker, in seven chapters. No trust in the server required.':

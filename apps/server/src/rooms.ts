@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { appendLedger, verifyLedger } from './ledger.js';
+import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
 import { platformUserId } from './platform.js';
@@ -121,8 +122,7 @@ export function roomPlayers(db: DB, roomId: string) {
               u.avatar_version as avatarVersion, u.pubkey as publicKey, rp.seat, rp.stack,
               rp.sitting_out as sittingOut, u.private_mode as privateMode,
               COALESCE(b.total, 0) as totalBought,
-              COALESCE(pr.pending, 0) as pendingBuy,
-              u.avatar3d as avatar3d
+              COALESCE(pr.pending, 0) as pendingBuy
        FROM room_players rp
        JOIN users u ON u.id = rp.user_id
        LEFT JOIN (
@@ -147,7 +147,6 @@ export function roomPlayers(db: DB, roomId: string) {
     privateMode: number;
     totalBought: number;
     pendingBuy: number;
-    avatar3d: string | null;
   }[];
 }
 
@@ -360,59 +359,20 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       })
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
-    const room = getRoom(db, id);
-    if (!room) return reply.code(404).send({ error: 'no such room' });
-    if (!isMember(db, id, req.userId)) return reply.code(403).send({ error: 'not a member' });
-    const pending = db
-      .prepare(
-        "SELECT COUNT(*) as n FROM buy_requests WHERE room_id = ? AND user_id = ? AND status = 'pending'",
-      )
-      .get(id, req.userId) as { n: number };
-    if (pending.n >= LIMITS.pendingBuysPerRoom) {
-      return reply.code(429).send({ error: 'you already have buy requests waiting' });
-    }
-    // Idempotency. A double-click, an impatient second tap, or a client retry
-    // used to buy in twice - and in an auto-approve room the chips landed twice
-    // with no banker in the loop to notice. An identical buy moments after the
-    // last one is the same buy, so hand back the first rather than making a
-    // second. Distinct amounts, or the same amount later, are unaffected.
-    const recent = db
-      .prepare(
-        'SELECT id, status FROM buy_requests WHERE room_id = ? AND user_id = ? AND amount = ? AND ts > ? ORDER BY id DESC LIMIT 1',
-      )
-      .get(id, req.userId, parsed.data.amount, Date.now() - LIMITS.dedupWindowMs) as
-      { id: number; status: string } | undefined;
-    if (recent) return { id: recent.id, status: recent.status, duplicate: true };
-    const info = db
-      .prepare(
-        'INSERT INTO buy_requests (room_id, user_id, amount, note, ts) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run(id, req.userId, parsed.data.amount, parsed.data.note ?? null, Date.now());
-    const requestId = Number(info.lastInsertRowid);
-    if (!room.auto_approve_buys) roomEvents.emit('changed', id);
-    if (room.auto_approve_buys) {
-      // the banker pre-approved buys for this room; settle it like a banker click,
-      // attributed to the standing banker so the ledger names who vouched
-      const buyerId = req.userId;
-      const apply = db.transaction(() => {
-        db.prepare("UPDATE buy_requests SET status = 'approved' WHERE id = ?").run(requestId);
-        appendLedger(db, {
-          roomId: id,
-          userId: buyerId,
-          delta: parsed.data.amount,
-          kind: 'purchase',
-          approvedBy: room.banker_id,
-          note: parsed.data.note ?? undefined,
-        });
-        db.prepare(
-          'UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?',
-        ).run(parsed.data.amount, id, buyerId);
+    // All buy semantics (pending cap, idempotency window, auto-approve, banker
+    // attribution, ledger + stack move) live in the shared buy service so bots
+    // cannot get a different deal from humans.
+    try {
+      return requestRoomBuy(db, {
+        roomId: id,
+        userId: req.userId,
+        amount: parsed.data.amount,
+        note: parsed.data.note,
       });
-      apply();
-      roomEvents.emit('changed', id);
-      return { id: requestId, status: 'approved' };
+    } catch (e) {
+      if (e instanceof BuyServiceError) return reply.code(e.statusCode).send({ error: e.message });
+      throw e;
     }
-    return { id: requestId, status: 'pending' };
   });
 
   app.get('/api/rooms/:id/requests', authed, async (req, reply) => {
@@ -436,37 +396,18 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       .object({ requestId: z.number().int(), approve: z.boolean() })
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
-    const room = getRoom(db, id);
-    if (!room) return reply.code(404).send({ error: 'no such room' });
-    if (!canBank(room, req.userId)) return reply.code(403).send({ error: 'banker only' });
-    const request = db
-      .prepare("SELECT * FROM buy_requests WHERE id = ? AND room_id = ? AND status = 'pending'")
-      .get(parsed.data.requestId, id) as
-      { id: number; user_id: number; amount: number; note: string | null } | undefined;
-    if (!request) return reply.code(404).send({ error: 'no such pending request' });
-
-    const apply = db.transaction(() => {
-      db.prepare('UPDATE buy_requests SET status = ? WHERE id = ?').run(
-        parsed.data.approve ? 'approved' : 'rejected',
-        request.id,
-      );
-      if (parsed.data.approve) {
-        appendLedger(db, {
-          roomId: id,
-          userId: request.user_id,
-          delta: request.amount,
-          kind: 'purchase',
-          approvedBy: req.userId,
-          note: request.note ?? undefined,
-        });
-        db.prepare(
-          'UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?',
-        ).run(request.amount, id, request.user_id);
-      }
-    });
-    apply();
-    roomEvents.emit('changed', id);
-    return { ok: true };
+    try {
+      approveRoomBuy(db, {
+        roomId: id,
+        actorId: req.userId,
+        requestId: parsed.data.requestId,
+        approve: parsed.data.approve,
+      });
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof BuyServiceError) return reply.code(e.statusCode).send({ error: e.message });
+      throw e;
+    }
   });
 
   // the main banker names (or clears) a backup banker with the same powers

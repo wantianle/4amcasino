@@ -192,78 +192,6 @@
   color: #b42318;
   margin-top: 8px;
 }
-.home-room {
-  margin: 0;
-  scroll-margin-top: 24px;
-}
-.home-room-image {
-  position: relative;
-  overflow: hidden;
-  border-radius: 20px;
-  background: #101d29;
-  aspect-ratio: 2.08;
-}
-.home-room-image > img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center 62%;
-}
-.home-room-note {
-  position: absolute;
-  left: 28px;
-  bottom: 28px;
-  padding: 14px 18px;
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  color: #fff;
-  border: 1px solid rgb(255 255 255 / 24%);
-  border-radius: 12px;
-  background: rgb(10 23 34 / 84%);
-}
-.home-room-note > span {
-  font-size: 13px;
-  line-height: 1.6;
-}
-.home-room-note strong {
-  font-weight: 500;
-}
-.home-room figcaption {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-block: 14px;
-  gap: 20px;
-  font-size: 12px;
-  font-weight: 500;
-}
-.home-caption-detail {
-  color: var(--home-muted);
-  font-weight: 400;
-}
-.home-view-switch {
-  display: flex;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--color-background-secondary-default);
-}
-.home-view-switch button {
-  min-height: 38px;
-  padding: 8px 15px;
-  border-radius: 7px;
-  color: var(--home-muted);
-  font-size: 12px;
-  transition:
-    background 160ms,
-    color 160ms;
-}
-.home-view-switch button[aria-pressed='true'] {
-  background: var(--color-background-primary-default);
-  color: var(--color-accent-600);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
-}
 .home-essentials {
   display: flex;
   justify-content: center;
@@ -658,39 +586,6 @@
   }
   .home-join-toggle {
     min-height: 28px;
-  }
-  .home-room-image {
-    aspect-ratio: 1.2;
-    border-radius: 14px;
-  }
-  .home-room-image > img {
-    object-position: center 66%;
-  }
-  .home-room-note {
-    bottom: 16px;
-    left: 16px;
-    padding: 10px 12px;
-    gap: 10px;
-  }
-  .home-room-note > span {
-    font-size: 11px;
-  }
-  .home-room-note > svg {
-    width: 17px;
-    height: 17px;
-  }
-  .home-room figcaption {
-    gap: 8px;
-  }
-  .home-caption-detail {
-    display: block;
-    font-size: 10px;
-    margin-top: 3px;
-  }
-  .home-view-switch button {
-    padding-inline: 10px;
-    min-height: 40px;
-    font-size: 11px;
   }
   .home-essentials {
     display: grid;

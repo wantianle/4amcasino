@@ -21,9 +21,16 @@ export function createUser(
       .get() as { n: number };
     const info = db
       .prepare(
-        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, theme, join_number) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        // Card appearance and `auto_ready` are written explicitly so a brand-new
+        // account gets the current product defaults even on an existing database:
+        // SQLite keeps the original column default when `ensureColumn` finds the
+        // column already present, so relying on it would hand new users the
+        // retired indigo / two-color look and the old ready behaviour. Existing
+        // rows are never touched here.
+        `INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, join_number, card_back, four_color, auto_ready)
+         VALUES (?, ?, ?, ?, ?, ?, 'crimson', 1, 1)`,
       )
-      .run(username, hashAuthKey(authKey, salt), salt, publicKey, Date.now(), 'cyber', n);
+      .run(username, hashAuthKey(authKey, salt), salt, publicKey, Date.now(), n);
     return { userId: Number(info.lastInsertRowid), joinNumber: n };
   });
   return create.immediate();

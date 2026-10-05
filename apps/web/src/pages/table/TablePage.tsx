@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AutoDealDialog } from '../../features/table/AutoDealDialog.tsx';
 import { pokerOverlayOpen } from '../../features/table/pokerHotkeys.ts';
@@ -6,13 +6,10 @@ import { motion } from 'motion/react';
 import {
   ArrowLeft,
   Bomb,
-  Coins,
   CornersIn,
   CornersOut,
-  Cube,
   UsersThree,
   CardsThree,
-  ChatCircle,
   DotsThreeVertical,
   Eye,
   Microphone,
@@ -21,17 +18,16 @@ import {
   PauseCircle,
   Play,
   Receipt,
+  Robot,
   Skull,
   Sliders,
   Timer,
   Trophy,
   UserPlus,
   VideoCamera,
-  Wallet,
   X,
 } from '@phosphor-icons/react';
 import NumberFlow from '@number-flow/react';
-import confetti from 'canvas-confetti';
 import {
   bestFive,
   describeScore,
@@ -60,25 +56,28 @@ import { wsClient } from '../../shared/ws.ts';
 import { useStore } from '../../shared/store.ts';
 import { api, type FeatureTriggerKind } from '../../shared/api.ts';
 import { GameplaySettingsDialog } from '../../features/table/GameplaySettingsDialog.tsx';
+import { BotsDialog } from '../../features/bots/BotsDialog.tsx';
+import { botsPollMs, useRoomBots } from '../../features/bots/useRoomBots.ts';
 import { voice } from '../../shared/voice.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
 import { tNode } from '../../shared/i18n/trans.tsx';
 import { tHandCategory, tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
-import type { SeatView } from '../../widgets/table/players.tsx';
+import type { SeatView } from '../../widgets/table/RoundTable.tsx';
 import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
-import { FloatingCards } from '../../widgets/table/FloatingCards.tsx';
-import { ChipStack } from '../../widgets/table/ChipStack.tsx';
+import { ribbonFitsRail } from '../../widgets/table/geometry.ts';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
 import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
 import { ResultFlash } from '../../widgets/table/ResultFlash.tsx';
 import { TableDock } from '../../widgets/table/TableDock.tsx';
 import { TableQuickControls } from '../../widgets/table/TableQuickControls.tsx';
+import { PlayerHud } from '../../widgets/table/PlayerHud.tsx';
 import { PokerShortcutButton } from '../../features/settings/PokerShortcutButton.tsx';
 import { BrokeBuyInDialog } from '../../features/bank/BrokeBuyInDialog.tsx';
 import { InviteFriendsDialogBody } from '../../features/friends/FriendsPanel.tsx';
@@ -154,8 +153,8 @@ function RunTwicePrompt({
 }) {
   const now = useNow();
   return (
-    <div className="z-20 flex flex-col items-center gap-2 rounded-2xl bg-fuchsia-600/95 px-5 py-3 text-white shadow-[0_18px_50px_rgba(192,38,211,0.35)]">
-      <span className="font-display text-lg font-bold">
+    <div className="table-prompt z-20">
+      <span className="table-prompt-head">
         {t('🔁 Run it twice? · {n}s', {
           n: Math.max(0, Math.ceil((offer.deadlineTs - now) / 1000)),
         })}
@@ -164,41 +163,25 @@ function RunTwicePrompt({
         <div className="flex gap-2">
           <Button
             variant="secondary"
-            className="border-0 bg-white! text-fuchsia-700! hover:bg-fuchsia-50!"
+            className="border-0 bg-[var(--table-gold)]! text-[var(--table-gold-ink)]! hover:bg-[var(--table-gold-hi)]!"
             onClick={() => ritVote(true)}
           >
             {t('Twice 🔁')}
           </Button>
           <Button
             variant="secondary"
-            className="border-0 bg-white/20! text-white! hover:bg-white/30!"
+            className="border-0 bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!"
             onClick={() => ritVote(false)}
           >
             {t('Once')}
           </Button>
         </div>
       ) : (
-        <span className="text-xs text-fuchsia-100">
+        <span className="table-prompt-note">
           {t('Everyone is all-in - the rest of the board deals twice if all agree.')}
         </span>
       )}
     </div>
-  );
-}
-
-/**
- * v3 feedback #7a: with auto-deal on, the server dwells between hands before
- * the next ready check. This clock makes that wait legible, and the host's
- * Deal hand button (same panel) beats it outright.
- */
-function AutoDealClock({ autoDealAt }: { autoDealAt: number | null }) {
-  const now = useNow(1000);
-  if (!autoDealAt) return null;
-  const secs = Math.max(0, Math.ceil((autoDealAt - now) / 1000));
-  return (
-    <p className="text-center font-display text-[0.68rem] font-semibold tabular-nums text-indigo-600 dark:text-indigo-300">
-      {t('Next hand in {n}s', { n: secs })}
-    </p>
   );
 }
 
@@ -296,22 +279,22 @@ function MultiRunPrompt({
       role="region"
       aria-live="polite"
       aria-label={t('Multi-run all-in decision')}
-      className="z-20 flex flex-col items-center gap-1.5 rounded-2xl bg-fuchsia-600/95 px-5 py-3 text-white shadow-[0_18px_50px_rgba(192,38,211,0.35)]"
+      className="table-prompt z-20"
     >
       <div className="flex items-center gap-2">
-        <span className="font-display text-lg font-bold">{t('🔁 Run it how many times?')}</span>
+        <span className="table-prompt-head">{t('🔁 Run it how many times?')}</span>
         <span
           className={cn(
-            'rounded-full bg-white/15 px-2 py-0.5 font-display text-xs font-bold tabular-nums',
-            secs <= 5 && 'bg-rose-400/80',
+            'rounded-full bg-white/10 px-2 py-0.5 font-display text-xs font-bold tabular-nums text-[var(--table-gold-hi)]',
+            secs <= 5 && 'bg-[var(--table-red)]/80 text-white',
           )}
         >
           {t('{n}s', { n: secs })}
         </span>
       </div>
-      <p className="text-center text-sm font-semibold">
+      <p className="table-prompt-detail text-center">
         {headline}
-        {detail && <span className="ml-1.5 font-normal text-fuchsia-100">{detail}</span>}
+        {detail && <span className="table-prompt-note ml-1.5 font-normal">{detail}</span>}
       </p>
       {offer.stage === 'choice' && amBehind ? (
         <div className="flex gap-2">
@@ -320,8 +303,10 @@ function MultiRunPrompt({
               key={count}
               variant="secondary"
               className={cn(
-                'border-0 text-fuchsia-700!',
-                count > 1 ? 'bg-white! hover:bg-fuchsia-50!' : 'bg-white/25! text-white! hover:bg-white/35!',
+                'border-0',
+                count > 1
+                  ? 'bg-[var(--table-gold)]! text-[var(--table-gold-ink)]! hover:bg-[var(--table-gold-hi)]!'
+                  : 'bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!',
               )}
               disabled={sentPick !== null}
               onClick={() => pick(count)}
@@ -342,7 +327,7 @@ function MultiRunPrompt({
           </Button>
           <Button
             variant="secondary"
-            className="border-0 bg-white/20! text-white! hover:bg-white/30!"
+            className="border-0 bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!"
             disabled={sentPick !== null}
             onClick={() => answer(false)}
           >
@@ -351,7 +336,7 @@ function MultiRunPrompt({
         </div>
       ) : null}
       {!acting && (
-        <span className="text-[0.68rem] text-fuchsia-100">
+        <span className="table-prompt-note">
           {offer.stage === 'choice'
             ? t('Only the losing side chooses; dealing more than once needs the other side to agree.')
             : t('Declining or running out of time means one run.')}
@@ -374,6 +359,7 @@ function DesktopIconButton({
   className,
   hasPopup,
   expanded,
+  'data-testid': dataTestId,
 }: {
   label: string;
   onClick: () => void;
@@ -384,6 +370,7 @@ function DesktopIconButton({
   className?: string;
   hasPopup?: boolean;
   expanded?: boolean;
+  'data-testid'?: string;
 }) {
   return (
     <button
@@ -394,6 +381,7 @@ function DesktopIconButton({
       title={label}
       aria-haspopup={hasPopup ? 'menu' : undefined}
       aria-expanded={hasPopup ? expanded : undefined}
+      data-testid={dataTestId}
       className={cn(
         desktopIconClass,
         active && 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
@@ -410,47 +398,23 @@ function DesktopIconButton({
   );
 }
 
-/** Both visual tables use one room lifecycle and the same dialogs/actions. */
-export interface TablePresentation {
-  menuOpen: boolean;
-  setMenuOpen: (open: boolean) => void;
-  utilities: ReactNode;
-  chatOpen: boolean;
-  setChatOpen: (open: boolean) => void;
-  unreadChat: number;
-  voiceControl: ReactNode;
-  fullscreenControl: ReactNode;
-  seatPicker: ReactNode;
-  peekPanel: ReactNode;
-  runTwice: ReactNode;
-  /** P2 Lane F (ADDITIVE - optional so the 3D page keeps compiling and
-   *  rendering untouched): the felt-side feature overlays for this hand -
-   *  bomb/squid badges, the bomb-pot flop notice, the multi-run outcome and
-   *  the squid settlement summary. Identical nodes to the ones the 2D felt
-   *  renders; a presentation may place or ignore them. */
-  gameplay?: ReactNode;
-  status: string | null;
-  amSpectator: boolean;
-  players: SeatView[];
-  canManagePlayers: boolean;
-  standUp: (userId: number) => void;
-  showResult: () => void;
-  showLargeCards: () => void;
-}
-
-/** A1 (docs/table-redesign-spec.md): the layout minimum is 1280×720. Below
- *  that, button labels drop to icon-only first; only the table canvas itself
- *  scales down (the RoundTable fits its container), never wrapping. */
-function useViewportWidth(): number {
-  const [width, setWidth] = useState(() =>
-    typeof window === 'undefined' ? 1280 : window.innerWidth,
+/** The layout minimum is 1280×720 (docs/table-redesign-spec.md). Below that,
+ *  button labels drop to icon-only first; only the table canvas itself scales
+ *  down (the RoundTable fits its container), never wrapping. A SHORT viewport
+ *  (landscape phones) gets the phone oval too: the desktop canvas floors there
+ *  at a scale whose bottom seats end up underneath the corner cluster. */
+function useViewportSize(): { w: number; h: number } {
+  const [size, setSize] = useState(() =>
+    typeof window === 'undefined'
+      ? { w: 1280, h: 800 }
+      : { w: window.innerWidth, h: window.innerHeight },
   );
   useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
+    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  return width;
+  return size;
 }
 
 /** Live hand strength of the two cards in hand (carried over from the old
@@ -471,11 +435,7 @@ function holeStrengthLabel(myCards: CardId[], board: CardId[]): string | null {
   return cat ? tHandCategory(cat) : null;
 }
 
-export function TablePage({
-  renderTable,
-}: {
-  renderTable?: (table: TablePresentation) => ReactNode;
-} = {}) {
+export function TablePage() {
   const { id: roomId } = useParams<{ id: string }>();
   const storedRoom = useStore((s) => s.room);
   const room = storedRoom?.room.id === roomId ? storedRoom : null;
@@ -495,12 +455,6 @@ export function TablePage({
   // a popover opened from the table-area dock, so it starts closed on 2D.
   const [chatOpen, setChatOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // your hole cards as a big draggable panel; hide/show is remembered
-  const [bigCards, setBigCards] = useState(() =>
-    renderTable
-      ? localStorage.getItem('4am-big-cards') === 'on'
-      : localStorage.getItem('4am-big-cards') !== 'off',
-  );
   useEffect(() => {
     const sync = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', sync);
@@ -528,21 +482,13 @@ export function TablePage({
   const [peekSent, setPeekSent] = useState<Record<number, boolean>>({});
   const [shareOpen, setShareOpen] = useState(false);
   const [standingsOpen, setStandingsOpen] = useState(false);
-  // A6: the rankings popover riding the table-area dock
-  const [rankOpen, setRankOpen] = useState(false);
   const closeDockPopovers = useCallback(() => {
-    setRankOpen(false);
     setChatOpen(false);
   }, []);
   // review fix #7: stable identities so the dock's popover effects never see
   // callback churn - the focus behavior depends on open/close, not on render.
-  const toggleRank = useCallback(() => {
-    setRankOpen((open) => !open);
-    setChatOpen(false);
-  }, []);
   const toggleChat = useCallback(() => {
     setChatOpen((open) => !open);
-    setRankOpen(false);
   }, []);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
@@ -563,8 +509,18 @@ export function TablePage({
   // stays only as a cosmetic refinement for the room meta line. The table
   // canvas scales to fit the stage box in BOTH dimensions (RoundTable), and
   // phones swap the switch strip for the ⋮ menu below 768.
-  const viewportW = useViewportWidth();
+  // L6: narrowCanvas = the PHONE oval (548×410 + phone ring/anchors/pods).
+  // Portrait phones drive it off isPhone; a short landscape phone (height
+  // under the 480 the desktop canvas cannot survive) joins it too.
+  const { w: viewportW, h: viewportH } = useViewportSize();
   const isPhone = viewportW < 768;
+  const narrowCanvas = isPhone || (viewportH < 480 && viewportW < 1100);
+  // L6: the console strip is a PORTRAIT reflow — the dock + action cluster
+  // leave the felt and ride a bottom row (zero felt coverage by controls).
+  // A landscape phone (short but wide) keeps absolute corner overlays: the
+  // side gutters next to the smaller oval host them, and a console strip
+  // would squeeze the canvas into a scrollbox.
+  const consoleFlow = isPhone && viewportH >= viewportW;
   const compactBar = viewportW < 1280;
   const unreadChat = unreadChatCount(chat.length, chatSeenCount, chatOpen);
 
@@ -576,17 +532,16 @@ export function TablePage({
   // A11: one full-height viewport, no page scroll - the table area owns the
   // room; popovers close on Escape themselves.
   useEffect(() => {
-    if (renderTable) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [renderTable]);
+  }, []);
 
   // ⋮ menu: focus the first item on open, close on Escape.
   useEffect(() => {
-    if (!menuOpen || renderTable) return;
+    if (!menuOpen) return;
     desktopMenuRef.current
       ?.querySelector<HTMLElement>('a[href], button:not([disabled]), select:not([disabled])')
       ?.focus();
@@ -595,7 +550,7 @@ export function TablePage({
     };
     document.addEventListener('keydown', closeMenu);
     return () => document.removeEventListener('keydown', closeMenu);
-  }, [menuOpen, renderTable]);
+  }, [menuOpen]);
 
   useEffect(() => {
     let alive = true;
@@ -713,7 +668,7 @@ export function TablePage({
       )
         return;
       event.preventDefault();
-      // Dismiss only the recap, without also closing docked chat or 3D controls.
+      // Dismiss only the recap, without also closing docked chat.
       event.stopPropagation();
       setResultDismissed(true);
     };
@@ -721,22 +676,9 @@ export function TablePage({
     return () => document.removeEventListener('keydown', dismissOnEscape, true);
   }, [showResult, room?.room.id]);
 
-  // confetti when you win a pot
-  useEffect(() => {
-    if (!hand.result || mySeat === null) return;
-    const myDelta = hand.result.deltas.find((d) => d.seat === mySeat)?.delta ?? 0;
-    if (myDelta > 0 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      confetti({ particleCount: 110, spread: 75, origin: { y: 0.7 } });
-      setTimeout(
-        () => confetti({ particleCount: 50, angle: 60, spread: 60, origin: { x: 0, y: 0.8 } }),
-        220,
-      );
-      setTimeout(
-        () => confetti({ particleCount: 50, angle: 120, spread: 60, origin: { x: 1, y: 0.8 } }),
-        380,
-      );
-    }
-  }, [hand.result]); // eslint-disable-line react-hooks/exhaustive-deps
+  // L5 (spec §4): the winner confetti burst was removed with the motion
+  // pass - the celebration is the gold ring highlight + WIN badge + the
+  // pot-collection chip flight (WinnerFx), no particles / canvas overlays.
 
   useEffect(() => {
     if (errors.length === 0) return;
@@ -773,6 +715,25 @@ export function TablePage({
     hasMeetLink: !!room?.room.meetLink,
   });
 
+  // ── table bots (Phase 1 UI) ───────────────────────────────────────────────
+  // ONE shared read instance feeds both the seat badges and the host dialog:
+  // a create/stop in the dialog reloads this state, so the felt repaints in
+  // the same frame and the two views can never disagree. A watch-link
+  // spectator is not a room member (the route 403s) - `quiet` folds exactly
+  // that into "no badges"; real faults (503, network) still surface as errors.
+  const [botsOpen, setBotsOpen] = useState(false);
+  const botsVisible = !!room && !amSpectator;
+  const [botsPoll, setBotsPoll] = useState(0);
+  const botsState = useRoomBots(roomId, botsVisible, botsPoll, true);
+  const { bots } = botsState;
+  useEffect(() => {
+    setBotsPoll(botsPollMs(bots, botsOpen));
+  }, [bots, botsOpen]);
+  const botByUserId = useMemo(
+    () => new Map(bots.map((b) => [b.userId, { status: b.status, policyKind: b.policyKind }])),
+    [bots],
+  );
+
   useEffect(() => {
     setPeekSent({});
   }, [hand.handId]);
@@ -796,12 +757,12 @@ export function TablePage({
   // Standings refresh whenever the popover or the dialog is showing - and at
   // the end of every hand, which is the only moment the numbers can change.
   useEffect(() => {
-    if (!standingsOpen && !rankOpen) return;
+    if (!standingsOpen) return;
     api
       .roomLeaderboard(roomId!)
       .then((r) => setStandings(r.rows))
       .catch(() => setStandings([]));
-  }, [standingsOpen, rankOpen, roomId, hand.result, hand.abort]);
+  }, [standingsOpen, roomId, hand.result, hand.abort]);
 
   // re-arm the buy-in prompt whenever the broke state resolves (approval landed / stood up)
   useEffect(() => {
@@ -843,16 +804,6 @@ export function TablePage({
     }
   }, [myTurnNow, hand.handId, hand.actionSeq, isPhone]);
 
-  // small and big blind seats, derived like the engine does: heads-up the
-  // button IS the small blind, otherwise SB is next after the button
-  const blinds = useMemo(() => {
-    if (hand.buttonSeat === null || hand.seats.length < 2) return { sb: null, bb: null };
-    const order = [...hand.seats.map((x) => x.seat)].sort((a, b) => a - b);
-    const after = (seat: number) => order[(order.indexOf(seat) + 1) % order.length]!;
-    const sb = hand.seats.length === 2 ? hand.buttonSeat : after(hand.buttonSeat);
-    return { sb, bb: after(sb) };
-  }, [hand.buttonSeat, hand.seats]);
-
   const seatViews = useMemo((): SeatView[] => {
     if (!room) return [];
     // the chip leader: up the most against their buy-ins right now
@@ -875,15 +826,12 @@ export function TablePage({
         return {
           seat: p.seat!,
           userId: p.userId,
-          username: p.username,
           displayName: p.displayName,
           avatarVersion: p.avatarVersion,
           stack: stackShown,
           pendingBuy: p.pendingBuy ?? 0,
           broke: stackShown === 0 && !(handLive && inHand),
           isButton: inHand && hand.buttonSeat === p.seat,
-          isSB: inHand && blinds.sb === p.seat,
-          isBB: inHand && blinds.bb === p.seat,
           isToAct: handLive && hand.betting?.toAct === p.seat,
           folded: !!engineSeat?.folded,
           allIn: !!engineSeat?.allIn,
@@ -900,9 +848,11 @@ export function TablePage({
           // P2 B2: per-seat bank, in ms. Only present in rooms that run the
           // feature (betting_state carries timeBanks) - seats read it as-is.
           bankMs: hand.timeBanks[p.seat!],
+          // Table bot: undefined for humans, so the pod keeps the plain look.
+          bot: botByUserId.get(p.userId),
         };
       });
-  }, [room, hand, handLive, voiceState, blinds]);
+  }, [room, hand, handLive, voiceState, botByUserId]);
 
   if (!room) {
     return (
@@ -965,33 +915,8 @@ export function TablePage({
     const label = holeStrengthLabel(cards, hand.board);
     if (label) strengthLabels[s.seat] = label;
   }
-  // feedback #3: the balance moved out of the deleted bottom box into a small
-  // chip above the dock (your on-table stack already rides the seat pod).
-  const roomMeRow = room.players.find((p) => p.seat === mySeat);
-  const myBought = roomMeRow?.totalBought ?? 0;
-  const myNet = (roomMeRow?.stack ?? 0) - myBought;
   const seatName = (seat: number) =>
     seatViews.find((s) => s.seat === seat)?.displayName ?? t('Seat {n}', { n: seat + 1 });
-
-  const disconnectedInHand = handLive
-    ? seatViews.filter((s) => s.inHand && !s.folded && !s.connected).map((s) => s.displayName)
-    : [];
-  const mobileStatus = !handLive
-    ? null
-    : mySeat !== null && !hand.seats.some((s) => s.seat === mySeat)
-      ? t('You are not in this hand. You will be dealt in at the next deal.')
-      : disconnectedInHand.length > 0
-        ? t('{names} lost connection. Holding the hand for them to rejoin…', {
-            names: disconnectedInHand.join(', '),
-          })
-        : hand.betting
-          ? hand.betting.toAct !== null && hand.betting.toAct !== mySeat
-            ? t('Waiting for {name}…', {
-                name:
-                  seatViews.find((s) => s.seat === hand.betting!.toAct)?.displayName ?? t('player'),
-              })
-            : null
-          : t('Shuffling the encrypted deck…');
 
   const peekAmt = Math.max(1, parseInt(peekAmtStr, 10) || room.room.bb * 5);
   const peekEligible =
@@ -1190,8 +1115,7 @@ export function TablePage({
 
   // The recap panel is gone: on the 2D table the payoff is told by the cards
   // themselves - a WIN tag on the winner's pod while chips fly off the pot
-  // (see WinnerFx / RoundTable). This pill remains for voided
-  // hands and for the 3D lounge, whose chrome has no pods of its own. The
+  // (see WinnerFx / RoundTable). This pill remains for voided hands. The
   // full story lives in the last-hand strip and in hand history (出牌记录).
   const resultWinners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
   const winnersLine = resultWinners.length
@@ -1299,11 +1223,10 @@ export function TablePage({
   // 账本) - live on the top bar itself (TableQuickControls), so the desktop ⋮
   // menu keeps only the remaining secondary items (invite, watch link,
   // standings...). Phones have no room for that strip, so the menu carries the
-  // full set there. The 3D lounge chrome - which has no such row - always gets
-  // the full set.
+  // full set there.
   const inlineSurfaced: TableUtilityAction[] = isPhone
     ? []
-    : ['auto-deal', 'sit-out', 'timer', 'preferences', 'hands', 'ledger'];
+    : ['auto-deal', 'sit-out', 'timer', 'bots', 'preferences', 'hands', 'ledger'];
   const desktopMenuGroups = utilityGroups
     .map((group) => ({
       ...group,
@@ -1322,8 +1245,8 @@ export function TablePage({
           : t('That change did not go through. Try again.'),
       );
   const closeUtilityMenu = () => setMenuOpen(false);
-  // Phone view controls (A11 + review fix #1): the ⋮ menu carries 3D and
-  // fullscreen where the top bar has no room for the icon buttons.
+  // Phone view controls (A11 + review fix #1): the ⋮ menu carries fullscreen
+  // where the top bar has no room for the icon buttons.
   const fullscreenSupported =
     typeof document !== 'undefined' && 'requestFullscreen' in document.documentElement;
   const toggleFullscreen = () => {
@@ -1390,20 +1313,6 @@ export function TablePage({
             <VideoCamera size={18} /> {t('Open video call')}
           </a>
         );
-      case 'standings':
-        return (
-          <button
-            type="button"
-            role="menuitem"
-            className={utilityItemClass}
-            onClick={() => {
-              closeUtilityMenu();
-              setStandingsOpen(true);
-            }}
-          >
-            <Trophy size={18} /> {t('Standings')}
-          </button>
-        );
       case 'ledger':
         return (
           <Link
@@ -1438,7 +1347,7 @@ export function TablePage({
             }}
           >
             <PauseCircle size={18} />{' '}
-            {meSittingOut ? t('Deal me back in') : t('Sit out next hand')}
+            {meSittingOut ? t('Deal me in next hand') : t('Sit out next deal')}
           </button>
         );
       case 'timer':
@@ -1448,7 +1357,7 @@ export function TablePage({
             <span className="flex-1">{t('Turn timer')}</span>
             <select
               aria-label={t('Turn timer')}
-              value={room.room.actionSecs ?? 45}
+              value={room.room.actionSecs ?? ACTION_TIMEOUT_SECS}
               disabled={handLive}
               onChange={(event) =>
                 void api.roomSettings(roomId!, +event.target.value).catch(reportError)
@@ -1464,6 +1373,26 @@ export function TablePage({
               <option value={0}>{t('No limit')}</option>
             </select>
           </label>
+        );
+      case 'bots':
+        // phone entry for the host-only bot dialog (desktop rides the top bar)
+        return (
+          <button
+            type="button"
+            role="menuitem"
+            className={utilityItemClass}
+            onClick={() => {
+              closeUtilityMenu();
+              setBotsOpen(true);
+            }}
+          >
+            <Robot size={18} /> {t('Bot opponents')}
+            {bots.length > 0 && (
+              <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
+                {t('{n} seated', { n: bots.length })}
+              </span>
+            )}
+          </button>
         );
       case 'preferences':
         return (
@@ -1494,34 +1423,41 @@ export function TablePage({
     ) : null;
 
   // ── P2 feature overlays (B1/B3/B4) ────────────────────────────────────────
-  // Badges ride the felt above the board so every view (seat, rest, spectator)
-  // reads the same hand-state. All of it derives from server announcements -
-  // nothing here invents boards, antes or settlements.
+  // L3 (rev-3): the feature banners ride a RIBBON — on the top rail for 1/3/5
+  // players, else as the center column's first child (adaptive; see
+  // geometry.ts ribbonFitsRail). On the column they used to collide with the
+  // top seats' bet chips and ate the H2 budget. Borderless colored text: bomb =
+  // room gold, squid = its identity violet. All of it still derives from
+  // server announcements — nothing here invents boards, antes or settlements.
   const feat = hand.featureStarted;
   const bombActive = !!feat?.bombPot?.enabled;
   const bombBeforeFlop = bombActive && handLive && (!hand.betting || hand.betting.street === 'preflop');
-  const featureBannerRow = (feat?.squid?.enabled || bombActive) && hand.handId !== null && (
-    <div className="z-10 flex flex-wrap items-center justify-center gap-1.5" role="status">
-      {bombActive && feat.bombPot && (
-        <span className="flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[0.68rem] font-bold text-amber-950 shadow-md">
-          <Bomb size={12} weight="fill" />
-          {t('Bomb pot · {n}× BB', { n: feat.bombPot.anteBb })}
-        </span>
-      )}
-      {feat?.squid?.enabled && (
-        <span className="flex items-center gap-1 rounded-full bg-violet-600 px-2.5 py-1 text-[0.68rem] font-bold text-white shadow-md">
-          <Skull size={12} weight="fill" />
-          {t('Squid Game · {n}× BB · {p} players', { n: feat.squid.penaltyBb, p: hand.seats.length })}
-        </span>
-      )}
-    </div>
-  );
-  const bombFeltNote = bombBeforeFlop && (
-    <p className="z-10 flex items-center gap-1.5 rounded-full bg-amber-400/90 px-3 py-1 text-xs font-bold text-amber-950 shadow">
-      <Bomb size={13} weight="fill" />
-      {t('Bomb pot ante posted - straight to the flop.')}
-    </p>
-  );
+  const featureRibbon =
+    ((feat?.squid?.enabled || bombActive) && hand.handId !== null) || bombBeforeFlop ? (
+      <div className="table-ribbon" role="status">
+        {(feat?.squid?.enabled || bombActive) && hand.handId !== null && (
+          <div className="table-ribbon-row">
+            {bombActive && feat.bombPot && (
+              <span className="rb-bomb">
+                <Bomb size={12} weight="fill" />
+                {t('Bomb pot · {n}× BB', { n: feat.bombPot.anteBb })}
+              </span>
+            )}
+            {feat?.squid?.enabled && (
+              <span className="rb-squid">
+                <Skull size={12} weight="fill" />
+                {t('Squid Game · {n}× BB · {p} players', { n: feat.squid.penaltyBb, p: hand.seats.length })}
+              </span>
+            )}
+          </div>
+        )}
+        {bombBeforeFlop && (
+          <span className="rb-note">
+            <Bomb size={11} weight="fill" /> {t('Bomb pot ante posted - straight to the flop.')}
+          </span>
+        )}
+      </div>
+    ) : null;
   // The negotiated outcome, kept honest by the server's terminal message: the
   // boards below only ever multiply when `multiRunResult.runs` says so.
   const runOutcome = hand.multiRunResult;
@@ -1532,7 +1468,7 @@ export function TablePage({
     (sawRunOfferRef.current === runOutcome.handId || runOutcome.runs > 1);
   const multiRunOutcome =
     handLive && runOutcomeShown && runOutcome ? (
-      <p className="z-10 rounded-full bg-white/85 px-3 py-1 text-xs font-bold text-fuchsia-600 shadow-sm ring-1 ring-fuchsia-200/70 dark:bg-slate-900/85 dark:text-fuchsia-300 dark:ring-fuchsia-500/30">
+      <p className="table-outcome z-10">
         🔁{' '}
         {runOutcome.runs > 1
           ? t('Dealing {n} runs', { n: runOutcome.runs })
@@ -1554,11 +1490,11 @@ export function TablePage({
       <div
         role="region"
         aria-label={t('Squid Game settlement')}
-        className="z-10 flex max-w-[min(30rem,92%)] flex-col items-center gap-1 rounded-2xl bg-violet-600/90 px-3.5 py-2 text-white shadow-[0_14px_40px_rgba(109,40,217,0.35)]"
+        className="table-squid-summary z-10"
       >
-        <p className="flex items-center gap-1.5 text-xs font-bold text-white">
+        <p className="table-squid-title">
           <Skull size={13} weight="fill" /> {t('Squid Game settlement')}
-          <span className="font-normal text-violet-200">
+          <span className="table-squid-sub">
             {squid.noClaimant
               ? t('Nobody won every run - no bounty.')
               : t('Bounty {n}', { n: squid.winners.map((w) => seatName(w)).join(t(' and ')) })}
@@ -1569,8 +1505,8 @@ export function TablePage({
             <span
               key={n.seat}
               className={cn(
-                'rounded-full px-2 py-0.5 font-display text-[0.68rem] font-bold tabular-nums',
-                n.net > 0 ? 'bg-white/20' : n.net < 0 ? 'bg-black/25' : 'bg-white/5 opacity-70',
+                'table-squid-chip',
+                n.net > 0 ? 'table-squid-chip--pos' : n.net < 0 ? 'table-squid-chip--neg' : 'table-squid-chip--zero',
               )}
             >
               {seatName(n.seat)} {n.net >= 0 ? `+${fmt(n.net)}` : `−${fmt(-n.net)}`}
@@ -1580,9 +1516,50 @@ export function TablePage({
       </div>
     ) : null;
 
+  // ── center-column size budget (H2) ────────────────────────────────────────
+  // The felt column (pot → [ribbon] → prompts → board → summaries) is one
+  // stack; a 3-run board or a banner/summary pile grows it down toward the
+  // bottom-seat pods (baseline: run 3 covering the hero's plate). When that
+  // risk is live we switch the column to its COMPACT tier - smaller board
+  // cards, collapsed gaps - and RoundTable additionally scales the measured
+  // column down to the geometry budget (centerBudget) as a backstop: it is a
+  // mitigation, not a guarantee - the clamp bottoms out at minScale 0.72, so
+  // an extreme pile (3 runs + banners + summary) can still overrun.
+  // L3: the feature ribbon rides the top rail band for 1/3/5 seated players
+  // (geometry.ts ribbonFitsRail) - there it is outside this stack and is NOT
+  // counted below; every other seat count flows it at the column head, where
+  // it is.
+  const boardRuns = hand.boards.length > 0 ? hand.boards : [hand.board];
+  // EFFECTIVE multi-run, decided by the server's INTENT, not by card arrival:
+  // - primary: multi_run_result with runs > 1 - broadcast the moment the
+  //   negotiation resolves, BEFORE run 2's first board_open lands (boards
+  //   only grows lazily per flip, gameClient board_open). Without this the
+  //   felt would visibly jump single→multi tier mid-hand at the first flip;
+  // - fallback: a non-empty extra run already on the boards array (covers
+  //   any window where cards arrived without the result frame in view);
+  // - stays FALSE for the legacy declined rit, whose rit_result leaves a
+  //   `[shared, []]` placeholder behind with no multiRunResult - that hand
+  //   must render exactly like a single run: no raised anchor, no xs tier,
+  //   no run labels.
+  const multiRunBoard =
+    (hand.multiRunResult?.runs ?? 0) > 1 || boardRuns.slice(1).some((r) => r.length > 0);
+  // L3: the ribbon rides the top rail band (geometry.ts ribbonFitsRail, the
+  // SAME predicate RoundTable uses to place it) for 1/3/5 seated players -
+  // there it is not part of the column, so the ResizeObserver never measures
+  // it and it must NOT count toward the budget. Every other seat count flows
+  // it at the column head, where it does. multiRunBoard's own semantics are
+  // untouched.
+  const ribbonOnRail = !!featureRibbon && ribbonFitsRail(Math.max(seatViews.length, 1));
+  const feltStackCount = [
+    !ribbonOnRail && featureRibbon,
+    runTwice,
+    multiRunOutcome,
+    squidSummary,
+  ].filter(Boolean).length;
+  const centerCompact = multiRunBoard || feltStackCount >= 2;
+
   // ── host-only dock controls (B1/B3 arming + Lane D dialog) ────────────────
-  const dockChip =
-    'pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200/70 backdrop-blur transition-[color,background-color,transform] duration-200 hover:bg-white hover:text-slate-950 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/80 dark:text-slate-200 dark:ring-slate-700/70 dark:hover:bg-slate-800 dark:hover:text-white';
+  const dockChip = 'pointer-events-auto table-dock-chip';
   const hostGameplay =
     isHost && !amSpectator && features ? (
       <div className="flex flex-wrap items-start gap-1.5">
@@ -1597,15 +1574,12 @@ export function TablePage({
                 : t('Trigger Squid Game next hand')
             }
             aria-pressed={!!armedTriggers.squid}
-            className={cn(
-              dockChip,
-              armedTriggers.squid &&
-                'bg-violet-100/95 text-violet-700 ring-violet-300 dark:bg-violet-950/80 dark:text-violet-300 dark:ring-violet-700',
-            )}
+            className={cn(dockChip, armedTriggers.squid && 'table-dock-chip--squid')}
+            data-testid="gameplay-squid"
           >
             {armedTriggers.squid ? <X size={15} /> : <Skull size={15} />}
             <span className={isPhone ? 'sr-only' : undefined}>
-              {armedTriggers.squid ? t('Squid Game armed') : t('Trigger Squid Game next hand')}
+              {t('Squid Game')}
             </span>
           </button>
         )}
@@ -1620,15 +1594,12 @@ export function TablePage({
                 : t('Trigger bomb pot next hand')
             }
             aria-pressed={!!armedTriggers.bomb}
-            className={cn(
-              dockChip,
-              armedTriggers.bomb &&
-                'bg-amber-100/95 text-amber-700 ring-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:ring-amber-700',
-            )}
+            className={cn(dockChip, armedTriggers.bomb && 'table-dock-chip--active')}
+            data-testid="gameplay-bomb"
           >
             {armedTriggers.bomb ? <X size={15} /> : <Bomb size={15} />}
             <span className={isPhone ? 'sr-only' : undefined}>
-              {armedTriggers.bomb ? t('Bomb pot armed') : t('Trigger bomb pot next hand')}
+              {t('Bomb pot')}
             </span>
           </button>
         )}
@@ -1638,7 +1609,7 @@ export function TablePage({
             type="button"
             onClick={openGameplay}
             title={t('Gameplay rules')}
-            className={cn(dockChip, 'text-fuchsia-700 dark:text-fuchsia-300')}
+            className={cn(dockChip, 'table-dock-chip--active')}
           >
             <Sliders size={15} />
             <span className="sr-only">{t('Gameplay rules')}</span>
@@ -1646,6 +1617,49 @@ export function TablePage({
         )}
       </div>
     ) : null;
+  // ── corner controls ───────────────────────────────────────────────────────
+  // The betting area is a compact widget - % pills, slider + amount (chips and
+  // BB), big action buttons, action-clock ring. On portrait phones the cluster
+  // AND the dock leave the felt and ride a console strip below the canvas (they
+  // can no longer share its box); desktop and short landscape phones keep the
+  // bottom-corner overlays, the smaller phone oval leaving the side columns free.
+  const bettingCluster = (
+    <fieldset
+      disabled={!wsConnected}
+      className={cn(
+        'm-0 min-w-0 border-0 p-0',
+        consoleFlow ? 'shrink-0' : 'table-cluster-host absolute bottom-2 right-2 z-30 md:bottom-3 md:right-3',
+      )}
+    >
+      <div
+        data-testid="betting-panel"
+      >
+        <BettingPanel mySeat={mySeat} isHost={!!isHost} narrow={narrowCanvas} />
+      </div>
+    </fieldset>
+  );
+  const dockNode = (
+    <TableDock
+      flow={consoleFlow}
+      phone={narrowCanvas}
+      compact={isPhone || compactBar}
+      hasSeat={mySeat !== null}
+      sittingOut={meSittingOut}
+      sitOutDisabled={!wsConnected}
+      onToggleSitOut={() => {
+        if (wsConnected) setSitOut(!meSittingOut);
+      }}
+      onClosePopovers={closeDockPopovers}
+      chatOpen={chatOpen}
+      onToggleChat={toggleChat}
+      unread={unreadChat}
+      chatBody={
+        <fieldset disabled={!wsConnected} className="h-full min-h-0">
+          <ChatPanel chrome={false} />
+        </fieldset>
+      }
+    />
+  );
   const sharedDialogs = (
     <>
       <AutoDealDialog open={autoDealOpen} onClose={() => setAutoDealOpen(false)} />
@@ -1656,6 +1670,21 @@ export function TablePage({
           open={gameplayOpen}
           onOpenChange={setGameplayOpen}
           onSaved={setFeatures}
+        />
+      )}
+      {/* host-only bot seat: manage the felt's machine players. The dialog
+          reads the page's shared bot state - no second fetch of its own. */}
+      {isHost && (
+        <BotsDialog
+          roomId={roomId!}
+          open={botsOpen}
+          onClose={() => setBotsOpen(false)}
+          takenSeats={[...takenSeats]}
+          bb={room?.room.bb ?? 20}
+          bots={bots}
+          loading={botsState.loading}
+          error={botsState.error}
+          reload={botsState.reload}
         />
       )}
       <BrokeBuyInDialog
@@ -1780,7 +1809,7 @@ export function TablePage({
       </Dialog>
 
       {/* connection state */}
-      {room && !wsConnected && (
+      {!wsConnected && (
         <div className="fixed left-1/2 top-3 z-50 -translate-x-1/2 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-semibold text-white shadow-lg">
           {t('Connection lost. Reconnecting…')}
         </div>
@@ -1795,147 +1824,37 @@ export function TablePage({
     </>
   );
 
-  if (renderTable) {
-    const standUp = (userId: number) => {
-      if (!isBankerHere || !wsConnected || userId === auth.userId) return;
-      void api
-        .standUp(roomId!, userId)
-        .catch((err) =>
-          useStore
-            .getState()
-            .pushError(err instanceof Error ? err.message : tr('Could not stand them up')),
-        );
-    };
-    return (
-      <div className="table3d-experience">
-        {renderTable({
-          menuOpen,
-          setMenuOpen,
-          chatOpen,
-          setChatOpen,
-          unreadChat,
-          utilities: (
-            <div role="menu" aria-label={t('Table controls')}>
-              {utilityGroups.map((group) => (
-                <section
-                  key={group.id}
-                  className="table-utility-group"
-                  aria-label={utilityGroupLabels[group.id]}
-                >
-                  <h3>{utilityGroupLabels[group.id]}</h3>
-                  {group.actions.map((action) => (
-                    <div key={action} role="none">
-                      {utilityAction(action)}
-                    </div>
-                  ))}
-                </section>
-              ))}
-            </div>
-          ),
-          voiceControl: (
-            <DesktopIconButton
-              label={
-                voiceState.joined
-                  ? voiceState.muted
-                    ? t('Unmute voice')
-                    : t('Mute voice')
-                  : t('Join voice')
-              }
-              onClick={() => (voiceState.joined ? voice.toggleMute() : void voice.join())}
-              active={voiceState.joined && !voiceState.muted}
-            >
-              {voiceState.joined && voiceState.muted ? (
-                <MicrophoneSlash size={19} />
-              ) : (
-                <Microphone size={19} />
-              )}
-            </DesktopIconButton>
-          ),
-          fullscreenControl: (
-            <DesktopIconButton
-              label={isFullscreen ? t('Exit full screen') : t('Full screen')}
-              onClick={() => {
-                const change = document.fullscreenElement
-                  ? document.exitFullscreen()
-                  : document.documentElement.requestFullscreen();
-                void change.catch(() =>
-                  useStore.getState().pushError(t('Full screen is unavailable in this browser.')),
-                );
-              }}
-              active={isFullscreen}
-            >
-              {isFullscreen ? <CornersIn size={19} /> : <CornersOut size={19} />}
-            </DesktopIconButton>
-          ),
-          seatPicker: mySeat === null ? (amSpectator ? spectatorPanel : seatPicker) : null,
-          peekPanel,
-          runTwice,
-          gameplay: (
-            <>
-              {featureBannerRow}
-              {bombFeltNote}
-              {multiRunOutcome}
-              {squidSummary}
-            </>
-          ),
-          status: mobileStatus,
-          amSpectator,
-          players: seatViews,
-          canManagePlayers: !!isBankerHere,
-          standUp,
-          showResult: () => setResultDismissed(false),
-          showLargeCards: () => {
-            setBigCards(true);
-            localStorage.setItem('4am-big-cards', 'on');
-          },
-        })}
-        {sharedDialogs}
-        <Dialog open={chatOpen} onClose={() => setChatOpen(false)} title={t('Table chat')}>
-          <fieldset disabled={!wsConnected} className="h-[min(60dvh,36rem)] min-h-0">
-            <ChatPanel chrome={false} />
-          </fieldset>
-        </Dialog>
-        {showResult && (
-          <div className="lounge-result-overlay" role="region" aria-label={t('Hand result')}>
-            {renderFlash(true)}
-          </div>
-        )}
-        {bigCards && hand.myCards.length > 0 && !notInHand && (
-          <FloatingCards
-            bounded
-            cards={hand.myCards}
-            onClose={() => {
-              setBigCards(false);
-              localStorage.setItem('4am-big-cards', 'off');
-            }}
-          />
-        )}
-      </div>
-    );
-  }
-
-  // P1 merged table layout (docs/table-redesign-spec.md): ONE consolidated
-  // 牌桌区 for desktop and phone alike. The old right column (standings dock +
-  // chat) and the old bottom bar are gone: rankings/chat are dock buttons with
-  // popovers (A6), status/balance/shortcuts ride inside the table area (A7),
-  // sit-out anchors bottom-left (A9), and the oval is a fixed-aspect canvas
-  // that scales instead of stretching (A1/A2/A3).
+  // ONE consolidated 牌桌区 for desktop and phone alike. The old right column
+  // (standings dock + chat) and the old bottom bar are gone: rankings/chat are
+  // dock buttons with popovers, status/balance/shortcuts ride inside the table
+  // area, sit-out anchors bottom-left, and the oval is a fixed-aspect canvas
+  // that scales instead of stretching.
+  // The desktop floor (min 30rem) is a DESKTOP contract - on the phone oval's
+  // short viewports (landscape 844×390) it would force the page past the
+  // viewport and push the bottom-corner controls out of the clipped strip, so
+  // the phone canvas runs un-floored.
   return (
     <div
-      className="table-app-bg flex h-[calc(100dvh-60px)] min-h-[30rem] flex-col gap-2 overflow-hidden p-2 md:h-[calc(100dvh-65px)] md:gap-2.5 md:p-3"
+      className={cn(
+        'table-app-bg flex h-[calc(100dvh-60px)] flex-col gap-2 overflow-hidden p-2 md:h-[calc(100dvh-65px)] md:gap-2.5 md:p-3',
+        !narrowCanvas && 'min-h-[30rem]',
+      )}
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
     >
       {/* ── compact top bar (A11) ─────────────────────────────────────────── */}
-      <header className="flex h-12 shrink-0 items-center gap-2 rounded-xl bg-white/80 px-2 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70 dark:bg-slate-950/70 dark:ring-slate-800">
+      <header className={cn(
+        'relative shrink-0 rounded-xl bg-white/80 px-2 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70 dark:bg-slate-950/70 dark:ring-slate-800',
+        isPhone ? 'grid grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[2.75rem_2.75rem] gap-x-1' : 'flex h-12 items-center gap-2',
+      )} data-testid="table-header">
         <Link
           to="/lobby"
-          className={desktopIconClass}
+          className={cn(desktopIconClass, isPhone && 'row-span-2 h-11 w-11')}
           aria-label={t('Leave table')}
           title={t('Leave table')}
         >
           <ArrowLeft size={19} weight="bold" />
         </Link>
-        <div className="min-w-0 flex-1 md:flex-none md:pr-2">
+        <div className={cn('min-w-0 md:flex-none md:pr-2', isPhone ? 'self-center' : 'flex-1')}>
           <h1 className="truncate font-display text-sm font-semibold tracking-[-0.02em] md:text-base">
             {room.room.name}
           </h1>
@@ -1964,18 +1883,69 @@ export function TablePage({
           )}
         </div>
 
-        {room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
-        {room.room.voided && (
+        {isPhone && (room.room.auditMode === 'strict-audit' || room.room.voided) && (
+          <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-1 self-end truncate text-[0.62rem]">
+            {room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
+            {room.room.voided && <Badge tone="rose">{t('void table')}</Badge>}
+          </div>
+        )}
+        {!isPhone && room.room.auditMode === 'strict-audit' && <Badge tone="amber">{t('strict audit')}</Badge>}
+        {!isPhone && room.room.voided && (
           <span title={t('The banker voided this table: results do not count anywhere')}>
             <Badge tone="rose">{t('void table')}</Badge>
           </span>
         )}
-        {handLive && hand.deadline !== null && (
+        {!isPhone && handLive && hand.deadline !== null && (
           <CountdownChip deadline={hand.deadline} urgent={urgent} />
         )}
 
-        <div className="ml-auto flex flex-nowrap items-center justify-end gap-1">
-          <BankControls roomId={roomId!} mode="hub" compact={isPhone || compactBar} />
+        {isPhone && (
+          <div className="col-start-3 row-start-1 self-center justify-self-end">
+            <BankControls roomId={roomId!} compact />
+          </div>
+        )}
+        <div className={cn(
+          'flex items-center justify-end gap-1',
+          isPhone ? 'col-start-2 row-start-2 min-w-0 justify-start overflow-visible pl-1 pr-12' : 'ml-auto flex-nowrap',
+        )}>
+          {!isPhone && <BankControls roomId={roomId!} compact={compactBar} />}
+          {!amSpectator && <PlayerHud key={roomId} roomId={roomId!} />}
+          {isPhone && (
+            <Link
+              to={`/room/${roomId}/hands`}
+              className={cn(desktopIconClass, 'h-11 w-11')}
+              data-testid="mobile-history"
+              title={t('Hand history')}
+              aria-label={t('Hand history')}
+            >
+              <CardsThree size={19} />
+            </Link>
+          )}
+          {isPhone && !amSpectator && (
+            <DesktopIconButton
+              label={isHost ? t('Auto-deal') : t('Only the host can change this room setting.')}
+              onClick={() => (isHost ? void api.setAutoDeal(roomId!, room.room.autoDeal === false).catch(reportError) : setAutoDealOpen(true))}
+              className="h-11 w-11"
+              data-testid="mobile-auto-deal"
+            >
+              <Play size={18} weight={room.room.autoDeal === false ? 'regular' : 'fill'} />
+            </DesktopIconButton>
+          )}
+          {isPhone && isHost && (
+            <DesktopIconButton label={t('Bot opponents')} onClick={() => setBotsOpen(true)} className="h-11 w-11" data-testid="mobile-bots">
+              <Robot size={18} />
+            </DesktopIconButton>
+          )}
+          {isPhone && !amSpectator && (
+            <DesktopIconButton label={t('Invite friends')} onClick={() => setInviteOpen(true)} className="h-11 w-11" data-testid="mobile-invite">
+              <UserPlus size={18} />
+            </DesktopIconButton>
+          )}
+          {isPhone && isBankerHere && (
+            <DesktopIconButton label={t('Watch-only link')} onClick={() => setWatchOpen(true)} className="h-11 w-11" data-testid="mobile-watch">
+              <Eye size={18} />
+            </DesktopIconButton>
+          )}
           {/* phones trade the switch strip for the ⋮ menu so the bar never
               wraps (A1); desktop keeps the chips, icon-only when tight */}
           {!isPhone && (
@@ -1984,7 +1954,7 @@ export function TablePage({
               isHost={!!isHost}
               autoDeal={room.room.autoDeal !== false}
               autoDealPaused={!!room.autoDealPaused}
-              actionSecs={room.room.actionSecs ?? 45}
+              actionSecs={room.room.actionSecs ?? ACTION_TIMEOUT_SECS}
               timerDisabled={handLive}
               amSpectator={amSpectator}
               compact={compactBar}
@@ -1994,9 +1964,11 @@ export function TablePage({
                 void api.roomSettings(roomId!, seconds).catch(reportError)
               }
               onOpenGameplay={isHost && features ? openGameplay : undefined}
+              onOpenBots={isHost ? () => setBotsOpen(true) : undefined}
+              botCount={bots.length}
             />
           )}
-          <DesktopIconButton
+          {!isPhone && <DesktopIconButton
             label={
               voiceState.joined
                 ? voiceState.muted
@@ -2019,33 +1991,16 @@ export function TablePage({
             ) : (
               <Microphone size={19} weight={voiceState.joined ? 'bold' : 'regular'} />
             )}
-          </DesktopIconButton>
-          {/* the dock owns chat/rankings on phones; the bar mirrors the chat
-              popover on wider screens where there is room for it */}
-          {!isPhone && (
-            <DesktopIconButton
-              label={
-                unreadChat > 0
-                  ? t('Toggle chat, {n} unread messages', { n: unreadChat })
-                  : t('Toggle chat')
-              }
-              onClick={toggleChat}
-              active={chatOpen}
-              badge={unreadChat}
-            >
-              <ChatCircle size={20} weight={chatOpen ? 'fill' : 'regular'} />
+          </DesktopIconButton>}
+          {!isPhone && !amSpectator && (
+            <DesktopIconButton label={t('Invite friends')} onClick={() => setInviteOpen(true)}>
+              <UserPlus size={18} />
             </DesktopIconButton>
           )}
-
-          {!isPhone && (
-            <Link
-              to={`/room/${roomId}/3d`}
-              className={desktopIconClass}
-              aria-label={t('3D table')}
-              title={t('3D table')}
-            >
-              <Cube size={19} />
-            </Link>
+          {!isPhone && isBankerHere && (
+            <DesktopIconButton label={t('Watch-only link')} onClick={() => setWatchOpen(true)}>
+              <Eye size={18} />
+            </DesktopIconButton>
           )}
           {!isPhone && (
             <DesktopIconButton
@@ -2057,7 +2012,7 @@ export function TablePage({
             </DesktopIconButton>
           )}
 
-          <div className="relative">
+          <div className={cn('relative', isPhone && 'absolute bottom-1 right-1')}>
             <DesktopIconButton
               label={t('More table controls')}
               onClick={() => setMenuOpen((open) => !open)}
@@ -2065,6 +2020,8 @@ export function TablePage({
               hasPopup
               expanded={menuOpen}
               buttonRef={desktopMenuTriggerRef}
+              className={isPhone ? 'h-11 w-11' : undefined}
+              data-testid="table-more"
             >
               <DotsThreeVertical size={20} weight="bold" />
             </DesktopIconButton>
@@ -2079,7 +2036,12 @@ export function TablePage({
                   ref={desktopMenuRef}
                   role="menu"
                   aria-label={t('Table controls')}
-                  className="absolute right-0 top-12 z-30 max-h-[70vh] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+                  className={cn(
+                    'pointer-events-auto z-50 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_20px_60px_rgba(15,23,42,0.18)] ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700',
+                    isPhone
+                      ? 'fixed right-2 top-[9rem] max-h-[calc(100dvh-10rem)] w-[min(18rem,calc(100vw-1rem))]'
+                      : 'absolute right-0 top-12 max-h-[70vh] w-72',
+                  )}
                 >
                   {desktopMenuGroups.map((group, index) => (
                     <div
@@ -2100,7 +2062,7 @@ export function TablePage({
                       ))}
                     </div>
                   ))}
-                  {/* review fix #1: phones keep 3D + fullscreen reachable via ⋮ */}
+                  {/* review fix #1: phones keep fullscreen reachable via ⋮ */}
                   {isPhone && (
                     <div
                       role="group"
@@ -2110,14 +2072,6 @@ export function TablePage({
                       <div className="px-3 pb-1 pt-2 text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
                         {t('View')}
                       </div>
-                      <Link
-                        to={`/room/${roomId}/3d`}
-                        role="menuitem"
-                        className={utilityItemClass}
-                        onClick={closeUtilityMenu}
-                      >
-                        <Cube size={18} /> {t('3D table')}
-                      </Link>
                       <button
                         type="button"
                         role="menuitem"
@@ -2143,6 +2097,23 @@ export function TablePage({
                           </span>
                         )}
                       </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={utilityItemClass}
+                        onClick={() => {
+                          if (voiceState.joined) voice.toggleMute();
+                          else void voice.join();
+                          closeUtilityMenu();
+                        }}
+                      >
+                        {voiceState.joined && voiceState.muted ? <MicrophoneSlash size={18} /> : <Microphone size={18} />}{' '}
+                        {voiceState.joined
+                          ? voiceState.muted
+                            ? t('Unmute voice')
+                            : t('Mute voice')
+                          : t('Join voice')}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2152,10 +2123,20 @@ export function TablePage({
         </div>
       </header>
 
+      <div className="flex shrink-0 items-center justify-between gap-2 px-1" data-testid="table-corner-controls">
+        <div className={cn('min-w-0', isPhone && 'table-dock--phone')}>{hostGameplay}</div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <PokerShortcutButton className="!text-(--table-muted) hover:!text-(--table-ink)" />
+          <button type="button" onClick={() => setStandingsOpen(true)} className={dockChip} aria-haspopup="dialog">
+            <Trophy size={15} /> {t('Standings')}
+          </button>
+        </div>
+      </div>
+
       {/* ── the one table area (A7: no separate bottom bar) ───────────────── */}
       <section
         aria-label={t('Poker board')}
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] bg-slate-200/60 ring-1 ring-slate-200 dark:bg-slate-900/60 dark:ring-slate-800 md:rounded-[2rem]"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] md:rounded-[2rem]"
       >
         {showResult && hand.abort && (
           <div
@@ -2204,17 +2185,28 @@ export function TablePage({
 
         {/* the stage: a fixed-aspect oval that scales to fit - down to a
             readability floor, past which the stage itself scrolls (RoundTable).
-            On phones the canvas is lifted above the betting widget + dock. */}
-        <div className="relative min-h-[8rem] flex-1">
+            L6: on portrait phones the oval only owns the flex region ABOVE
+            the console strip - the dock + action cluster leave the felt and
+            ride as a bottom row, so they can never share the canvas box.
+            Landscape phones keep the corner overlays (the smaller oval
+            leaves the side columns free). */}
+        <div className={cn('relative min-h-[8rem] flex-1', consoleFlow && 'flex flex-col')}>
           <div
             className={cn(
-              'h-full min-h-0',
+              // pb-6: the hero's pill row rides BELOW its ring point and
+              // spills past the canvas box (≈50 design px at the worst
+              // showdown state); the strip absorbs it without shrinking the
+              // canvas area below the floor scale's 225px height on 320×700.
+              consoleFlow ? 'min-h-0 flex-1 pb-6' : 'h-full min-h-0',
               notInHand && 'opacity-60 saturate-50',
-              isPhone && 'pb-[10.5rem]',
             )}
           >
           <RoundTable
-            narrow={isPhone}
+            narrow={narrowCanvas}
+            centerCompact={centerCompact}
+            centerRaised={multiRunBoard}
+            centerBudget
+            ribbon={featureRibbon}
             seats={seatViews}
             mySeat={mySeat}
             myUserId={auth.userId}
@@ -2222,6 +2214,7 @@ export function TablePage({
             committedBySeat={Object.fromEntries(
               (hand.betting?.seats ?? []).map((s) => [s.seat, s.committed]),
             )}
+            handId={hand.handId}
             urgent={urgent}
             handLive={handLive}
             canSit={mySeat === null && !amSpectator}
@@ -2246,85 +2239,141 @@ export function TablePage({
             onShareHand={shareData ? () => setShareOpen(true) : undefined}
             handTypes={strengthLabels}
           >
-            {/* A5: pot - transparent background, chip pile + number beside it,
-                centered directly above the cards area */}
-            <div className="flex items-center justify-center" title={t('POT')}>
-              <span className="sr-only">{t('POT')}</span>
-              <motion.div
-                key={pot}
-                initial={pot > 0 ? { scale: 1.12 } : false}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', stiffness: 320, damping: 18 }}
-                className="flex items-center gap-2"
-              >
-                {pot > 0 ? (
-                  <ChipStack amount={pot} bb={room.room.bb} size={isPhone ? 'lg' : 'sm'} />
-                ) : (
-                  <Coins size={16} weight="duotone" className="text-slate-400 dark:text-slate-500" />
-                )}
-                <span
-                  className={cn(
-                    'font-display font-semibold tabular-nums text-slate-700 drop-shadow-[0_1px_2px_rgba(255,255,255,0.75)] dark:text-slate-200 dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
-                    isPhone ? 'text-lg' : 'text-base',
-                  )}
+            {/* A5/L3: the pot is ONE GG "Total Pot" gold pill centered above
+                the board row. (rev-3 dropped the pot chip pile + the 0-state
+                Coins icon — the number carries the value; the pulse motion
+                stays as-is, the motion pass is L5.) */}
+            {pot > 0 && (
+              <div className="table-pot-pill" title={t('POT')}>
+                <span className="sr-only">{t('POT')}</span>
+                <span className="table-pot-label">{t('POT')}</span>
+                <motion.span
+                  key={pot}
+                  initial={{ scale: 1.12 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 320, damping: 18 }}
+                  className="table-pot-val"
                 >
                   <NumberFlow value={pot} />
-                </span>
-              </motion.div>
-            </div>
+                </motion.span>
+              </div>
+            )}
             {/* the felt keeps its layout while a result flashes over it */}
             <>
-              {featureBannerRow}
-              {bombFeltNote}
               {runTwice}
               <div className="flex flex-col items-center gap-2">
                 {(() => {
                   // P2 B4: render hand.boards - run 1 owns the felt's geometry
-                  // as before; run 2 / run 3 grow underneath, compact (md
-                  // cards + a small 「第 N 跑」 label).
-                  const runs = hand.boards.length > 0 ? hand.boards : [hand.board];
-                  const [first, ...rest] = runs;
+                  // as before; run 2 / run 3 grow underneath.
+                  // EFFECTIVE MULTI-RUN (multiRunBoard: server-declared
+                  // runs > 1, or a non-empty extra run already dealt - a
+                  // trailing [] from a declined legacy rit is NOT one):
+                  // every row shares ONE card
+                  // size (xs) and ONE 5-slot structure (label + 5 cells, dealt
+                  // cards or matching empty placeholders) - GGPoker-style equal
+                  // rows, no 96px-vs-40px mismatch, no ragged widths.
+                  // Sizing math (design px, canvas 1180x660): the bare stack
+                  // pot ≈28 + column gap 8 + 3x40 + 2x8 = 172, centered on the
+                  // RAISED anchor (48% -> y ≈317), spans ≈231-403 - below the
+                  // far pods (bottom edge ≈197-207) and above the bet ellipse
+                  // (y ≈455). The hero pod's top edge is state-dependent
+                  // (≈412-440 at showdown), so the bottom gap is real but thin
+                  // in the worst case. This is sizing, NOT a guarantee:
+                  // banners/summaries stacked on 3 runs still exceed the
+                  // 204px budget and fall to the RoundTable clamp, which
+                  // scales the whole column uniformly (floor minScale 0.72) -
+                  // past that floor the column may still touch a pod.
+                  // Non-effective hands (single run, or a single run with a
+                  // legacy empty extra, banners included) keep the yPct anchor
+                  // and the untouched full/md tier.
+                  const [first, ...rest] = boardRuns;
+                  const boardSmall = narrowCanvas || centerCompact;
+                  // L3 tiers (mockup board = 84×120 'board'; desktop compact
+                  // falls to 'sm' 40×56; multi-run 'xs'). L6 measured the
+                  // phone 'md' idea and REVERTED it: five md cards span 359
+                  // of the 548 oval and the ±130° hole-card fans ate the end
+                  // cards — 'sm' (232 wide) is the widest tier the 9-seat
+                  // phone ring leaves free, and at k≈0.55-0.68 the corner
+                  // index still renders ~11px, above the legibility line.
+                  // Phone multi-run rows upgrade xs→sm (28 design px of card
+                  // is unreadable at the floor scale); desktop tiers are
+                  // untouched. The RoundTable clamp (centerBudget, now active
+                  // on the phone canvas too) keeps the stack inside the
+                  // seat-ring budget.
+                  const runSize = multiRunBoard
+                    ? narrowCanvas
+                      ? 'sm'
+                      : 'xs'
+                    : boardSmall
+                      ? 'sm'
+                      : 'board';
+                  const runGap = multiRunBoard ? 'gap-1' : boardSmall ? 'gap-1.5' : 'gap-3';
+                  const emptySlotClass =
+                    multiRunBoard && !narrowCanvas
+                      ? 'h-10 w-7 rounded-md'
+                      : boardSmall || multiRunBoard
+                        ? 'h-14 w-10 rounded-lg'
+                        : 'h-30 w-21 rounded-[13px]';
+                  const runLabel = (n: number) => (
+                    <span className="table-run-chip">{t('Run {n}', { n })}</span>
+                  );
+                  const emptySlot = (key: string, index: number) => (
+                    <div
+                      key={key}
+                      className={cn('table-slot', emptySlotClass)}
+                      role="img"
+                      aria-label={t('Empty community card {n}', { n: index + 1 })}
+                    />
+                  );
                   return (
                     <>
                       <div
                         className={cn(
                           'flex items-center justify-center',
-                          isPhone ? 'gap-1' : 'gap-2.5',
+                          runGap,
                         )}
                       >
+                        {multiRunBoard && runLabel(1)}
                         {[0, 1, 2, 3, 4].map((index) =>
                           first![index] !== undefined ? (
                             <PlayingCard
                               key={`${index}-${first![index]}`}
                               card={first![index]}
-                              size={isPhone ? 'md' : 'table'}
+                              size={runSize}
                               deal
                               // the three flop cards land together, so cascade them; the
                               // turn and river arrive alone and flip immediately
                               dealDelay={first!.length === 3 ? index * 0.16 : 0}
                             />
                           ) : (
-                            <div
-                              key={index}
-                              className={cn(
-                                'border-2 border-dashed border-slate-300/80 dark:border-slate-700',
-                                isPhone ? 'h-24 w-[4.2rem] rounded-xl' : 'h-36 w-24 rounded-2xl',
-                              )}
-                              role="img"
-                              aria-label={t('Empty community card {n}', { n: index + 1 })}
-                            />
+                            emptySlot(`r0-slot-${index}`, index)
                           ),
                         )}
                       </div>
+                      {/* a run that has not opened a single card renders NO row
+                          (legacy rit_result leaves a `[]` placeholder behind when
+                          the ahead player declined - never show it as a ghost
+                          row); a partly-dealt run pads to the same 5 slots as
+                          run 1 so the visible rows stay equal width */}
                       {rest.map((run, runIdx) =>
                         run.length === 0 ? null : (
-                          <div key={`run-${runIdx}`} className="flex items-center justify-center gap-1">
-                            <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
-                              {t('Run {n}', { n: runIdx + 2 })}
-                            </span>
-                            {run.map((card, i) => (
-                              <PlayingCard key={`r${runIdx}-${card}`} card={card} size="md" deal />
-                            ))}
+                          <div
+                            key={`run-${runIdx}`}
+                            className={cn('flex items-center justify-center', runGap)}
+                          >
+                            {runLabel(runIdx + 2)}
+                            {[0, 1, 2, 3, 4].map((index) =>
+                              run[index] !== undefined ? (
+                                <PlayingCard
+                                  key={`r${runIdx}-${index}-${run[index]}`}
+                                  card={run[index]}
+                                  size={runSize}
+                                  deal
+                                />
+                              ) : (
+                                emptySlot(`r${runIdx}-slot-${index}`, index)
+                              ),
+                            )}
                           </div>
                         ),
                       )}
@@ -2335,44 +2384,26 @@ export function TablePage({
               {multiRunOutcome}
               {squidSummary}
               {notInHand && (
-                <p className="rounded-xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm dark:bg-slate-800/90 dark:text-slate-300">
-                  {t("You're in the next hand.")}
-                </p>
+                <p className="table-notinhand">{t("You're in the next hand.")}</p>
               )}
               {!handLive && opponents.length === 0 && !amSpectator && (
                 <button
                   type="button"
                   onClick={() => setInviteOpen(true)}
-                  className="flex items-center gap-2 rounded-full bg-white/80 px-4 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200/70 hover:text-slate-900 dark:bg-slate-900/80 dark:text-slate-300 dark:ring-slate-700/70 dark:hover:text-slate-100"
+                  className="table-invite"
                 >
                   <UserPlus size={15} /> {t('Invite friends')} · {t('code')}{' '}
-                  <span className="font-display text-indigo-600 dark:text-indigo-300">
-                    {room.room.joinCode}
-                  </span>
+                  <span className="table-invite-code">{room.room.joinCode}</span>
                 </button>
               )}
             </>
           </RoundTable>
           </div>
 
-          {/* v3 feedback #7b: the deal command post lives in the open top-right
-              corner, never on the felt (where the board rows pushed it below
-              the fold). Host sees 「准备好就发牌」 + an always-reachable 发牌
-              button - click beats the auto-deal dwell outright (7a) - plus the
-              countdown to the next ready check. */}
-          {!handLive && mySeat !== null && isHost && (
-            <div className="absolute right-2 top-2 z-30 flex w-36 flex-col items-stretch gap-1.5 rounded-2xl bg-white/92 p-2.5 text-center shadow-[0_10px_30px_rgba(15,23,42,0.12)] ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/88 dark:ring-slate-700/70 md:w-40">
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                {opponents.length === 0 ? t('Invite a friend to deal.') : t('Deal when ready.')}
-              </p>
-              {opponents.length > 0 && (
-                <Button disabled={!wsConnected} className="w-full" onClick={startHand}>
-                  <Play size={16} weight="fill" /> {t('Deal hand')}
-                </Button>
-              )}
-              <AutoDealClock autoDealAt={hand.autoDealAt} />
-            </div>
-          )}
+          {/* L4 (rev2 decision): the host's deal post + auto-deal clock + the
+              ready check are merged into the bottom-right action cluster
+              (BettingPanel) - one card serves between-hand and in-hand, so
+              the old top-right command post is gone. */}
 
           {/* feedback #3: the last-hand recap floats over the top-left of the
               felt now - the standalone bottom panel is gone. It stops short of
@@ -2399,7 +2430,7 @@ export function TablePage({
 
           {/* popover click-away: over the felt only - the action bar stays
               usable while a dock popover is open */}
-          {(rankOpen || chatOpen) && (
+          {chatOpen && (
             <button
               className="absolute inset-0 z-20 cursor-default"
               aria-label={t('Close table controls')}
@@ -2407,81 +2438,21 @@ export function TablePage({
             />
           )}
 
-          {/* A8 (GGPoker ref, user feedback #5): the betting area is now a
-              compact widget anchored bottom-right of the table area - % pills,
-              slider + amount (chips and BB), big action buttons, action-clock
-              ring. The old full-width bottom box is gone. */}
-          <fieldset
-            disabled={!wsConnected}
-            className="absolute bottom-2 right-2 z-30 m-0 min-w-0 border-0 p-0 md:bottom-3 md:right-3"
-          >
-            <BettingPanel
-              mySeat={mySeat}
-              isHost={!!isHost}
-              urgent={urgent}
-              hideIdleStart
-            />
-          </fieldset>
-
-          {/* A6 + A9: rankings / chat popovers, sit-out, shortcuts button and
-              the balance chip - bottom-left, and on top of everything docked */}
-          <TableDock
-            compact={isPhone || compactBar}
-            hostGameplay={hostGameplay}
-            hasSeat={mySeat !== null}
-            sittingOut={meSittingOut}
-            sitOutDisabled={!wsConnected}
-            onToggleSitOut={() => {
-              if (wsConnected) setSitOut(!meSittingOut);
-            }}
-            rankOpen={rankOpen}
-            onToggleRank={toggleRank}
-            onClosePopovers={closeDockPopovers}
-            standings={standings}
-            minSettleHands={room.room.minSettleHands}
-            chatOpen={chatOpen}
-            onToggleChat={toggleChat}
-            unread={unreadChat}
-            chatBody={
-              <fieldset disabled={!wsConnected} className="h-full min-h-0">
-                <ChatPanel chrome={false} />
-              </fieldset>
-            }
-            balance={
-              me ? (
-                <div
-                  title={t('Your balance. Bought {n} total.', { n: fmt(myBought) })}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 font-display text-xs font-bold text-slate-800 shadow-sm ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/80 dark:text-slate-100 dark:ring-slate-700/70"
-                >
-                  <Wallet
-                    size={14}
-                    weight="fill"
-                    className="shrink-0 text-amber-500"
-                    aria-label={t('Your balance')}
-                  />
-                  <NumberFlow value={me.stack} />
-                  {myBought > 0 && (
-                    <span
-                      className={cn(
-                        'text-[0.65rem]',
-                        myNet >= 0
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : 'text-rose-600 dark:text-rose-400',
-                      )}
-                    >
-                      {myNet >= 0 ? `+${fmt(myNet)}` : `−${fmt(-myNet)}`}
-                    </span>
-                  )}
-                </div>
-              ) : null
-            }
-            shortcut={
-              <div className="inline-flex items-center rounded-full bg-white/85 p-0.5 shadow-sm ring-1 ring-slate-200/70 backdrop-blur dark:bg-slate-900/80 dark:ring-slate-700/70">
-                <PokerShortcutButton className="!text-slate-700 dark:!text-slate-200" />
-              </div>
-            }
-          />
+          {/* A8 + A6/A9: the corner controls. Portrait phones re-dock them
+              into the console strip (rendered below, outside the felt box). */}
+          {consoleFlow ? null : (
+            <>
+              {bettingCluster}
+              {dockNode}
+            </>
+          )}
         </div>
+        {consoleFlow && (
+          <div className="table-console relative z-30 flex shrink-0 items-end justify-between gap-1.5 px-0.5 pb-1">
+            {dockNode}
+            {bettingCluster}
+          </div>
+        )}
       </section>
 
       {sharedDialogs}

@@ -8,7 +8,9 @@ import { z } from 'zod';
 import { openDb, type DB } from './db.js';
 import { checkLogin, createSession, createUser, requireUser } from './auth.js';
 import { registerRoomRoutes } from './rooms.js';
+import { registerBotRoutes, type BotControl } from './botRoutes.js';
 import { leaderboardRankOf, registerProfileRoutes } from './profile.js';
+import { registerHandStatsRoutes } from './handStats.js';
 import { registerSocialRoutes } from './social.js';
 import { registerAccountRoutes } from './account.js';
 import { registerAdminRoutes } from './admin.js';
@@ -40,8 +42,11 @@ const loginSchema = registerSchema.omit({ publicKey: true });
 export function createApp(
   dbPath: string,
   storageInfo?: () => Record<string, unknown>,
-): { app: FastifyInstance; db: DB } {
+): { app: FastifyInstance; db: DB; botControl: BotControl } {
   const db = openDb(dbPath);
+  // The bot routes own the persisted lifecycle; an optional supervisor is
+  // attached after `app.listen()` (it needs the loopback URL) via this holder.
+  const botControl: BotControl = { hooks: null };
   // Trust exactly one hop - the immediate peer, which in production is Render's
   // load balancer. req.ip then resolves to the address that balancer observed
   // rather than the left-most X-Forwarded-For entry, which any client can forge
@@ -196,7 +201,9 @@ export function createApp(
   });
 
   registerRoomRoutes(app, db);
+  registerBotRoutes(app, db, botControl);
   registerProfileRoutes(app, db);
+  registerHandStatsRoutes(app, db);
   registerSocialRoutes(app, db);
   registerAccountRoutes(app, db);
   registerAdminRoutes(app, db);
@@ -213,5 +220,5 @@ export function createApp(
     });
   }
 
-  return { app, db };
+  return { app, db, botControl };
 }

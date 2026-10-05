@@ -1,0 +1,33 @@
+@source './preview.tsx';
+* { box-sizing: border-box; }
+body { margin: 0; }
+.skin-preview { min-height: 100dvh; color: var(--table-ink); padding: 30px 48px 18px; font-family: Outfit, sans-serif; }
+.preview-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.preview-eyebrow { color: #b9b0a3; font-size: 11px; letter-spacing: .22em; margin: 0 0 6px; }
+.preview-header h1 { font-size: 32px; font-weight: 500; letter-spacing: -.04em; margin: 0; }
+.preview-header label { color: #b9b0a3; font-size: 11px; display: grid; gap: 6px; }
+.preview-header select { background: #171614; color: #f4ecdc; border: 1px solid #62553e; padding: 9px 12px; border-radius: 8px; font: 14px Outfit, sans-serif; }
+.preview-header select:focus-visible, .preview-actions button:focus-visible { outline: 2px solid #f5d67b; outline-offset: 3px; }
+.preview-meta { display: flex; justify-content: space-between; color: #b9b0a3; font-size: 10px; letter-spacing: .16em; border-bottom: 1px solid #ffffff12; padding: 22px 0 12px; }
+.preview-stage { height: min(660px, calc(100dvh - 300px)); min-height: 430px; }
+.preview-pot { border-radius: 100px; padding: 5px 16px; background: var(--table-surface-cluster); color: var(--table-ink-soft); font-size: 12px; }
+.preview-pot strong { margin-left: 8px; font-size: 18px; color: white; }
+.preview-footer { max-width: 660px; margin: 8px auto 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px; background: var(--table-surface-dock); border: 1px solid var(--table-hairline); border-radius: 16px; }
+.preview-footer span { color: var(--table-gold-hi); font-size: 12px; letter-spacing: .12em; }
+.preview-footer p { margin: 4px 0 0; color: var(--table-muted); font-size: 12px; }
+.preview-actions { display: flex; gap: 8px; }
+.preview-actions button { padding: 12px 16px; background: var(--table-surface-btn); color: white; border: 1px solid var(--table-hairline); border-radius: 9px; font: 500 14px Outfit, sans-serif; }
+.preview-actions .preview-raise { color: var(--table-gold-ink); background: linear-gradient(var(--table-gold-pale), var(--table-gold-mid)); }
+.preview-note { text-align: center; color: #a79e8f; margin: 14px 0 0; font-size: 11px; }
+@media (max-width: 640px) {
+  .skin-preview { padding: 20px 8px; }
+  .preview-header { padding: 0 8px; gap: 8px; }
+  .preview-header h1 { font-size: 26px; }
+  .preview-eyebrow { font-size: 8px; }
+  .preview-header select { max-width: 172px; font-size: 12px; }
+  .preview-meta { margin: 0 8px; font-size: 9px; }
+  .preview-stage { height: 460px; min-height: 0; }
+  .preview-footer { flex-direction: column; align-items: stretch; margin: 0 8px; gap: 14px; }
+  .preview-actions button { flex: 1; padding: 12px 8px; }
+  .preview-note { font-size: 9px; }
+}

@@ -29,7 +29,7 @@
 | 场景 | 刻度 | 例 |
 |---|---|---|
 | 牌桌 HUD、按钮、状态行 | 最口语，能省则省 | 「轮到你了。」「跟 200」 |
-| 设置、个人页描述 | 口语但完整成句 | 「快捷键在 2D 和 3D 里都有效，轮到你时生效。」 |
+| 设置、个人页描述 | 口语但完整成句 | 「快捷键轮到你时生效。」 |
 | 错误/警告 | 口语、不责备、给出路 | 「密码不对，再试一次。」 |
 | 落地页营销 | 保留英文的克制俏皮，不加码 | 「自己人。自己的牌局。」 |
 | 公平性说明、账号合并等严肃流程 | 中性清晰，仍可说「你」 | 「你的密码只在这个浏览器里推导出签名密钥，从不发给服务器。」 |
@@ -102,7 +102,6 @@
 | hand abort / void hand | 本手作废 / 作废手牌 | 徽章「作废」 |
 | purchase / transfer / revert | 买入 / 转账 / 撤销 | 账本 kind 徽章 |
 | hand-settlement | 结算 | 徽章「结算」 |
-| lounge（3D） | 酒廊 | 与 2D「大厅」区分开；LOUNGE_DESTINATIONS：入口、电视区、吧台、沙发角、舞池、落地窗景 |
 | tournament formats: Freezeout / Knockout / Fixed-hand league | 淘汰制 / 击倒赛 / 固定手数月赛 | 「月赛」若与业务不符改「循环赛」；三选一后全站锁死 |
 | provably fair / fair play guide | 可验证发牌 / 公平玩法说明 | 页脚「Fair play」→「公平玩法」 |
 | 4AM Casino / 4AM | **不翻译** | 品牌名保留原文；正文中英混排时按 4.5 加半角空格 |
@@ -141,11 +140,11 @@
 
 | 位置 | 处理 | 理由 |
 |---|---|---|
-| 段落：「Keep your focus on the cards in 2D, or settle into the lounge in 3D. It's the same hand, with everyone at the same table.」 | **合并为一句**：「2D 专心打牌，3D 窝进酒廊——同一手牌，同一张桌。」 | 两句说了同一件事，中文对「补刀式同义重复」容忍度低 |
+| 段落：「Keep your focus on the cards, with everyone at the same table.」 | 「专心看牌，大家同坐一张桌。」 | 由原两句收敛为一句 |
 | 「No venue to book. No chips to count out. Just a table with room for your friends.」 | **删第三句**，保留：「不用订场地，不用数筹码。」 | 英文第三句是总结性 marketing filler，中文里像凑字数 |
 | 「The hopeful flop. The unexpected river. The friend who definitely has it this time. Real poker moments, play-money chips.」 | 保留前三个排比（这是灵魂），**删末句**，把 play-money 交给 FAQ 和页脚说 | 末句与首句语义重叠 |
 | 「A place to play. A reason to hang out.」 | 意译为「能打牌，也能待着。」 | 直译「一个游玩的场所，一个相聚的理由」即 AI 味范本——正好用作团队对照教材 |
-| meta description / og:description | **重写为 ≤ 40 字**：「和朋友开私密德州牌局，语音聊天、3D 酒廊、对局回放。纯娱乐筹码。」 | 分享文案被截断是硬约束，不是风格选择 |
+| meta description / og:description | **≤ 40 字**：「和朋友开私密德州牌局，语音聊天、牌局回放。纯娱乐筹码。」 | 分享文案被截断是硬约束，不是风格选择 |
 | 「Inside 4AM — an example room」 | 「4AM 实拍 —— 示例房间」 | 短、清楚 |
 | 三个步骤小标题 | 「开一桌，变成你的场子」「把链接丢进群聊」「发牌，闲聊，再来一局」 | 动词开头、口语量词「一桌」，去掉翻译腔 |
 
@@ -259,11 +258,11 @@
 | Select pot size, then Enter to confirm. | 选满池，回车确认。 |
 | Select your full stack, then Enter to confirm. | 选全部筹码，回车确认。 |
 | Enable keyboard shortcuts | 启用快捷键 |
-| Shortcuts work in 2D and 3D on your turn. They pause while you type, open a menu or dialog, or wait for the server. WASD stays available for lounge movement. | 快捷键在 2D 和 3D 里轮到你时生效；输入文字、打开菜单或弹窗、等待服务器时会暂停。WASD 仍用于酒廊走位。 |
+| Shortcuts work on your turn. They pause while you type, open a menu or dialog, or wait for the server. | 快捷键在轮到你时生效；输入文字、打开菜单或弹窗、等待服务器时会暂停。 |
 | None | 无 |
 | Recording cancelled. | 已取消录制。 |
 | {Action} set to {key}. Save to apply. | 「{动作}」已设为 {key}，保存后生效。 |
-| Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved. | 请选一个字母或数字，可加 Shift。WASD 和浏览器自带快捷键不可用。 |
+| Choose a letter or number, optionally with Shift. Browser shortcuts are reserved. | 请选一个字母或数字，可加 Shift。浏览器自带快捷键不可用。 |
 | Keyboard shortcuts saved to your account. | 快捷键已保存到账号。 |
 | Could not load your keyboard shortcuts. | 没能加载你的快捷键设置。 |
 | Press a key for {action}. Escape cancels; Backspace clears. | 按下要绑定「{动作}」的键。Esc 取消，Backspace 清除。 |
@@ -272,7 +271,7 @@
 | Defaults restored. Save to apply. | 已恢复默认，保存后生效。 |
 | Invalid shortcut settings. | 快捷键设置无效。 |
 | Include every action, or clear its shortcut. | 每个动作都要绑定，或者清空绑定。 |
-| Use a letter or number, optionally with Shift. WASD is reserved for 3D movement. | 请用字母或数字，可加 Shift。WASD 留给 3D 走位了。 |
+| Use a letter or number, optionally with Shift. | 请用字母或数字，可加 Shift。 |
 
 ### 5b. 登录 / 注册 / 找回 `LoginPage.tsx`
 
@@ -373,9 +372,7 @@
 | Start a table / Open your lobby | 开一桌 / 去大厅 |
 | Play-money poker. / Right in your browser. | 纯娱乐筹码。/ 浏览器直接开打。 |
 | Have a room code? Join your friends → | 有房间码？进朋友的桌 → |
-| Private rooms / Voice & chat / 2D & 3D views / Hand replays | 私密房间 / 语音和文字 / 2D·3D 双视图 / 牌局回放 |
-| A place to play. A reason to hang out. | 能打牌，也能待着。 |
-| Inside 4AM — an example room / The lounge / The table | 4AM 实拍 —— 示例房间 / 酒廊 / 牌桌 |
+| Private rooms / Voice & chat / Hand replays | 私密房间 / 语音和文字 / 牌局回放 |
 
 **三步（含小标题下压成一个动词短句）**
 
@@ -386,7 +383,7 @@
 | Make tonight poker night | 今晚就开牌 |
 | 1. Make it your table. — Create a private room and choose your blinds. The host gets things ready for the first hand. | ① 开一桌，变成你的场子。—— 建个私密房间，定好盲注，房主把第一手牌张罗好。 |
 | 2. Drop the link in the chat. — Share the invite link or room code. Your friends sign in, join the room, and pick a seat. | ② 把链接丢进群聊。—— 邀请链接或房间码都行，朋友登录、进房、挑个位子。 |
-| 3. Deal. Talk. Run it back. — Play Texas Hold'em together. Switch views, react to a hand, or get up and explore between games. | ③ 发牌，闲聊，再来一局。—— 一起打德州扑克，随时切换视图、甩个表情，牌局之间去酒廊溜达一圈。 |
+| 3. Deal. Talk. Run it back. — Play Texas Hold'em together. React to a hand and run it back. | ③ 发牌，闲聊，再来一局。—— 一起打德州扑克，甩个表情，再来一局。 |
 
 **中段与收尾**
 
@@ -394,7 +391,7 @@
 |---|---|
 | All the tension. / None of the stakes. | 该心跳的一样不少，/ 真钱一分没有。 |
 | The hopeful flop. The unexpected river. The friend who definitely has it this time.（末句删） | 盼翻牌，怕河牌，还有那个每次都说「这把有牌」的朋友。 |
-| （合并行）Keep your focus on the cards… same table. | 2D 专心打牌，3D 窝进酒廊——同一手牌，同一张桌。 |
+| Keep your focus on the cards, with everyone at the same table. | 专心看牌，大家同坐一张桌。 |
 | Good games. / Nothing swept under the table. | 牌局要爽，/ 更要摊得开。 |
 | An encrypted deal, a record of every chip, and replays for the hands you're still talking about. | 加密发牌、每一枚筹码都有账，那些你们聊到半夜的牌局都能回放。 |
 | Read the fair-play guide | 看公平玩法说明 |
@@ -412,8 +409,7 @@
 |---|---|
 | Is this real-money poker? — No. 4AM uses play-money chips. It does not take deposits, pay out winnings, or process real-money bets. | 这是真钱扑克吗？—— 不是。4AM 只用娱乐筹码：不收存款，不提现，不经手任何真钱。 |
 | Does everyone need to download an app? — No download is needed. Open 4AM in your browser, sign in, and join your friend's table using its invite link or room code. | 每个人都要装 App 吗？—— 谁都不用装。浏览器打开 4AM，登录，凭邀请链接或房间码进桌。 |
-| Do I have to play in 3D? — You can use the focused 2D table or the 3D lounge, and switch between them in the same room… | 必须用 3D 打吗？—— 2D 牌桌专心打，3D 酒廊坐着聊；同一个房间里随时切换，操作不变。 |
-| Can we talk while we play? — Yes. Rooms have text chat and voice controls… | 打牌时能说话吗？—— 能。房间有文字聊天和语音控制，还可以甩表情、换造型，局间去酒廊转转。 |
+| Can we talk while we play? — Yes. Rooms have text chat and voice controls. You can also react at the table. | 打牌时能说话吗？—— 能。房间有文字聊天和语音控制，还可以在牌桌上甩个表情。 |
 | How can I check what happened in a hand? — Finished hands have replays and a recorded action history… | 想复盘某一手怎么办？—— 打完的牌局有回放和完整的操作记录，筹码流向看房间账本；加密发牌和验证的说明在公平玩法页。 |
 
 **静态 head（index.html，`lang="zh-CN"`）**
@@ -421,7 +417,7 @@
 | EN | ZH |
 |---|---|
 | title: 4AM Casino — your people, your poker night | 4AM Casino —— 自己人，自己的牌局 |
-| meta/og description（≤40 字） | 和朋友开私密德州牌局：语音聊天、3D 酒廊、牌局回放。纯娱乐筹码，浏览器直接开打。 |
+| meta/og description（≤40 字） | 和朋友开私密德州牌局：语音聊天、牌局回放。纯娱乐筹码，浏览器直接开打。 |
 
 ---
 
@@ -443,7 +439,7 @@
    - 术语一致性可集中审计（词典就是唯一的真相源 + 走查面）。
    - 需人工二次处理的只有"拼句式"文案（如 replay 的 `Seat N votes to run it twice`），改成整句模板键 + 变量。
 2. **服务器 prose**：不改协议。让 `packages/shared` 把 server 现在散发的散文字面量收口成导出常量（server 引用、web 词典同源），客户端 `tr(enText)`：精确匹配 → 模板匹配（正则捕获 `${name}` 等）→ 原样回退。这一层同样覆盖 ledger `kind` 徽章与 note、`hand_abort.reason`、`betting.ts` 抛出的 `minimum is ${x}` / `raise rights closed` 等。**注意 server 端 prose 大小写风格不统一（`invalid input` vs `Invalid agent access settings.`），短语库键要归一化匹配（trim + 首字母不敏感），但输出遵循中文规范。**
-3. **Canvas 文案**（shareCard.ts / replayGif.ts / 3D 铭牌）：同一 `tr()`，外加两条专属规则——① 画布版词典允许更短的变体键（`POT 1,200` → 「底池 1,200」；`RUN 2` → 「第 2 跑」；`4amcasino.com · provably fair` → 「4amcasino.com · 发牌可验证」）；② 现有 `.slice(0, 40)` / `ellipsize` 对 CJK 依然可用（slice 按码点截断没问题），但**字体栈必须补 CJK**：`Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif`，否则导出图是豆腐块；GIF/分享图上的中文建议同步做一次字重与描边检查。
+3. **Canvas 文案**（shareCard.ts / replayGif.ts）：同一 `tr()`，外加两条专属规则——① 画布版词典允许更短的变体键（`POT 1,200` → 「底池 1,200」；`RUN 2` → 「第 2 跑」；`4amcasino.com · provably fair` → 「4amcasino.com · 发牌可验证」）；② 现有 `.slice(0, 40)` / `ellipsize` 对 CJK 依然可用（slice 按码点截断没问题），但**字体栈必须补 CJK**：`Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif`，否则导出图是豆腐块；GIF/分享图上的中文建议同步做一次字重与描边检查。
 4. **格式化**：`fmt()` 换 `Intl.NumberFormat('zh-CN')`（行为几乎不变，保住占位）；把散落的 27 处裸 `toLocaleString()/toLocaleDateString()/toLocaleTimeString()` 收口到 `shared/lib/datetime.ts` 三个 helper（`fmtTime/fmtDate/fmtRelative`，统一 zh-CN 与 4.1 的相对时间规则）。这是纯机械 codemod，零上游冲突面。
 5. **静态 head**：`index.html` 的 title/meta/og 与 `lang="zh-CN"` 单独维护一份中文常量（Vite 构建期注入或部署时替换均可，改动只在 1 个文件）；OG 图不带英文标语则无需重绘。
 6. **键名残留排查**：CI 加一条 grep——`src/pages|features|widgets` 下未被 `t()` 包裹、含英文句子的 JSX 文本，输出报告不阻塞；每迭代清零。
@@ -456,4 +452,4 @@
 
 ---
 
-*设计依据文件：SettingsPage.tsx、KeyboardShortcuts.tsx、LoginPage.tsx、ProfileDialog.tsx、ActionBar.tsx、LandingPage.tsx、ChatPanel.tsx、TablePage.tsx、gameClient.ts、replay.ts、LedgerPage.tsx、shared/{evaluate,betting,commission,lounge,tournamentPolicy,pokerHotkeys,cards}.ts、apps/web/shared/lib/cn.ts、server/{game,rooms,ledger,settle,rake,account,admin,profile}.ts、apps/web/index.html。未改动任何源码。*
+*设计依据文件：SettingsPage.tsx、KeyboardShortcuts.tsx、LoginPage.tsx、ProfileDialog.tsx、ActionBar.tsx、LandingPage.tsx、ChatPanel.tsx、TablePage.tsx、gameClient.ts、replay.ts、LedgerPage.tsx、shared/{evaluate,betting,commission,tournamentPolicy,pokerHotkeys,cards}.ts、apps/web/shared/lib/cn.ts、server/{game,rooms,ledger,settle,rake,account,admin,profile}.ts、apps/web/index.html。未改动任何源码。*

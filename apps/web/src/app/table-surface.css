@@ -1,0 +1,103 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * table-surface.css — table skeleton paint
+ *
+ * Room background, rail (thick charcoal edge + gold hairline), felt (deep
+ * forest + radial vignette + micro-noise + 4AM watermark), and the empty-seat
+ * sit spot. Layer sizes/offsets stay in widgets/table/geometry.ts (FELT.*) —
+ * this file only paints them. Colors reference table-tokens.css; the only
+ * literals are neutral white/black alpha overlays.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ground shadow under the table */
+.table-ground {
+  border-radius: 50%;
+  background: #000;
+  filter: blur(var(--table-ground-shadow-blur));
+  opacity: var(--table-ground-shadow-opacity);
+}
+
+/* the table's dark underside (thickness below the rail top) */
+.table-rail-side {
+  border-radius: 50%;
+  background: var(--table-rail-lo);
+}
+
+/* rail top: charcoal leather, soft top highlight, one thin gold hairline */
+.table-rail-top {
+  border-radius: 50%;
+  background:
+    var(--table-rail-texture, linear-gradient(transparent, transparent)),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 26%),
+    radial-gradient(120% 160% at 50% 0%, var(--table-rail-hi) 0%, var(--table-rail) 52%, var(--table-rail-lo) 100%);
+  border: 1px solid var(--table-rail-gold);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.12),
+    inset 0 -6px 14px rgba(0, 0, 0, 0.45);
+}
+
+/* felt: deep forest green, radial vignette, noise.
+   NOTE: no `position` here — the element carries Tailwind's `absolute`
+   (a positioned element already anchors the watermark + ::before), and
+   unlayered rules would override utilities. */
+.table-felt {
+  border-radius: 50%;
+  background: radial-gradient(
+    78% 78% at 50% 46%,
+    var(--table-felt-core) 0%,
+    var(--table-felt-mid) 58%,
+    var(--table-felt-edge) 100%
+  );
+  box-shadow: var(--table-felt-inset-shadow);
+  overflow: hidden;
+}
+.table-felt::before {
+  /* fabric micro-noise — same SVG turbulence tile as the mockup */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: var(--table-felt-noise-opacity);
+  mix-blend-mode: overlay;
+}
+
+/* faint large wordmark across the upper felt (GG tablestand motif) */
+.table-felt-watermark {
+  position: absolute;
+  left: 50%;
+  top: var(--table-watermark-top);
+  transform: translate(-50%, -50%);
+  font-family: var(--font-table-num);
+  font-size: var(--table-watermark-size);
+  font-weight: 900;
+  letter-spacing: 0.44em;
+  white-space: nowrap;
+  color: var(--table-felt-watermark-ink);
+  opacity: var(--table-felt-watermark-opacity);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* empty seat — dashed gold ring on the seat ring (was dashed indigo) */
+.table-sit-spot {
+  display: flex;
+  height: 3.5rem;
+  width: 3.5rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1.5px dashed color-mix(in srgb, var(--table-gold-hi) 35%, transparent);
+  background: rgba(10, 8, 5, 0.3);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--table-muted-2);
+  transition:
+    border-color 0.2s,
+    background-color 0.2s,
+    color 0.2s;
+}
+.table-sit-spot:hover {
+  border-color: color-mix(in srgb, var(--table-gold-hi) 70%, transparent);
+  background: color-mix(in srgb, var(--table-gold) 10%, transparent);
+  color: var(--table-gold-hi);
+}

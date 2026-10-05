@@ -119,7 +119,7 @@ export function KeyboardShortcuts() {
       });
       if (!key) {
         setError(
-          'Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved.',
+          'Choose a letter or number, optionally with Shift. Browser shortcuts are reserved.',
         );
         return;
       }
@@ -189,7 +189,7 @@ export function KeyboardShortcuts() {
       </label>
       <p className="text-sm leading-relaxed text-slate-500">
         {t(
-          'Shortcuts work in 2D and 3D on your turn. They pause while you type, open a menu or dialog, or wait for the server. WASD stays available for lounge movement.',
+          'Shortcuts work on your turn. They pause while you type, open a menu or dialog, or wait for the server.',
         )}
       </p>
       <div className="divide-y divide-border-button-default">

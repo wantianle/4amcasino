@@ -17,14 +17,13 @@ const settings: Record<string, string> = {
   'Quick bet buttons on the table, saved to your account.': '牌桌上的快捷下注按钮，保存在你的账号里。',
   'Bet button {n}': '快捷下注按钮 {n}',
   'Keyboard shortcuts': '快捷键',
-  Appearance: '外观',
+  'Language & display': '语言与显示',
   'Account & security': '账号与安全',
   'Merge accounts': '账号合并',
   Session: '登录状态',
 
   // Card descriptions (§5a)
   'Your quick actions, saved to your account.': '你的快捷操作，保存在账号里。',
-  'Choose light or dark. Your preference is saved on this device.': '浅色或深色，只记在这台设备上。',
   'Your password derives the key that signs your cards, right here in this browser. Nothing on this card is ever sent to the server in the clear.':
     '你的密码在这个浏览器里推导出为牌签名的密钥；本页任何内容都不会明文发给服务器。',
   'Combine two accounts that belong to the same person. Once a platform admin approves it, everything moves to the account you keep.':
@@ -33,7 +32,7 @@ const settings: Record<string, string> = {
     '退出会清空这个浏览器里的密钥，用同一个密码重新登录就能找回。',
   'Sign out': '退出登录',
 
-  // Language control (Appearance card). Option labels are endonyms and never
+  // Language control (Language & display card). Option labels are endonyms and never
   // go through the dictionary: 中文 stays 中文, English stays English.
   Language: '界面语言',
   'Choose the language of menus and messages. It is saved on this device.':
@@ -71,8 +70,8 @@ const settings: Record<string, string> = {
 
   // Shortcut panel (§5a)
   'Enable keyboard shortcuts': '启用快捷键',
-  'Shortcuts work in 2D and 3D on your turn. They pause while you type, open a menu or dialog, or wait for the server. WASD stays available for lounge movement.':
-    '快捷键在 2D 和 3D 里轮到你时生效；输入文字、打开菜单或弹窗、等待服务器时会暂停。WASD 仍用于酒廊走位。',
+  'Shortcuts work on your turn. They pause while you type, open a menu or dialog, or wait for the server.':
+    '快捷键在轮到你时生效；输入文字、打开菜单或弹窗、等待服务器时会暂停。',
   None: '无',
   'Shortcut for {action}': '「{action}」的快捷键',
   'Record {action} shortcut': '录制「{action}」快捷键',
@@ -82,8 +81,8 @@ const settings: Record<string, string> = {
     '按下要绑定「{action}」的键。Esc 取消，Backspace 清除。',
   'Recording cancelled.': '已取消录制。',
   '{action} set to {key}. Save to apply.': '「{action}」已设为 {key}，保存后生效。',
-  'Choose a letter or number, optionally with Shift. WASD and browser shortcuts are reserved.':
-    '请选一个字母或数字，可加 Shift。WASD 和浏览器自带快捷键不可用。',
+  'Choose a letter or number, optionally with Shift. Browser shortcuts are reserved.':
+    '请选一个字母或数字，可加 Shift。浏览器自带快捷键不可用。',
   'Keyboard shortcuts saved to your account.': '快捷键已保存到账号。',
   'Could not load your keyboard shortcuts.': '没能加载你的快捷键设置。',
   'Could not load shortcuts.': '快捷键没能加载出来。',
@@ -104,8 +103,8 @@ const settings: Record<string, string> = {
   // text here (translated at the display site; the shared package stays English).
   'Invalid shortcut settings.': '快捷键设置无效。',
   'Include every action, or clear its shortcut.': '每个动作都要绑定，或者清空绑定。',
-  'Use a letter or number, optionally with Shift. WASD is reserved for 3D movement.':
-    '请用字母或数字，可加 Shift。WASD 留给 3D 走位了。',
+  'Use a letter or number, optionally with Shift.':
+    '请用字母或数字，可加 Shift。',
   '{key} is assigned to more than one action.': '「{key}」已分配给多个动作。',
 };
 

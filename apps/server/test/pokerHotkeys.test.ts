@@ -63,12 +63,15 @@ describe('account poker shortcuts', () => {
     ).json();
     expect(publicProfile.pokerHotkeys).toBeUndefined();
   });
+  it.each(['A', 'W', 'S', 'D', 'Shift+W'])(
+    'accepts letter or shifted-letter binding %s',
+    async (key) => {
+      expect(
+        (await put({ ...defaults, bindings: { ...defaults.bindings, fold: key } })).statusCode,
+      ).toBe(200);
+    },
+  );
   it.each([
-    'A',
-    'W',
-    'S',
-    'D',
-    'Shift+W',
     'Enter',
     'Escape',
     'Ctrl+F',
@@ -77,7 +80,7 @@ describe('account poker shortcuts', () => {
     'q',
     'Shift+Shift+F',
     '💰',
-  ])('rejects reserved or malformed key %s', async (key) => {
+  ])('rejects malformed key %s', async (key) => {
     expect(
       (await put({ ...defaults, bindings: { ...defaults.bindings, fold: key } })).statusCode,
     ).toBe(400);

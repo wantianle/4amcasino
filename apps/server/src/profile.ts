@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { isPlatform, platformUserId } from './platform.js';
-import { canBank, getRoom, isMember, roomEvents } from './rooms.js';
+import { canBank, getRoom, isMember } from './rooms.js';
 import { DEFAULT_POKER_HOTKEYS, parsePokerHotkeys, describeScore, evaluate7 } from '@4am/shared';
 
 const MAX_AVATAR_BYTES = 300_000;
@@ -65,8 +65,6 @@ const profileSchema = z.object({
   bio: z.string().trim().max(280).optional(),
   cardBack: z.enum(CARD_BACKS).optional(),
   fourColor: z.boolean().optional(),
-  theme: z.enum(['light', 'dark', 'cyber']).optional(),
-  avatar3d: z.string().max(300).optional(),
   quickPhrases: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
   privateMode: z.boolean().optional(),
   autoJoinInvites: z.boolean().optional(),
@@ -119,7 +117,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/profile', authed, async (req) => {
     const row = db
       .prepare(
-        'SELECT id, username, display_name, bio, avatar_version, card_back, four_color, theme, avatar3d, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, bet_ratios, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
+        'SELECT id, username, display_name, bio, avatar_version, card_back, four_color, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, bet_ratios, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
       )
       .get(req.userId) as {
       id: number;
@@ -129,12 +127,10 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       avatar_version: number;
       card_back: string;
       four_color: number;
-      theme: string;
-      avatar3d: string | null;
       quick_phrases: string | null;
       private_mode: number;
       auto_join_invites: number;
-      auto_ready: number;
+      auto_ready: number | null;
       poker_hotkeys: string | null;
       bet_ratios: string | null;
       hasAvatar: number;
@@ -148,12 +144,13 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       avatarVersion: row.avatar_version,
       cardBack: row.card_back,
       fourColor: !!row.four_color,
-      theme: row.theme,
-      avatar3d: row.avatar3d,
       quickPhrases: row.quick_phrases ? (JSON.parse(row.quick_phrases) as string[]) : [],
       privateMode: !!row.private_mode,
       autoJoinInvites: !!row.auto_join_invites,
-      autoReady: !!row.auto_ready,
+      // Default-on: a stored explicit 0 (the player turned it off) stays false,
+      // while a never-set/NULL value resolves to true so it matches the signup
+      // default and the client's `defaultPrefs`.
+      autoReady: row.auto_ready === null || row.auto_ready === undefined ? true : !!row.auto_ready,
       pokerHotkeys: storedPokerHotkeys(row.poker_hotkeys),
       // A NULL column means the player has never saved quick-bet ratios, so
       // omit the field entirely: the web's loadPrefs then keeps whatever the
@@ -166,7 +163,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.put('/api/profile', authed, async (req, reply) => {
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid profile' });
-    const { displayName, bio, cardBack, fourColor, theme, quickPhrases, privateMode } = parsed.data;
+    const { displayName, bio, cardBack, fourColor, quickPhrases, privateMode } = parsed.data;
     if (parsed.data.pokerHotkeys !== undefined)
       db.prepare('UPDATE users SET poker_hotkeys = ? WHERE id = ?').run(
         JSON.stringify(parsed.data.pokerHotkeys),
@@ -197,19 +194,6 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
         parsed.data.showBestHand ? 1 : 0,
         req.userId,
       );
-    if (parsed.data.avatar3d !== undefined) {
-      db.prepare('UPDATE users SET avatar3d = ? WHERE id = ?').run(
-        parsed.data.avatar3d,
-        req.userId,
-      );
-      // the character changed: every table they sit at repaints live
-      const memberRooms = db
-        .prepare('SELECT room_id FROM room_players WHERE user_id = ?')
-        .all(req.userId) as { room_id: string }[];
-      for (const r of memberRooms) roomEvents.emit('changed', r.room_id);
-    }
-    if (theme !== undefined)
-      db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.userId);
     if (quickPhrases !== undefined)
       db.prepare('UPDATE users SET quick_phrases = ? WHERE id = ?').run(
         JSON.stringify(quickPhrases),

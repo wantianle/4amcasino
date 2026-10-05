@@ -1,0 +1,257 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * table-center.css — center information area
+ *
+ * The felt's center column (RoundTable's potRef children) plus the top rail
+ * ribbon: pot pill, feature banners / slots, run chips, outcome, summaries,
+ * prompts and the last-hand line. All colors reference table-tokens.css;
+ * sizes that are geometry live in geometry.ts or the tier classes. This file
+ * owns static appearance; component motion lives in TSX, with the shared
+ * pod-state transitions in table-motion.css.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Total Pot pill (GG "Total Pot : X") ── */
+.table-pot-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 16px;
+  border-radius: var(--radius-table-pill);
+  background: var(--table-surface-label);
+  border: 1px solid color-mix(in srgb, var(--table-gold) 45%, transparent);
+  box-shadow: var(--shadow-table-disc);
+}
+.table-pot-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--table-label);
+}
+.table-pot-val {
+  font-family: var(--font-table-num);
+  font-size: var(--text-table-pot);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--table-gold-hi);
+}
+
+/* ── feature banners (replaces the in-column pill row) ──
+   The stack is static content; RoundTable positions it INSIDE the locked
+   canvas so it scales with the table: wrapped in `.table-ribbon-rail` when
+   the top rail band is free, or flowed at the head of the center column
+   when a seat occupies top-center (everything but 1/3/5 seats). */
+.table-ribbon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  pointer-events: none;
+}
+.table-ribbon-rail {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15; /* below the pods (z-20): the ribbon can never cover a seat */
+  pointer-events: none;
+}
+.table-ribbon-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 22px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+.table-ribbon .rb-squid {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--table-squid);
+}
+.table-ribbon .rb-bomb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--table-gold);
+}
+.table-ribbon .rb-note {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--table-gold-hi);
+  background: rgba(12, 10, 6, 0.6);
+  border-radius: var(--radius-table-pill);
+  padding: 2px 10px;
+}
+
+/* ── run chip (第 N 跑) — dark + gold, replaces the fuchsia pill ── */
+.table-run-chip {
+  font-family: var(--font-table-num);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--table-gold-hi);
+  background: var(--table-surface-label);
+  border: 1px solid color-mix(in srgb, var(--table-gold) 40%, transparent);
+  border-radius: var(--radius-table-pill);
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+/* ── empty community-card slot — faint gold dashes (mockup .slot.void) ── */
+.table-slot {
+  border: 2px dashed color-mix(in srgb, var(--table-gold-hi) 14%, transparent);
+}
+
+/* ── multi-run outcome line ── */
+.table-outcome {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--table-gold-hi);
+  background: var(--table-surface-label);
+  border: 1px solid var(--table-hairline);
+  border-radius: var(--radius-table-pill);
+  padding: 4px 12px;
+}
+
+/* ── squid settlement summary — dark card, violet accent kept ── */
+.table-squid-summary {
+  background: rgba(12, 10, 6, 0.92);
+  border: 1px solid color-mix(in srgb, var(--table-squid) 45%, transparent);
+  border-radius: var(--radius-table-pod);
+  box-shadow: var(--shadow-table-cluster);
+  padding: 8px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.table-squid-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--table-squid);
+}
+.table-squid-sub {
+  font-weight: 500;
+  color: color-mix(in srgb, var(--table-squid) 65%, var(--table-muted));
+}
+.table-squid-chip {
+  font-family: var(--font-table-num);
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-table-pill);
+  padding: 1px 8px;
+}
+.table-squid-chip--pos {
+  background: color-mix(in srgb, var(--table-gold) 14%, transparent);
+  color: var(--table-gold-hi);
+}
+.table-squid-chip--neg {
+  background: color-mix(in srgb, var(--table-down) 12%, transparent);
+  color: var(--table-down);
+}
+.table-squid-chip--zero {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--table-faint);
+}
+
+/* ── run-it-twice / multi-run negotiation prompt — dark + gold ── */
+.table-prompt {
+  background: rgba(13, 11, 8, 0.96);
+  border: 1px solid color-mix(in srgb, var(--table-gold) 45%, transparent);
+  border-radius: var(--radius-table-pod);
+  box-shadow: var(--shadow-table-cluster);
+  padding: 10px 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.table-prompt-head {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--table-gold-hi);
+}
+.table-prompt-detail {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--table-ink-soft);
+}
+.table-prompt-note {
+  font-size: 10.5px;
+  color: var(--table-faint);
+}
+
+/* ── not-in-hand notice + invite entry ── */
+.table-notinhand {
+  background: var(--table-surface-label);
+  border: 1px solid var(--table-hairline);
+  border-radius: 12px;
+  padding: 7px 15px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--table-muted);
+}
+.table-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--table-surface-dock);
+  border: 1px solid var(--table-hairline-3);
+  border-radius: var(--radius-table-pill);
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--table-muted);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+.table-invite:hover {
+  color: var(--table-gold-hi);
+  border-color: color-mix(in srgb, var(--table-gold) 50%, transparent);
+}
+.table-invite-code {
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--table-gold);
+}
+
+/* ── last-hand strip (top-left overlay) — quiet dark glass ── */
+.table-lasthand {
+  background: rgba(12, 10, 7, 0.78);
+  border: 1px solid var(--table-hairline-3);
+  border-radius: 12px;
+  color: var(--table-ink);
+  box-shadow: var(--shadow-table-disc);
+}
+.table-lasthand .lh-lab {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--table-label);
+}
+.table-lasthand .lh-txt {
+  color: var(--table-muted);
+}
+.table-lasthand .lh-txt b {
+  font-family: var(--font-table-num);
+  color: var(--table-gold-hi);
+}
+.table-lasthand .lh-ic,
+.table-lasthand .lh-caret {
+  color: var(--table-faint);
+}
+.table-lasthand a {
+  color: var(--table-gold);
+}

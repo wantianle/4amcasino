@@ -1,0 +1,8 @@
+{
+  "pageErrors": [],
+  "source": "Mock REST + room websocket, contract checked against handStats.ts",
+  "viewports": [
+    1440,
+    390
+  ]
+}

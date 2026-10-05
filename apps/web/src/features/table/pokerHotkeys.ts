@@ -81,7 +81,7 @@ export const pokerActionLatch = createActionLatch();
 export function pokerOverlayOpen(): boolean {
   return [
     ...document.querySelectorAll<HTMLElement>(
-      '[role="dialog"], [role="menu"], .lounge-panel, [data-poker-hotkeys-blocked]',
+      '[role="dialog"], [role="menu"], [data-poker-hotkeys-blocked]',
     ),
   ].some(
     (element) =>

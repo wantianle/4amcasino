@@ -1,14 +1,14 @@
 ---
 name: 4AM Casino — Zeus
-description: Private poker tables with a Zeus account interface and an immersive lounge.
+description: Private poker tables with a Zeus account interface.
 colors:
   primary: 'oklch(62.3% 0.214 259.815)'
   primary-deep: 'oklch(54.6% 0.245 262.881)'
-  canvas: '#ffffff'
-  surface: '#f7f7f7'
-  border: '#ebebeb'
-  ink: '#171717'
-  muted: '#707070'
+  canvas: '#0a0a0a'
+  surface: '#171717'
+  border: '#262626'
+  ink: '#ededed'
+  muted: '#b8b8b8'
 typography:
   body:
     fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif'
@@ -46,17 +46,16 @@ components:
 
 **Creative North Star: "Zeus around the table"**
 
-Use the official Zeus UI design system selected by the user at myzeusui.com:
-light or dark canvas, neutral panels, Inter typography, blue actions, and a floating icon
-sidebar. Poker remains the content. The immersive 3D lounge uses the same action
-language in transparent widgets over its night scene.
+Use the official Zeus UI design system selected by the user at myzeusui.com, in its
+dark appearance only: a dark canvas, neutral panels, Inter typography, blue actions, and a floating icon
+sidebar. Poker remains the content.
 
 **Key Characteristics:**
 
-- Zeus light and dark appearances, selected with the official theme control and saved on the device.
+- The app is **always dark**, matched to the poker-table style; the light/dark toggle and its device
+  preference have been removed (see Colors).
 - Compact navigation that expands to show names and real tables.
 - Actual account data, honest empty states, readable gains and losses.
-- A full viewport for the 3D world, independent of the control state.
 
 ## Colors
 
@@ -64,11 +63,17 @@ The normative palette comes from `@zeus/tokens` 0.2.3. `zeus.css` bridges existi
 slate and indigo utility names to the neutral and blue palette. Primary colors in
 the frontmatter retain the source OKLCH values. Emerald means positive results,
 rose means losses or a fold, and amber means committed chips or blind positions.
-Small text on neutral panels uses a darker muted tone in light mode and a lighter muted tone in dark mode.
+Small text on neutral panels uses the lighter muted tone. The whole application renders in the dark
+appearance only: the light appearance, the theme switch control, and the pre-render device preference have
+been removed; no design work targets a light canvas.
 
-The 3D environment retains its night scene and glass controls in either application appearance.
+Table-surface tokens (`--table-*` / `table-*` utilities in `apps/web/src/app/table-tokens.css`) are
+**appearance-independent and always dark**: `.dark` must never override them, and no light-mode variant of
+the felt, rail, gold system, or betting cluster will be designed.
+
 Card faces stay white for recognition; card-back colorways and four-color suits remain player preferences.
-The device preference is applied before the app renders and is independent of server profile preferences.
+The former before-render theme device preference is gone with the toggle — the app starts dark with no
+device lookup.
 
 ## Typography
 
@@ -86,8 +91,7 @@ rail. Search uses the same destination list, including settlement and settings.
 
 Account panels use a responsive grid with zero minimum column widths to prevent
 long content from pushing the viewport wider. The lobby is checked down to 320
-pixels. The 3D world always occupies the dynamic viewport; its floating controls
-never reserve a page track or resize the canvas.
+pixels.
 
 Public pages inherit the same Zeus controls and typography. Landing-page
 composition, example-media rules, and responsive behavior live in its
@@ -141,7 +145,7 @@ explicit empty states, and an accessible data table. Respect reduced motion.
 Keep settings inline, with the current value beside the editable percentage,
 explicit application scope, a whole-chip example, and an audit table. Save and
 reload states must show whether another session changed the underlying value.
-Use semantic secondary text tokens in custom CSS so both themes retain contrast;
+Use semantic secondary text tokens in custom CSS so the dark theme retains contrast;
 selected blue options use tinted blue explanatory text. Neutral admin panels use
 14px corners and 24px padding (18px on mobile), while shared controls retain Zeus
 SDK geometry and interaction states.
@@ -158,7 +162,7 @@ semantic secondary text and tabular chip amounts. Financial tables retain separa
 play and settlement columns, signed values and descriptive captions. Filters wrap;
 review and receipt forms stay inline. Public watching separates the current table
 from the selected completed hand and its decision controls. Sponsor disclosure and
-external-link labels remain readable in both appearances. Reuse the shared playing
+external-link labels remain readable on the dark surfaces. Reuse the shared playing
 cards and neutral panels; this surface establishes no separate visual identity.
 
 ### Playing cards
@@ -167,80 +171,9 @@ Use `PlayingCard` everywhere, including marketing. Face-up and face-down cards
 have image roles and accessible names; invisible spacing slots stay out of the
 accessibility tree. Use dark text on bright blind badges.
 
-### 3D midnight lounge
-
-The 3D table uses teal wool felt, a walnut floor, brass window frames, warm perimeter
-lamps, and a quiet city backdrop. Keep the space above the entire playing surface
-open: no ceiling meshes, chandeliers, floating decoration, or pot labels across the
-board in overhead view. Both runouts have equal-size, separate rows; private and
-public opponent cards rest at their own places on the felt.
-
-Characters sit on a cushion at 0.61 with hips at 0.73, bent thighs/knees, and grounded
-boots. Upper-body gestures pivot at the pelvis. Chairs retain their canonical room
-positions and orientation for every viewer; they never follow a gesture. Standing,
-the chair aisle, walking, turning, and sitting are separate movement stages. Leg
-IK keeps the soles grounded and the stride follows distance travelled. Gestures
-layer on the current posture, with a short blend when interrupted; they cannot
-move the character off its walking path. Targeted effects share a visible wind-up,
-flight/contact, recoil, and recovery timeline. Reduced motion settles movement
-immediately and keeps interaction feedback.
-
-The room perimeter contains a TV wall, drinks counter, sofa corners, a dance area,
-and a city-view spot. Use click/tap destinations around fixed furniture; reserve
-dragging for the camera. A destination ring shows where the player is going. A
-break reserves the seat and chips; a live, unfolded hand delays departure. Return
-and choosing an empty chair use the same approach and sitting stages. Reactions
-remain available to unseated members.
-
-The TV has a real video surface, an original silent ambient loop, a public table
-channel, and local-file playback. Label playback as local to the device. Keep
-play/pause, mute, volume, seeking, fullscreen, recovery, and closing accessible.
-Honor reduced motion and pause hidden playback.
-
-Card and chip places belong to the felt, independently of the wider seating
-layout. Both runouts, public opponent cards, and the viewer's private cards must
-remain clear of the rail and chip stacks from all nine seats. The large-card
-viewer and shared 2D controls remain available.
-
-The 3D world fills the entire dynamic viewport. Header, navigation, cards, and
-actions float as compact translucent glass widgets; no page track or opaque
-full-width band reserves space for UI. Empty space between widgets passes input
-to the canvas. Use the glass backing on a pseudo-element where a widget contains
-fixed dialogs, so blur cannot trap those dialogs inside its bounds. Readability
-comes from pale text, a restrained translucent dark backing, and a stronger
-fallback for reduced transparency or unsupported backdrop filtering.
-
-Camera presets and the card widget collapse independently. Hide empty idle card
-placeholders. A clear-view control hides the HUD and leaves a keyboard-accessible
-restore button; Escape also restores it. Poker turns, unanswered ready checks,
-run-it-twice prompts, and private-card offers restore required controls. The
-canvas and camera never resize when these controls change. On phones, actions
-precede the card widget and the bounded overlay scrolls internally; account and
-table dialogs keep the full viewport available for focus and scrolling.
-
-The lounge perimeter uses a layered city skyline with instanced lit windows,
-walnut portal frames, upholstered wall alcoves, brass sconces, and illuminated
-bar shelves. Warm local lights distinguish seating and the drinks counter;
-cool city fill and a soft warm table key keep characters and cards readable.
-Only the main key casts realtime shadows. No new furniture enters the walking
-lanes or playing area.
-
-After taking a break, WASD and arrow keys steer relative to the camera while the
-world has focus. Releasing keys, focusing UI, opening a decision prompt, switching
-windows, or losing connection stops steering. Chair exits finish before direct
-movement takes over. Swept floor checks slide along obstacles; diagonal movement
-uses the same speed as forward movement. Reduced motion keeps direct steering
-continuous while disabling gait flourishes. Click destinations and return-to-seat
-hand control back to the path planner. Shared movement coalesces to four updates
-per second and includes the final stop; authoritative server corrections remain
-in charge of occupied arrival spots.
-
 ## Do's and Don'ts
 
 - Do use the installed Zeus SDK and tokens for shared application controls.
 - Do preserve native forms and all existing poker actions during visual changes.
 - Do show real account data and readable negative chart values.
-- Do keep the world canvas stable when controls appear, collapse, or hide.
-- Keep appearance choices limited to Zeus light and dark; do not restore cyber overrides.
-- Don't let UI typing steer the character.
-- Don't put scenery or HUD labels across the overhead card area.
+- The app is always dark (Zeus dark tokens); do not design light canvases, and do not restore cyber overrides.

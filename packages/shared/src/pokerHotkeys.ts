@@ -18,11 +18,10 @@ export const DEFAULT_POKER_HOTKEYS: PokerHotkeys = {
   bindings: { fold: 'F', check: 'X', call: 'C', raise: 'R', halfPot: '2', pot: '3', allIn: 'I' },
 };
 
-/** Leave native navigation, browser commands and 3D movement keys alone. */
+/** Leave native navigation and browser commands alone; bindings are a single
+ *  letter or digit, optionally with Shift. */
 export function validPokerBinding(key: unknown): key is string {
-  return (
-    typeof key === 'string' && /^(Shift\+)?[A-Z0-9]$/.test(key) && !/^(Shift\+)?[WASD]$/.test(key)
-  );
+  return typeof key === 'string' && /^(Shift\+)?[A-Z0-9]$/.test(key);
 }
 
 export function pokerHotkeysError(value: unknown): string | null {
@@ -45,7 +44,7 @@ export function pokerHotkeysError(value: unknown): string | null {
     const key = bindings[action];
     if (key === null) continue;
     if (!validPokerBinding(key))
-      return 'Use a letter or number, optionally with Shift. WASD is reserved for 3D movement.';
+      return 'Use a letter or number, optionally with Shift.';
     if (used.has(key)) return `${key} is assigned to more than one action.`;
     used.add(key);
   }

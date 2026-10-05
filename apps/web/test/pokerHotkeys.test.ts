@@ -71,7 +71,9 @@ describe('poker shortcut safety and intent', () => {
       'defaultPrevented',
     ])
       expect(pokerBindingFromEvent({ ...event, [flag]: true })).toBeNull();
-    for (const key of ['w', 'A', 'ArrowLeft', 'Enter', 'Tab', 'Dead', '💰'])
+    expect(pokerBindingFromEvent({ ...event, key: 'w' })).toBe('W');
+    expect(pokerBindingFromEvent({ ...event, key: 'A' })).toBe('A');
+    for (const key of ['ArrowLeft', 'Enter', 'Tab', 'Dead', '💰'])
       expect(pokerBindingFromEvent({ ...event, key })).toBeNull();
   });
   it('keeps shifted bindings distinct while rejecting duplicates and allowing cleared keys', () => {

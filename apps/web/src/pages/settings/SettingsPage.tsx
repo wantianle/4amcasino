@@ -4,7 +4,7 @@ import {
   RiShieldKeyholeLine,
   RiLinksLine,
   RiLogoutBoxLine,
-  RiSunLine,
+  RiTranslate2,
   RiKeyboardLine,
   RiCoinsLine,
 } from '@remixicon/react';
@@ -24,7 +24,6 @@ import { ProfileEditor } from '../../features/profile/ProfileDialog.tsx';
 import { AccountSecurity } from '../../features/account/AccountSecurity.tsx';
 import { KeyboardShortcuts } from '../../features/settings/KeyboardShortcuts.tsx';
 import { SettingsCard } from '../../features/settings/SettingsCard.tsx';
-import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { t } from '../../shared/i18n/index.ts';
 import { tNode } from '../../shared/i18n/trans.tsx';
 import { LOCALES, useLocaleStore } from '../../shared/i18n/locale.ts';
@@ -38,7 +37,7 @@ const SECTIONS = [
   { id: 'table', label: 'Table & play', icon: RiPokerClubsLine },
   { id: 'bet-sizing', label: 'Bet sizing', icon: RiCoinsLine },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: RiKeyboardLine },
-  { id: 'appearance', label: 'Appearance', icon: RiSunLine },
+  { id: 'language', label: 'Language & display', icon: RiTranslate2 },
   { id: 'account', label: 'Account & security', icon: RiShieldKeyholeLine },
   { id: 'merge', label: 'Merge accounts', icon: RiLinksLine },
   { id: 'session', label: 'Session', icon: RiLogoutBoxLine },
@@ -46,7 +45,7 @@ const SECTIONS = [
 
 /** A10 (docs/table-redesign-spec.md): the quick-bet buttons at the table are
  *  four configurable pot ratios. The list applies instantly and is saved to
- *  the account; the table's ActionBar reads it from the store. */
+ *  the account; the table's betting panel reads it from the store. */
 function BetSizingSettings() {
   const ratios = useStore((s) => s.prefs.betRatios);
   const [saved, setSaved] = useState(false);
@@ -373,12 +372,11 @@ export function SettingsPage() {
           </SettingsCard>
 
           <SettingsCard
-            id="appearance"
-            title={t('Appearance')}
-            icon={<RiSunLine className="size-4" aria-hidden />}
-            desc={t('Choose light or dark. Your preference is saved on this device.')}
+            id="language"
+            title={t('Language & display')}
+            icon={<RiTranslate2 className="size-4" aria-hidden />}
+            desc={t('Choose the language of menus and messages. It is saved on this device.')}
           >
-            <AppearanceToggle />
             <LanguagePicker />
           </SettingsCard>
 

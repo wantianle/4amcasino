@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import type { WebSocket } from 'ws';
 import {
   Transcript,
@@ -38,12 +39,9 @@ import {
   type RoomGameplaySettings,
   type ServerMsg,
   signedBody,
-  isLoungeWalkable,
-  availableLoungePoint,
-  LOUNGE_DESTINATIONS,
-  type LoungePosition,
 } from '@4am/shared';
 import type { DB } from './db.js';
+import { materializeHandProjection, positionAssignments } from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
 import { readRoomFeatures } from './gameplaySettings.js';
@@ -103,11 +101,31 @@ export { activeHands };
 /** With auto-deal on, the next hand starts this soon after the previous one
  *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one). */
 export const AUTO_DEAL_INTERVAL_MS = 2_500;
+
+/**
+ * Env-gated structured diagnostics for the hand engine. Off by default; set
+ * `BOT_DEBUG=1` (and optionally `BOT_DEBUG_FILE`) to capture the full timer /
+ * turn / betting timeline for a hand. Never throws into the game loop.
+ */
+function hdbg(event: string, data: Record<string, unknown>): void {
+  if (!process.env.BOT_DEBUG) return;
+  try {
+    appendFileSync(
+      process.env.BOT_DEBUG_FILE ?? '/tmp/opencode/hand-debug.log',
+      `${Date.now()} ${event} ${JSON.stringify(data)}\n`,
+    );
+  } catch {
+    /* diagnostics must never affect the game */
+  }
+}
 /** How long the ready check waits when auto-deal is on. The check resolves the
  *  instant every player is in, so this only bounds a straggler - it must not be
  *  the old 20s or auto-deal would feel manual. Overridable via
  *  `GameOpts.readyCheckMs`. */
 export const AUTO_DEAL_READY_CHECK_MS = 3_000;
+
+/** Street order used by the stats projection's `street` events. */
+const STREET_INDEX: Record<string, number> = { preflop: 0, flop: 1, turn: 2, river: 3 };
 
 /** The classic house rule: 7-2 offsuit wins collect a bounty from everyone. */
 export function isSevenDeuce(cards: CardId[]): boolean {
@@ -230,6 +248,8 @@ export interface HandSettlementOutcome {
  * can never be half-applied.
  */
 export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlementOutcome {
+  if (!Number.isInteger(w.rake) || w.rake < 0)
+    throw new Error(`invalid rake ${w.rake} on hand ${w.handId}`);
   const write = db.transaction((): HandSettlementOutcome => {
     const claim = db
       .prepare(
@@ -315,6 +335,25 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       });
     }
 
+    // `afterRows` above is the pre-rake stack and is only used for the
+    // conservation check. settleRake credits the rake recipient, which may be a
+    // player in this hand, so re-read the TRUE final stacks after every money
+    // move. The projection and hand_settlements.final_stacks must equal
+    // room_players.stack (spec: ending_stack = post-settlement actual stack).
+    const finalUserIds = [
+      ...new Set([...userIds, ...(w.rakeRecipientId !== null ? [w.rakeRecipientId] : [])]),
+    ];
+    const finalPlaceholders = finalUserIds.map(() => '?').join(',');
+    const resultStacks = finalUserIds.length
+      ? (
+          db
+            .prepare(
+              `SELECT user_id, stack FROM room_players WHERE room_id = ? AND user_id IN (${finalPlaceholders})`,
+            )
+            .all(w.roomId, ...finalUserIds) as { user_id: number; stack: number }[]
+        ).map((r) => ({ userId: r.user_id, stack: r.stack }))
+      : [];
+
     const timeBankSkipped: number[] = [];
     if (w.timeBankEpoch !== null) {
       for (const tb of w.timeBanks) {
@@ -346,6 +385,29 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       'INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)',
     ).run(w.handId, w.roomId, w.head, JSON.stringify(w.entries), w.now);
 
+    // Normalized stats projection, in the SAME transaction as the settlement.
+    // A structurally impossible hand throws here and rolls the whole settlement
+    // back (spec §2). Invariant: `applyHandSettlement` is only called for a hand
+    // that actually started, so a real transcript is always present; the sole
+    // tolerated no-op is an empty `entries` (test/aux callers with no
+    // transcript) - any non-empty transcript must project or the hand rolls back.
+    materializeHandProjection(db, {
+      handId: w.handId,
+      roomId: w.roomId,
+      head: w.head,
+      entries: w.entries,
+      transcriptTs: w.now,
+      now: w.now,
+      // Live settlement is strict: malformed/mismatched transcripts roll back.
+      strict: true,
+      verifyHead: true,
+      pokerLedger: w.pokerLedger,
+      squidLedger: w.squidLedger,
+      stackDeltas: w.stackDeltas,
+      rake: w.rake,
+      finalStacks: resultStacks,
+    });
+
     const gs = db
       .prepare(
         `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
@@ -373,7 +435,7 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
          schedule_reset_at = excluded.schedule_reset_at`,
     ).run(w.roomId, completed, lastBombHands, lastBombAt, gs?.schedule_reset_at ?? null);
 
-    const finalStacks = afterRows.map((r) => ({ userId: r.user_id, stack: r.stack }));
+    const finalStacks = resultStacks;
     db.prepare('UPDATE hand_settlements SET final_stacks = ? WHERE hand_id = ?').run(
       JSON.stringify(finalStacks),
       w.handId,
@@ -412,9 +474,6 @@ function verifySnapshotShares(
 
 export class GameRoom {
   private sockets = new Map<number, WebSocket>();
-  private lounge = new Map<number, LoungePosition>();
-  private loungeLastMove = new Map<number, number>();
-  private loungeRevision = 0;
   private hand: Hand | null = null;
   private lastButton: number | null = null;
   // voluntary card shows for the current (or most recently ended) hand
@@ -457,13 +516,6 @@ export class GameRoom {
     // and a player stuck in that loop answers no crypto requests, so every hand
     // they are dealt into stalls out. The orphan is cheap; the loop was not.
     this.sockets.set(userId, ws);
-    const member = this.db
-      .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
-      .get(this.roomId, userId) as { seat: number | null } | undefined;
-    if (member?.seat === null && !this.lounge.has(userId)) {
-      const point = availableLoungePoint(LOUNGE_DESTINATIONS.entry, [...this.lounge.values()]);
-      if (point) this.lounge.set(userId, { ...point, revision: ++this.loungeRevision });
-    }
     this.broadcastRoomState();
     // late joiners and reconnects still get to see voluntarily shown cards
     if (this.shownHandId) {
@@ -479,8 +531,6 @@ export class GameRoom {
   leave(userId: number, ws: WebSocket): void {
     if (this.sockets.get(userId) === ws) {
       this.sockets.delete(userId);
-      this.lounge.delete(userId);
-      this.loungeLastMove.delete(userId);
       this.broadcastRoomState();
       // a folded player walking away must never strand the hand
       this.hand?.onPlayerGone(userId);
@@ -534,8 +584,6 @@ export class GameRoom {
   }
 
   shutdown(): void {
-    this.lounge.clear();
-    this.loungeLastMove.clear();
     if (this.hostHandover) clearTimeout(this.hostHandover);
     this.hostHandover = null;
     this.hand?.clearTimer();
@@ -736,7 +784,6 @@ export class GameRoom {
       totalBought: p.privateMode ? 0 : p.totalBought,
       privateStats: !!p.privateMode,
       pendingBuy: p.pendingBuy,
-      avatar3d: p.avatar3d,
     }));
     const state: ServerMsg = {
       t: 'room_state',
@@ -765,7 +812,6 @@ export class GameRoom {
       },
       players,
       handActive: this.hand !== null,
-      lounge: Object.fromEntries(this.lounge),
       autoDealAt: this.autoDealAt,
       autoDealPaused: this.autoDealPaused,
       readyCheck: this.readyCheck
@@ -784,67 +830,8 @@ export class GameRoom {
     for (const [uid, ws] of this.sockets) ws.send(memberIds.has(uid) ? full : masked);
   }
 
-  private lastPoke = new Map<number, number>();
-
   handleMessage(userId: number, msg: ClientMsg): void {
     switch (msg.t) {
-      case 'lounge_move': {
-        const player = this.db
-          .prepare('SELECT seat, sitting_out FROM room_players WHERE room_id = ? AND user_id = ?')
-          .get(this.roomId, userId) as { seat: number | null; sitting_out: number } | undefined;
-        if (!player || !this.sockets.has(userId))
-          return this.send(userId, {
-            t: 'error',
-            message: 'Join this table as a member to explore the lounge.',
-          });
-        if (player.seat !== null && !player.sitting_out)
-          return this.send(userId, {
-            t: 'error',
-            message: 'Take a break before leaving your chair.',
-          });
-        if (this.hand?.isContesting(userId))
-          return this.send(userId, {
-            t: 'error',
-            message: 'Finish this hand before walking away. Your break is saved.',
-          });
-        if (!isLoungeWalkable(msg))
-          return this.send(userId, {
-            t: 'error',
-            message: 'Choose a clear spot on the lounge floor.',
-          });
-        const now = Date.now();
-        if (now - (this.loungeLastMove.get(userId) ?? -Infinity) < 180) return;
-        this.loungeLastMove.set(userId, now);
-        const point = availableLoungePoint(
-          msg,
-          [...this.lounge].filter(([id]) => id !== userId).map(([, position]) => position),
-        );
-        if (!point)
-          return this.send(userId, {
-            t: 'error',
-            message: 'That part of the lounge is full. Choose another spot.',
-          });
-        const position = { ...point, revision: ++this.loungeRevision };
-        this.lounge.set(userId, position);
-        this.broadcast({ t: 'lounge_presence', roomId: this.roomId, userId, position });
-        return;
-      }
-      case 'lounge_return': {
-        const player = this.db
-          .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
-          .get(this.roomId, userId) as { seat: number | null } | undefined;
-        if (!player || player.seat === null)
-          return this.send(userId, {
-            t: 'error',
-            message: 'Choose an open seat to return to the table.',
-          });
-        this.lounge.delete(userId);
-        this.db
-          .prepare('UPDATE room_players SET sitting_out = 0 WHERE room_id = ? AND user_id = ?')
-          .run(this.roomId, userId);
-        this.broadcastRoomState();
-        return;
-      }
       case 'chat': {
         const user = this.db
           .prepare('SELECT COALESCE(display_name, username) as name FROM users WHERE id = ?')
@@ -856,42 +843,6 @@ export class GameRoom {
           text: msg.text,
           kind: msg.kind ?? 'text',
           ts: Date.now(),
-        });
-        return;
-      }
-      case 'poke': {
-        // a friendly shove in the 3D world; relayed, never gameplay-affecting
-        const nowTs = Date.now();
-        if (nowTs - (this.lastPoke.get(userId) ?? 0) < 900) return;
-        this.lastPoke.set(userId, nowTs);
-        const pokeUser = this.db
-          .prepare('SELECT COALESCE(display_name, username) as name FROM users WHERE id = ?')
-          .get(userId) as { name: string };
-        this.broadcast({
-          t: 'poke',
-          fromUserId: userId,
-          fromName: pokeUser.name,
-          targetSeat: msg.targetSeat,
-        });
-        return;
-      }
-      case 'emote': {
-        const nowEmote = Date.now();
-        if (nowEmote - (this.lastPoke.get(userId) ?? 0) < 700) return;
-        this.lastPoke.set(userId, nowEmote);
-        const emoteUser = this.db
-          .prepare('SELECT COALESCE(display_name, username) as name FROM users WHERE id = ?')
-          .get(userId) as { name: string };
-        const emoteSeat = this.db
-          .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
-          .get(this.roomId, userId) as { seat: number | null } | undefined;
-        this.broadcast({
-          t: 'emote',
-          fromUserId: userId,
-          fromName: emoteUser.name,
-          fromSeat: emoteSeat?.seat ?? null,
-          kind: msg.kind,
-          targetSeat: msg.targetSeat,
         });
         return;
       }
@@ -916,7 +867,6 @@ export class GameRoom {
             'UPDATE room_players SET seat = ?, sitting_out = 0 WHERE room_id = ? AND user_id = ?',
           )
           .run(msg.seat, this.roomId, userId);
-        this.lounge.delete(userId);
         this.broadcastRoomState();
         return;
       }
@@ -935,10 +885,6 @@ export class GameRoom {
         this.db
           .prepare('UPDATE room_players SET seat = NULL WHERE room_id = ? AND user_id = ?')
           .run(this.roomId, userId);
-        if (!this.lounge.has(userId)) {
-          const point = availableLoungePoint(LOUNGE_DESTINATIONS.entry, [...this.lounge.values()]);
-          if (point) this.lounge.set(userId, { ...point, revision: ++this.loungeRevision });
-        }
         this.broadcastRoomState();
         return;
       }
@@ -980,7 +926,6 @@ export class GameRoom {
         return this.onPostHandShow(userId, msg);
       }
       case 'sit_out': {
-        if (!msg.sittingOut) this.lounge.delete(userId);
         this.db
           .prepare('UPDATE room_players SET sitting_out = ? WHERE room_id = ? AND user_id = ?')
           .run(msg.sittingOut ? 1 : 0, this.roomId, userId);
@@ -1530,14 +1475,26 @@ class Hand {
   // ---------- lifecycle ----------
 
   begin(): void {
+    const positions = positionAssignments(this.seats, this.buttonSeat);
     this.appendServer('hand_start', {
+      schemaVersion: 2,
+      startedAt: Date.now(),
+      gameKind: this.features.bomb.settings ? 'bomb_pot' : 'normal',
       roomId: this.roomId,
-      seats: this.seats.map((s) => ({
-        seat: s.seat,
-        userId: s.userId,
-        pubkey: s.pubkey,
-        stack: s.stack,
-      })),
+      seats: this.seats.map((s) => {
+        const pos = positions.get(s.seat);
+        return {
+          seat: s.seat,
+          userId: s.userId,
+          pubkey: s.pubkey,
+          stack: s.stack,
+          position: pos?.position,
+          positionIndex: pos?.positionIndex,
+          dealingIndex: pos?.dealingIndex,
+          preflopOrder: pos?.preflopOrder,
+          postflopOrder: pos?.postflopOrder,
+        };
+      }),
       buttonSeat: this.buttonSeat,
       sb: this.sb,
       bb: this.bb,
@@ -1571,16 +1528,35 @@ class Hand {
   }
 
   clearTimer(): void {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) {
+      clearTimeout(this.timer);
+      hdbg('clearTimer', { id: this.id, phase: this.phase, toAct: this.betting?.toAct });
+    }
     this.timer = null;
   }
 
   private armTimer(ms: number): void {
     this.clearTimer();
     this.timer = setTimeout(() => this.onTimeout(), ms);
+    hdbg('armTimer', {
+      id: this.id,
+      phase: this.phase,
+      toAct: this.betting?.toAct,
+      ms,
+      lastDeadline: this.lastDeadline,
+      actionSeq: this.actionSeq,
+    });
   }
 
   private onTimeout(): void {
+    hdbg('onTimeout', {
+      id: this.id,
+      phase: this.phase,
+      toAct: this.betting?.toAct,
+      retriesLeft: this.retriesLeft,
+      lastDeadline: this.lastDeadline,
+      actionSeq: this.actionSeq,
+    });
     // give a stalled (often just disconnected) player a fixed grace window:
     // re-send whatever we are waiting on a few times before giving up
     if (
@@ -1618,9 +1594,28 @@ class Hand {
       }
       case 'betting': {
         const seat = this.betting?.toAct;
-        if (seat === null || seat === undefined) return;
-        this.appendServer('timeout_fold', { seat });
-        this.applyEngineAction(seat, { type: 'fold' }, true);
+        // Never leave a live betting round without a pending timer: if there is
+        // no actor to fold (should be impossible) or the auto-fold is rejected,
+        // re-arm instead of stalling the hand forever.
+        const rearm = () => this.armTimer(Math.max(250, this.opts.actionTimeoutMs || 1000));
+        if (seat === null || seat === undefined) {
+          hdbg('timeoutBranch', { id: this.id, branch: 'seat-null' });
+          rearm();
+          return;
+        }
+        const potAtFold = this.potTotal();
+        this.appendServer('timeout_fold', {
+          seat,
+          actionSeq: this.actionSeq,
+          street: this.betting?.street ?? 'preflop',
+          amountAdded: 0,
+          potBefore: potAtFold,
+          potAfter: potAtFold,
+          ts: Date.now(),
+        });
+        const ok = this.applyEngineAction(seat, { type: 'fold' }, true);
+        hdbg('timeoutBranch', { id: this.id, branch: ok ? 'ok' : 'apply-false', seat });
+        if (!ok) rearm();
         return;
       }
       case 'audit': {
@@ -2162,6 +2157,28 @@ class Hand {
       this.sb,
       this.bb,
     );
+    // Forced posts, before any voluntary action. `startHand` commits index 0 as
+    // the small blind and index 1 as the big blind (heads-up: the button is the
+    // small blind). Recorded so the stats layer can separate forced chips from
+    // VPIP/PFR decisions. potBefore/potAfter accumulate per post (SB then BB).
+    let blindPot = 0;
+    const blindPosts = this.betting.seats.slice(0, 2).map((s, i) => {
+      const amount = s.committed;
+      const potBefore = blindPot;
+      blindPot += amount;
+      return {
+        seat: s.seat,
+        userId: this.seats.find((x) => x.seat === s.seat)!.userId,
+        kind: i === 0 ? 'sb' : 'bb',
+        nominal: i === 0 ? this.sb : this.bb,
+        amount,
+        stackAfter: s.stack,
+        potBefore,
+        potAfter: blindPot,
+        allIn: s.allIn,
+      };
+    });
+    this.appendServer('blind_post', { posts: blindPosts, ts: Date.now() });
     this.appendServer('betting_start', { street: 'preflop' });
     this.coordinateTurn(true);
   }
@@ -2186,6 +2203,26 @@ class Hand {
       anteBb,
       seats: this.seats.map((s) => ({ seat: s.seat, stack: s.stack })),
     });
+    // The ante is the only preflop event in a bomb pot (never a VPIP action).
+    // potBefore/potAfter accumulate in seat order.
+    let antePot = 0;
+    const antePosts = this.betting.seats.map((s) => {
+      const amount = s.total;
+      const potBefore = antePot;
+      antePot += amount;
+      return {
+        seat: s.seat,
+        userId: this.seats.find((x) => x.seat === s.seat)!.userId,
+        kind: 'ante',
+        nominal: ante,
+        amount,
+        stackAfter: s.stack,
+        potBefore,
+        potAfter: antePot,
+        allIn: s.allIn,
+      };
+    });
+    this.appendServer('ante_post', { posts: antePosts, ts: Date.now() });
     this.room.broadcast({
       t: 'feature_started',
       handId: this.id,
@@ -2211,6 +2248,12 @@ class Hand {
     this.finishTurnTimer();
     const st = this.betting;
     if (!st || st.toAct === null || this.opts.actionTimeoutMs <= 0) {
+      hdbg('beginTurnTimer:noArm', {
+        id: this.id,
+        hasBetting: !!st,
+        toAct: st?.toAct ?? null,
+        actionTimeoutMs: this.opts.actionTimeoutMs,
+      });
       this.turnBaseDeadline = null;
       this.lastDeadline = null;
       return;
@@ -2219,6 +2262,12 @@ class Hand {
     this.turnBaseDeadline = now + this.opts.actionTimeoutMs;
     const bank = this.timeBanks().get(st.toAct) ?? 0;
     this.lastDeadline = this.turnBaseDeadline + bank;
+    hdbg('beginTurnTimer', {
+      id: this.id,
+      toAct: st.toAct,
+      actionTimeoutMs: this.opts.actionTimeoutMs,
+      lastDeadline: this.lastDeadline,
+    });
     this.armTimer(this.lastDeadline - now);
   }
 
@@ -2252,6 +2301,21 @@ class Hand {
   }
 
   private broadcastBetting(): void {
+    hdbg('broadcastBetting', {
+      id: this.id,
+      actionSeq: this.actionSeq,
+      toAct: this.betting?.toAct,
+      currentBet: this.betting?.currentBet,
+      deadline: this.lastDeadline,
+      seats: this.betting?.seats.map((s) => ({
+        seat: s.seat,
+        stack: s.stack,
+        folded: s.folded,
+        allIn: s.allIn,
+        committed: s.committed,
+        lastActedAt: s.lastActedAt,
+      })),
+    });
     this.room.broadcast({
       t: 'betting_state',
       handId: this.id,
@@ -2270,13 +2334,28 @@ class Hand {
       .map((i) => this.boardCards.get(i)!);
   }
 
+  /** Chips already committed to the pot this hand (side-pot basis). */
+  private potTotal(st: BettingState | null = this.betting): number {
+    return st ? st.seats.reduce((s, x) => s + x.total, 0) : 0;
+  }
+
   private onAction(info: HandSeatInfo, action: PlayerAction, sig: string): void {
     if (this.phase !== 'betting' || !this.betting)
       return this.err(info.userId, 'not in a betting round');
+    hdbg('onAction', {
+      id: this.id,
+      seat: info.seat,
+      action,
+      toAct: this.betting.toAct,
+      deadline: this.lastDeadline,
+      now: Date.now(),
+      actionSeq: this.actionSeq,
+    });
     // Server-side deadline enforcement: at/after the final deadline the ONLY
     // successful transition is the timeout auto-fold. A late action arriving
     // before the timer callback fires is rejected here so a race cannot beat it.
     if (this.lastDeadline !== null && Date.now() >= this.lastDeadline) {
+      hdbg('onActionRejected', { id: this.id, seat: info.seat, reason: 'after deadline' });
       this.appendServer('action_rejected', { seat: info.seat, reason: 'after deadline' });
       return this.err(info.userId, 'the action clock expired');
     }
@@ -2295,17 +2374,62 @@ class Hand {
     userId?: number,
     record?: { pubkey: string; sig: string },
   ): boolean {
+    hdbg('applyEngineAction', {
+      id: this.id,
+      seat,
+      action,
+      auto,
+      phase: this.phase,
+      toAct: this.betting?.toAct,
+      actionSeq: this.actionSeq,
+    });
+    const beforeState = this.betting!;
+    const beforeSeat = beforeState.seats.find((x) => x.seat === seat);
+    const potBefore = this.potTotal(beforeState);
     try {
       this.betting = applyAction(this.betting!, seat, action);
     } catch (e) {
       // an illegal, out-of-turn, stale or duplicate action must not consume the
       // actor's time bank and must not be recorded as a normal action
       const reason = e instanceof Error ? e.message : 'illegal action';
+      hdbg('applyRejected', {
+        id: this.id,
+        seat,
+        action,
+        reason,
+        phase: this.phase,
+        toAct: this.betting?.toAct,
+      });
       this.appendServer('action_rejected', { seat, reason });
       if (userId !== undefined) this.err(userId, reason);
       return false;
     }
-    if (record) this.appendPlayer('action', record.pubkey, { action, seat }, record.sig);
+    // This action's authoritative, 0-based index in the hand: the count of
+    // actions already applied. It equals the `actionSeq` the betting_state for
+    // the current turn advertised, so a client that sent the action can match
+    // it back exactly even after a reconnect/missed frame. Captured before the
+    // counter is incremented below.
+    const seq = this.actionSeq;
+    if (record) {
+      // The player's signature only covers `{action}` (see signedBodyOf); the
+      // stats fields below are server-supplied and never alter what was signed.
+      const afterSeat = this.betting!.seats.find((x) => x.seat === seat);
+      this.appendPlayer(
+        'action',
+        record.pubkey,
+        {
+          action,
+          seat,
+          actionSeq: seq,
+          street: beforeState.street,
+          amountAdded: (afterSeat?.total ?? 0) - (beforeSeat?.total ?? 0),
+          potBefore,
+          potAfter: this.potTotal(),
+          ts: Date.now(),
+        },
+        record.sig,
+      );
+    }
     // the action really applied: charge the clock it used past the base deadline
     this.consumeTurnTime(seat);
     this.actionSeq++;
@@ -2314,9 +2438,19 @@ class Hand {
       handId: this.id,
       seat,
       action,
+      actionSeq: seq,
       ...(auto ? { auto: true } : {}),
     });
     this.coordinateTurn();
+    hdbg('applyOk', {
+      id: this.id,
+      seat,
+      action,
+      auto,
+      newToAct: this.betting?.toAct,
+      actionSeq: this.actionSeq,
+      phase: this.phase,
+    });
     return true;
   }
 
@@ -2328,6 +2462,14 @@ class Hand {
    */
   private coordinateTurn(initial = false): void {
     const st = this.betting!;
+    hdbg('coordinateTurn', {
+      id: this.id,
+      street: st.street,
+      toAct: st.toAct,
+      closed: streetClosed(st),
+      initial,
+      actionSeq: this.actionSeq,
+    });
     if (!streetClosed(st)) {
       if (!initial) this.finishTurnTimer();
       this.beginTurnTimer();
@@ -2405,13 +2547,25 @@ class Hand {
         return;
       }
       this.phase = 'betting';
-      this.appendServer('street', { street: this.betting.street, board: this.currentBoard() });
+      this.appendServer('street', {
+        street: this.betting.street,
+        board: this.currentBoard(),
+        streetIndex: STREET_INDEX[this.betting.street] ?? 0,
+        potAfter: this.potTotal(),
+        ts: Date.now(),
+      });
       this.coordinateTurn(true);
       return;
     }
     this.betting = nextStreet(this.betting!);
     this.phase = 'betting';
-    this.appendServer('street', { street: this.betting.street, board: this.currentBoard() });
+    this.appendServer('street', {
+      street: this.betting.street,
+      board: this.currentBoard(),
+      streetIndex: STREET_INDEX[this.betting.street] ?? 0,
+      potAfter: this.potTotal(),
+      ts: Date.now(),
+    });
     this.coordinateTurn(true);
   }
 
@@ -2502,13 +2656,26 @@ class Hand {
     this.clearTimer();
     this.chains.clear();
     this.pendingBoard.clear();
-    this.appendServer('timeout_fold', { seat });
+    const droppedPot = this.potTotal(st);
+    this.appendServer('timeout_fold', {
+      seat,
+      actionSeq: this.actionSeq,
+      street: st.street,
+      amountAdded: 0,
+      potBefore: droppedPot,
+      potAfter: droppedPot,
+      ts: Date.now(),
+    });
+    // Terminal off-book fold (settles the hand immediately, so the counter is
+    // never consumed further): stamp it with the index it would occupy so the
+    // frame still carries an authoritative, collision-free `actionSeq`.
     this.room.broadcast({
       t: 'action_applied',
       handId: this.id,
       seat,
       action: { type: 'fold' },
       auto: true,
+      actionSeq: this.actionSeq,
     });
     this.betting = { ...st, seats, toAct: null, needToAct: [], winnerByFold: live[0]!.seat };
     this.settle();
@@ -2932,6 +3099,13 @@ class Hand {
       ...(rake > 0 ? { commission: rake } : {}),
       awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
       deltas: combined,
+      // Poker-only split so stats never have to reverse-engineer squid out of
+      // the combined deltas (old transcripts have no such field).
+      pokerDeltas,
+      runCount: runs,
+      grossPot: totalPot + rake,
+      showdown: showdownMsg !== null,
+      ts: Date.now(),
       ...(squid
         ? {
             squid: {

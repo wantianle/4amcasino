@@ -11,11 +11,57 @@ import type {
   RoomGameplaySettings,
 } from '@4am/shared';
 import { isAdminSite } from './adminSite.ts';
+import { statsQuery, type StatsQuery, type HandStats, type HiddenStats, type RoomHud } from '../features/stats/types.ts';
 
 /** The new-gameplay features a host can fire on demand (as opposed to the
  *  always-on time bank / multi-run switches). Matches the server's
  *  `room_feature_triggers.kind` allowlist. */
 export type FeatureTriggerKind = 'squid' | 'bomb';
+
+/** ── Table bots (apps/server/src/botRoutes.ts) ───────────────────────────────
+ * The PUBLIC, sanitized view of a bot opponent: the server never ships the
+ * encrypted seed or a runner grant on these routes. Mirrors
+ * `botPublicJson()` / `BOT_STATUSES` server-side. */
+export type BotStatus =
+  | 'created'
+  | 'waiting_buy_approval'
+  | 'ready'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'error'
+  | 'removed';
+
+export interface BotPublic {
+  id: string;
+  userId: number;
+  username: string | null;
+  displayName: string | null;
+  /** The seat the bot actually occupies (room_players wins over the
+   *  configured seat), or null while it never sat down. */
+  seat: number | null;
+  configuredSeat: number | null;
+  status: BotStatus;
+  policyKind: string;
+  /** Difficulty tier; `high` is accepted by the API but currently runs as medium. */
+  difficulty: BotDifficulty;
+  createdAt: number;
+  updatedAt: number;
+  stoppedAt: number | null;
+  stopRequestedAt: number | null;
+  identityRecoverable: boolean;
+}
+
+export type BotDifficulty = 'low' | 'medium' | 'high';
+
+/** The buy request the create/buy endpoints echo back. `approved` means the
+ *  chips already landed (host is the room's banker); `pending` waits in the
+ *  normal banker approval queue. */
+export interface BotBuyEcho {
+  id: number;
+  status: string;
+}
 
 /** A deep-partial feature patch: the server merges it over the stored settings,
  *  so the UI can send just the knob that changed (`{ squid: { enabled: true } }`).
@@ -105,6 +151,9 @@ async function req(path: string, body?: unknown, method?: string): Promise<any> 
 }
 
 export const api = {
+  myStats: (query: StatsQuery = {}) => req(`/api/me/stats?${statsQuery(query)}`) as Promise<HandStats>,
+  userStats: (id: number, query: StatsQuery = {}) => req(`/api/users/${id}/stats?${statsQuery(query)}`) as Promise<HandStats | HiddenStats>,
+  roomHud: (id: string) => req(`/api/rooms/${encodeURIComponent(id)}/hud`) as Promise<RoomHud>,
   tournaments: () => req('/api/tournaments') as Promise<{ tournaments: TournamentSummary[] }>,
   tournament: (id: string) =>
     req(`/api/tournaments/${encodeURIComponent(id)}`) as Promise<TournamentState>,
@@ -339,11 +388,7 @@ export const api = {
     }>,
   /** Cancel a previously queued manual trigger. The id must be the one returned
    *  by `triggerFeature`. */
-  cancelFeatureTrigger: (
-    roomId: string,
-    feature: FeatureTriggerKind,
-    requestId: string,
-  ) =>
+  cancelFeatureTrigger: (roomId: string, feature: FeatureTriggerKind, requestId: string) =>
     req(
       `/api/rooms/${roomId}/feature-triggers/${encodeURIComponent(requestId)}`,
       { feature, requestId },
@@ -391,4 +436,45 @@ export const api = {
   adminArchiveRoom: (id: string, archived: boolean) =>
     req(`/api/admin/rooms/${id}/archive`, { archived }),
   adminDeleteRoom: (id: string) => req(`/api/admin/rooms/${id}/delete`, {}),
+  // ── table bots (host-only mutations; GET is open to members/bankers) ──────
+  /** Public, sanitized bot list for the room (no seed, no grant token). */
+  roomBots: (roomId: string) => req(`/api/rooms/${roomId}/bots`) as Promise<{ bots: BotPublic[] }>,
+  /** Create a bot in a seat; with `initialBuyIn` it queues through the normal
+   *  banker path, so the returned `buyRequest.status` says whether the bot is
+   *  ready to start yet (`approved`) or still waiting (`pending`). */
+  createBot: (
+    roomId: string,
+    body: {
+      seat: number;
+      name?: string;
+      policyKind?: string;
+      difficulty?: BotDifficulty;
+      policyJson?: string;
+      initialBuyIn?: number;
+    },
+  ) =>
+    req(`/api/rooms/${roomId}/bots`, body) as Promise<{
+      bot: BotPublic;
+      buyRequest: BotBuyEcho | null;
+    }>,
+  /** Hand the bot to the supervisor (`ready|stopped|error` → `starting`). */
+  startBot: (roomId: string, botId: string) =>
+    req(`/api/rooms/${roomId}/bots/${encodeURIComponent(botId)}/start`, {}) as Promise<{
+      bot: BotPublic;
+    }>,
+  /** Graceful stop: a live hand is allowed to finish first. */
+  stopBot: (roomId: string, botId: string) =>
+    req(`/api/rooms/${roomId}/bots/${encodeURIComponent(botId)}/stop`, {}) as Promise<{
+      bot: BotPublic;
+    }>,
+  /** Fund the bot through the banker queue, exactly like a human buy-in. */
+  buyBot: (roomId: string, botId: string, amount: number) =>
+    req(`/api/rooms/${roomId}/bots/${encodeURIComponent(botId)}/buy`, {
+      amount,
+    }) as Promise<{ buyRequest: BotBuyEcho }>,
+  /** Remove the bot (graceful when a supervisor is attached). */
+  removeBot: (roomId: string, botId: string) =>
+    req(`/api/rooms/${roomId}/bots/${encodeURIComponent(botId)}`, undefined, 'DELETE') as Promise<{
+      bot: BotPublic;
+    }>,
 };

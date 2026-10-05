@@ -31,7 +31,7 @@
   --color-slate-950: #0a0a0a;
 }
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   --font-inter: 'Inter';
   --color-text-tertiary: #707070;
 }
@@ -48,16 +48,6 @@ html.zeus.dark {
   :where(html.zeus.dark) :is(.text-slate-400, .text-slate-500) {
     color: var(--color-text-secondary);
   }
-}
-.appearance-toggle {
-  min-height: 44px;
-}
-button.appearance-toggle {
-  min-width: 44px;
-  flex-shrink: 0;
-}
-.rail-mode .zeus-sidebar > div .appearance-toggle {
-  margin-left: -5px;
 }
 html.dark :where(nav, [role='dialog']) {
   scrollbar-color: #737373 transparent;
@@ -289,17 +279,4 @@ html.dark :where(nav, [role='dialog']) {
   background: var(--color-background-primary-default);
   color: var(--color-text-secondary);
   font-size: 12px;
-}
-/* Small status labels must stay readable on the light neutral surfaces. */
-html.zeus :is(.text-emerald-500, .text-emerald-600):not(.dark *) {
-  color: var(--color-emerald-700);
-}
-html.zeus :is(.text-rose-500, .text-rose-600):not(.dark *) {
-  color: var(--color-rose-700);
-}
-html.zeus :is(.text-amber-500, .text-amber-600):not(.dark *) {
-  color: var(--color-amber-700);
-}
-html.zeus .text-indigo-500:not(.dark *) {
-  color: var(--color-accent-600);
 }

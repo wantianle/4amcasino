@@ -12,11 +12,11 @@ export type TableUtilityAction =
   | 'invite'
   | 'watch'
   | 'video'
-  | 'standings'
-  | 'ledger'
+   | 'ledger'
   | 'hands'
   | 'sit-out'
   | 'timer'
+  | 'bots'
   | 'auto-deal'
   | 'preferences';
 
@@ -47,10 +47,13 @@ export function tableUtilityGroups({
   if (!amSpectator) table.push('auto-deal');
   if (hasSeat) table.push('sit-out');
   if (isHost) table.push('timer');
+  // host-only bot management; on desktop the same action rides the top-bar
+  // chip (inlineSurfaced drops it from the menu), on phones this is the entry
+  if (isHost) table.push('bots');
 
   return [
     ...(people.length > 0 ? [{ id: 'people' as const, actions: people }] : []),
-    { id: 'records', actions: ['standings', 'ledger', 'hands'] },
+    { id: 'records', actions: ['ledger', 'hands'] },
     ...(table.length > 0 ? [{ id: 'table' as const, actions: table }] : []),
     { id: 'preferences', actions: ['preferences'] },
   ];

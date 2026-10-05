@@ -13,7 +13,6 @@ import { t } from '../../shared/i18n/index.ts';
 import { Button, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { cardFromName } from '@4am/shared';
-import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { adminDestination, isAdminSite } from '../../shared/adminSite.ts';
 import { authDestination } from '../../shared/authDestination.ts';
 
@@ -117,9 +116,6 @@ export function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-20">
-      <div className="absolute right-4 top-4">
-        <AppearanceToggle compact />
-      </div>
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-end justify-center gap-1.5">
           {['As', 'Kh'].map((n, i) => (

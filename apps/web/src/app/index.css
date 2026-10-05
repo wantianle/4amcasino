@@ -1,6 +1,21 @@
 @import '@zeus/tokens';
 @source '../../../../node_modules/@zeus/ui/dist/*.js';
 @import './zeus.css';
+/* L0: GGPoker-style table design tokens (values from the approved rev-3
+   mockup). Tokens + fonts only — no component consumes them until L1+. */
+@import './table-tokens.css';
+@import './table-skins.css';
+/* L1: table skeleton paint (room/rail/felt/watermark/sit-spot), tokens only */
+@import './table-surface.css';
+/* L2: seat-unit paint (pod card, gold avatar ring, hole-card fan, pills, D disc) */
+@import './table-pod.css';
+@import './card-face.css';
+/* L3: center information area (pot pill, board tier, ribbon, run chips, summaries) */
+@import './table-center.css';
+/* L4: control area (action cluster, deal post, dock chips) */
+@import './table-controls.css';
+/* L5: motion & state feedback (glow entrances, dim transitions, reduced-motion) */
+@import './table-motion.css';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -14,11 +29,21 @@ body {
   overflow-x: clip;
 }
 
+/* the room the table sits in — warm near-black with a soft overhead glow
+   (rev-3 mockup body background; always dark per DESIGN.md) */
 .table-app-bg {
-  background: var(--color-background-primary-default);
+  background: radial-gradient(
+    120% 90% at 50% 8%,
+    var(--table-room-glow) 0%,
+    var(--table-room-1) 46%,
+    var(--table-room-2) 100%
+  );
 }
 
-/* card backs — the 4AM night grid with a crescent, in four colorways */
+/* card backs — the 4AM night grid with a crescent, in four colorways.
+   (L2 note: the GG-mode lattice repaint is scoped to the seat pods in
+   table-pod.css — this global rule and its colorways stay untouched so
+   TournamentWatch / Hands / Player / the Profile deck preview are unaffected.) */
 .card-back {
   background-image:
     radial-gradient(circle at 68% 26%, rgba(255, 255, 255, 0.55) 0 12%, transparent 13%),

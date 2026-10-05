@@ -9,7 +9,7 @@ import { Badge, Button, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { useStore } from '../../shared/store.ts';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
-import type { SeatView } from '../../widgets/table/players.tsx';
+import type { SeatView } from '../../widgets/table/RoundTable.tsx';
 import { t } from '../../shared/i18n/index.ts';
 
 interface RoomPlayer {
@@ -114,13 +114,6 @@ export function ReplayPage() {
   /** Translate one replay step into the shape the live table renders. */
   const seatViews: SeatView[] = useMemo(() => {
     if (!replay || !step) return [];
-    // blind positions, standard rules: heads-up the button posts the small
-    const order = replay.seats.map((s) => s.seat).sort((a, b) => a - b);
-    const bi = Math.max(0, order.indexOf(replay.buttonSeat));
-    const heads = order.length === 2;
-    const sbSeat = heads ? replay.buttonSeat : order[(bi + 1) % order.length];
-    const bbSeat = order[(bi + (heads ? 1 : 2)) % order.length];
-
     return replay.seats.map((s) => {
       const info = players.get(s.userId);
       const es = step.betting?.seats.find((x) => x.seat === s.seat);
@@ -128,13 +121,10 @@ export function ReplayPage() {
       return {
         seat: s.seat,
         userId: s.userId,
-        username: info?.username ?? `seat${s.seat + 1}`,
         displayName: info?.displayName ?? t('Seat {n}', { n: s.seat + 1 }),
         avatarVersion: info?.avatarVersion ?? 0,
         stack: es ? es.stack : s.stack,
         isButton: replay.buttonSeat === s.seat,
-        isSB: sbSeat === s.seat,
-        isBB: bbSeat === s.seat,
         isToAct: step.actor === s.seat,
         folded: !!es?.folded,
         allIn: !!es && es.stack === 0 && !es.folded,
@@ -148,6 +138,7 @@ export function ReplayPage() {
         voiceMuted: false,
         revealed: step.reveals[s.seat],
         won: !!award && award.amount > 0,
+        wonAmount: award?.amount ?? 0,
         pendingBuy: 0,
         lastAction: step.lastActions[s.seat],
       };
@@ -225,6 +216,7 @@ export function ReplayPage() {
           myUserId={auth.userId}
           myCards={myCards}
           committedBySeat={committedBySeat}
+          handId={null}
           urgent={false}
           handLive={step.awards === null}
           canSit={false}

@@ -1,7 +1,7 @@
 /**
  * Shared chip-denomination model for the felt (docs/table-redesign-spec.md P1
  * A5 + user feedback on chip visuals). Pure math + palette data only - no JSX -
- * so the 2D widgets and the 3D lane render the SAME denominations and colors:
+ * so the felt widgets render the SAME denominations and colors:
  *
  *   white = 1 SB · red = 5 SB · green = 25 SB · blue = 100 SB · purple = 500 SB
  *
@@ -26,14 +26,6 @@ export const CHIP_TIERS: readonly ChipTier[] = [
   { color: 'white', sb: 1 },
 ] as const;
 
-/** One stack of chips of a single color. */
-export interface ChipCount {
-  color: ChipColor;
-  count: number;
-  /** Value in chips of the whole stack of this color (count × sb × unit). */
-  value: number;
-}
-
 /** Standard structure assumption: the small blind is half the big blind. */
 export function sbFromBb(bb: number): number {
   return Math.max(1, Math.round(Math.max(1, bb) / 2));
@@ -45,16 +37,19 @@ export function sbFromBb(bb: number): number {
  * an empty stack for a positive amount), so the piles always account for the
  * full value.
  */
-export function chipBreakdown(amount: number, sbUnit = 1): ChipCount[] {
+export function chipBreakdown(
+  amount: number,
+  sbUnit = 1,
+): Array<{ color: ChipColor; count: number }> {
   const unit = Math.max(1, sbUnit);
   let rest = Math.max(0, Math.floor(amount));
   if (rest === 0) return [];
-  const out: ChipCount[] = [];
+  const out: Array<{ color: ChipColor; count: number }> = [];
   for (const tier of CHIP_TIERS) {
     const d = tier.sb * unit;
     const count = Math.floor(rest / d);
     if (count > 0) {
-      out.push({ color: tier.color, count, value: count * d });
+      out.push({ color: tier.color, count });
       rest -= count * d;
     }
   }
@@ -64,9 +59,8 @@ export function chipBreakdown(amount: number, sbUnit = 1): ChipCount[] {
     const white = out.find((c) => c.color === 'white');
     if (white) {
       white.count += 1;
-      white.value += rest;
     } else {
-      out.push({ color: 'white', count: 1, value: rest });
+      out.push({ color: 'white', count: 1 });
     }
   }
   return out;

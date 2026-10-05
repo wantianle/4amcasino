@@ -1,0 +1,796 @@
+{
+  "runId": "2026-10-04T08-28-10-802Z-seed1234-hands12",
+  "config": {
+    "hands": 12,
+    "seed": 1234,
+    "bots": 2,
+    "styles": [
+      "llm",
+      "llm"
+    ],
+    "humanStyle": "scripted",
+    "sb": 10,
+    "bb": 20,
+    "buyIn": 4000,
+    "cryptoMs": 1500,
+    "actionMs": 30000,
+    "llm": {
+      "enabled": true,
+      "expect": "model",
+      "shadow": false,
+      "model": "deepseek-flash",
+      "baseUrl": "https://sub2api.minieye.tech/v1",
+      "timeoutMs": 12000,
+      "maxCallsPerHand": 24,
+      "maxOutputTokens": 2048,
+      "minModelBudgetMs": 6000,
+      "apiKeyPresent": true
+    }
+  },
+  "startedAt": "2026-10-04T08:28:10.802Z",
+  "notes": [
+    "SEED seeds the policy RNG only; the deal uses server randomness, so hands are not reproducible run to run.",
+    "Top-ups (reloads) are part of the experiment; netChips excludes buy-ins (it is the sum of hand deltas).",
+    "avgCommit = average per hand of the seat final committed total (chips put into the pot).",
+    "action*Share denominator is that style total actions; bb/100 is descriptive only at this sample size.",
+    "LLM latency is exactly one sample per request, recorded after the response body has been read (never at the headers), so latencyMs.samples == llm_calls.",
+    "Latency is reported two ways: successful-only (outcome ok) and all-attempt. A timeout sample is CENSORED at the configured request timeout (~12s), so all-attempt p95/p99 are lower bounds on the provider tail, NOT the provider raw latency; see latencyMs.censored/timeoutRate.",
+    "usageMissing counts only parseable responses that carried no usable usage block; timeout/http/parse_body requests have no usage by definition and are not counted there.",
+    "LLM cost is a fixed-estimate from list-price constants inside LlmPolicy; it is observability only, not billing.",
+    "LLM runs default to a 30s action clock and a 12s request timeout so a real model round-trip can complete; zero fallbacks is a healthy live run, not a failure.",
+    "On a short action clock the policy degrades proactively: `deadline_skips` counts decisions that never fired a request (below LLM_MIN_BUDGET_MS, default 6000ms), which is distinct from `llm_fallbacks.timeout` (a request that was sent and cut off).",
+    "The decision view carries `historyComplete` (false after a mid-hand disconnect gap) and a bounded `sessionMemory` (<=8 recentHands + <=8 opponents over their last complete hands); reconnectDiscards counts policy results dropped because the connection epoch changed during the await.",
+    "`LLM_EXPECT=model` (default) demands a server-accepted action whose decision source was the model - not merely a legal model result, so a shadow run cannot satisfy it; `LLM_EXPECT=fallback` demands a server-accepted action from the local fallback. Attribution joins transcript actions to routed decisions on the server-authoritative (handId, actionSeq) + seat; acceptedWithoutRoute/routeWithoutAccepted/duplicateRoute/seatMismatch/acceptedMissingActionSeq must all be 0, and latency.samples and sum(outcomes) must equal llm_calls."
+  ],
+  "globals": {
+    "hands": 12,
+    "requestedHands": 12,
+    "aborts": 0,
+    "botActions": 77,
+    "topUps": 1,
+    "botErrors": 0,
+    "humanLlmDecisions": 0,
+    "humanHarnessFallbacks": 0,
+    "ledgerVerified": true,
+    "ledgerTotal": 16001,
+    "purchased": 16001,
+    "players": 3,
+    "totalPot": 17869,
+    "avgPot": 1489.1,
+    "durationMs": 574574
+  },
+  "execution": {
+    "modelRequests": 77,
+    "modelLegalResults": 60,
+    "modelAccepted": 60,
+    "fallbackAccepted": 17,
+    "otherAccepted": 25,
+    "modelDiscarded": 0,
+    "fallbackDiscarded": 0,
+    "staleDiscards": 0,
+    "deadlineDiscards": 0,
+    "reconnectDiscards": 0,
+    "autoActions": 0,
+    "acceptedWithoutRoute": 0,
+    "routeWithoutAccepted": 0,
+    "duplicateRoute": 0,
+    "seatMismatch": 0,
+    "acceptedMissingActionSeq": 0,
+    "acceptedWithoutRouteSamples": [],
+    "routeWithoutAcceptedSamples": [],
+    "duplicateRouteSamples": [],
+    "seatMismatchSamples": [],
+    "modelAcceptedBySeat": {
+      "llm#1": 29,
+      "llm#2": 31
+    },
+    "note": "Attribution joins each accepted transcript action (authoritative handId:actionSeq + seat) to a routed decision; unmapped/seats that disagree/duplicate/seq-less are counted as integrity failures. modelAccepted counts server-accepted actions whose decision source was the model; shadow routes to fallback and therefore scores 0."
+  },
+  "distinctiveness": {
+    "vpipSpread": 0,
+    "pfrSpread": 0,
+    "foldSpread": 0,
+    "note": "Spread across styles; larger = more separable behaviour. Report-only, not a pass/fail gate.",
+    "distinct": false
+  },
+  "bots": [
+    {
+      "id": "c102ffd78d4e886550123982",
+      "kind": "llm",
+      "seat": 1,
+      "userId": 2,
+      "handsParticipated": 12,
+      "acceptedActions": 37,
+      "rejectedActions": 0,
+      "rejections": [],
+      "lastStatus": "running"
+    },
+    {
+      "id": "322d585a419647eb18fb71b5",
+      "kind": "llm",
+      "seat": 2,
+      "userId": 3,
+      "handsParticipated": 12,
+      "acceptedActions": 40,
+      "rejectedActions": 0,
+      "rejections": [],
+      "lastStatus": "running"
+    }
+  ],
+  "human": {
+    "kind": "human:scripted",
+    "hands": 12,
+    "vpip": 0.167,
+    "pfr": 0.167,
+    "actionFoldShare": 0.4,
+    "actionCallShare": 0.16,
+    "actionRaiseShare": 0.08,
+    "avgCommit": 46.7,
+    "netChips": -241,
+    "bbPer100": -100.4,
+    "potsWon": 1,
+    "actions": {
+      "fold": 10,
+      "check": 9,
+      "call": 4,
+      "bet": 0,
+      "raise": 2
+    }
+  },
+  "styles": [
+    {
+      "kind": "llm",
+      "hands": 24,
+      "vpip": 0.833,
+      "pfr": 0.292,
+      "actionFoldShare": 0.143,
+      "actionCallShare": 0.286,
+      "actionRaiseShare": 0.506,
+      "avgCommit": 721.2,
+      "netChips": 153,
+      "bbPer100": 31.9,
+      "potsWon": 11,
+      "actions": {
+        "fold": 11,
+        "check": 5,
+        "call": 22,
+        "bet": 17,
+        "raise": 22
+      }
+    }
+  ],
+  "llm": {
+    "global": {
+      "calls": 77,
+      "fallbacks": {
+        "disabled": 0,
+        "timeout": 17,
+        "http": 0,
+        "parse_body": 0,
+        "parse": 0,
+        "illegal": 0,
+        "budget": 0
+      },
+      "deadlineSkips": 0,
+      "outcomes": {
+        "ok": 60,
+        "http": 0,
+        "timeout": 17,
+        "parse_body": 0
+      },
+      "latencyMs": {
+        "samples": 77,
+        "min": 2384,
+        "p50": 6434,
+        "p95": 12001,
+        "p99": 12003,
+        "max": 12003,
+        "successful": {
+          "samples": 60,
+          "min": 2384,
+          "p50": 5285,
+          "p95": 10584,
+          "p99": 11140,
+          "max": 11140
+        },
+        "censored": 17,
+        "timeoutRate": 0.221,
+        "note": "successful = outcome ok only; all-attempt p95 is truncated by the configured request timeout (censored), so it is a lower bound, not the provider raw p95."
+      },
+      "tokens": {
+        "prompt": 75823,
+        "completion": 40489,
+        "total": 116312
+      },
+      "cost": {
+        "estimatedUsd": 0.06501,
+        "pricingBasis": "fixed-estimate",
+        "note": "fixed-estimate from LlmPolicy list-price constants; NOT billing"
+      },
+      "finishReasons": {
+        "tool_calls": 60
+      },
+      "usageMissing": 0,
+      "parseStages": {
+        "tool": 0,
+        "content": 0
+      },
+      "modelActionLegal": {
+        "true": 60,
+        "false": 0
+      },
+      "fallbackActionLegal": {
+        "true": 17,
+        "false": 0
+      }
+    },
+    "byPolicy": {
+      "bot#1:llm": {
+        "calls": 37,
+        "fallbacks": {
+          "disabled": 0,
+          "timeout": 8,
+          "http": 0,
+          "parse_body": 0,
+          "parse": 0,
+          "illegal": 0,
+          "budget": 0
+        },
+        "deadlineSkips": 0,
+        "outcomes": {
+          "ok": 29,
+          "http": 0,
+          "timeout": 8,
+          "parse_body": 0
+        },
+        "latencyMs": {
+          "samples": 37,
+          "min": 2384,
+          "p50": 7282,
+          "p95": 12002,
+          "p99": 12003,
+          "max": 12003,
+          "successful": {
+            "samples": 29,
+            "min": 2384,
+            "p50": 5341,
+            "p95": 10584,
+            "p99": 11140,
+            "max": 11140
+          },
+          "censored": 8,
+          "timeoutRate": 0.216,
+          "note": "successful = outcome ok only; all-attempt p95 is truncated by the configured request timeout (censored), so it is a lower bound, not the provider raw p95."
+        },
+        "tokens": {
+          "prompt": 36419,
+          "completion": 20187,
+          "total": 56606
+        },
+        "cost": {
+          "estimatedUsd": 0.032039,
+          "pricingBasis": "fixed-estimate",
+          "note": "fixed-estimate from LlmPolicy list-price constants; NOT billing"
+        },
+        "finishReasons": {
+          "tool_calls": 29
+        },
+        "usageMissing": 0,
+        "parseStages": {
+          "tool": 0,
+          "content": 0
+        },
+        "modelActionLegal": {
+          "true": 29,
+          "false": 0
+        },
+        "fallbackActionLegal": {
+          "true": 8,
+          "false": 0
+        }
+      },
+      "bot#2:llm": {
+        "calls": 40,
+        "fallbacks": {
+          "disabled": 0,
+          "timeout": 9,
+          "http": 0,
+          "parse_body": 0,
+          "parse": 0,
+          "illegal": 0,
+          "budget": 0
+        },
+        "deadlineSkips": 0,
+        "outcomes": {
+          "ok": 31,
+          "http": 0,
+          "timeout": 9,
+          "parse_body": 0
+        },
+        "latencyMs": {
+          "samples": 40,
+          "min": 2398,
+          "p50": 5883,
+          "p95": 12001,
+          "p99": 12002,
+          "max": 12002,
+          "successful": {
+            "samples": 31,
+            "min": 2398,
+            "p50": 5285,
+            "p95": 10633,
+            "p99": 11091,
+            "max": 11091
+          },
+          "censored": 9,
+          "timeoutRate": 0.225,
+          "note": "successful = outcome ok only; all-attempt p95 is truncated by the configured request timeout (censored), so it is a lower bound, not the provider raw p95."
+        },
+        "tokens": {
+          "prompt": 39404,
+          "completion": 20302,
+          "total": 59706
+        },
+        "cost": {
+          "estimatedUsd": 0.032971,
+          "pricingBasis": "fixed-estimate",
+          "note": "fixed-estimate from LlmPolicy list-price constants; NOT billing"
+        },
+        "finishReasons": {
+          "tool_calls": 31
+        },
+        "usageMissing": 0,
+        "parseStages": {
+          "tool": 0,
+          "content": 0
+        },
+        "modelActionLegal": {
+          "true": 31,
+          "false": 0
+        },
+        "fallbackActionLegal": {
+          "true": 9,
+          "false": 0
+        }
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "server booted + bots ran",
+      "ok": true,
+      "detail": "2 bots, 12 hands"
+    },
+    {
+      "name": "no hand_abort",
+      "ok": true,
+      "detail": "0 aborts"
+    },
+    {
+      "name": "completed hands",
+      "ok": true,
+      "detail": "played 12/12"
+    },
+    {
+      "name": "per-player stack == SUM(ledger.delta)",
+      "ok": true,
+      "detail": "3 players"
+    },
+    {
+      "name": "no negative stack",
+      "ok": true,
+      "detail": "3 players"
+    },
+    {
+      "name": "room ledger total == purchases",
+      "ok": true,
+      "detail": "16001"
+    },
+    {
+      "name": "no bot errored (no illegal action / policy throw)",
+      "ok": true,
+      "detail": "0 errors"
+    },
+    {
+      "name": "bots acted legally",
+      "ok": true,
+      "detail": "77 bot actions observed"
+    },
+    {
+      "name": "no bot action_rejected (server-side)",
+      "ok": true,
+      "detail": "0 rejections"
+    },
+    {
+      "name": "every bot participated + had accepted actions",
+      "ok": true,
+      "detail": "llm#1:part=12,acc=37,rej=0,status=running llm#2:part=12,acc=40,rej=0,status=running"
+    },
+    {
+      "name": "ledger hash chain verified",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "every accepted action has a routed decision",
+      "ok": true,
+      "detail": "0 unmatched"
+    },
+    {
+      "name": "routed seat matches transcript seat",
+      "ok": true,
+      "detail": "0 mismatches"
+    },
+    {
+      "name": "every routed send was accepted",
+      "ok": true,
+      "detail": "0 unaccepted sends"
+    },
+    {
+      "name": "no duplicate routed decisions",
+      "ok": true,
+      "detail": "0 duplicates"
+    },
+    {
+      "name": "every accepted action carries an authoritative actionSeq",
+      "ok": true,
+      "detail": "0 missing"
+    },
+    {
+      "name": "latency samples == llm_calls",
+      "ok": true,
+      "detail": "77/77"
+    },
+    {
+      "name": "sum(request outcomes) == llm_calls",
+      "ok": true,
+      "detail": "77/77"
+    },
+    {
+      "name": "llm fallback actions all legal",
+      "ok": true,
+      "detail": "true=17, false=0"
+    },
+    {
+      "name": "LLM bots completed >= 80% of hands",
+      "ok": true,
+      "detail": "llm#1:12 llm#2:12"
+    },
+    {
+      "name": "llm actually called",
+      "ok": true,
+      "detail": "77 llm call(s)"
+    },
+    {
+      "name": "llm model action accepted by server",
+      "ok": true,
+      "detail": "modelAccepted=60 (calls=77, modelLegal=60, fallbackAccepted=17)"
+    }
+  ],
+  "hands": [
+    {
+      "handId": "7cc8784f477c1d35",
+      "participants": 3,
+      "pot": 7214,
+      "commission": 40,
+      "deltas": [
+        {
+          "seat": 1,
+          "delta": -4000
+        },
+        {
+          "seat": 2,
+          "delta": 3960
+        },
+        {
+          "seat": 0,
+          "delta": 0
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 5,
+        "2": 5
+      },
+      "rejections": [],
+      "durationMs": 71117
+    },
+    {
+      "handId": "b04ec26e88db4b8a",
+      "participants": 3,
+      "pot": 90,
+      "commission": 0,
+      "deltas": [
+        {
+          "seat": 2,
+          "delta": -10
+        },
+        {
+          "seat": 0,
+          "delta": -20
+        },
+        {
+          "seat": 1,
+          "delta": 30
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 1,
+        "2": 1
+      },
+      "rejections": [],
+      "durationMs": 13774
+    },
+    {
+      "handId": "8981d9349a8647a6",
+      "participants": 3,
+      "pot": 500,
+      "commission": 2,
+      "deltas": [
+        {
+          "seat": 0,
+          "delta": -230
+        },
+        {
+          "seat": 1,
+          "delta": 268
+        },
+        {
+          "seat": 2,
+          "delta": -40
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 6,
+        "1": 4,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 42264
+    },
+    {
+      "handId": "a44ed0f6c2d82b0f",
+      "participants": 3,
+      "pot": 760,
+      "commission": 3,
+      "deltas": [
+        {
+          "seat": 1,
+          "delta": 257
+        },
+        {
+          "seat": 2,
+          "delta": -260
+        },
+        {
+          "seat": 0,
+          "delta": 0
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 3,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 48015
+    },
+    {
+      "handId": "0e22fa45818b194c",
+      "participants": 3,
+      "pot": 320,
+      "commission": 1,
+      "deltas": [
+        {
+          "seat": 2,
+          "delta": -150
+        },
+        {
+          "seat": 0,
+          "delta": 169
+        },
+        {
+          "seat": 1,
+          "delta": -20
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 4,
+        "1": 2,
+        "2": 4
+      },
+      "rejections": [],
+      "durationMs": 36608
+    },
+    {
+      "handId": "e10f8fe4dd4a8bcb",
+      "participants": 3,
+      "pot": 500,
+      "commission": 2,
+      "deltas": [
+        {
+          "seat": 0,
+          "delta": -100
+        },
+        {
+          "seat": 1,
+          "delta": 198
+        },
+        {
+          "seat": 2,
+          "delta": -100
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 3,
+        "1": 2,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 34316
+    },
+    {
+      "handId": "4b843395b42e6f61",
+      "participants": 3,
+      "pot": 3519,
+      "commission": 17,
+      "deltas": [
+        {
+          "seat": 1,
+          "delta": -1225
+        },
+        {
+          "seat": 2,
+          "delta": 1208
+        },
+        {
+          "seat": 0,
+          "delta": 0
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 6,
+        "2": 5
+      },
+      "rejections": [],
+      "durationMs": 109979
+    },
+    {
+      "handId": "2f638c3549dbad88",
+      "participants": 3,
+      "pot": 60,
+      "commission": 0,
+      "deltas": [
+        {
+          "seat": 2,
+          "delta": 20
+        },
+        {
+          "seat": 0,
+          "delta": -20
+        },
+        {
+          "seat": 1,
+          "delta": 0
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 2,
+        "1": 1,
+        "2": 2
+      },
+      "rejections": [],
+      "durationMs": 26873
+    },
+    {
+      "handId": "5a8d3b3a66f4dbb8",
+      "participants": 3,
+      "pot": 490,
+      "commission": 2,
+      "deltas": [
+        {
+          "seat": 0,
+          "delta": -10
+        },
+        {
+          "seat": 1,
+          "delta": 148
+        },
+        {
+          "seat": 2,
+          "delta": -140
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 3,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 39223
+    },
+    {
+      "handId": "2348cb4138121f91",
+      "participants": 3,
+      "pot": 3696,
+      "commission": 18,
+      "deltas": [
+        {
+          "seat": 1,
+          "delta": 1236
+        },
+        {
+          "seat": 2,
+          "delta": -1254
+        },
+        {
+          "seat": 0,
+          "delta": 0
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 6,
+        "2": 5
+      },
+      "rejections": [],
+      "durationMs": 95757
+    },
+    {
+      "handId": "6a88c83f1f3f0376",
+      "participants": 3,
+      "pot": 90,
+      "commission": 0,
+      "deltas": [
+        {
+          "seat": 2,
+          "delta": -20
+        },
+        {
+          "seat": 0,
+          "delta": -20
+        },
+        {
+          "seat": 1,
+          "delta": 40
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 3,
+        "1": 2,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 27632
+    },
+    {
+      "handId": "c9b1ed78f22bb353",
+      "participants": 3,
+      "pot": 630,
+      "commission": 3,
+      "deltas": [
+        {
+          "seat": 0,
+          "delta": -10
+        },
+        {
+          "seat": 1,
+          "delta": 187
+        },
+        {
+          "seat": 2,
+          "delta": -180
+        }
+      ],
+      "acceptedBySeat": {
+        "0": 1,
+        "1": 2,
+        "2": 3
+      },
+      "rejections": [],
+      "durationMs": 28551
+    }
+  ]
+}

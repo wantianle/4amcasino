@@ -1,0 +1,122 @@
+/* Card face/back presets. All artwork is CSS/SVG, so previews and tables are
+   self-contained and remain crisp in both pod and board tiers. */
+.playing-card-face {
+  --card-ink: #172033;
+  --card-red: #b4233f;
+  --card-blue: #1769aa;
+  --card-green: #18734f;
+  --card-index-size: 1em;
+  --card-pip-size: 1em;
+  color: var(--card-ink);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 22%, #d6dbe4);
+  box-shadow:
+    0 2px 3px rgb(15 23 42 / 0.16),
+    0 7px 12px rgb(15 23 42 / 0.12),
+    inset 0 1px 0 rgb(255 255 255 / 0.92),
+    inset 0 -1px 0 rgb(15 23 42 / 0.08);
+}
+.playing-card-face::before {
+  content: '';
+  position: absolute;
+  inset: 1px 9% auto;
+  height: 9%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.72), transparent);
+  opacity: 0.72;
+  pointer-events: none;
+}
+.playing-card-face[data-card-suit='1'],
+.playing-card-face[data-card-suit='2'] { color: var(--card-red); }
+.playing-card-face[data-card-face='gg-four-color'][data-card-suit='1'] { color: var(--card-blue); }
+.playing-card-face[data-card-face='gg-four-color'][data-card-suit='0'] { color: var(--card-green); }
+.playing-card-face[data-card-face='gg-four-color'][data-card-suit='2'] { color: var(--card-red); }
+.playing-card-face[data-card-face='gg-four-color'][data-card-suit='3'] { color: #151b27; }
+.playing-card-face[data-card-face='gg-solid'][data-card-suit='0'] { color: var(--card-green); }
+.playing-card-face[data-card-face='gg-solid'][data-card-suit='1'] { color: var(--card-blue); }
+.playing-card-face[data-card-face='gg-solid'][data-card-suit='2'] { color: var(--card-red); }
+.playing-card-face[data-card-face='gg-solid'][data-card-suit='3'] { color: #151b27; }
+.playing-card-index { font-size: var(--card-index-size); z-index: 2; }
+.playing-card-pip { font-size: var(--card-pip-size); }
+.playing-card-face[data-card-face='classic-large'] {
+  --card-index-size: 1.08em;
+  --card-pip-size: 1.05em;
+  background: linear-gradient(145deg, #fff 0%, #faf8f1 100%);
+}
+.playing-card-face[data-card-face='gg-four-color'] {
+  --card-index-size: 1.12em;
+  --card-pip-size: 1.08em;
+  background: linear-gradient(145deg, #fff 0%, #f2f5f2 100%);
+}
+.playing-card-face[data-card-face='gg-solid'] {
+  --card-index-size: 1.12em;
+  --card-pip-size: 1.08em;
+  background: linear-gradient(145deg, #fff 0%, #f7f8f5 100%);
+}
+.playing-card-solid-logo {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: currentColor;
+  font-size: var(--card-pip-size);
+  line-height: 1;
+  text-shadow: 0 1px 1px rgb(15 23 42 / 0.14);
+}
+.playing-card-face[data-card-face='gg-solid'] .playing-card-index--bottom {
+  display: block;
+}
+.playing-card-face[data-card-face='jumbo-accessible'] {
+  --card-index-size: 1.32em;
+  --card-pip-size: 1.22em;
+  background: #fff;
+  border: 2px solid currentColor;
+}
+.playing-card-face[data-card-face='minimal'] {
+  --card-index-size: 1.08em;
+  --card-pip-size: .9em;
+  background: #fcfcfb;
+}
+.playing-card-face[data-card-face='minimal'] .playing-card-pip { opacity: .78; }
+.playing-card-face[data-card-face='minimal'] .playing-card-index--bottom { display: none; }
+.card-back {
+  border: 1px solid rgb(255 255 255 / 0.22);
+  box-shadow:
+    0 2px 3px rgb(15 23 42 / 0.2),
+    0 6px 11px rgb(15 23 42 / 0.16),
+    inset 0 1px 0 rgb(255 255 255 / 0.24),
+    inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+.playing-card-court {
+  position: absolute;
+  inset: 19% 12% 8%;
+  width: 76%;
+  height: 73%;
+  color: currentColor;
+}
+.playing-card-court-crown { fill: currentColor; opacity: .9; }
+.playing-card-court-hair { fill: #39251d; stroke: currentColor; stroke-width: .7; }
+.playing-card-court-face { fill: #f5c9a6; stroke: currentColor; stroke-width: 1; }
+.playing-card-court-face-detail { fill: none; stroke: currentColor; stroke-width: .7; stroke-linecap: round; }
+.playing-card-court-collar { fill: #fff8e8; stroke: currentColor; stroke-width: 1; }
+.playing-card-court-coat { fill: color-mix(in srgb, currentColor 72%, #fff 28%); stroke: currentColor; stroke-width: 1.2; }
+.playing-card-court-sash { fill: #f1c75b; stroke: currentColor; stroke-width: .8; }
+.playing-card-court-jewel { fill: #e6b94c; stroke: currentColor; stroke-width: .7; }
+.playing-card-court-sword { fill: none; stroke: #e7e0d2; stroke-width: 1.3; stroke-linecap: round; }
+
+/* Five two-way, CSS-drawn back presets. The existing crimson class remains
+   the compatibility default; these names are ready for preference wiring. */
+.card-back-wine-lattice { --back-color: #5e1626; background-image: repeating-linear-gradient(45deg, #ffffff18 0 2px, transparent 2px 8px), repeating-linear-gradient(-45deg, #0005 0 2px, transparent 2px 8px), radial-gradient(circle, #f5d67b 0 5%, transparent 6%); background-size: auto, auto, 18px 18px; }
+.card-back-black-gold { --back-color: #11100e; background-image: repeating-linear-gradient(45deg, #f5d67b 0 1px, transparent 1px 9px), repeating-linear-gradient(-45deg, #f5d67b55 0 1px, transparent 1px 9px), radial-gradient(circle, #f5d67b 0 5%, transparent 6%); background-size: auto, auto, 20px 20px; }
+.card-back-classic-red-blue { --back-color: #8d1d2c; background-image: repeating-linear-gradient(45deg, #e9edf5 0 2px, transparent 2px 10px), repeating-linear-gradient(-45deg, #183c7a 0 2px, transparent 2px 10px); }
+.card-back-geometry { --back-color: #263b48; background-image: linear-gradient(30deg, transparent 45%, #76d5c5 46% 50%, transparent 51%), linear-gradient(-30deg, transparent 45%, #76d5c5 46% 50%, transparent 51%); background-size: 18px 18px; }
+.card-back-deep-blue-silver { --back-color: #102844; background-image: radial-gradient(circle at center, transparent 0 34%, #c7d2df 35% 39%, transparent 40%), repeating-linear-gradient(45deg, #ffffff22 0 1px, transparent 1px 12px); background-size: 24px 24px, auto; }
+
+/* table-pod.css deliberately owns the pod's historical crimson paint. These
+ * equally specific attribute selectors let a chosen preset win inside pods,
+ * while the generic rules above continue to serve board/global cards. */
+.table-pod-card .card-back[data-card-back='wine-lattice'] { background-image: repeating-linear-gradient(45deg, #ffffff18 0 2px, transparent 2px 8px), repeating-linear-gradient(-45deg, #0005 0 2px, transparent 2px 8px), radial-gradient(circle, #f5d67b 0 5%, transparent 6%); background-size: auto, auto, 18px 18px; background-color: #5e1626; }
+.table-pod-card .card-back[data-card-back='black-gold'] { background-image: repeating-linear-gradient(45deg, #f5d67b 0 1px, transparent 1px 9px), repeating-linear-gradient(-45deg, #f5d67b55 0 1px, transparent 1px 9px), radial-gradient(circle, #f5d67b 0 5%, transparent 6%); background-size: auto, auto, 20px 20px; background-color: #11100e; }
+.table-pod-card .card-back[data-card-back='classic-red-blue'] { background-image: repeating-linear-gradient(45deg, #e9edf5 0 2px, transparent 2px 10px), repeating-linear-gradient(-45deg, #183c7a 0 2px, transparent 2px 10px); background-color: #8d1d2c; }
+.table-pod-card .card-back[data-card-back='geometry'] { background-image: linear-gradient(30deg, transparent 45%, #76d5c5 46% 50%, transparent 51%), linear-gradient(-30deg, transparent 45%, #76d5c5 46% 50%, transparent 51%); background-size: 18px 18px; background-color: #263b48; }
+.table-pod-card .card-back[data-card-back='deep-blue-silver'] { background-image: radial-gradient(circle at center, transparent 0 34%, #c7d2df 35% 39%, transparent 40%), repeating-linear-gradient(45deg, #ffffff22 0 1px, transparent 1px 12px); background-size: 24px 24px, auto; background-color: #102844; }

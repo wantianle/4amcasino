@@ -45,7 +45,7 @@ export function ShowdownCards({
               'flex items-center gap-2.5 rounded-xl p-2 pr-3',
               light
                 ? 'bg-white/10'
-                : 'bg-slate-100/80 ring-1 ring-slate-200/70 dark:bg-slate-800/60 dark:ring-slate-700/60',
+                : 'bg-[var(--table-surface-label)] ring-1 ring-[var(--table-hairline)] text-[var(--table-ink)]',
             )}
           >
             {/* shrink-0: as flex children these were compressed narrower than a
@@ -57,7 +57,7 @@ export function ShowdownCards({
             </div>
             <div className="min-w-0">
               <div className="text-sm font-semibold leading-tight">{nameOf(r.seat)}</div>
-              <div className={cn('text-xs', light ? 'text-white/60' : 'text-slate-500')}>
+              <div className={cn('text-xs', light ? 'text-white/60' : 'text-[var(--table-muted)]')}>
                 {labelOf(r.score)}
               </div>
             </div>
@@ -67,14 +67,14 @@ export function ShowdownCards({
                 delta > 0
                   ? light
                     ? 'text-emerald-300'
-                    : 'text-emerald-600'
+                    : 'text-[var(--table-up)]'
                   : delta < 0
                     ? light
                       ? 'text-rose-300'
-                      : 'text-rose-600'
+                      : 'text-[var(--table-down)]'
                     : light
                       ? 'text-white/50'
-                      : 'text-slate-400',
+                      : 'text-[var(--table-faint)]',
               )}
             >
               {delta > 0 ? '+' : ''}

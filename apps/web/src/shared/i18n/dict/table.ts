@@ -1,6 +1,6 @@
 // Table widget dictionary (widgets/table/*, features/table/preActions.ts,
 // features/table/AutoDealDialog.tsx): action-bar buttons and status lines,
-// seat badges, ready check, run-it-twice, chat panel, floating cards.
+// seat badges, ready check, run-it-twice, chat panel.
 // Keys are the exact English source strings (B+ scheme, docs/zh-i18n.md §6.2);
 // §5d samples are used verbatim where the doc provides them.
 // Keys already defined elsewhere and deliberately NOT repeated here (the
@@ -9,6 +9,10 @@
 // Big blind (dict/lobby.ts). Hand categories + rank words live in
 // dict/shared.ts and reach the UI through tHandCategory()/tScore() only.
 const table: Record<string, string> = {
+  'Sit out next deal': '下一手离座',
+  'Deal me in next hand': '下一手发牌',
+  Gameplay: '玩法',
+  History: '历史',
   // ── Action bar buttons (§5d) ─────────────────────────────────────────────
   'Call {n}': '跟 {n}',
   'Bet {n}': '下注 {n}',
@@ -80,7 +84,7 @@ const table: Record<string, string> = {
   'Enter to confirm': '回车确认',
   'Enter a whole-chip amount from {min} to {max}.': '请输入 {min} 到 {max} 之间的整数筹码。',
 
-  // ── Seat / player badges (players.tsx, RoundTable.tsx) ───────────────────
+  // ── Seat / player badges (RoundTable.tsx) ────────────────────────────────
   You: '你',
   '(dealer)': '（庄位）',
   'Dealer button': '庄位',
@@ -102,12 +106,18 @@ const table: Record<string, string> = {
   muted: '已静音',
   "{name}'s profile": '{name}的主页',
   Sit: '入席',
-  'Show big cards': '放大看底牌',
   'Buy waiting for banker approval': '买入待账房批准',
   '+{n} soon': '+{n} 即将到账',
   'Stand this player up': '请这名玩家起身',
   'Tap again to stand them up': '再点一次，确认让其起身',
   'stand up?': '起身？',
+  // L2 seat stack unit toggle (local device preference, taps every seat)
+  pts: '分',
+  '{n} chips · tap to show BB': '{n} 分 · 点此改用 BB 显示',
+  '{n} BB · tap to show points': '{n} BB · 点此改用分显示',
+  // L4 action cluster sub line
+  'To call {n}': '要跟 {n}',
+  'Pot {n}': '底池 {n}',
   'in {n}': '买入 {n}',
 
   // ── Chat panel (ChatPanel.tsx) ───────────────────────────────────────────
@@ -150,13 +160,7 @@ const table: Record<string, string> = {
   'Waiting for friends to sit down…': '等朋友入座…',
   pot: '底池',
 
-  // ── Floating cards (FloatingCards.tsx) / TurnProgress.tsx ────────────────
-  'Your cards (drag to move)': '你的底牌（可拖动）',
-  'Drag here to move your cards': '按住这里拖动底牌',
-  'Smaller cards': '缩小底牌',
-  'Bigger cards': '放大底牌',
-  "Hide big cards (tap your seat's cards to bring them back)":
-    '收起大牌（再点你座位上的牌就会回来）',
+  // ── TurnProgress.tsx ─────────────────────────────────────────────────────
   'time remaining to act': '剩余行动时间',
 
   // ── P2 B2 计时银行 (TurnProgress / BettingPanel ring / seat pods) ─────────

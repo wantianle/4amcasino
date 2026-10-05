@@ -15,6 +15,11 @@ export interface AgentGrant {
   scope_id: string;
   can_play: number;
   expires_at: number;
+  /** 'user' for grants a person minted for themselves, 'bot_runner' for the
+   *  internal grant that lets a bot account play its seat. */
+  grant_kind: string;
+  /** Set for bot_runner grants: the bot_accounts row they belong to. */
+  bot_id: string | null;
 }
 export class AgentError extends Error {
   constructor(
@@ -44,11 +49,19 @@ export function resolveAgentGrant(db: DB, token: string): AgentGrant | null {
       'SELECT * FROM agent_grants WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?',
     )
     .get(tokenHash(token), Date.now()) as AgentGrant | undefined;
-  return grant &&
-    enabledUser(db, grant.user_id) &&
-    scopeMember(db, grant.user_id, grant.scope_kind, grant.scope_id)
-    ? grant
-    : null;
+  if (!grant || !enabledUser(db, grant.user_id)) return null;
+  if (!scopeMember(db, grant.user_id, grant.scope_kind, grant.scope_id)) return null;
+  // A bot_runner grant is only valid while it names an existing bot whose user
+  // and room still match the grant. Normal `user` grants are unchanged.
+  if (grant.grant_kind === 'bot_runner') {
+    if (!grant.bot_id) return null;
+    const bot = db
+      .prepare('SELECT user_id, room_id, status FROM bot_accounts WHERE id = ?')
+      .get(grant.bot_id) as { user_id: number; room_id: string; status: string } | undefined;
+    if (!bot || bot.user_id !== grant.user_id || bot.room_id !== grant.scope_id) return null;
+    if (bot.status === 'removed') return null;
+  }
+  return grant;
 }
 const PLAY_MESSAGES = new Set([
   'sit',
@@ -172,8 +185,9 @@ export function registerAgentAccess(app: FastifyInstance, db: DB): void {
   });
   app.get('/api/me/agent-grants', { preHandler: requireUser(db) }, async (req) => ({
     grants: db
+      // Internal bot-runner grants must never appear in a user's own list.
       .prepare(
-        'SELECT id, label, scope_kind AS scopeKind, scope_id AS scopeId, can_play AS canPlay, created_at AS createdAt, expires_at AS expiresAt, revoked_at AS revokedAt FROM agent_grants WHERE user_id = ? ORDER BY created_at DESC LIMIT 100',
+        "SELECT id, label, scope_kind AS scopeKind, scope_id AS scopeId, can_play AS canPlay, created_at AS createdAt, expires_at AS expiresAt, revoked_at AS revokedAt FROM agent_grants WHERE user_id = ? AND grant_kind != 'bot_runner' ORDER BY created_at DESC LIMIT 100",
       )
       .all(req.userId),
   }));

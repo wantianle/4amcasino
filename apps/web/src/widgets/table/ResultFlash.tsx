@@ -19,7 +19,7 @@ export function ResultFlash({
   detail?: string | null;
   /** The hand was voided, not won: red, no trophy. */
   aborted?: boolean;
-  /** Glass styling for the dark mobile table and the 3D lounge overlay. */
+  /** Glass styling for the dark mobile table result overlay. */
   dark?: boolean;
   onDismiss: () => void;
   /** Present only when a share card can actually be built from this result. */

@@ -1,0 +1,23 @@
+{
+  "name": "@4am/agent-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./decision-view": "./src/decisionView.ts",
+    "./policy": "./src/policy.ts"
+  },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@4am/mental-poker": "*",
+    "@4am/shared": "*",
+    "@noble/hashes": "^1.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0"
+  }
+}

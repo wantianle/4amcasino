@@ -11,7 +11,6 @@ import type { ArenaResult, PlayerAction, TournamentState } from '@4am/shared';
 import { carriesStacks, tournamentFormatLabel } from '@4am/shared';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
-import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { t } from '../../shared/i18n/index.ts';
 import { fmt } from '../../shared/lib/cn.ts';
 import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
@@ -133,7 +132,6 @@ function PublicTournament({ id }: { id: string }) {
           <Link className="broadcast-link" to={`/tournaments/${encodeURIComponent(id)}`}>
             <RiArrowLeftLine size={16} aria-hidden="true" /> {t('Tournament details')}
           </Link>
-          <AppearanceToggle compact />
         </div>
       </nav>
       {!state ? (

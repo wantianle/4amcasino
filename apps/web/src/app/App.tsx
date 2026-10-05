@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Fragment, lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { useStore } from '../shared/store.ts';
-import { applyAppearance, loadPrefs } from '../shared/prefs.ts';
+import { loadPrefs } from '../shared/prefs.ts';
 import { peekPendingJoin } from '../shared/pendingJoin.ts';
 import { api } from '../shared/api.ts';
 import { authDestination } from '../shared/authDestination.ts';
@@ -38,9 +38,6 @@ const PlayerPage = lazy(() =>
 );
 const ReplayPage = lazy(() =>
   import('../pages/replay/ReplayPage.tsx').then((module) => ({ default: module.ReplayPage })),
-);
-const Table3DPage = lazy(() =>
-  import('../pages/table3d/Table3DPage.tsx').then((module) => ({ default: module.Table3DPage })),
 );
 const SettingsPage = lazy(() =>
   import('../pages/settings/SettingsPage.tsx').then((module) => ({ default: module.SettingsPage })),
@@ -120,9 +117,6 @@ export function App() {
   const isPlatform = useStore((s) => s.auth.isPlatform);
   const setAuth = useStore((s) => s.setAuth);
   const locale = useLocaleStore((s) => s.locale);
-  useEffect(() => {
-    applyAppearance();
-  }, []);
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
@@ -228,14 +222,9 @@ export function App() {
                   </RequireAuth>
                 }
               />
-              <Route
-                path="/room/:id/3d"
-                element={
-                  <RequireAuth>
-                    <Table3DPage />
-                  </RequireAuth>
-                }
-              />
+              {/* Old /room/:id/3d links redirect back to the 2D table in the
+                  same room. */}
+              <Route path="/room/:id/3d" element={<Navigate to=".." relative="path" replace />} />
               <Route
                 path="/room/:id/ledger"
                 element={

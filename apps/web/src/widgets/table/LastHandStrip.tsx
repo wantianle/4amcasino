@@ -55,9 +55,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
     <div
       className={cn(
         'rounded-2xl',
-        light
-          ? 'bg-white/10 text-white'
-          : 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-700/70',
+        light ? 'bg-white/10 text-white' : 'table-lasthand',
       )}
     >
       <button
@@ -67,17 +65,19 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
       >
         <ClockCounterClockwise
           size={15}
-          className={light ? 'text-white/50' : 'text-slate-400'}
+          className={light ? 'text-white/50' : 'lh-ic'}
           aria-label={t('Last hand')}
         />
-        <span className="text-xs font-semibold uppercase tracking-[0.14em]">{t('Last hand')}</span>
-        <span className={cn('min-w-0 flex-1 truncate text-sm', light ? 'text-white/70' : 'text-slate-500')}>
+        <span className={cn('text-xs font-semibold uppercase tracking-[0.14em]', !light && 'lh-lab')}>
+          {t('Last hand')}
+        </span>
+        <span className={cn('lh-txt min-w-0 flex-1 truncate text-sm', light && 'text-white/70')}>
           {headline}
         </span>
         {open ? (
-          <CaretDown size={14} className={light ? 'text-white/50' : 'text-slate-400'} />
+          <CaretDown size={14} className={light ? 'text-white/50' : 'lh-caret'} />
         ) : (
-          <CaretUp size={14} className={light ? 'text-white/50' : 'text-slate-400'} />
+          <CaretUp size={14} className={light ? 'text-white/50' : 'lh-caret'} />
         )}
       </button>
       {open && (
@@ -88,7 +88,12 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
               <div key={k} className="flex flex-wrap items-center gap-1.5">
                 {/* a single-run hand needs no label; 2-3 runs get 第 N 跑 */}
                 {runCount > 1 && (
-                  <span className="w-11 shrink-0 text-[0.65rem] font-bold uppercase tracking-wide text-fuchsia-500">
+                  <span
+                    className={cn(
+                      'w-11 shrink-0 text-[0.65rem] font-bold uppercase tracking-wide',
+                      light ? 'text-fuchsia-500' : 'text-[var(--table-gold-hi)]',
+                    )}
+                  >
                     {t('Run {n}', { n: k + 1 })}
                   </span>
                 )}
@@ -99,7 +104,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
                   <span
                     className={cn(
                       'ml-1 text-xs font-semibold',
-                      light ? 'text-emerald-300' : 'text-emerald-600 dark:text-emerald-400',
+                      light ? 'text-emerald-300' : 'text-[var(--table-up)]',
                     )}
                   >
                     {awards
@@ -119,16 +124,13 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
             light={light}
           />
           {last.reveals.length === 0 && Object.keys(last.shown).length === 0 && (
-            <p className={cn('text-xs', light ? 'text-white/50' : 'text-slate-500')}>
+            <p className={cn('lh-txt text-xs', light && 'text-white/50')}>
               {t('No cards were shown - the pot went to the last player standing.')}
             </p>
           )}
           <Link
             to={`/room/${roomId}/replay/${last.handId}`}
-            className={cn(
-              'inline-block text-xs font-semibold',
-              light ? 'text-indigo-300' : 'text-indigo-600 dark:text-indigo-400',
-            )}
+            className={cn('inline-block text-xs font-semibold', light && 'text-indigo-300')}
           >
             {t('Full replay →')}
           </Link>

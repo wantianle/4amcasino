@@ -10,7 +10,6 @@ import {
   RiGithubLine,
   RiPokerClubsLine,
   RiRestartLine,
-  RiVolumeUpLine,
 } from '@remixicon/react';
 import { cardFromName } from '@4am/shared';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
@@ -18,7 +17,6 @@ import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import './landing.css';
-import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 
 const community = ['2h', '5s', '8d', 'Jd', '3c'].map(cardFromName);
 const hole = ['Jc', 'Jh'].map(cardFromName);
@@ -62,16 +60,8 @@ const questions = [
     ),
   ],
   [
-    t('Do I have to play in 3D?'),
-    t(
-      'You can use the focused 2D table or the 3D lounge, and switch between them in the same room. The 3D view includes camera presets and the same game controls.',
-    ),
-  ],
-  [
     t('Can we talk while we play?'),
-    t(
-      'Yes. Rooms have text chat and voice controls. You can also react at the table, customise your character, and take a break to explore the lounge.',
-    ),
+    t('Yes. Rooms have text chat and voice controls. You can also react at the table.'),
   ],
   [
     t('How can I check what happened in a hand?'),
@@ -160,55 +150,6 @@ function JoinTable() {
     </div>
   );
 }
-function RoomPreview() {
-  const [view, setView] = useState<'lounge' | 'overhead'>('lounge');
-  return (
-    <figure className="home-room" id="experience">
-      <div className="home-room-image">
-        <img
-          src={`/media/landing-${view}.webp`}
-          width="1440"
-          height="810"
-          fetchPriority="high"
-          alt={
-            view === 'lounge'
-              ? t(
-                  'Six colourful characters sitting around the poker table in the warmly lit 4AM lounge.',
-                )
-              : t(
-                  'The same six-player table seen from above, with community cards clearly visible on the felt.',
-                )
-          }
-        />
-        <div className="home-room-note">
-          <RiVolumeUpLine aria-hidden />
-          <span>
-            {t('A place to play.')}
-            <br />
-            <strong>{t('A reason to hang out.')}</strong>
-          </span>
-        </div>
-      </div>
-      <figcaption>
-        <span>
-          {t('Inside 4AM')} <span className="home-caption-detail">{t('— an example room')}</span>
-        </span>
-        <div className="home-view-switch" role="group" aria-label={t('Preview camera view')}>
-          <button type="button" aria-pressed={view === 'lounge'} onClick={() => setView('lounge')}>
-            {t('The lounge')}
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === 'overhead'}
-            onClick={() => setView('overhead')}
-          >
-            {t('The table')}
-          </button>
-        </div>
-      </figcaption>
-    </figure>
-  );
-}
 function HandPreview() {
   const [step, setStep] = useState(0);
   const reducedMotion = useReducedMotion();
@@ -281,7 +222,6 @@ export function LandingPage() {
           <a href="#questions">{t('Questions')}</a>
         </nav>
         <div className="home-header-actions">
-          <AppearanceToggle compact />
           <ButtonLink
             href={destination}
             variant="secondary"
@@ -323,7 +263,6 @@ export function LandingPage() {
               <JoinTable />
             </div>
           </div>
-          <RoomPreview />
           <div className="home-essentials" role="group" aria-label={t('Included at every table')}>
             <span>
               <RiCheckLine aria-hidden />
@@ -332,10 +271,6 @@ export function LandingPage() {
             <span>
               <RiCheckLine aria-hidden />
               {t('Voice & chat')}
-            </span>
-            <span>
-              <RiCheckLine aria-hidden />
-              {t('2D & 3D views')}
             </span>
             <span>
               <RiCheckLine aria-hidden />
@@ -378,11 +313,11 @@ export function LandingPage() {
             </li>
             <li>
               <h3>{t('Deal. Talk. Run it back.')}</h3>
-              <p>{t('Play Texas Hold’em together. Switch views, react to a hand, or get up and explore between games.')}</p>
+              <p>{t('Play Texas Hold’em together. React to a hand and run it back.')}</p>
             </li>
           </ol>
         </section>
-        <section className="home-game-section" aria-labelledby="game-title">
+        <section className="home-game-section" id="experience" aria-labelledby="game-title">
           <div className="home-wrap home-game">
             <HandPreview />
             <div className="home-game-copy">
@@ -398,7 +333,7 @@ export function LandingPage() {
               </p>
               <p>
                 {t(
-                  'Keep your focus on the cards in 2D, or settle into the lounge in 3D. It’s the same hand, with everyone at the same table.',
+                  'Keep your focus on the cards, with everyone at the same table.',
                 )}
               </p>
               <a className="home-text-link" href="#experience">

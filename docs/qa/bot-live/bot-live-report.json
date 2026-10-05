@@ -1,0 +1,95 @@
+{
+  "runId": "2026-10-03T23-24-28-924Z",
+  "base": "http://localhost:8787",
+  "roomId": "2cb5843f138d",
+  "account": {
+    "username": "qamut0qn9i5fcf",
+    "userId": 19,
+    "humanSeat": 0
+  },
+  "config": {
+    "HANDS": 3,
+    "BOTS": 2,
+    "BUYIN": 1000,
+    "ACTION_MS": 25000,
+    "HAND_MS": 90000,
+    "HAND_BUDGET_MS": 240000,
+    "POLL_MS": 1000
+  },
+  "botsRunning": [
+    {
+      "id": "b3ba6da3265f56343b456725",
+      "seat": 1,
+      "kind": "scripted",
+      "status": "running"
+    },
+    {
+      "id": "d02ffd147d16912297774c74",
+      "seat": 2,
+      "kind": "scripted",
+      "status": "running"
+    }
+  ],
+  "botsAfterStop": [
+    {
+      "id": "b3ba6da3265f56343b456725",
+      "seat": 1,
+      "status": "stopped"
+    },
+    {
+      "id": "d02ffd147d16912297774c74",
+      "seat": 2,
+      "status": "stopped"
+    }
+  ],
+  "result": {
+    "settledHands": 3,
+    "aborts": 0,
+    "botTranscriptActions": 12,
+    "humanTranscriptActions": 8,
+    "humanAutoFolds": 0,
+    "humanActionHands": [
+      "c90d420273c57399",
+      "ef081383e86a6b09"
+    ],
+    "clickAttempts": 8,
+    "botPods": 2,
+    "ledgerVerified": true,
+    "pageErrors": [],
+    "consoleErrors": []
+  },
+  "hands": [
+    {
+      "handId": "c90d420273c57399",
+      "abort": false,
+      "botActions": 5,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "01d09301295c3ee6",
+      "abort": false,
+      "botActions": 2,
+      "humanActions": 0,
+      "humanAutoFolds": 0
+    },
+    {
+      "handId": "ef081383e86a6b09",
+      "abort": false,
+      "botActions": 5,
+      "humanActions": 4,
+      "humanAutoFolds": 0
+    }
+  ],
+  "screenshots": [
+    "docs/qa/bot-live/01-room-entry.png",
+    "docs/qa/bot-live/02-bots-dialog.png",
+    "docs/qa/bot-live/03-bots-seated.png",
+    "docs/qa/bot-live/04-playing.png",
+    "docs/qa/bot-live/05-after-hands.png"
+  ],
+  "notes": [
+    "The test account and room are left on the (ephemeral) server; storage resets on restart, and this script has no account-delete API.",
+    "Human actions are read from the signed transcript, so a server timeout auto-fold can never be mistaken for real play."
+  ]
+}

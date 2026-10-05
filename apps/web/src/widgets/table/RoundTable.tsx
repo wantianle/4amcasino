@@ -1,72 +1,81 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { Crown, Coins, MicrophoneSlash, Play, Timer, X } from '@phosphor-icons/react';
+import { Crown, Coins, MicrophoneSlash, Play, Robot, Timer, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
+import { botStatusLabel, botStatusTone } from '../../features/bots/botStatus.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
-import type { SeatView } from './players.tsx';
-import { ChipStack, ChipVariantContext } from './ChipStack.tsx';
-import { ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
+import { ChipStack } from './ChipStack.tsx';
+import { BetFlight, ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
+import { TurnProgress } from './TurnProgress.tsx';
+import {
+  anchorOf,
+  angleOf,
+  betPoint,
+  BET_RING,
+  BET_RING_PHONE,
+  CENTER_COLUMN,
+  centerColumnBudgetPx,
+  FELT,
+  K_CAP_DESKTOP,
+  K_CAP_PHONE,
+  K_FLOOR,
+  PHONE_CANVAS,
+  POT_SWEEP_TARGET,
+  ribbonFitsRail,
+  SEAT_ANCHOR,
+  SEAT_ANCHOR_PHONE,
+  SEAT_COUNT,
+  seatPoint,
+  SIT_SPOT_EMPTY,
+  TABLE_CANVAS,
+} from './geometry.ts';
 
 /** A real round table: nine seat pods around an oval, your seat pinned at the
  *  bottom, everyone repositioning live as they sit, act, and fold. The banker
- *  sees every seat and can stand a player up (both requested by notpritam,
- *  docs/FEATURES.md). Empty seats are sittable in place.
+ *  can stand a player up (docs/FEATURES.md).
  *
- *  P1 table redesign (docs/table-redesign-spec.md):
- *  - A3 ONE locked design canvas defines the oval; the phone instance is the
- *    same canvas at exact 1/2 (identical aspect and seat geometry), fitted
- *    with a uniform CSS scale(k).
- *  - User feedback #1: k has a readable FLOOR. When the viewport cannot fit
- *    the canvas at the floor, the stage SCROLLS instead of shrinking the
- *    table into illegibility. The ellipse never stretches either way.
- *  - User feedback #4: no separate big-card panel - the pod IS the card
- *    display.
- *  - User feedback v2 (#1-#3): the two hole cards sit SIDE BY SIDE next to the
- *    avatar (never fanned over it, never colliding with the position discs);
- *    name / stack / 牌型 live on a compact solid plate below the avatar, not
- *    as text floating over the felt; and the pods are anchored by arc so the
- *    bottom seat can no longer be clipped by the rim or covered by the
- *    「行动中」 badge - the pill rides in the pod's own flow.
- *  - Chip semantics v3 (user clarified): every seat shows TWO piles that never
- *    overlap - the player's FULL STACK as a tiny chip bank riding on their
- *    name plate (variant="stack", compact caps), and their CURRENT-STREET BET
- *    as a pile pushed toward the center on the bet ellipse (variant="bet",
- *    with the indigo amount pill). The CENTER pile (TablePage's pot row) is
- *    the sum of all contributions. Three locations, three sizes/labels:
- *    plate bank = 筹码, felt pill = this street, center = 底池. */
+ *  All positioning comes from ./geometry.ts: the locked desktop and phone
+ *  canvases, the felt and bet ellipses, the seat ring, the pot sweep target
+ *  and the center column's size budget (H2 - a measured backstop, not a
+ *  guarantee). Chip semantics: the only chip pile is this street's bet on the
+ *  bet ellipse; the seat stack is a number on the name plate (points ⇄ BB
+ *  toggle) and the center pot is TablePage's pot pill. */
 
-const SEATS = 9;
-
-/** THE design canvas (A3). Ellipse = 87%×60% of the canvas = 1026.6×396
- *  (2.592:1) on desktop, 513.3×198 (2.592:1) on the phone half-canvas.
- *  rx/ry are the SEAT RING percentages; the pods grow off those points via
- *  anchorOf(), so the near ring sits deep enough (40) for the bottom pod -
- *  cards, plate, action pill - to clear both the board and the rim. */
-export const TABLE_CANVAS = {
-  w: 1180,
-  h: 660,
-  rx: 45,
-  ryNear: 40,
-  ryFar: 33,
-} as const;
-
-/** Phone instance: exact 1/2 of the locked canvas (same aspect, same rx/ry). */
-export const PHONE_CANVAS = {
-  w: TABLE_CANVAS.w / 2,
-  h: TABLE_CANVAS.h / 2,
-  rx: TABLE_CANVAS.rx,
-  ryNear: TABLE_CANVAS.ryNear,
-  ryFar: TABLE_CANVAS.ryFar,
-} as const;
-
-/** User feedback #1: never scale below this or the avatars/cards/labels stop
- *  being readable. At 0.55 a desktop 'table' card still renders 53px; below
- *  the floor the stage scrolls instead. */
-const K_FLOOR = 0.55;
+export interface SeatView {
+  seat: number;
+  userId: number;
+  displayName: string;
+  avatarVersion: number;
+  stack: number;
+  isButton: boolean;
+  isToAct: boolean;
+  folded: boolean;
+  allIn: boolean;
+  inHand: boolean;
+  broke: boolean;
+  sittingOut: boolean;
+  /** Currently up the most chips in this room (stack minus buy-ins). */
+  isLeader: boolean;
+  connected: boolean;
+  speaking: boolean;
+  voiceMuted: boolean;
+  revealed?: CardId[];
+  won: boolean;
+  /** Chips netted by this seat in the settled hand. */
+  wonAmount: number;
+  /** Chips requested from the bank, still waiting for approval. */
+  pendingBuy: number;
+  lastAction?: PlayerAction & { auto?: boolean };
+  /** P2 B2: this seat's remaining time bank in ms. Optional and additive. */
+  bankMs?: number;
+  /** Table bot: its lifecycle status drives the cyan identity badge and the
+   *  status pill under the pod. Absent for human seats. */
+  bot?: { status: string; policyKind: string };
+}
 
 function actionLabel(a: PlayerAction & { auto?: boolean }): string {
   if (a.type === 'fold') return a.auto ? t('Timed out') : t('Fold');
@@ -93,46 +102,66 @@ function useStageBox() {
   return [ref, box] as const;
 }
 
-/** User feedback #2: the two hole cards sit SIDE BY SIDE - parallel, no fan,
- *  no overlap; nothing of one card hides the other. */
+/** L2 seat hole cards: face-up pairs (hero, showdown reveals) sit strictly
+ *  side by side — nothing of one card hides the other (feedback #2 kept);
+ *  face-down pairs ride the avatar as the small-angle GG fan. `podFace` is
+ *  the explicit rev-3 seat face (big corner index + center pip, no rotated
+ *  bottom index) — applied at every size the pod uses (desktop pod, phone
+ *  sm, dense-phone xs), never inferred from the size name. */
 function HoleCards({
   size,
   cards,
   faceDown,
+  narrow = false,
 }: {
-  size: 'xs' | 'sm';
+  size: 'xs' | 'sm' | 'pod' | 'md';
   cards?: CardId[];
   faceDown?: boolean;
+  narrow?: boolean;
 }) {
+  // L2 (rev-3 mockup): opponents' face-down cards ride the avatar's top edge
+  // as a small-angle GG fan — two burgundy backs tilted ±6° with a slight
+  // overlap. Face-up cards (hero, showdown reveals) stay strictly side by
+  // side: never obscure a card the player can act on (feedback v2 #2 kept).
   if (faceDown) {
     return (
-      <div className="flex items-center gap-1">
-        <PlayingCard faceDown size={size} />
-        <PlayingCard faceDown size={size} />
+      <div className="table-pod-fan">
+        <PlayingCard
+          faceDown
+          size={size}
+          className="table-pod-fan-back table-pod-fan-back--first"
+        />
+        <PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" />
       </div>
     );
   }
   if (!cards || cards.length === 0) return null;
   return (
-    <div className="flex items-center gap-1">
+    <div className={cn('flex items-center', narrow ? 'gap-0.5' : 'gap-[5px]')}>
       {cards.slice(0, 2).map((c, i) => (
-        <PlayingCard key={`${i}-${c}`} card={c} size={size} deal />
+        <PlayingCard key={`${i}-${c}`} card={c} size={size} deal podFace />
       ))}
     </div>
   );
 }
 
-/** User feedback #1/#3: a seat pod is anchored by its angle on the ring so it
- *  can never be clipped by the canvas edge or the stage scroll box:
- *  - bottom-arc pods hang ABOVE their anchor point,
- *  - pods at the far left/right edge grow toward the table's interior,
- *  - everything else centers on the ring point as before. */
-function anchorOf(s: number, c: number): { tx: string; ty: string } {
-  const tx = c > 0.7 ? '-100%' : c < -0.7 ? '0%' : '-50%';
-  // -12px keeps even the fullest bottom pod (pill + cards + plate WITH its
-  // stack bank + strength) clear of the community cards above it.
-  const ty = s > 0.55 ? 'calc(-100% - 12px)' : '-50%';
-  return { tx, ty };
+/** L2 (rev-3 mockup): the seat stack's display UNIT (points ⇄ big blinds) is
+ *  a LOCAL preference — tapping any seat's number toggles it for every seat
+ *  on THIS client only; it is deliberately never synced to account Prefs.
+ *  Persisted per device; default points. */
+const STACK_UNIT_KEY = '4am-stack-unit';
+
+function useStackUnit(): ['chips' | 'bb', () => void] {
+  const [unit, setUnit] = useState<'chips' | 'bb'>(() =>
+    localStorage.getItem(STACK_UNIT_KEY) === 'bb' ? 'bb' : 'chips',
+  );
+  const toggle = () =>
+    setUnit((u) => {
+      const next = u === 'chips' ? 'bb' : 'chips';
+      localStorage.setItem(STACK_UNIT_KEY, next);
+      return next;
+    });
+  return [unit, toggle];
 }
 
 export function RoundTable({
@@ -141,6 +170,7 @@ export function RoundTable({
   myUserId,
   myCards,
   committedBySeat,
+  handId,
   urgent,
   handLive,
   canSit,
@@ -155,6 +185,10 @@ export function RoundTable({
   readyCheck = null,
   onShareHand,
   narrow = false,
+  centerCompact = false,
+  centerRaised = false,
+  centerBudget = false,
+  ribbon,
   handTypes,
   children,
 }: {
@@ -163,6 +197,8 @@ export function RoundTable({
   myUserId: number | null;
   myCards: CardId[];
   committedBySeat: Record<number, number>;
+  /** L5: current hand id - the bet-flight baseline resets with every hand. */
+  handId: string | null;
   urgent: boolean;
   handLive: boolean;
   canSit: boolean;
@@ -182,14 +218,38 @@ export function RoundTable({
   readyCheck?: { eligible: number[]; ready: number[] } | null;
   /** Opens the share card for the settled hand; rides the top winner's badge. */
   onShareHand?: () => void;
-  /** Phone instance of the SAME locked canvas (exact 1/2, aspect unchanged). */
+  /** Phone uses its own taller oval (PHONE_CANVAS 548×410) + phone anchors. */
   narrow?: boolean;
+  /** Compact center tier (audit H2): TablePage collapses the pot/board stack
+   *  (smaller cards, tighter gaps) when multi-run boards or a banner/summary
+   *  stack would otherwise push the column into the bottom-seat pods. */
+  centerCompact?: boolean;
+  /** Raise the center column to CENTER_COLUMN.compactYPct. Driven ONLY by
+   *  effective multi-run boards (server-declared runs > 1, or a non-empty
+   *  extra run already dealt - the caller owns the predicate) - a
+   *  single-run stack, even with banners
+   *  piled on, keeps the canvas-centered yPct so its rendering stays
+   *  baseline-identical. */
+  centerRaised?: boolean;
+  /** Clamp the center column to the geometry budget: measured content taller
+   *  than centerColumnBudgetPx() scales down (never below minScale). Off for
+   *  consumers that size their own children to fit (replays). */
+  centerBudget?: boolean;
+  /** L3: feature banners (bomb/squid + ante note). Rendered INSIDE the locked
+   *  canvas so it scales with the table. When the top rail band is free —
+   *  1/3/5 seated players per geometry.ts ribbonFitsRail() — it rides the rail
+   *  as an absolute strip; for every other seat count a pod sits at or near
+   *  top-center, so it flows at the head of the center column instead (the
+   *  only canvas position that can never cover the top seat). */
+  ribbon?: React.ReactNode;
   /** Hand type (牌型) to show at the bottom of each pod, keyed by seat. */
   handTypes?: Record<number, string>;
   children: React.ReactNode;
 }) {
   // two-tap kick: first tap arms, second confirms, so a stray click never stands anyone up
   const [kickArmed, setKickArmed] = useState<number | null>(null);
+  // L2: one tap on ANY seat's stack flips pts ⇄ BB for every seat (local pref)
+  const [stackUnit, toggleStackUnit] = useStackUnit();
   const reduce = useReducedMotion();
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
@@ -197,6 +257,40 @@ export function RoundTable({
   const fxLit = useWinnerFx(winners.length > 0);
   const potRef = useRef<HTMLDivElement | null>(null);
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});
+  const betEls = useRef<Record<number, HTMLDivElement | null>>({});
+  // L5 (spec row 3): when a seat's street bet GROWS, burst chips from its pod
+  // to its bet spot. Seeding waits for the first NON-EMPTY snapshot: the real
+  // message order is hand_start (no betting yet) -> first betting_state
+  // (blinds ALREADY posted), so seeding on the empty map would misread the
+  // blinds as growth and fire a volley - on every hand AND every rejoin.
+  // Baseline + flights reset whenever handId changes (incl. -> null between
+  // hands, which also clears stale flight entries).
+  const prevCommitted = useRef<Record<number, number>>({});
+  const committedSeeded = useRef(false);
+  const lastFlightHand = useRef<string | null>(null);
+  const [betFlights, setBetFlights] = useState<Record<number, number>>({});
+  useEffect(() => {
+    if (handId !== lastFlightHand.current) {
+      lastFlightHand.current = handId;
+      committedSeeded.current = false;
+      prevCommitted.current = {};
+      setBetFlights({});
+    }
+    if (!handLive || handId === null) return; // replay (no hand) never flies
+    if (!committedSeeded.current) {
+      if (Object.keys(committedBySeat).length === 0) return; // wait for the first betting_state
+      committedSeeded.current = true;
+      prevCommitted.current = { ...committedBySeat };
+      return;
+    }
+    const runs: Record<number, number> = {};
+    for (const [seatStr, amount] of Object.entries(committedBySeat)) {
+      const seat = Number(seatStr);
+      if (amount > (prevCommitted.current[seat] ?? 0)) runs[seat] = Date.now() + seat;
+      prevCommitted.current[seat] = amount;
+    }
+    if (Object.keys(runs).length > 0) setBetFlights((f) => ({ ...f, ...runs }));
+  }, [committedBySeat, handLive, handId]);
   const shareSeat = onShareHand ? (winners[0]?.seat ?? null) : null;
 
   // A3 + feedback #1: fit the locked canvas into the box (both dimensions),
@@ -205,8 +299,24 @@ export function RoundTable({
   const canvas = narrow ? PHONE_CANVAS : TABLE_CANVAS;
   const measured = box.w > 0 && box.h > 0;
   const fit = measured ? Math.min(box.w / canvas.w, box.h / canvas.h) : K_FLOOR;
-  const k = Math.min(Math.max(fit, K_FLOOR), narrow ? 0.9 : 1.3);
+  const k = Math.min(Math.max(fit, K_FLOOR), narrow ? K_CAP_PHONE : K_CAP_DESKTOP);
 
+  // H2 size budget: the center column's layout height (contentRect is
+  // pre-transform, so the canvas scale never skews it). When the page opts
+  // into centerBudget, content taller than the geometry budget scales down
+  // uniformly - a backstop that keeps most overruns off the bottom-seat
+  // pods, but it floors at minScale, so an extreme pile can still touch one.
+  const [colH, setColH] = useState(0);
+  useEffect(() => {
+    const el = potRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) setColH(r.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // only occupied seats show, auto-spread evenly around the oval; when seated,
   // the order rotates so YOUR seat sits bottom-center
   const occupied = [...seats].sort((a, b) => a.seat - b.seat);
@@ -216,30 +326,49 @@ export function RoundTable({
     if (i > 0) order = [...occupied.slice(i), ...occupied.slice(0, i)];
   }
   const n = Math.max(order.length, 1);
-  const angleOf = (idx: number) => (Math.PI / 180) * (90 + (idx / n) * 360);
-  const RX = canvas.rx;
-  // bottom seats sit a touch lower so your pod never crowds the board
-  const ry = (a: number) => (Math.sin(a) > 0 ? canvas.ryNear : canvas.ryFar);
+  // L2 phone readability: on the half-size canvas a 7+ seat ring cannot fit
+  // the enlarged desktop pods — dense phone seats ride their hole cards back
+  // down to xs (the fan/pair geometry follows via .table-canvas--dense vars).
+  const dense = narrow && n >= 7;
+  const holeSize: 'xs' | 'sm' | 'pod' = narrow ? (dense ? 'xs' : 'sm') : 'pod';
+  // Face-up hero cards overhang the plaque toward the board. Keep the
+  // historical default budget unless the actual hero has visible cards; the
+  // phone uses its own CSS overhang (including the dense xs tier).
+  const heroCardsVisible =
+    mySeat !== null && myCards.length > 0 && seats.some((p) => p.seat === mySeat && p.inHand);
+  const heroHoloOverhangPx = heroCardsVisible ? (narrow ? (dense ? 4 : 13) : 38) : 0;
+  const budgetPx = centerColumnBudgetPx(
+    canvas,
+    narrow ? SEAT_ANCHOR_PHONE : SEAT_ANCHOR,
+    heroHoloOverhangPx,
+  );
+  // L6: the clamp guards BOTH canvases — the phone's board tiers
+  // (sm single-run, sm multi-run) need the same budget backstop desktop has.
+  const colScale =
+    centerBudget && colH > budgetPx ? Math.max(CENTER_COLUMN.minScale, budgetPx / colH) : 1;
+  // L3 rail-band check — shared with TablePage's column budget via
+  // geometry.ts, so placement and budget can never disagree.
+  const ribbonOnRail = !!ribbon && ribbonFitsRail(n);
   // an unseated member sees where they can join: one + per cyclic gap that
   // still has a free seat number in it, placed between the neighbors
   const sitSpots: { seat: number; x: number; y: number }[] = [];
   if (canSit && !handLive) {
     if (order.length === 0) {
-      sitSpots.push({ seat: 0, x: 50, y: 84 });
+      sitSpots.push({ seat: 0, x: SIT_SPOT_EMPTY.xPct, y: SIT_SPOT_EMPTY.yPct });
     } else {
       for (let i = 0; i < order.length; i++) {
         const from = order[i]!.seat;
         const to = order[(i + 1) % order.length]!.seat;
         let free: number | null = null;
-        for (let c = (from + 1) % SEATS; c !== to; c = (c + 1) % SEATS) {
+        for (let c = (from + 1) % SEAT_COUNT; c !== to; c = (c + 1) % SEAT_COUNT) {
           if (!seats.some((x) => x.seat === c)) {
             free = c;
             break;
           }
         }
         if (free !== null) {
-          const a = (Math.PI / 180) * (90 + ((i + 0.5) / n) * 360);
-          sitSpots.push({ seat: free, x: 50 + RX * Math.cos(a), y: 50 + ry(a) * Math.sin(a) });
+          const spot = seatPoint(angleOf(i + 0.5, n), canvas);
+          sitSpots.push({ seat: free, x: spot.x, y: spot.y });
         }
       }
     }
@@ -257,7 +386,11 @@ export function RoundTable({
       >
         {/* the locked-aspect canvas, scaled uniformly (never stretched) */}
         <div
-          className="relative"
+          className={cn(
+            'table-canvas relative',
+            narrow && 'table-canvas--narrow',
+            dense && 'table-canvas--dense',
+          )}
           style={{
             width: canvas.w,
             height: canvas.h,
@@ -265,43 +398,75 @@ export function RoundTable({
             transformOrigin: 'top left',
           }}
         >
-          {/* isometric table, bottom-up: ground shadow, the table's dark side,
-              a bright rim band, the felt inset on top, and a racetrack line */}
+          {/* The GG-modeled table, bottom-up: ground shadow, the table's dark
+              underside, the charcoal rail top with its single gold hairline,
+              and the deep-green felt (vignette + noise + watermark) — layer
+              sizes/offsets from FELT in ./geometry.ts (TS is the coordinate
+              authority); paint + colors from table-surface.css (L0 tokens).
+              The old racetrack stitch line was dropped in rev 3. */}
           <div
             aria-hidden="true"
-            className="absolute left-1/2 top-[calc(50%+36px)] h-[60%] w-[88%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-slate-600/30 blur-xl dark:bg-black/70"
+            className="table-ground absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{
+              top: `calc(50% + ${FELT.shadow.dropPx}px)`,
+              width: `${FELT.shadow.wPct}%`,
+              height: `${FELT.shadow.hPct}%`,
+            }}
           />
           <div
             aria-hidden="true"
-            className="absolute left-1/2 top-[calc(50%+26px)] h-[60%] w-[87%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-slate-500/60 dark:bg-slate-700/80"
+            className="table-rail-side absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{
+              top: `calc(50% + ${FELT.side.dropPx}px)`,
+              width: `${FELT.side.wPct}%`,
+              height: `${FELT.side.hPct}%`,
+            }}
           />
           <div
             aria-hidden="true"
-            className="absolute left-1/2 top-1/2 h-[60%] w-[87%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-slate-300/90 dark:bg-slate-400/50"
+            className="table-rail-top absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{ width: `${FELT.rim.wPct}%`, height: `${FELT.rim.hPct}%` }}
           />
           <div
             aria-hidden="true"
-            className="absolute left-1/2 top-[calc(50%+1px)] h-[56%] w-[83%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-gradient-to-b from-slate-200/95 to-slate-300/90 shadow-[inset_0_4px_14px_rgba(15,23,42,0.18)] dark:from-slate-900 dark:to-slate-950 dark:shadow-[inset_0_4px_18px_rgba(0,0,0,0.55)]"
-          />
-          <div
-            aria-hidden="true"
-            className="absolute left-1/2 top-1/2 h-[45%] w-[68%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border border-slate-400/50 dark:border-slate-500/40"
-          />
+            className="table-felt absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{
+              top: `calc(50% + ${FELT.inset.dropPx}px)`,
+              width: `${FELT.inset.wPct}%`,
+              height: `${FELT.inset.hPct}%`,
+            }}
+          >
+            <span className="table-felt-watermark">4AM · CASINO</span>
+          </div>
 
           {/* pot, board, and status live at the center (A5: the pot row is the
               first child, i.e. centered directly above the cards area).
-              Chip semantics v3: the column is tagged `pot` so the page's own
-              pot pile picks the variant up without the page passing it -
-              piles here read bigger, glow warm, and carry the tallest cap. */}
+              H2 size budget: with centerBudget on (the live table), content
+              taller than centerColumnBudgetPx() scales down uniformly - a
+              mitigation, not a guarantee: the page's compact tier shrinks
+              the content first so the clamp usually only nudges, but it
+              floors at minScale (0.72) and an extreme pile (3 runs +
+              banners + summary) can overrun past that floor. */}
           <div
             ref={potRef}
             className={cn(
-              'absolute left-1/2 top-1/2 z-10 flex w-[66%] -translate-x-1/2 -translate-y-1/2 flex-col items-center',
-              narrow ? 'gap-2.5' : 'gap-5',
+              'table-center-col absolute z-10 flex flex-col items-center',
+              centerCompact ? 'gap-2' : narrow ? 'gap-2.5' : 'gap-5',
             )}
+            style={{
+              left: `${CENTER_COLUMN.xPct}%`,
+              top: `${centerRaised ? CENTER_COLUMN.compactYPct : CENTER_COLUMN.yPct}%`,
+              width: `${CENTER_COLUMN.widthPct}%`,
+              transform: `translate(-50%, -50%) scale(${colScale})`,
+            }}
           >
-            <ChipVariantContext.Provider value="pot">{children}</ChipVariantContext.Provider>
+            {!ribbonOnRail && ribbon}
+            {children}
           </div>
+
+          {/* L3: rail-band ribbon — inside the canvas so it scales with the
+              table, z below the pods so a seat can never be covered by it */}
+          {ribbonOnRail && <div className="table-ribbon-rail">{ribbon}</div>}
 
           {sitSpots.map((spot) => (
             <div
@@ -309,10 +474,7 @@ export function RoundTable({
               className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
               style={{ left: `${spot.x}%`, top: `${spot.y}%` }}
             >
-              <button
-                onClick={() => onSit(spot.seat)}
-                className="flex h-14 w-14 flex-col items-center justify-center rounded-full border-2 border-dashed border-indigo-400/50 text-xs font-semibold text-indigo-500 transition-colors hover:border-indigo-400 hover:bg-indigo-500/10 dark:text-indigo-300"
-              >
+              <button onClick={() => onSit(spot.seat)} className="table-sit-spot">
                 {t('Sit')}
               </button>
             </div>
@@ -320,19 +482,17 @@ export function RoundTable({
 
           {order.map((p, i) => {
             const seat = p.seat;
-            const a = angleOf(i);
-            const s = Math.sin(a);
-            const c = Math.cos(a);
-            const x = 50 + RX * c;
-            const y = 50 + ry(a) * s;
-            const { tx, ty } = anchorOf(s, c);
+            const a = angleOf(i, n);
+            const { x, y, sin: s, cos: c } = seatPoint(a, canvas);
+            // L6: the phone oval has its own anchors (no pod hangs and none
+            // flips inward) and its own, wider bet ellipse.
+            const { tx, ty } = anchorOf(s, c, narrow ? SEAT_ANCHOR_PHONE : SEAT_ANCHOR);
             const committed = committedBySeat[seat] ?? 0;
             // Bet piles ride their own tighter ellipse between the pot and the
             // seats. The straight-bottom seat gets a sideways nudge: there is
             // no vertical room left between the river card and a full pod, so
             // its stack sits just off the center line (user feedback v2 #1).
-            const betNudge = s > 0.55 && Math.abs(c) < 0.35 ? (c >= 0 ? 13 : -13) : 0;
-            const bet = { x: 50 + 27 * c + betNudge, y: 50 + 19 * s };
+            const bet = betPoint(a, narrow ? BET_RING_PHONE : BET_RING);
             const isMe = p.userId === myUserId;
             const bbCount = Math.round(p.stack / Math.max(1, bb));
             const strength = handTypes?.[seat] ?? null;
@@ -342,6 +502,62 @@ export function RoundTable({
             const isBanker = p.userId === bankerId;
             const isHost = hostId != null && p.userId === hostId;
             const isCoBanker = coBankerId !== null && p.userId === coBankerId;
+
+            const lastAction = p.lastAction;
+            const aggressive =
+              !!lastAction && (lastAction.type === 'raise' || lastAction.type === 'bet');
+            const folded = lastAction?.type === 'fold';
+            const showAction =
+              !p.broke && p.connected && !p.sittingOut && (!!lastAction || p.allIn);
+            // L5 (spec row 6): during the winner moment the beaten hands dim
+            // alongside the folded ones - the 300ms transition lives in
+            // table-motion.css, and it lifts the instant the moment ends (or
+            // the next hand starts).
+            const lostNow = fxLit && p.inHand && !p.won && !p.folded;
+            const dim = p.folded || !p.connected || p.sittingOut || lostNow;
+            // the stack's display unit is a shared local preference; one tap
+            // flips pts ⇄ BB for EVERY seat on this device.
+            const stackHint =
+              stackUnit === 'chips'
+                ? t('{n} chips · tap to show BB', { n: fmt(p.stack) })
+                : t('{n} BB · tap to show points', { n: bbCount });
+            // AT MOST ONE role corner; every role folds into its tip.
+            const roles: { key: string; pos: string; icon: React.ReactNode; label: string }[] = [];
+            if (isHost)
+              roles.push({
+                key: 'host',
+                pos: '-left-[3px] -top-[3px]',
+                icon: <Play size={8} weight="fill" />,
+                label: t('Host - deals the hands'),
+              });
+            if (isBanker || isCoBanker)
+              roles.push({
+                key: 'banker',
+                pos: '-left-[3px] -bottom-[3px]',
+                icon: <Coins size={9} weight="fill" />,
+                label: isBanker ? t('Banker') : t('Backup banker'),
+              });
+            if (p.isLeader)
+              roles.push({
+                key: 'leader',
+                pos: '-right-[3px] -top-[3px]',
+                icon: <Crown size={9} weight="fill" />,
+                label: t('Chip leader'),
+              });
+            // A bot never produces a muted corner: its identity badge owns the
+            // bottom-right slot (see the badge below), and bots have no voice
+            // session to mute anyway - the guard makes the slot conflict
+            // impossible by construction, not by assumption.
+            if (p.voiceMuted && !p.bot)
+              roles.push({
+                key: 'muted',
+                pos: '-right-[3px] -bottom-[3px]',
+                icon: <MicrophoneSlash size={9} weight="fill" />,
+                label: t('muted'),
+              });
+            const corner = roles[0];
+            const cornerTip = roles.map((r) => r.label).join(' · ');
+
             return (
               <div key={seat}>
                 {/* v3 feedback #3 + chip semantics: this slot on the inner bet
@@ -351,53 +567,28 @@ export function RoundTable({
                     acted, the current-street chip pile + amount pill sliding in
                     from the seat and sweeping to the pot when the street
                     closes. */}
-                {(committed > 0 || (p.inHand && (p.isButton || p.isSB || p.isBB))) && (
+                {(committed > 0 || (p.inHand && p.isButton)) && (
                   <div
+                    ref={(el) => {
+                      betEls.current[seat] = el;
+                    }}
                     className="absolute z-20 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5"
                     style={{ left: `${bet.x}%`, top: `${bet.y}%` }}
                   >
-                    {p.inHand && (p.isButton || p.isSB || p.isBB) && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        {p.isButton && (
-                          <span
-                            role="img"
-                            aria-label={t('Dealer button')}
-                            title={t('Dealer button')}
-                            className={cn(
-                              'flex items-center justify-center rounded-full bg-white font-black text-slate-900 shadow-md ring-2 ring-slate-900/20 dark:ring-white/30',
-                              narrow ? 'h-6 w-6 text-[0.7rem]' : 'h-5 w-5 text-[0.6rem]',
-                            )}
-                          >
-                            D
-                          </span>
-                        )}
-                        {p.isSB && (
-                          <span
-                            role="img"
-                            aria-label={p.isButton ? t('Small blind (button)') : t('Small blind')}
-                            title={p.isButton ? t('Small blind (button)') : t('Small blind')}
-                            className={cn(
-                              'flex items-center justify-center rounded-full bg-sky-500 px-0.5 font-black text-white shadow-md ring-2 ring-sky-300/40',
-                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
-                            )}
-                          >
-                            SB
-                          </span>
-                        )}
-                        {p.isBB && (
-                          <span
-                            role="img"
-                            aria-label={t('Big blind')}
-                            title={t('Big blind')}
-                            className={cn(
-                              'flex items-center justify-center rounded-full bg-amber-500 px-0.5 font-black text-amber-950 shadow-md ring-2 ring-amber-300/40',
-                              narrow ? 'h-6 min-w-6 text-[0.65rem]' : 'h-5 min-w-5 text-[0.55rem]',
-                            )}
-                          >
-                            BB
-                          </span>
-                        )}
-                      </div>
+                    {/* L2 (rev-2 user decision #3): pure-GG position — the ONE
+                        gold dealer disc plus the posted blind chips carry the
+                        button and the blinds; the SB/BB letter discs are gone.
+                        The disc stays all hand, even after the player folds —
+                        like a real button on the table. */}
+                    {p.inHand && p.isButton && (
+                      <span
+                        role="img"
+                        aria-label={t('Dealer button')}
+                        title={t('Dealer button')}
+                        className="table-disc-d shrink-0"
+                      >
+                        D
+                      </span>
                     )}
                     <AnimatePresence>
                       {committed > 0 && (
@@ -408,8 +599,8 @@ export function RoundTable({
                               ? { opacity: 0 }
                               : {
                                   // sweep into the pot when the street closes
-                                  x: ((50 - bet.x) / 100) * canvas.w,
-                                  y: ((44 - bet.y) / 100) * canvas.h,
+                                  x: ((POT_SWEEP_TARGET.xPct - bet.x) / 100) * canvas.w,
+                                  y: ((POT_SWEEP_TARGET.yPct - bet.y) / 100) * canvas.h,
                                   opacity: 0,
                                   scale: 0.5,
                                 }
@@ -436,17 +627,12 @@ export function RoundTable({
                               amount={committed}
                               bb={bb}
                               sb={sb}
-                              variant="bet"
-                              size={narrow ? 'lg' : 'sm'}
+                              // L6: the phone's bet lanes are a few design px
+                              // wide (board edge ↔ pod top) — only the xs tier
+                              // fits between them without covering a card.
+                              size={narrow ? 'xs' : 'sm'}
                             />
-                            <span
-                              className={cn(
-                                'rounded-full bg-indigo-600/90 px-1.5 py-0.5 font-display font-bold text-white shadow-sm',
-                                narrow ? 'text-[0.85rem]' : 'text-[0.68rem]',
-                              )}
-                            >
-                              {fmt(committed)}
-                            </span>
+                            <span className="table-bet-amt">{fmt(committed)}</span>
                           </motion.div>
                         </motion.div>
                       )}
@@ -457,267 +643,276 @@ export function RoundTable({
                   ref={(el) => {
                     podEls.current[seat] = el;
                   }}
-                  className="absolute z-20"
-                  style={{ left: `${x}%`, top: `${y}%`, transform: `translate(${tx}, ${ty})` }}
+                  className={cn(
+                    'absolute z-20 flex flex-col items-center gap-[4px]',
+                    // L6: on the phone the hero's pill row rides ABOVE the
+                    // card so it cannot spill down into the console cluster.
+                    isMe && narrow && 'table-pod--hero-top',
+                  )}
+                  style={{
+                    left: `${x}%`,
+                    top: `${y}%`,
+                    transform: `translate(${tx}, ${ty}) translateY(var(--table-pod-lift, 0px))`,
+                  }}
                 >
-                  {/* User feedback v2 (#1-#3): top-down the pod reads
-                    status pill → [cards beside avatar] → name/stack plate →
-                    extras. Nothing floats over anything else: the cards are
-                    parallel and off the avatar, the label is a solid plate,
-                    and the D/SB/BB discs stay on the avatar. Anchoring keeps
-                    the whole pod inside the canvas on every arc. */}
+                  {/* L2 seat unit (rev-3 mockup): ONE dark plaque card holds
+                      avatar → name → stack → action → strength → state, with
+                      the hole cards riding the card's top edge and a single
+                      gold avatar ring. Status pills ride BELOW the unit.
+                      rev-3 rules: one hairline + one shadow, ≤1 role corner
+                      (merged tooltip), dimmed folded/offline/sitting-out. */}
+
                   <div
                     className={cn(
-                      'relative flex flex-col items-center gap-[3px] text-center transition-transform',
-                      p.isToAct && 'scale-[1.04]',
-                      p.isLeader && !p.isToAct && 'scale-[1.02]',
-                      (p.folded || !p.connected) && 'opacity-55',
-                      p.sittingOut && 'opacity-60 saturate-50',
+                      'table-pod-card transition-transform',
+                      !cardsVisible && 'table-pod-card--bare',
+                      p.isToAct && 'table-pod-card--acting scale-[1.04]',
+                      p.won && 'table-pod-card--won',
+                      dim && 'table-pod-card--dim',
                     )}
                   >
-                    {p.isToAct && (
-                      <span
+                    {isMe && myCards.length > 0 && (
+                      <div
                         className={cn(
-                          'flex items-center gap-1 rounded-full px-2 py-0.5 whitespace-nowrap font-bold text-white shadow-md',
-                          narrow ? 'text-[0.72rem]' : 'text-[0.6rem]',
-                          urgent ? 'bg-rose-600' : 'bg-indigo-600',
+                          narrow ? 'table-pod-holo table-pod-holo--side' : 'table-hero-cards',
+                          dim && 'table-hero-cards--dim',
                         )}
+                        data-testid="hero-hole-cards"
+                        aria-label={t('Your cards')}
                       >
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white motion-reduce:animate-none" />
-                        {t('playing')}
-                      </span>
-                    )}
-                    {p.won && !p.isToAct && (
-                      <span className="flex items-center">
-                        <WinBadge
-                          amount={p.wonAmount ?? 0}
-                          onShare={p.seat === shareSeat ? onShareHand : undefined}
+                        <HoleCards
+                          size={narrow ? holeSize : 'md'}
+                          narrow={narrow}
+                          cards={myCards}
                         />
-                      </span>
+                      </div>
                     )}
-                    {readyCheck && !p.won && readyCheck.eligible.includes(p.userId) && (
-                      <span
+                    {cardsVisible && !isMe && (
+                      <div
                         className={cn(
-                          'flex items-center rounded-full px-2 py-0.5 whitespace-nowrap font-bold text-white shadow-md',
-                          narrow ? 'text-[0.72rem]' : 'text-[0.6rem]',
-                          readyCheck.ready.includes(p.userId)
-                            ? 'bg-emerald-500'
-                            : 'animate-pulse bg-slate-500 motion-reduce:animate-none',
+                          'table-pod-holo',
+                          isMe || p.revealed ? 'table-pod-holo--side' : 'table-pod-holo--fan',
                         )}
                       >
-                        {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
-                      </span>
+                        <HoleCards
+                          size={holeSize}
+                          narrow={narrow}
+                          cards={isMe ? myCards : p.revealed}
+                          faceDown={!isMe && !p.revealed}
+                        />
+                      </div>
                     )}
-                    {/* v3 feedback #4: the two hole cards sit ON the avatar -
-                        compact, overlapping its top edge - yet still strictly
-                        side by side (no fan, no mutual overlap). The pt band
-                        reserves that space in the pod's flow, so the cards
-                        can never touch the status pill above them. */}
-                    <div className="relative flex items-end justify-center pt-[26px]">
-                      {cardsVisible && (
-                        <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2">
-                          <HoleCards
-                            size="xs"
-                            cards={isMe ? myCards : p.revealed}
-                            faceDown={!isMe && !p.revealed}
-                          />
-                        </div>
+                    <div
+                      className={cn(
+                        'table-avatar-ring',
+                        p.isToAct && !urgent && 'table-avatar-ring--acting',
+                        // L5 danger: last 10s - the glow shifts red and
+                        // breathes at 1Hz (table-motion.css)
+                        p.isToAct && urgent && 'table-avatar-ring--hot',
+                        p.won && 'table-avatar-ring--won',
+                        p.speaking && 'table-avatar-ring--speaking',
+                        dim && 'table-avatar-ring--dim',
                       )}
-                      {/* the turn cue wraps the avatar */}
-                      <div
-                        className={cn(
-                          'relative rounded-full transition-shadow',
-                          p.isToAct && (urgent ? 'turn-glow-rose' : 'turn-glow'),
-                          p.isLeader && !p.isToAct && !p.won && 'ring-2 ring-amber-400/80',
-                        )}
+                    >
+                      <Link
+                        to={`/players/${p.userId}`}
+                        aria-label={t("{name}'s profile", { name: p.displayName })}
                       >
-                        <Link to={`/players/${p.userId}`} aria-label={t("{name}'s profile", { name: p.displayName })}>
-                          <Avatar
-                            userId={p.userId}
-                            name={p.displayName}
-                            version={p.avatarVersion}
-                            size={isMe ? 'md' : narrow ? 'md' : 'sm'}
-                            speaking={p.speaking}
-                          />
-                        </Link>
-                        {/* corner markers announce themselves (review fix #15) */}
-                        {p.isLeader && (
-                          <span
-                            role="img"
-                            aria-label={t('Chip leader')}
-                            title={t('Chip leader')}
-                            className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-white"
-                          >
-                            <Crown size={9} weight="fill" />
-                          </span>
-                        )}
-                        {isHost && (
-                          <span
-                            role="img"
-                            aria-label={t('Host - deals the hands')}
-                            title={t('Host - deals the hands')}
-                            className="absolute -top-1 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white"
-                          >
-                            <Play size={8} weight="fill" />
-                          </span>
-                        )}
-                        {(isBanker || isCoBanker) && (
-                          <span
-                            role="img"
-                            aria-label={isBanker ? t('Banker') : t('Backup banker')}
-                            title={isBanker ? t('Banker') : t('Backup banker')}
-                            className={cn(
-                              'absolute -bottom-1 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full text-white',
-                              isBanker ? 'bg-indigo-600' : 'bg-slate-500',
-                            )}
-                          >
-                            <Coins size={9} weight="fill" />
-                          </span>
-                        )}
-                        {p.voiceMuted && (
-                          <span
-                            role="img"
-                            aria-label={t('muted')}
-                            title={t('muted')}
-                            className="absolute -left-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-white"
-                          >
-                            <MicrophoneSlash size={9} weight="fill" />
-                          </span>
-                        )}
-                        {/* v3 feedback #3: D / SB / BB no longer ride the
-                            avatar - they live on the felt at the seat's bet
-                            slot (see the marker row above). */}
-                      </div>
-                    </div>
-                    {/* feedback v2 #3: name + stack (+ 牌型 / state) live on a
-                        compact solid plate - a designed label, not text drawn
-                        over the felt, and never colliding with the cards.
-                        Chip semantics v3: the player's ENTIRE current stack
-                        also rides the plate as a tiny xs chip bank (variant
-                        "stack", cap 3 per tier) - chips in front of them at
-                        the table. The STREET BET lives separately on the bet
-                        ellipse toward the pot; the center pile is the pot.
-                        Three money spots, three places, three sizes. */}
-                    <div className="flex w-max max-w-[9rem] flex-col items-center rounded-xl bg-white/92 px-2 py-1 shadow-sm ring-1 ring-black/5 backdrop-blur-sm dark:bg-slate-900/90 dark:ring-white/10">
-                      <div
-                        className={cn(
-                          'w-full truncate font-semibold leading-tight text-slate-900 dark:text-white',
-                          narrow ? 'text-[0.85rem]' : 'text-xs',
-                        )}
-                        title={p.displayName}
-                      >
-                        {p.displayName}
-                      </div>
-                      {/* Chip semantics v3: the pile rides the SAME row as the
-                          number it pictures - a seat plate stays one compact
-                          block and the pod never grows into the board. */}
-                      <div
-                        className={cn(
-                          'flex items-center justify-center gap-1.5 font-display leading-tight text-slate-600 dark:text-slate-300',
-                          narrow ? 'text-[0.8rem]' : 'text-[0.7rem]',
-                          p.broke && 'font-bold text-rose-500 dark:text-rose-400',
-                        )}
-                      >
-                        {p.stack > 0 && (
-                          <ChipStack
-                            amount={p.stack}
-                            bb={bb}
-                            sb={sb}
-                            variant="stack"
-                            size={narrow ? 'sm' : 'xs'}
-                            className="shrink-0"
-                          />
-                        )}
-                        <span className="min-w-0 truncate">
-                          <StackValue stack={p.stack} won={p.won} />
-                          <span className="opacity-60"> · {bbCount} BB</span>
-                        </span>
-                      </div>
-                      {strength && (
-                        <div
+                        <Avatar
+                          userId={p.userId}
+                          name={p.displayName}
+                          version={p.avatarVersion}
+                          // L6: phone avatars ride one tier down (hero 42,
+                          // opponents 32 design px) so the compact pod
+                          // clears the board budget at 9 seats.
+                          size={isMe ? 'md' : 'sm'}
                           className={cn(
-                            'font-semibold leading-tight text-indigo-600 dark:text-indigo-300',
-                            narrow ? 'text-[0.8rem]' : 'text-[0.66rem]',
+                            'rounded-full',
+                            isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
+                            !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                          )}
+                        />
+                      </Link>
+                      {corner && (
+                        <span
+                          role="img"
+                          aria-label={cornerTip}
+                          title={cornerTip}
+                          className={cn(
+                            'table-role-badge',
+                            corner.pos,
+                            corner.key === 'muted' && 'table-role-badge--muted',
                           )}
                         >
-                          {strength}
-                        </div>
+                          {corner.icon}
+                        </span>
                       )}
+                      {/* The bot identity badge rides outside the one-role
+                                corner rule on purpose: who is a bot must stay
+                                visible even when the seat also holds a crown.
+                                The bottom-right slot is reserved for it - the
+                                roles list above cannot emit a `muted` corner
+                                for a bot, so no collision is possible. */}
+                      {p.bot && (
+                        <span
+                          role="img"
+                          aria-label={t('Bot - {status}', { status: botStatusLabel(p.bot.status) })}
+                          title={t('Bot opponent - {status}', {
+                            status: botStatusLabel(p.bot.status),
+                          })}
+                          className="table-role-badge table-role-badge--bot -bottom-[3px] -right-[3px]"
+                        >
+                          <Robot size={9} weight="fill" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="table-pod-info">
+                      <div className="table-pname" title={p.displayName}>
+                        {p.displayName}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleStackUnit}
+                        aria-label={stackHint}
+                        title={stackHint}
+                        className={cn('table-pstack', p.broke && 'table-pstack--out')}
+                      >
+                        {stackUnit === 'chips' ? (
+                          <>
+                            <StackValue stack={p.stack} won={p.won} />
+                            <span className="table-pstack-unit">{t('pts')}</span>
+                          </>
+                        ) : (
+                          <>
+                            {bbCount}
+                            <span className="table-pstack-unit">BB</span>
+                          </>
+                        )}
+                      </button>
+                      {showAction && (
+                        <motion.div
+                          key={
+                            lastAction ? `${lastAction.type}-${lastAction.amount ?? 0}` : 'all-in'
+                          }
+                          initial={reduce ? false : { scale: 1.35, y: -2 }}
+                          animate={{ scale: 1, y: 0 }}
+                          transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+                          className={cn(
+                            'table-paction',
+                            !lastAction
+                              ? 'table-paction--allin'
+                              : aggressive
+                                ? 'table-paction--aggr'
+                                : folded
+                                  ? 'table-paction--fold'
+                                  : '',
+                          )}
+                        >
+                          {lastAction ? actionLabel(lastAction) : t('All-in')}
+                        </motion.div>
+                      )}
+                      {strength && <div className="table-pstrength">{strength}</div>}
                       {(p.broke || !p.connected || p.sittingOut) && (
                         <div
                           className={cn(
-                            'font-semibold leading-tight',
-                            narrow ? 'text-[0.8rem]' : 'text-[0.62rem]',
+                            'table-pstate',
                             p.broke
-                              ? 'text-rose-500 dark:text-rose-400'
+                              ? 'table-pstate--out'
                               : !p.connected
-                                ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-slate-500 dark:text-slate-400',
+                                ? 'table-pstate--off'
+                                : 'table-pstate--sit',
                           )}
                         >
-                          {p.broke ? t('Out of chips') : !p.connected ? t('Offline') : t('Sitting out')}
+                          {p.broke
+                            ? t('Out of chips')
+                            : !p.connected
+                              ? t('Offline')
+                              : t('Sitting out')}
                         </div>
                       )}
+                      {p.isToAct && <TurnProgress seat={p.seat} />}
                     </div>
-                    {/* P2 B2 + v3 feedback #5: a NUMERIC time-bank readout on
-                        every seat that has a bank (0s included - you can lose
-                        it all). The acting seat gets the loud amber chip, the
-                        others a quiet outline; the countdown bar on the pod is
-                        the drain, this badge is the balance. */}
-                    {handLive && p.inHand && !p.folded && p.bankMs !== undefined && (
-                      <div
-                        title={t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
-                        className={cn(
-                          'flex items-center gap-1 rounded-full px-1.5 font-display font-bold tabular-nums shadow-sm',
-                          narrow ? 'text-[0.75rem]' : 'text-[0.6rem]',
-                          p.isToAct
-                            ? 'bg-amber-400/95 text-amber-950 ring-2 ring-amber-300/80'
-                            : p.bankMs === 0
-                              ? 'bg-slate-500/15 text-slate-500 dark:text-slate-400'
-                              : 'bg-white/80 text-amber-700 ring-1 ring-amber-300/60 dark:bg-slate-800/80 dark:text-amber-300',
-                        )}
-                      >
-                        <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />
-                        {Math.ceil(p.bankMs / 1000)}s
-                      </div>
-                    )}
-                    {p.pendingBuy > 0 && (
-                      <div
-                        title={t('Buy waiting for banker approval')}
-                        className={cn(
-                          'rounded-full bg-amber-400/25 px-1.5 py-px font-display font-bold text-amber-600 dark:text-amber-300',
-                          narrow ? 'text-[0.85rem]' : 'text-[0.62rem]',
-                        )}
-                      >
-                        {t('+{n} soon', { n: fmt(p.pendingBuy) })}
-                      </div>
-                    )}
-                    {!p.broke && p.connected && !p.sittingOut && (p.lastAction || p.allIn) &&
-                      (() => {
-                        const a = p.lastAction;
-                        const aggressive = a && (a.type === 'raise' || a.type === 'bet');
-                        const folded = a?.type === 'fold';
-                        return (
-                          <motion.div
-                            key={a ? `${a.type}-${a.amount ?? 0}` : 'all-in'}
-                            initial={reduce ? false : { scale: 1.45, y: -3 }}
-                            animate={{ scale: 1, y: 0 }}
-                            transition={{ type: 'spring', stiffness: 380, damping: 17 }}
+                  </div>
+                  {/* pills ride BELOW the unit (rev-3); wrapped so the
+                            phone rule can collapse them to one capped row */}
+                  {(p.isToAct ||
+                    (p.won && !p.isToAct) ||
+                    (readyCheck &&
+                      !p.won &&
+                      !p.isToAct &&
+                      readyCheck.eligible.includes(p.userId)) ||
+                    (handLive && p.inHand && !p.folded && p.bankMs !== undefined) ||
+                    p.pendingBuy > 0 ||
+                    (!!p.bot && p.bot.status !== 'running')) && (
+                    <div className="table-pod-pills">
+                      {p.isToAct && (
+                        <span
+                          className={cn(
+                            'table-pill',
+                            urgent ? 'table-pill--acting-hot' : 'table-pill--acting',
+                          )}
+                        >
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" />
+                          {t('playing')}
+                        </span>
+                      )}
+                      {p.won && !p.isToAct && (
+                        <WinBadge
+                          amount={p.wonAmount}
+                          onShare={p.seat === shareSeat ? onShareHand : undefined}
+                        />
+                      )}
+                      {readyCheck &&
+                        !p.won &&
+                        !p.isToAct &&
+                        readyCheck.eligible.includes(p.userId) && (
+                          <span
                             className={cn(
-                              'rounded-full px-2 py-0.5 whitespace-nowrap font-bold',
-                              narrow ? 'text-[0.8rem]' : 'text-[0.62rem]',
-                              !a || aggressive
-                                ? 'bg-amber-400 text-amber-950 shadow-[0_0_14px_rgba(251,191,36,0.55)]'
-                                : folded
-                                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-300'
-                                  : 'bg-white/80 text-slate-600 shadow-sm dark:bg-slate-800/80 dark:text-slate-200',
+                              'table-pill',
+                              readyCheck.ready.includes(p.userId)
+                                ? 'table-pill--ready'
+                                : 'table-pill--wait',
                             )}
                           >
-                            {a ? actionLabel(a) : t('All-in')}
-                          </motion.div>
-                        );
-                      })()}
-                  </div>
+                            {readyCheck.ready.includes(p.userId) ? t('✓ ready') : t('ready?')}
+                          </span>
+                        )}
+                      {handLive && p.inHand && !p.folded && p.bankMs !== undefined && (
+                        <div
+                          title={t('Bank {n}s', { n: Math.ceil(p.bankMs / 1000) })}
+                          className={cn(
+                            'table-pill table-pill--bank',
+                            p.isToAct && 'table-pill--bank-loud',
+                            !p.isToAct && p.bankMs === 0 && 'table-pill--bank-quiet',
+                          )}
+                        >
+                          <Timer size={narrow ? 10 : 8} weight="fill" aria-hidden="true" />
+                          {Math.ceil(p.bankMs / 1000)}s
+                        </div>
+                      )}
+                      {p.pendingBuy > 0 && (
+                        <div
+                          title={t('Buy waiting for banker approval')}
+                          className="table-pill table-pill--buy"
+                        >
+                          {t('+{n} soon', { n: fmt(p.pendingBuy) })}
+                        </div>
+                      )}
+                      {/* a bot that is NOT actually playing says why: the
+                            host sees waiting/starting/error at a glance */}
+                      {p.bot && p.bot.status !== 'running' && (
+                        <span
+                          className={cn(
+                            'table-pill table-pill--bot',
+                            botStatusTone(p.bot.status) === 'bad' && 'table-pill--bot-bad',
+                          )}
+                        >
+                          <Robot size={9} weight="fill" aria-hidden="true" />
+                          {botStatusLabel(p.bot.status)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {canKick && !isMe && (
                     <button
                       onClick={() => {
@@ -737,8 +932,8 @@ export function RoundTable({
                       className={cn(
                         'absolute -right-2 -top-2 z-30 flex items-center justify-center rounded-full text-white shadow-sm transition-all',
                         kickArmed === p.userId
-                          ? 'h-auto w-auto bg-rose-600 px-2 py-0.5 text-[0.62rem] font-bold'
-                          : 'h-5 w-5 bg-slate-400 hover:bg-rose-500 dark:bg-slate-600',
+                          ? 'h-auto w-auto bg-[var(--table-red)] px-2 py-0.5 text-[0.62rem] font-bold'
+                          : 'h-5 w-5 bg-[var(--table-faint)] hover:bg-[var(--table-red)]',
                       )}
                     >
                       {kickArmed === p.userId ? t('stand up?') : <X size={11} weight="bold" />}
@@ -764,6 +959,23 @@ export function RoundTable({
             getTo={() => podEls.current[w.seat] ?? null}
           />
         ))}
+
+      {/* L5 (spec row 3): the mirror moment on every street - a call/raise
+          bursts from the seat's pod to its bet spot on the felt. */}
+      {handLive &&
+        handId !== null &&
+        Object.entries(betFlights).map(([seatStr, run]) => {
+          const seat = Number(seatStr);
+          if ((committedBySeat[seat] ?? 0) === 0) return null;
+          return (
+            <BetFlight
+              key={`bet-fly-${seat}`}
+              run={run}
+              getFrom={() => podEls.current[seat] ?? null}
+              getTo={() => betEls.current[seat] ?? null}
+            />
+          );
+        })}
     </div>
   );
 }

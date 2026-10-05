@@ -26,22 +26,17 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | Controls never hide mid-hand: Fold / Call / Raise stay in place off-turn and arm as pre-actions | **notpritam** |
 | Mid-hand kick: the banker can stand anyone up any time; it means auto-kicked from the next deal | **notpritam** |
 | Raise highlight: amber glowing badge that pops on the raiser seat; quiet chips for calls, bold ALL-IN | **notpritam** |
-| The 3D world: three.js midnight-lounge table at /room/:id/3d, customisable characters (color, head, hat) synced to everyone, fully playable via the HUD | **notpritam** |
-| 3D fun: live character preview, glow-trim + blast customisation, jointed seated poses, targeted gestures (POW), fold slumps, returning bust effects, camera-aware turn arrow | **notpritam** |
-| 3D card lounge: teal felt, walnut floor, brass city windows, perimeter lamps and seating; open overhead card view | **notpritam** |
-| Lounge atmosphere and movement: layered city, illuminated bar and seating, camera-relative WASD/arrows with collision checks, click destinations, and safe chair handoffs | **notpritam** |
-| Living casino ambience: spinning roulette, orbiting holo cards, blinking JACKPOT, sweeping spotlights, dust motes, wall art, bar cat | **notpritam** |
-| Card reveal choreography: board cards flip back-to-face with a cascading flop, in 2D and in the 3D world (drop + flip onto the felt) | **notpritam** |
-| New-design landing page (round isometric table preview, 3D world story) and README refresh with fresh screenshots | **notpritam** |
+| Card reveal choreography: board cards flip back-to-face with a cascading flop, in 2D | **notpritam** |
+| New-design landing page (round isometric table preview) and README refresh with fresh screenshots | **notpritam** |
 | TV replays: banker toggle that saves every player's hand key post-hand; the server decrypts folded hole cards into the transcript and replays show ALL cards from the deal, WSOP broadcast style | **notpritam** |
 | Save hand: download the full signed hand record (transcript + players) as JSON from the replay page | **notpritam** |
 | Ready check: auto-deal never starts betting until everyone clicks "I'm ready"; 20 seconds, then it deals without the stragglers | **notpritam** |
 | Room auto-deal switch in both table views; prefers the online, seated host, automatically chooses a funded online fallback, preserves readiness, and pauses when too few players are ready | **notpritam** |
 | Misclick guard: Fold / Check-Call / Raise hold fixed positions in every state and go dead for a beat whenever the options change | **notpritam** |
-| Custom poker shortcuts: account-saved Fold, Check, Call, Bet/Raise, half-pot, pot, and all-in bindings; record, select, clear, disable, or restore in Settings or at the table. Shared keyboard handling across desktop, phone, and 3D; typed amount plus Enter confirms sizing shortcuts | **notpritam** |
+| Custom poker shortcuts: account-saved Fold, Check, Call, Bet/Raise, half-pot, pot, and all-in bindings; record, select, clear, disable, or restore in Settings or at the table. Shared keyboard handling across desktop and phone; typed amount plus Enter confirms sizing shortcuts | **notpritam** |
 | Run it twice: when everyone is all-in before the river the players vote (15s, unanimous); the remaining streets deal twice from the untouched deck and every pot splits between the boards | **notpritam** |
 | Showdown shows every player's cards: the result banner lists each player with THEIR two cards, the hand they made, and their net - not just the winning five | **notpritam** |
-| Thunder reveal: lightning flash + thunder crack on every showdown, in 2D and the 3D world | **notpritam** |
+| Thunder reveal: lightning flash + thunder crack on every showdown | **notpritam** |
 | The table cards in the result banner, next to the winning five | **notpritam** |
 | Position badges: bold D / SB / BB discs on the seat avatars | **notpritam** |
 | Fold-key escrow: a folding client hands its per-hand key to the server (only the server, never the transcript), so a folder who leaves can never strand the hand - the server computes their unmask shares with publicly verifiable DLEQ proofs (`recovered_share`). Tradeoff: after your fold the server can decrypt your two cards, nobody else's | **notpritam** |

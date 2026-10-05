@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { BettingState, PlayerAction, Street } from './betting.js';
 import type { CardId } from './cards.js';
-import type { LoungePosition } from './lounge.js';
 import type { RoomGameplaySettings } from './roomRules.js';
 
 const hex = (len?: number) =>
@@ -30,44 +29,6 @@ const scalarHex = z
 
 export const dleqProofSchema = z.object({ A1: hex(64), A2: hex(64), z: scalarHex });
 
-/** The 3D emote set, as a closed list. It has to be a real allowlist rather than
- *  a free string: the client looks the value up on a plain object, so a `kind` of
- *  `__proto__` resolves to Object.prototype - truthy, but with no `apply` - and
- *  the throw lands inside requestAnimationFrame, permanently killing the render
- *  loop for everyone at the table. */
-export const EMOTE_KINDS = [
-  'wave',
-  'dance',
-  'disco',
-  'robot',
-  'twirl',
-  'jump',
-  'clap',
-  'bow',
-  'flex',
-  'facepalm',
-  'rage',
-  'laugh',
-  'cry',
-  'shrug',
-  'heart',
-  'thumbs',
-  'headbang',
-  'moonwalk',
-  'spin',
-  'wiggle',
-  'salute',
-  'guitar',
-  'dab',
-  'chicken',
-  'pray',
-  'levitate',
-  'celebrate',
-  'shove',
-  'slap',
-  'chip',
-] as const;
-
 export const playerActionSchema = z.object({
   type: z.enum(['fold', 'check', 'call', 'bet', 'raise']),
   amount: z.number().int().positive().optional(),
@@ -78,12 +39,6 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('join_room'), roomId: z.string() }),
   z.object({ t: z.literal('sit'), seat: z.number().int().min(0).max(8) }),
   z.object({ t: z.literal('leave_seat') }),
-  z.object({
-    t: z.literal('lounge_move'),
-    x: z.number().finite().min(-11.2).max(11.2),
-    z: z.number().finite().min(-7.5).max(7.5),
-  }),
-  z.object({ t: z.literal('lounge_return') }),
   z.object({ t: z.literal('start_hand') }),
   z.object({ t: z.literal('key_commit'), handId: z.string(), commit: hex(64), sig: hex(128) }),
   z.object({
@@ -153,15 +108,6 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
     t: z.literal('chat'),
     text: z.string().min(1).max(400),
     kind: z.enum(['text', 'sticker', 'phrase']).optional(),
-  }),
-  z.object({
-    t: z.literal('poke'),
-    targetSeat: z.number().int().min(0).max(8),
-  }),
-  z.object({
-    t: z.literal('emote'),
-    kind: z.enum(EMOTE_KINDS),
-    targetSeat: z.number().int().min(0).max(8).optional(),
   }),
   // relayed verbatim to another player, so it needs its own ceiling - SDP and
   // ICE payloads are a few KB, nowhere near this
@@ -249,8 +195,6 @@ export interface RoomStatePlayer {
   privateStats: boolean;
   /** Chips requested from the bank, still waiting for banker approval. */
   pendingBuy: number;
-  /** JSON blob describing the player's 3D character (color, head, hat). */
-  avatar3d: string | null;
 }
 
 export type ServerMsg =
@@ -282,12 +226,10 @@ export type ServerMsg =
       };
       players: RoomStatePlayer[];
       handActive: boolean;
-      lounge?: Record<number, LoungePosition>;
       autoDealAt?: number | null;
       autoDealPaused?: boolean;
       readyCheck?: { deadlineTs: number; eligible: number[]; ready: number[] } | null;
     }
-  | { t: 'lounge_presence'; roomId: string; userId: number; position: LoungePosition | null }
   | { t: 'error'; message: string }
   | {
       t: 'chat';
@@ -296,15 +238,6 @@ export type ServerMsg =
       text: string;
       kind: 'text' | 'sticker' | 'phrase';
       ts: number;
-    }
-  | { t: 'poke'; fromUserId: number; fromName: string; targetSeat: number }
-  | {
-      t: 'emote';
-      fromUserId: number;
-      fromName: string;
-      fromSeat: number | null;
-      kind: string;
-      targetSeat?: number;
     }
   | { t: 'rtc'; from: number; data: unknown }
   | { t: 'voice_state'; userId: number; muted: boolean }
@@ -358,7 +291,21 @@ export type ServerMsg =
       /** Per-seat time bank remaining (ms). Optional while rolling out. */
       timeBanks?: SeatTimeBank[];
     }
-  | { t: 'action_applied'; handId: string; seat: number; action: PlayerAction; auto?: boolean }
+  | {
+      t: 'action_applied';
+      handId: string;
+      seat: number;
+      action: PlayerAction;
+      auto?: boolean;
+      /**
+       * Authoritative, server-assigned 0-based index of this action among the
+       * actions applied in this hand (the same counter `betting_state.actionSeq`
+       * reports as "actions applied so far"). It is stable across a client
+       * reconnect/missed frame, unlike a locally accumulated ordinal.
+       * Optional only while clients/servers roll between releases; the server
+       * always sends it. */
+      actionSeq?: number;
+    }
   | {
       t: 'showdown';
       handId: string;

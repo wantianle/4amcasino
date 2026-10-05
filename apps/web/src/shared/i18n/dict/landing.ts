@@ -27,7 +27,6 @@ const landing: Record<string, string> = {
   'Join your friends': '进朋友的桌',
   'Private rooms': '私密房间',
   'Voice & chat': '语音和文字',
-  '2D & 3D views': '2D·3D 双视图',
   'Hand replays': '牌局回放',
   'Included at every table': '每张牌桌都包含',
 
@@ -36,17 +35,7 @@ const landing: Record<string, string> = {
   'Join table': '加入牌桌',
   'Enter the 6-letter or number code from your host.': '输入房主给你的 6 位字母数字房间码。',
 
-  // Room preview
-  'Six colourful characters sitting around the poker table in the warmly lit 4AM lounge.':
-    '暖光酒廊里，六个色彩鲜明的角色围坐在牌桌旁。',
-  'The same six-player table seen from above, with community cards clearly visible on the felt.':
-    '从上方俯瞰同一张六人牌桌，公共牌在桌布上一目了然。',
-  'A place to play.': '能打牌，',
-  'A reason to hang out.': '也能待着。',
-  'Inside 4AM': '4AM 实拍',
-  '— an example room': '—— 示例房间',
-  'Preview camera view': '预览视角',
-  'The lounge': '酒廊',
+  // 'The table' is also used by the replay / tournament / player pages.
   'The table': '牌桌',
 
   // Example hand widget
@@ -85,8 +74,8 @@ const landing: Record<string, string> = {
   'Share the invite link or room code. Your friends sign in, join the room, and pick a seat.':
     '邀请链接或房间码都行，朋友登录、进房、挑个位子。',
   'Deal. Talk. Run it back.': '发牌，闲聊，再来一局。',
-  'Play Texas Hold’em together. Switch views, react to a hand, or get up and explore between games.':
-    '一起打德州扑克，随时切换视图、甩个表情，牌局之间去酒廊溜达一圈。',
+  'Play Texas Hold’em together. React to a hand and run it back.':
+    '一起打德州扑克，甩个表情，再来一局。',
 
   // Game section
   'All the tension.': '该心跳的一样不少，',
@@ -95,8 +84,8 @@ const landing: Record<string, string> = {
   'The hopeful flop. The unexpected river. The friend who definitely has it this time. Real poker moments, play-money chips.':
     '盼翻牌，怕河牌，还有那个每次都说「这把有牌」的朋友。',
   // §3.2: two English sentences say one thing — merged in ZH.
-  'Keep your focus on the cards in 2D, or settle into the lounge in 3D. It’s the same hand, with everyone at the same table.':
-    '2D 专心打牌，3D 窝进酒廊——同一手牌，同一张桌。',
+  'Keep your focus on the cards, with everyone at the same table.':
+    '专心看牌，大家同坐一张桌。',
   'Take a look around': '四处看看',
 
   // Trust section
@@ -121,12 +110,9 @@ const landing: Record<string, string> = {
   'Does everyone need to download an app?': '每个人都要装 App 吗？',
   'No download is needed. Open 4AM in your browser, sign in, and join your friend’s table using its invite link or room code.':
     '谁都不用装。浏览器打开 4AM，登录，凭邀请链接或房间码进桌。',
-  'Do I have to play in 3D?': '必须用 3D 打吗？',
-  'You can use the focused 2D table or the 3D lounge, and switch between them in the same room. The 3D view includes camera presets and the same game controls.':
-    '2D 牌桌专心打，3D 酒廊坐着聊；同一个房间里随时切换，操作不变。',
   'Can we talk while we play?': '打牌时能说话吗？',
-  'Yes. Rooms have text chat and voice controls. You can also react at the table, customise your character, and take a break to explore the lounge.':
-    '能。房间有文字聊天和语音控制，还可以甩表情、换造型，局间去酒廊转转。',
+  'Yes. Rooms have text chat and voice controls. You can also react at the table.':
+    '能。房间有文字聊天和语音控制，还可以在牌桌上甩个表情。',
   'How can I check what happened in a hand?': '想复盘某一手怎么办？',
   'Finished hands have replays and a recorded action history. The room ledger tracks chip movement. Our fair-play guide explains the encrypted deal and what the verification checks cover.':
     '打完的牌局有回放和完整的操作记录，筹码流向看房间账本；加密发牌和验证的说明在公平玩法页。',

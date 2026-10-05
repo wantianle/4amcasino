@@ -16,3 +16,16 @@ arena-results.json
 
 # Runtime logs (server.out.log, build.log, ...)
 *.log
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
+
+# Local-only secrets and tooling state
+.botenv
+.cortexkit/
+.ignore
+.codex/
+.cursor/
+.grok/

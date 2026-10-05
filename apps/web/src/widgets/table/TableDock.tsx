@@ -1,31 +1,24 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
-import { ChatCircle, PauseCircle, Trophy, X } from '@phosphor-icons/react';
-import { cn, fmt } from '../../shared/lib/cn.ts';
+import { ChatCircle, PauseCircle, X } from '@phosphor-icons/react';
+import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
-import type { LeaderboardRow } from '../../pages/leaderboard/LeaderboardPage.tsx';
 
-/** P1 table redesign (docs/table-redesign-spec.md):
- *  - A6: rankings and chat are no longer a right column - they are buttons in
- *    the table area that open popover panels over the felt.
- *  - A9: 「下一手休息」(sit out next hand) lives at the BOTTOM-LEFT of the
- *    table area.
+/** Rankings and chat are buttons in the table area that open popover panels
+ *  over the felt; 「下一手休息」(sit out next hand) lives at the BOTTOM-LEFT.
  *  The dock anchors to the bottom-left corner of the table section. */
 
-const glassChip =
-  'inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200/70 backdrop-blur transition-[color,background-color,transform] duration-200 hover:bg-white hover:text-slate-950 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:bg-slate-900/80 dark:text-slate-200 dark:ring-slate-700/70 dark:hover:bg-slate-800 dark:hover:text-white';
+const glassChip = 'table-dock-chip';
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]';
 
 /**
- * Review fixes #6 + #7:
- * - the keydown/trap effect runs ONCE on mount (deps []), reading the close
- *   handler and the trigger ref through stable refs - so an inline callback
- *   that changes identity on every TablePage re-render can never re-fire the
- *   effect and steal focus mid-typing;
- * - Escape closes, Tab is trapped inside the panel, and on close focus goes
- *   back to the dock button that opened the panel;
- * - the panel carries a stable id the trigger references via aria-controls.
+ * The keydown/trap effect runs ONCE on mount (deps []), reading the close
+ * handler and the trigger ref through stable refs - so an inline callback that
+ * changes identity on every re-render can never re-fire the effect and steal
+ * focus mid-typing. Escape closes, Tab is trapped inside the panel, and on
+ * close focus goes back to the dock button that opened the panel; the panel
+ * carries a stable id the trigger references via aria-controls.
  */
 function Popover({
   panelId,
@@ -104,41 +97,38 @@ function Popover({
   );
 }
 
-const RANK_PANEL_ID = 'table-rank-popover';
 const CHAT_PANEL_ID = 'table-chat-popover';
 
 export function TableDock({
+  flow = false,
+  phone = false,
   compact,
   hasSeat,
   sittingOut,
   sitOutDisabled,
   onToggleSitOut,
-  rankOpen,
-  onToggleRank,
   onClosePopovers,
-  standings,
-  minSettleHands,
   chatOpen,
   onToggleChat,
   unread,
   chatBody,
-  balance,
-  shortcut,
   hostGameplay,
 }: {
+  /** L6 portrait phones: the dock rides the console strip below the canvas
+   *  instead of overlaying the felt bottom-left. `relative` (not absolute)
+   *  keeps it the positioning host for its popovers. */
+  flow?: boolean;
+  /** L6 phone: dock chips grow to the 44px touch minimum (table-controls.css). */
+  phone?: boolean;
   /** Narrow viewport: labels drop out, icons carry the meaning (A1). */
   compact: boolean;
   hasSeat: boolean;
   sittingOut: boolean;
   sitOutDisabled: boolean;
   onToggleSitOut: () => void;
-  rankOpen: boolean;
-  onToggleRank: () => void;
   /** Closes both popovers; Escape and the X buttons use it, so closing from
    *  inside the panel never leaves the other one's state stale. */
   onClosePopovers: () => void;
-  standings: LeaderboardRow[] | null;
-  minSettleHands: number;
   chatOpen: boolean;
   onToggleChat: () => void;
   unread: number;
@@ -146,53 +136,23 @@ export function TableDock({
   chatBody: ReactNode;
   /** Feedback #3: the account balance chip, folded out of the deleted bottom
    *  box into the bottom-left dock column. */
-  balance?: ReactNode;
   /** Feedback #3: 「快捷键」 as its own standalone button, bottom-left. */
-  shortcut?: ReactNode;
   /** P2 Lane F: the host's between-hand gameplay controls (arm the squid game
    *  or a bomb pot for the next hand, open the 玩法规则 editor on phones).
    *  Rendered as a column above the balance chip; omitted for everyone else. */
   hostGameplay?: ReactNode;
 }) {
-  const rankTriggerRef = useRef<HTMLButtonElement>(null);
   const chatTriggerRef = useRef<HTMLButtonElement>(null);
   // NOTE: the click-away catcher is NOT here - the page renders one over the
   // felt only (z-20), so the action bar stays live while a popover is open.
   return (
-    <div className="pointer-events-none absolute bottom-2 left-2 z-30 flex flex-col items-start gap-1.5">
-      {rankOpen && (
-        <Popover
-          panelId={RANK_PANEL_ID}
-          label={t('Standings')}
-          onClose={onClosePopovers}
-          restoreFocusTo={rankTriggerRef}
-          className="w-[min(20rem,92vw)]"
-        >
-          <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5 dark:border-slate-800">
-            <h2 className="font-display text-sm font-semibold">{t('Standings')}</h2>
-            <button
-              type="button"
-              onClick={onClosePopovers}
-              aria-label={t('Close')}
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="max-h-[34dvh] overflow-y-auto p-2.5">
-            {standings === null ? (
-              <p className="px-1.5 py-2 text-xs text-slate-400">{t('Counting chips…')}</p>
-            ) : standings.length === 0 ? (
-              <p className="px-1.5 py-2 text-xs text-slate-400">
-                {t('No completed hands yet. Deal one and check back.')}
-              </p>
-            ) : (
-              <StandingsList rows={standings} minHands={minSettleHands} />
-            )}
-          </div>
-        </Popover>
+    <div
+      className={cn(
+        'pointer-events-none flex flex-col items-start gap-1.5',
+        flow ? 'relative' : 'absolute bottom-2 left-2 z-30',
+        phone && 'table-dock--phone',
       )}
-
+    >
       {chatOpen && (
         <Popover
           panelId={CHAT_PANEL_ID}
@@ -222,8 +182,6 @@ export function TableDock({
         {hostGameplay}
         {/* feedback #3: balance chip + the standalone 「快捷键」 button join the
             dock column, so everything the old bottom box carried is reachable */}
-        {balance}
-        {shortcut}
         {/* A9: sit-out for the next hand, bottom-left of the table area */}
         {hasSeat && (
           <button
@@ -231,34 +189,21 @@ export function TableDock({
             onClick={onToggleSitOut}
             disabled={sitOutDisabled}
             aria-pressed={sittingOut}
-            title={sittingOut ? t('Deal me back in') : t('Sit out next hand')}
+            title={sittingOut ? t('Deal me in next hand') : t('Sit out next deal')}
             className={cn(
               glassChip,
-              sittingOut && 'bg-amber-100/95 text-amber-700 ring-amber-200 dark:bg-amber-950/80 dark:text-amber-300',
+              sittingOut && 'table-dock-chip--active',
               sitOutDisabled && 'opacity-50',
             )}
           >
             <PauseCircle size={15} />
             <span className={compact ? 'sr-only' : undefined}>
-              {sittingOut ? t('Deal me back in') : t('Sit out next hand')}
+              {sittingOut ? t('Deal me in next hand') : t('Sit out next deal')}
             </span>
           </button>
         )}
         {/* A6: rankings + chat buttons -> popovers */}
         <div className="flex items-center gap-1.5">
-          <button
-            ref={rankTriggerRef}
-            type="button"
-            onClick={onToggleRank}
-            aria-expanded={rankOpen}
-            aria-controls={rankOpen ? RANK_PANEL_ID : undefined}
-            aria-haspopup="dialog"
-            title={t('Standings')}
-            className={cn(glassChip, rankOpen && 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300')}
-          >
-            <Trophy size={15} />
-            <span className={compact ? 'sr-only' : undefined}>{t('Standings')}</span>
-          </button>
           <button
             ref={chatTriggerRef}
             type="button"
@@ -270,13 +215,13 @@ export function TableDock({
             className={cn(
               glassChip,
               'relative',
-              chatOpen && 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
+              chatOpen && 'table-dock-chip--active',
             )}
           >
             <ChatCircle size={15} weight={chatOpen ? 'fill' : 'regular'} />
             <span className={compact ? 'sr-only' : undefined}>{t('Table chat')}</span>
             {unread > 0 && !chatOpen && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[0.6rem] font-bold text-white ring-2 ring-white dark:ring-slate-900">
+              <span className="table-dock-badge absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center px-1 ring-2 ring-(--table-surface-dock)">
                 {unread > 9 ? '9+' : unread}
               </span>
             )}
@@ -284,40 +229,5 @@ export function TableDock({
         </div>
       </div>
     </div>
-  );
-}
-
-/** Compact glance-list for the popover. The full table with every column
- *  still lives in the Standings dialog; this is the 30k-ft version. */
-function StandingsList({ rows, minHands }: { rows: LeaderboardRow[]; minHands: number }) {
-  return (
-    <ol className="space-y-0.5 text-sm">
-      {rows.slice(0, 10).map((r, i) => (
-        <li
-          key={r.userId}
-          className="flex items-center gap-2 rounded-lg px-2 py-1.5 odd:bg-slate-50 dark:odd:bg-slate-800/50"
-        >
-          <span className="w-5 shrink-0 text-right font-display text-xs font-bold text-slate-400">
-            {i + 1}
-          </span>
-          <span className="min-w-0 flex-1 truncate font-medium">{r.displayName ?? r.username}</span>
-          {r.handsPlayed < minHands && (
-            <span className="shrink-0 text-[0.6rem] text-slate-400">{t('{n} hands', { n: r.handsPlayed })}</span>
-          )}
-          <span
-            className={cn(
-              'shrink-0 font-display text-xs font-bold tabular-nums',
-              r.net > 0
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : r.net < 0
-                  ? 'text-rose-600 dark:text-rose-400'
-                  : 'text-slate-400',
-            )}
-          >
-            {r.net > 0 ? `+${fmt(r.net)}` : r.net < 0 ? `−${fmt(-r.net)}` : '0'}
-          </span>
-        </li>
-      ))}
-    </ol>
   );
 }

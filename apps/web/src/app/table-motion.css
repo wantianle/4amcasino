@@ -1,0 +1,100 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * table-motion.css — motion & state feedback
+ *
+ * Scope: the pod-state CSS feedback — acting/won/hot glow, fold-leave dim and
+ * border/opacity transitions. Chip flights live in WinnerFx.tsx and the
+ * countdown ring drain in TurnProgress/BettingPanel TSX. NO coin rain,
+ * confetti, particles, screen shake or canvas overlays - CSS/DOM only. High-frequency
+ * motion touches only transform/opacity (never box-shadow/width/top: glows
+ * live on a pseudo-element layer that fades+scales in); pod state switches
+ * additionally carry short opacity/filter/border-color transitions.
+ *
+ * Reduced motion: flights are skipped in JS (useReducedMotion); glows degrade
+ * to a STATIC ring/outline; dim transitions collapse; the countdown ring keeps
+ * draining (it is required information, not decor).
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── acting / won / hot glow: entrance on a pseudo layer (spec row 1 & 6) ──
+   The glow itself is a box-shadow, but it is never animated per-frame - the
+   layer fades and scales in over one short decelerate, then rests. */
+.table-avatar-ring--acting,
+.table-avatar-ring--won {
+  box-shadow: var(--shadow-table-avatar); /* the static base; the glow rides ::after */
+}
+.table-avatar-ring--acting::after,
+.table-avatar-ring--won::after,
+.table-avatar-ring--hot::after {
+  content: '';
+  position: absolute;
+  inset: -2.5px;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+.table-avatar-ring--acting::after {
+  box-shadow:
+    0 0 0 2.5px var(--table-gold-hi),
+    0 0 18px rgba(245, 214, 123, 0.55);
+  animation: table-glow-in var(--table-dur-glow) var(--table-ease-decelerate) both;
+}
+.table-avatar-ring--won::after {
+  box-shadow:
+    0 0 0 2.5px var(--table-gold-hi),
+    0 0 22px rgba(245, 214, 123, 0.5);
+  animation: table-glow-in var(--table-dur-highlight) var(--table-ease-decelerate) both;
+}
+/* danger (urgent): the acting glow shifts to the red family and breathes at
+   exactly 1Hz (spec §2 danger row: static color change + ≤1Hz breathing) */
+.table-avatar-ring--hot::after {
+  box-shadow:
+    0 0 0 2.5px var(--table-red),
+    0 0 18px rgba(192, 41, 43, 0.5);
+  animation:
+    table-glow-in var(--table-dur-glow) var(--table-ease-decelerate) both,
+    table-glow-breathe 1s var(--table-ease-standard) var(--table-dur-glow) infinite;
+}
+@keyframes table-glow-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes table-glow-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ── fold / leave / lost dimming: var(--table-dur-dim) standard ──
+   Replaces the pod card's transform-only tailwind transition with the full
+   state list; transform stays transitioned (acting scale, seat entrance). */
+.table-pod-card {
+  transition:
+    opacity var(--table-dur-dim) var(--table-ease-standard),
+    filter var(--table-dur-dim) var(--table-ease-standard),
+    border-color var(--table-dur-dim) var(--table-ease-standard),
+    transform 0.2s var(--table-ease-standard);
+}
+
+/* ── pot number pulse (spec row 5): the existing spring on the pot pill
+   (motion scale 1.12→1, L3/L4) already covers this - no extra CSS needed. ── */
+
+/* ── reduced motion (spec §3): glows go static, transitions collapse.
+   The countdown ring/underline keep draining - required information. ── */
+@media (prefers-reduced-motion: reduce) {
+  .table-avatar-ring--acting::after,
+  .table-avatar-ring--won::after,
+  .table-avatar-ring--hot::after {
+    animation: none;
+  }
+  .table-pod-card {
+    transition-duration: 1ms;
+  }
+}

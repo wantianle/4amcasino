@@ -1,4 +1,4 @@
-import { CardsThree, GearSix, Play, Receipt, Sliders, Timer } from '@phosphor-icons/react';
+import { CardsThree, GearSix, Play, Robot, Sliders, Timer } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
@@ -14,27 +14,6 @@ const chipClass =
 
 const iconOnlyClass = 'w-8 justify-center px-0';
 
-/** A miniature switch for the auto-deal chip, decorative: the button
- *  itself carries aria-pressed. */
-function MiniSwitch({ on }: { on: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors',
-        on ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600',
-      )}
-    >
-      <span
-        className={cn(
-          'absolute left-0.5 size-3 rounded-full bg-white shadow-sm transition-transform',
-          on && 'translate-x-3',
-        )}
-      />
-    </span>
-  );
-}
-
 export function TableQuickControls({
   roomId,
   isHost,
@@ -48,6 +27,8 @@ export function TableQuickControls({
   onOpenAutoDealDialog,
   onChangeActionSecs,
   onOpenGameplay,
+  onOpenBots,
+  botCount = 0,
 }: {
   /** Same room the ⋮ menu's record links point at - they live here now. */
   roomId: string;
@@ -59,7 +40,7 @@ export function TableQuickControls({
   /** Mid-hand: a timer edit only lands from the next deal. */
   timerDisabled: boolean;
   amSpectator: boolean;
-  /** A1: below the layout minimum, labels drop to icon-only. */
+  /** A1: below the layout minimum, labels drop to icons-only. */
   compact?: boolean;
   onChangeAutoDeal: (value: boolean) => void;
   onOpenAutoDealDialog: () => void;
@@ -69,6 +50,13 @@ export function TableQuickControls({
    *  offer it (phones fold it into the dock instead), it stays undefined and
    *  the chip is not rendered. */
   onOpenGameplay?: () => void;
+  /** Table bots: host-only 「机器人」 entry opening the BotsDialog. Phones fold
+   *  it into the ⋮ menu instead, so it stays undefined there and the chip is
+   *  not rendered. */
+  onOpenBots?: () => void;
+  /** Live bots in the room - a quiet count dot on the chip so the host sees
+   *  「有机器人在打」 without opening anything. */
+  botCount?: number;
 }) {
   return (
     <div
@@ -84,14 +72,13 @@ export function TableQuickControls({
           title={isHost ? t('Auto-deal') : t('Only the host can change this room setting.')}
           className={cn(
             chipClass,
-            compact && iconOnlyClass,
+             iconOnlyClass,
             autoDeal && !autoDealPaused && 'text-indigo-700 dark:text-indigo-300',
             autoDealPaused && 'text-amber-600 dark:text-amber-400',
           )}
         >
           <Play size={13} weight={autoDeal ? 'fill' : 'regular'} />
-          {!compact && <span>{t('Auto-deal')}</span>}
-          {!compact && <MiniSwitch on={autoDeal} />}
+          <span className="sr-only">{t('Auto-deal')}</span>
         </button>
       )}
 
@@ -133,10 +120,35 @@ export function TableQuickControls({
           onClick={onOpenGameplay}
           title={t('Gameplay rules')}
           aria-label={t('Gameplay rules')}
-          className={cn(chipClass, compact && iconOnlyClass, 'text-fuchsia-700 dark:text-fuchsia-300')}
+          className={cn(chipClass, compact && iconOnlyClass, 'text-[var(--table-gold-hi)]')}
         >
           <Sliders size={15} />
-          {!compact && <span>{t('Gameplay rules')}</span>}
+          {!compact && <span>{t('Gameplay')}</span>}
+        </button>
+      )}
+
+      {/* Table bots: the host seats scripted opponents here. Cyan icon reads
+          with the seat badges; the count dot shows live bots without opening
+          the dialog. Phones take the same action from the ⋮ menu. */}
+      {isHost && onOpenBots && (
+        <button
+          type="button"
+          onClick={onOpenBots}
+          title={t('Bot opponents')}
+          aria-label={
+            botCount > 0 ? t('Bot opponents - {n} at the table', { n: botCount }) : t('Bot opponents')
+          }
+          className={cn(chipClass, iconOnlyClass, 'relative text-[var(--table-stack)]')}
+        >
+          <Robot size={15} weight={botCount > 0 ? 'fill' : 'regular'} />
+          {botCount > 0 && (
+            <span
+              aria-hidden
+              className="absolute right-0.5 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--table-stack)] px-0.5 font-display text-[0.55rem] font-black leading-none text-slate-950"
+            >
+              {botCount}
+            </span>
+          )}
         </button>
       )}
 
@@ -148,16 +160,7 @@ export function TableQuickControls({
         aria-label={t('Hand history')}
       >
         <CardsThree size={15} />
-        {!compact && <span>{t('Hand history')}</span>}
-      </Link>
-      <Link
-        to={`/room/${roomId}/ledger`}
-        className={cn(chipClass, compact && iconOnlyClass)}
-        title={t('Ledger')}
-        aria-label={t('Ledger')}
-      >
-        <Receipt size={15} />
-        {!compact && <span>{t('Ledger')}</span>}
+        {!compact && <span>{t('History')}</span>}
       </Link>
 
       <Link

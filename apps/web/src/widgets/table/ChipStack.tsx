@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { cn } from '../../shared/lib/cn.ts';
 import {
   CHIP_PALETTES,
@@ -14,45 +14,25 @@ import {
  *  dashed-edge slices with a glossy, ringed face chip capping the pile, plus a
  *  soft ground shadow so the pile sits ON the felt instead of floating.
  *
- *  The same widget draws the three money spots the user asked to keep apart
- *  (clarified chip semantics), told apart by `variant`:
- *    stack  each player's FULL bank, riding on their seat plate (xs chips,
- *           tightest cap - big stacks must stay compact),
- *    bet    the chips pushed out this street, between seat and pot (sm chips
- *           with the indigo amount pill),
- *    pot    the center pot - the widest gaps and tallest cap, and the only
- *           pile that gets a warm under-glow.
+ *  Today this widget only renders the street-bet pile (the chips pushed out
+ *  between a seat and the pot). The seat-bank and center-pot variants were
+ *  removed in the table-ui refactor.
  *
  *  Requested by notpritam (docs/FEATURES.md); the dimensional redesign is user
  *  feedback on the P1 table ("nicer, smaller, color denominations, and never
  *  overlap"). */
 
-export type ChipVariant = 'stack' | 'bet' | 'pot';
-
-/** The felt's center column (RoundTable's `children`) is where the pot lives,
- *  and the page composes that column as opaque children. Rather than make
- *  every caller pass the variant by hand, RoundTable wraps the column in this
- *  provider and any pile that doesn't state its own variant inside it IS the
- *  pot. An explicit `variant` prop always wins over the context. */
-export const ChipVariantContext = createContext<ChipVariant | null>(null);
-
 /** face Ø / per-chip slice height in design-px. Deliberately tiny - the value
  *  label beside each pile carries precision; the pile only needs to read as
- *  "chips of these colors". `xs` is the seat-plate bank. */
+ *  "chips of these colors". `xs` is the phone bet lane. */
 const DIMS = {
   xs: { face: 11, step: 3 },
   sm: { face: 14, step: 3.5 },
-  lg: { face: 19, step: 5 },
 } as const;
 
-/** How many chips of ONE tier get drawn before the pile truncates into a ×n
- *  tail. Lower for the seat bank (nine of them live on the felt at once),
- *  higher for the single pot pile. Performance stays sane on huge stacks. */
-const MAX_SHOWN: Record<ChipVariant, number> = {
-  stack: 3,
-  bet: 4,
-  pot: 5,
-};
+/** How many chips of ONE tier get drawn. The pile is an approximate visual
+ *  only (no count badge); tuned for the street-bet pile so huge bets stay sane. */
+const MAX_SHOWN = 4;
 
 /** Deterministic side-to-side sway per slice (px, × face/14) so a pile reads
  *  as hand-stacked chips, not a perfect render. */
@@ -88,7 +68,8 @@ function faceStyle(p: ChipPalette, face: number): React.CSSProperties {
 }
 
 /** One vertical stack: ground shadow, side slices with a slight sway, glossy
- *  face chip on top, ×n tail when the true count is taller than the cap. */
+ *  face chip on top. The pile is intentionally an approximate visual cue; the
+ *  adjacent amount label carries the precise value. */
 function ChipColumn({
   color,
   count,
@@ -129,14 +110,6 @@ function ChipColumn({
           />
         );
       })}
-      {count > shown && (
-        <span
-          className="absolute -top-0.5 -right-1.5 rounded-full bg-slate-950/80 px-[3px] py-px font-display font-bold leading-none tabular-nums text-white ring-1 ring-white/25"
-          style={{ fontSize: Math.max(8, Math.round(face * 0.6)) }}
-        >
-          ×{count}
-        </span>
-      )}
     </div>
   );
 }
@@ -146,7 +119,6 @@ export const ChipStack = memo(function ChipStack({
   bb,
   sb,
   size = 'sm',
-  variant,
   className,
 }: {
   amount: number;
@@ -155,18 +127,11 @@ export const ChipStack = memo(function ChipStack({
   bb: number;
   /** Explicit small-blind unit for non-standard structures. */
   sb?: number;
-  size?: 'xs' | 'sm' | 'lg';
-  /** Which money spot this pile lives in: caps drawn chips per tier and adds
-   *  the pot's under-glow. Falls back to the enclosing ChipVariantContext
-   *  (RoundTable tags its center column `pot`), then to `bet`. See the header. */
-  variant?: ChipVariant;
+  size?: 'xs' | 'sm';
   className?: string;
 }) {
-  const ctxVariant = useContext(ChipVariantContext);
-  const resolved = variant ?? ctxVariant ?? 'bet';
   const unit = sb ?? sbFromBb(bb);
-  // memoized: nine seat banks + nine bet piles + the pot recompute only when
-  // an amount or the blind structure actually changes.
+  // memoized: recompute only when an amount or the blind structure changes.
   const breakdown = useMemo(
     () => (amount > 0 ? chipBreakdown(amount, unit) : []),
     [amount, unit],
@@ -175,14 +140,8 @@ export const ChipStack = memo(function ChipStack({
   const { face, step } = DIMS[size];
   return (
     <div
-      className={cn(
-        'flex items-end',
-        resolved === 'pot' ? 'gap-1' : resolved === 'stack' ? 'gap-[2px]' : 'gap-[3px]',
-        resolved === 'pot' && 'drop-shadow-[0_3px_10px_rgba(251,191,36,0.35)]',
-        className,
-      )}
+      className={cn('flex items-end gap-[3px]', className)}
       aria-hidden="true"
-      data-chip-variant={resolved}
     >
       {breakdown.map((tier) => (
         <ChipColumn
@@ -191,7 +150,7 @@ export const ChipStack = memo(function ChipStack({
           count={tier.count}
           face={face}
           step={step}
-          maxShown={MAX_SHOWN[resolved]}
+          maxShown={MAX_SHOWN}
         />
       ))}
     </div>

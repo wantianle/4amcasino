@@ -10,6 +10,7 @@ import { t, tr } from '../../shared/i18n/index.ts';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { summarizeHand, summaryActionLabel, type HandSummary } from '../../shared/replay.ts';
+import { ProStats } from '../../features/stats/ProStats.tsx';
 
 interface HandRef {
   handId: string;
@@ -232,6 +233,22 @@ function HandSummaryBlock({
 }
 
 export function HandsPage() {
+  const { id } = useParams<{ id: string }>();
+  const [params, setParams] = useSearchParams();
+  const pro = params.get('mode') === 'pro';
+  return <>
+    <div className="mx-auto max-w-[1600px] px-4 pt-4 md:px-6" role="group" aria-label={t('Hand history mode')}>
+      {['normal', 'pro'].map((mode) => <Button key={mode} className="mr-2" variant={pro === (mode === 'pro') ? 'primary' : 'secondary'} aria-pressed={pro === (mode === 'pro')} onClick={() => {
+        const next = new URLSearchParams(params);
+        if (mode === 'pro') next.set('mode', 'pro'); else next.delete('mode');
+        setParams(next);
+      }}>{t(mode === 'pro' ? 'Professional mode' : 'Normal mode')}</Button>)}
+    </div>
+    {pro ? <div className="mx-auto max-w-[1600px] space-y-4 p-4 md:p-6"><header className="flex flex-wrap items-center gap-4"><Link to={`/room/${id}`} className="text-sm text-slate-400 hover:text-slate-200">{t('← Back to table')}</Link><h1 className="font-display text-xl font-bold">{t('Hand history')} · {t('Professional mode')}</h1></header><ProStats key={id} roomId={id!} /></div> : <NormalHandsPage />}
+  </>;
+}
+
+function NormalHandsPage() {
   const { id: roomId } = useParams<{ id: string }>();
   const [hands, setHands] = useState<HandRef[] | null>(null);
   // expanded row: one hand open at a time keeps the page scannable

@@ -20,7 +20,6 @@ import { fmt } from '../../shared/lib/cn.ts';
 import { fmtDate } from '../../shared/lib/datetime.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
-import { AppearanceToggle } from '../../shared/ui/AppearanceToggle.tsx';
 import { PlatformDues } from '../../features/house/PlatformDues.tsx';
 import { CommissionControl } from './CommissionControl.tsx';
 import { TournamentAdmin } from './TournamentAdmin.tsx';
@@ -542,7 +541,6 @@ export function AdminPage() {
             {t('Platform workspace')}
           </span>
           <div>
-            <AppearanceToggle compact />
             <Button
               variant="secondary"
               disabled={loading}

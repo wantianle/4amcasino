@@ -12,7 +12,6 @@ export type SoundName =
   | 'chip'
   | 'chips-slide'
   | 'pot-collect'
-  | 'thwack'
   | 'boom'
   | 'slap'
   | 'boing'
@@ -147,15 +146,15 @@ const recipes: Record<SoundName, (c: AudioContext, t: number) => void> = {
   },
   // two ceramic chip clinks, slightly detuned
   chip: (c, t) => {
-    tone(c, t, 0.07, 2093, 0.12, 'triangle');
-    tone(c, t + 0.045, 0.09, 2637 + Math.random() * 60, 0.1, 'triangle');
+    tone(c, t, 0.07, 2093, 0.16, 'triangle');
+    tone(c, t + 0.045, 0.09, 2637 + Math.random() * 60, 0.13, 'triangle');
   },
   // a bet pushed across the felt: low slide + chips settling in a stack
   'chips-slide': (c, t) => {
-    noiseBurst(c, t, 0.14, 900, 0.8, 0.12, 420);
-    tone(c, t + 0.08, 0.06, 1976, 0.1, 'triangle');
-    tone(c, t + 0.13, 0.07, 2349, 0.09, 'triangle');
-    tone(c, t + 0.19, 0.08, 2637 + Math.random() * 50, 0.08, 'triangle');
+    noiseBurst(c, t, 0.14, 900, 0.8, 0.16, 420);
+    tone(c, t + 0.08, 0.06, 1976, 0.13, 'triangle');
+    tone(c, t + 0.13, 0.07, 2349, 0.12, 'triangle');
+    tone(c, t + 0.19, 0.08, 2637 + Math.random() * 50, 0.1, 'triangle');
   },
   // street over: every bet cascades into the pot
   'pot-collect': (c, t) => {
@@ -164,11 +163,6 @@ const recipes: Record<SoundName, (c: AudioContext, t: number) => void> = {
       const at = t + 0.05 + i * (0.055 - i * 0.004);
       tone(c, at, 0.06, 1760 + i * 180 + Math.random() * 40, 0.09 - i * 0.008, 'triangle');
     }
-  },
-  // a cartoon shove landing
-  thwack: (c, t) => {
-    noiseBurst(c, t, 0.05, 700, 1.2, 0.28, 300);
-    tone(c, t + 0.02, 0.12, 180, 0.26, 'sine', 70);
   },
   // busting out with style
   boom: (c, t) => {
@@ -199,17 +193,17 @@ const recipes: Record<SoundName, (c: AudioContext, t: number) => void> = {
   },
   // the classic double knuckle-tap for a check
   knock: (c, t) => {
-    tone(c, t, 0.07, 160, 0.3, 'sine', 90);
-    tone(c, t + 0.11, 0.07, 150, 0.24, 'sine', 85);
+    tone(c, t, 0.07, 160, 0.38, 'sine', 90);
+    tone(c, t + 0.11, 0.07, 150, 0.32, 'sine', 85);
   },
   // cards swished into the muck
   muck: (c, t) => {
-    noiseBurst(c, t, 0.16, 1500, 0.7, 0.16, 500);
+    noiseBurst(c, t, 0.16, 1500, 0.7, 0.21, 500);
   },
   // your turn: one soft marimba-ish ping
   turn: (c, t) => {
-    tone(c, t, 0.16, 880, 0.14);
-    tone(c, t, 0.16, 1760, 0.05);
+    tone(c, t, 0.16, 880, 0.18);
+    tone(c, t, 0.16, 1760, 0.07);
   },
   // clock running out: two urgent blips
   urgent: (c, t) => {
@@ -218,9 +212,9 @@ const recipes: Record<SoundName, (c: AudioContext, t: number) => void> = {
   },
   // you won the pot: gentle two-note chime
   win: (c, t) => {
-    tone(c, t, 0.28, 659, 0.14);
-    tone(c, t + 0.12, 0.42, 988, 0.14);
-    tone(c, t + 0.12, 0.42, 1976, 0.04);
+    tone(c, t, 0.28, 659, 0.18);
+    tone(c, t + 0.12, 0.42, 988, 0.18);
+    tone(c, t + 0.12, 0.42, 1976, 0.055);
   },
   // hand over (you didn't win): neutral soft tick
   end: (c, t) => {

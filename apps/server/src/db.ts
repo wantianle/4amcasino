@@ -6,6 +6,7 @@ import {
 } from '@4am/shared';
 import { initializePlatformSettings } from './platformSettings.js';
 import { migrateAgentPlatform } from './agentSchema.js';
+import { migrateHandStats } from './handProjection.js';
 
 export type DB = Database.Database;
 
@@ -19,7 +20,59 @@ export function openDb(path: string): DB {
   db.pragma('foreign_keys = ON');
   migrate(db);
   migrateAgentPlatform(db);
+  // Runs after the agent platform so `agent_grants` already exists when the bot
+  // columns are added to it.
+  migrateBots(db);
+  // Normalized hand-stats projection tables (pure additions - never touches
+  // transcripts/ledger/hand_settlements).
+  migrateHandStats(db);
   return db;
+}
+
+/**
+ * Bot accounts (in-room robot opponents). `bot_accounts` is the single source
+ * of truth for a bot - which user row is its independent account, its owner,
+ * lifecycle status, policy, seat and encrypted signing identity. We deliberately
+ * do not introduce or depend on a `users.is_bot` flag.
+ *
+ * The encrypted identity columns hold an AEAD-wrapped 32-byte signing seed
+ * (AES-256-GCM, key from BOT_IDENTITY_KEY). Losing that key makes a bot's
+ * identity unrecoverable, so callers must fail closed rather than mint a new one.
+ */
+export function migrateBots(db: DB): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_accounts (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      owner_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL UNIQUE,
+      status TEXT NOT NULL,
+      policy_kind TEXT NOT NULL,
+      policy_json TEXT,
+      seat INTEGER,
+      identity_ct TEXT,
+      identity_nonce TEXT,
+      identity_tag TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      stopped_at INTEGER,
+      stop_requested_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_accounts_room ON bot_accounts(room_id);
+    CREATE INDEX IF NOT EXISTS idx_bot_accounts_owner ON bot_accounts(owner_id);
+  `);
+  // Difficulty tier (`low` | `medium` | `high`), orthogonal to `policy_kind`.
+  // Added by ensureColumn rather than in the CREATE above so an existing DB gets
+  // it without a rewrite and every pre-existing bot keeps `low` (today's
+  // behaviour). `high` is a reserved, not-yet-implemented GTO tier.
+  ensureColumn(db, 'bot_accounts', 'difficulty', "TEXT NOT NULL DEFAULT 'low'");
+  // Internal bot-runner grants are ordinary `agent_grants` rows distinguished by
+  // grant_kind='bot_runner' and bot_id, so they reuse the whole agent-token
+  // pipeline (hashing, scope membership, revocation) without ever showing up in
+  // a user's own grant list.
+  ensureColumn(db, 'agent_grants', 'grant_kind', "TEXT NOT NULL DEFAULT 'user'");
+  ensureColumn(db, 'agent_grants', 'bot_id', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_grants_bot ON agent_grants(bot_id)');
 }
 
 function migrate(db: DB): void {
@@ -91,18 +144,13 @@ function migrate(db: DB): void {
   ensureColumn(db, 'users', 'avatar', 'BLOB');
   ensureColumn(db, 'users', 'avatar_mime', 'TEXT');
   ensureColumn(db, 'users', 'avatar_version', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'users', 'card_back', "TEXT NOT NULL DEFAULT 'indigo'");
-  ensureColumn(db, 'users', 'four_color', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'users', 'theme', "TEXT NOT NULL DEFAULT 'cyber'");
+  // Only the DEFAULT for newly added columns/rows: `ensureColumn` adds a column
+  // solely when it is missing, so an existing table with the old default and an
+  // existing user's saved value are never rewritten by this migration.
+  ensureColumn(db, 'users', 'card_back', "TEXT NOT NULL DEFAULT 'crimson'");
+  ensureColumn(db, 'users', 'four_color', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'users', 'avatar3d', 'TEXT');
-  // 2026-08-24 redesign: cyber becomes the game's look for everyone, once.
-  // Settings still offers light/dark, so a later explicit choice sticks.
   db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
-  const cyberFlag = db.prepare("SELECT value FROM meta WHERE key = 'cyber-theme-migrated'").get();
-  if (!cyberFlag) {
-    db.prepare("UPDATE users SET theme = 'cyber'").run();
-    db.prepare("INSERT INTO meta (key, value) VALUES ('cyber-theme-migrated', '1')").run();
-  }
   // heal balances damaged by the old absolute-stack settlement write (a buy
   // approved mid-hand was erased at hand end): the hash-chained ledger is the
   // source of truth, so recompute any stack that disagrees with it, once
@@ -162,9 +210,12 @@ function migrate(db: DB): void {
   })();
   initializePlatformSettings(db);
   ensureColumn(db, 'users', 'show_best_hand', 'INTEGER NOT NULL DEFAULT 1');
-  // "deal me in without asking every hand" - the ready check exists so nobody is
-  // dealt into a hand they walked away from, which is a per-player call
-  ensureColumn(db, 'users', 'auto_ready', 'INTEGER NOT NULL DEFAULT 0');
+  // "deal me in without asking every hand" is the default now: the server
+  // auto-marks auto-ready players the moment the ready window opens. A player
+  // can still turn it off (PUT /api/profile). `ensureColumn` only installs the
+  // column for a fresh DB - an existing DB keeps its old default, so new
+  // signups are written explicitly in `createUser` (old rows are never touched).
+  ensureColumn(db, 'users', 'auto_ready', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'users', 'poker_hotkeys', 'TEXT');
   // Quick-bet ratios (A10): the four table action-bar slots, stored as a JSON
   // array of pot fractions (with -1 as the all-in sentinel).

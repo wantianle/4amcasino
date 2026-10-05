@@ -218,9 +218,6 @@ export function sendChat(text: string, kind: 'text' | 'sticker' | 'phrase' = 'te
 function handle(msg: ServerMsg): void {
   const store = useStore.getState();
   switch (msg.t) {
-    case 'lounge_presence':
-      store.setLoungePosition(msg.roomId, msg.userId, msg.position);
-      return;
     case 'room_state': {
       store.setRoom(msg);
       // Authoritative snapshot restores countdown/readiness after a reconnect.
@@ -480,18 +477,6 @@ function handle(msg: ServerMsg): void {
       store.patchHand({
         lastActions: { ...hand.lastActions, [msg.seat]: { ...msg.action, auto: msg.auto } },
       });
-      return;
-    }
-
-    case 'poke': {
-      const event = new CustomEvent('4am-poke', { detail: msg, cancelable: true });
-      // The 3D scene times its own contact sound; 2D keeps immediate feedback.
-      if (window.dispatchEvent(event)) play('thwack');
-      return;
-    }
-
-    case 'emote': {
-      window.dispatchEvent(new CustomEvent('4am-emote', { detail: msg }));
       return;
     }
 

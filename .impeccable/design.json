@@ -86,24 +86,20 @@
   ],
   "narrative": {
     "northStar": "Zeus around the table",
-    "overview": "Use the official Zeus UI design system selected by the user at myzeusui.com: white canvas, neutral panels, Inter typography, blue actions, and a floating icon sidebar. Poker remains the content. The immersive 3D lounge uses the same action language in transparent widgets over its night scene.",
+    "overview": "Use the official Zeus UI design system selected by the user at myzeusui.com: white canvas, neutral panels, Inter typography, blue actions, and a floating icon sidebar. Poker remains the content.",
     "keyCharacteristics": [
       "One account appearance, with no light, dark, or cyber selector.",
       "Compact navigation that expands to show names and real tables.",
-      "Actual account data, honest empty states, readable gains and losses.",
-      "A full viewport for the 3D world, independent of the control state."
+      "Actual account data, honest empty states, readable gains and losses."
     ],
     "rules": [],
     "dos": [
       "Do use the installed Zeus SDK and tokens for shared application controls.",
       "Do preserve native forms and all existing poker actions during visual changes.",
-      "Do show real account data and readable negative chart values.",
-      "Do keep the world canvas stable when controls appear, collapse, or hide."
+      "Do show real account data and readable negative chart values."
     ],
     "donts": [
-      "Don't restore old theme selectors or global cyber overrides.",
-      "Don't let UI typing steer the character.",
-      "Don't put scenery or HUD labels across the overhead card area."
+      "Don't restore old theme selectors or global cyber overrides."
     ]
   }
 }

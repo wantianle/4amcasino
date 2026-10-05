@@ -19,7 +19,7 @@ import {
   pokerTypingTarget,
 } from './pokerHotkeys.ts';
 
-/** One keyboard path for desktop, phone and 3D controls. Hidden layouts never act. */
+/** One keyboard path for desktop and phone controls. Hidden layouts never act. */
 export function usePokerHotkeys({
   mySeat,
   myTurn,

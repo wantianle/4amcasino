@@ -11,7 +11,10 @@ import { t } from '../../shared/i18n/index.ts';
  *  is a ~2.6s glance; the full recap lives in 出牌记录 / the last-hand strip. */
 
 export const WIN_FX_MS = 2600;
-const STACK_LAND_MS = 1200;
+// L5: the collect burst leads within the first frame (spec sync rule: glow /
+// collect / sound within ±50ms) and its last disc lands ~0.91s in (0.04 lead +
+// 5x70ms stagger + 0.52 travel), so the stack reveal meets it there.
+const STACK_LAND_MS = 910;
 
 /** True from the moment a settled hand shows winners until the celebration
  *  has played out; drops again the instant no seat is marked won (next deal). */
@@ -57,12 +60,13 @@ export function StackValue({ stack, won }: { stack: number; won: boolean }) {
  *  `onShare` lands only on the top winner's badge, where there is a share
  *  card to build - the pill's old job, folded into the moment itself. */
 export function WinBadge({ amount, onShare }: { amount: number; onShare?: () => void }) {
+  const reduce = useReducedMotion();
   return (
     <motion.span
-      initial={{ scale: 0.4, y: 8, opacity: 0 }}
+      initial={reduce ? false : { scale: 0.4, y: 8, opacity: 0 }}
       animate={{ scale: 1, y: 0, opacity: 1 }}
-      exit={{ scale: 0.7, opacity: 0 }}
-      transition={{ type: 'spring', stiffness: 480, damping: 22 }}
+      exit={reduce ? undefined : { scale: 0.7, opacity: 0 }}
+      transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 480, damping: 22 }}
       className="pointer-events-auto flex items-center gap-1 rounded-full bg-gradient-to-b from-amber-300 to-amber-400 py-0.5 pl-2 pr-1 font-display text-[0.62rem] font-black uppercase tracking-wide text-amber-950 shadow-[0_4px_18px_rgba(251,191,36,0.5)] ring-1 ring-amber-200/80"
     >
       {t('WIN')}
@@ -154,10 +158,80 @@ export function ChipFlight({
               opacity: [0, 1, 1, 0],
               scale: [0.5, 1.05, 0.95, 0.4],
             }}
-            transition={{ duration: 0.72, delay: 0.18 + i * 0.07, ease: 'easeInOut' }}
+            transition={{ duration: 0.52, delay: 0.04 + i * 0.07, ease: [0.2, 0, 0, 1] }}
           />
         );
       })}
+    </div>
+  );
+}
+
+/** L5 (spec row 3): the call/raise moment - a short burst of chips arcs from
+ *  the acting seat's pod to its bet spot on the felt. Same viewport-space
+ *  measurement as ChipFlight, so the canvas scale is transparent to it;
+ *  pure decoration (aria-hidden) and skipped under reduced motion. */
+export function BetFlight({
+  run,
+  getFrom,
+  getTo,
+}: {
+  /** Re-trigger key: any change re-measures and replays the burst. */
+  run: number;
+  getFrom: () => HTMLElement | null;
+  getTo: () => HTMLElement | null;
+}) {
+  const reduce = useReducedMotion();
+  const [path, setPath] = useState<{
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    id: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!run || reduce) {
+      setPath(null);
+      return;
+    }
+    const from = getFrom()?.getBoundingClientRect();
+    const to = getTo()?.getBoundingClientRect();
+    if (!from || !to) return;
+    const sx = from.left + from.width / 2;
+    const sy = from.bottom - from.height * 0.25;
+    setPath({
+      x: sx,
+      y: sy,
+      dx: to.left + to.width / 2 - sx,
+      dy: to.top + to.height / 2 - sy,
+      id: run,
+    });
+    // measure once per committed bump; refs are stable by then
+  }, [run, reduce]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!path) return null;
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 z-[70]">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={`${path.id}-${i}`}
+          className={cn(
+            'absolute h-3 w-3 rounded-full ring-2 ring-white/50 shadow-[0_2px_6px_rgba(2,6,23,0.4)]',
+            DISC_TONES[(i + 1) % DISC_TONES.length],
+          )}
+          style={{ left: path.x - 6, top: path.y - 6 }}
+          initial={{ x: 0, y: 0, opacity: 0, scale: 0.4 }}
+          animate={{
+            x: [0, path.dx * 0.5, path.dx],
+            y: [0, path.dy * 0.5 - 14, path.dy],
+            opacity: [0, 1, 1, 0],
+            scale: [0.4, 1, 0.9, 0.5],
+          }}
+          transition={{
+            duration: 0.48,
+            delay: 0.08 + i * 0.09,
+            ease: [0, 0, 0, 1],
+          }}
+        />
+      ))}
     </div>
   );
 }

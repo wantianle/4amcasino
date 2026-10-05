@@ -71,7 +71,7 @@ class TestClient {
   lastState: BettingState | null = null;
   lastDeadline: number | null = null;
   /** Every action the server actually applied (broadcast action_applied). */
-  actionApplied: { seat: number; action: PlayerAction; auto: boolean }[] = [];
+  actionApplied: { seat: number; action: PlayerAction; auto: boolean; actionSeq?: number }[] = [];
   squidResult:
     | (Extract<ServerMsg, { t: 'squid_result' }> & {
         netBySeat?: { seat: number; net: number }[];
@@ -104,6 +104,13 @@ class TestClient {
   lastRespondedActionSeq = -1;
   roomState: Extract<ServerMsg, { t: 'room_state' }> | null = null;
   lookup = cardLookup();
+  /** Frames held while the current socket is CONNECTING; flushed on its `open`. */
+  private pendingSends: { payload: string; t: string }[] = [];
+  /** Every frame that actually left the client, tagged with its connect()
+   *  generation - lets a reconnect test prove which socket received what. */
+  sentFrames: { socket: number; t: string }[] = [];
+  private nextSocketId = 0;
+  private activeSocketId = 0;
 
   constructor(baseUrl: string, username: string, strategy: Strategy = 'passive') {
     this.baseUrl = baseUrl;
@@ -137,18 +144,73 @@ class TestClient {
 
   connect(roomId: string): Promise<void> {
     const wsUrl = this.baseUrl.replace('http', 'ws') + `/ws?token=${this.token}`;
-    this.ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl);
+    const socketId = ++this.nextSocketId;
+    this.activeSocketId = socketId;
+    this.ws = ws;
     return new Promise((resolve) => {
-      this.ws.on('open', () => {
+      ws.on('open', () => {
+        // A later connect() superseded this socket before it opened. The queued
+        // frames belong to the live connection, so a stale `open` must neither
+        // send nor flush: doing so would drain the queue onto this dead socket
+        // and starve the one the caller actually kept.
+        if (ws !== this.ws) {
+          ws.close();
+          resolve();
+          return;
+        }
         this.send({ t: 'join_room', roomId });
+        this.flushPending();
         resolve();
       });
-      this.ws.on('message', (raw) => this.handle(JSON.parse(String(raw)) as ServerMsg));
+      ws.on('message', (raw) => {
+        // A socket that has been replaced by a later connect() can still deliver
+        // frames it buffered before closing. Ignore them: the server re-sends the
+        // state the new socket is waiting on, so replaying a stale action here
+        // would be wrong (and used to hit the new socket while it was CONNECTING).
+        if (ws !== this.ws) return;
+        this.handle(JSON.parse(String(raw)) as ServerMsg);
+      });
+      ws.on('close', () => {
+        // The live socket died without being replaced: drop what was queued for
+        // it, so a later connect() cannot replay stale frames onto the new one.
+        if (ws === this.ws) this.pendingSends = [];
+      });
     });
   }
 
   send(obj: unknown): void {
-    this.ws.send(JSON.stringify(obj));
+    const payload = JSON.stringify(obj);
+    const t = (obj as { t?: string } | null)?.t ?? '';
+    if (this.ws.readyState === WebSocket.OPEN) {
+      this.write(payload, t);
+      return;
+    }
+    if (this.ws.readyState === WebSocket.CONNECTING) {
+      // The send raced the connection (e.g. a reconnect's delayed action).
+      // Hold it until `open`, then flush in order - dropping it would silently
+      // stall the hand.
+      this.pendingSends.push({ payload, t });
+      return;
+    }
+    // CLOSING/CLOSED: the socket is intentionally gone (a player who left, or
+    // the test torn down while a timer was pending). There is nowhere to
+    // deliver to, and that is not a test failure - drop it.
+    return;
+  }
+
+  /** Write through the live socket, recording which connection it used. */
+  private write(payload: string, t: string): void {
+    this.ws.send(payload);
+    this.sentFrames.push({ socket: this.activeSocketId, t });
+  }
+
+  /** Send everything held for the live socket, in order. Only a matching live
+   *  `open` reaches this, so another connection's queued frames are unreachable. */
+  private flushPending(): void {
+    const queued = this.pendingSends;
+    this.pendingSends = [];
+    for (const item of queued) this.write(item.payload, item.t);
   }
 
   /** Drop the socket like a player closing the tab (no reconnect). */
@@ -334,7 +396,12 @@ class TestClient {
         break;
       }
       case 'action_applied': {
-        this.actionApplied.push({ seat: msg.seat, action: msg.action, auto: !!msg.auto });
+        this.actionApplied.push({
+          seat: msg.seat,
+          action: msg.action,
+          auto: !!msg.auto,
+          actionSeq: msg.actionSeq,
+        });
         if (msg.action.type === 'fold' && msg.seat === this.seat) this.sawOwnFold = true;
         if (
           this.autoFoldKey &&
@@ -518,6 +585,36 @@ async function setupRoom(names: string[], strategies: Strategy[] = []) {
 }
 
 describe('full hand integration', () => {
+  it('a reconnect before the first socket opens never flushes onto the stale socket', async () => {
+    const c = new TestClient(baseUrl, 'racey');
+    clients.push(c);
+    await c.register();
+    const room = await c.api('/api/rooms', { name: 'Race', sb: 10, bb: 20 });
+
+    // These calls run in the same tick, so the first socket is guaranteed to
+    // still be CONNECTING when the second connect() replaces it. This pins the
+    // exact race: a queued frame plus a superseded socket that then opens.
+    const first = c.connect(room.id);
+    c.send({ t: 'sit', seat: 0 });
+    const second = c.connect(room.id);
+    await Promise.all([first, second]);
+    // Wait for the second socket to complete its handshake, including the
+    // server round-trip, so both the socket bookkeeping and room_state are final.
+    await c.waitFor(
+      () => c.roomState !== null && c.sentFrames.some((f) => f.t === 'sit'),
+      5000,
+    );
+
+    // Every frame left on the second socket. If the stale first socket had
+    // flushed the shared queue, `join_room`/`sit` would show socket 1 (and the
+    // second socket would have been starved).
+    expect(c.sentFrames.length).toBeGreaterThan(0);
+    expect(c.sentFrames.every((f) => f.socket === 2)).toBe(true);
+    expect(c.sentFrames.filter((f) => f.t === 'join_room').map((f) => f.socket)).toEqual([2]);
+    expect(c.sentFrames.filter((f) => f.t === 'sit').map((f) => f.socket)).toEqual([2]);
+    expect(c.roomState).not.toBeNull();
+  });
+
   it('three players play a complete hand to showdown', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob', 'carol']);
     host.send({ t: 'start_hand' });
@@ -575,7 +672,72 @@ describe('full hand integration', () => {
     expect(mine.myNet).toBe(hostDelta.delta);
     expect(['won at showdown', 'lost at showdown']).toContain(mine.outcome);
     expect(mine.voided).toBe(false);
+
+    // Server-authoritative action sequence: every accepted transcript action
+    // carries its 0-based index, and every observer sees a strictly increasing
+    // sequence on action_applied (one entry per applied action, no duplicates).
+    const handDetail = await host.api(
+      `/api/rooms/${room.id}/hands/${players[0]!.handEnd!.handId}`,
+    );
+    const actionEntries = (handDetail.entries as { type: string; payload: { actionSeq?: number } }[])
+      .filter((e) => e.type === 'action');
+    expect(actionEntries.length).toBeGreaterThan(0);
+    for (const e of actionEntries) expect(typeof e.payload.actionSeq).toBe('number');
+    for (const p of players) {
+      const seqs = p.actionApplied.map((a) => a.actionSeq as number);
+      for (const s of seqs) expect(Number.isInteger(s)).toBe(true);
+      expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+      expect(new Set(seqs).size).toBe(seqs.length);
+    }
   }, 20000);
+
+  it('mid-hand reconnect: the reconnected client gets the authoritative actionSeq after missed frames', async () => {
+    const { players, room, host } = await setupRoom(['mra', 'mrb', 'mrc']);
+    const a = players[0]!;
+    const bob = players[1]!;
+    // Space actions out so there is a window to drop the socket with actions in
+    // flight, then reconnect before the hand settles.
+    for (const p of players) p.thinkMs = 250;
+    host.send({ t: 'start_hand' });
+    await a.waitFor(() => a.actionApplied.length >= 1, 12000);
+
+    const bobSeenBefore = bob.actionApplied.length;
+    const serverAppliedBefore = a.actionApplied.length;
+    bob.disconnect();
+    // At least one action is applied while bob is offline: bob provably missed it.
+    await a.waitFor(() => a.actionApplied.length > serverAppliedBefore, 12000);
+    await bob.connect(room.id);
+    // The hand is still live; bob now receives a later action_applied.
+    await bob.waitFor(() => bob.actionApplied.length > bobSeenBefore, 20000);
+    const firstAfterReconnect = bob.actionApplied[bobSeenBefore]!;
+    expect(typeof firstAfterReconnect.actionSeq).toBe('number');
+    // A locally accumulated ordinal would have been exactly bobSeenBefore (it
+    // missed a frame), but the server sequence has advanced past the gap.
+    expect(firstAfterReconnect.actionSeq!).toBeGreaterThan(bobSeenBefore);
+
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 25000)));
+    expect(a.handAbort).toBeNull();
+
+    // Direct set comparison: the continuously-connected observer's non-auto
+    // actionSeq values must equal the transcript's accepted actionSeq values
+    // exactly, and the reconnected observer's post-reconnect frames must be a
+    // subset of the same authoritative sequence (never a fabricated ordinal).
+    const handDetail = await host.api(`/api/rooms/${room.id}/hands/${a.handEnd!.handId}`);
+    const transcriptSeqs = (
+      handDetail.entries as { type: string; payload: { actionSeq?: number } }[]
+    )
+      .filter((e) => e.type === 'action')
+      .map((e) => e.payload.actionSeq as number)
+      .sort((x, y) => x - y);
+    expect(transcriptSeqs.length).toBeGreaterThan(0);
+    const observerSeqs = a.actionApplied
+      .filter((x) => !x.auto)
+      .map((x) => x.actionSeq as number)
+      .sort((x, y) => x - y);
+    expect(observerSeqs).toEqual(transcriptSeqs);
+    const bobAfter = bob.actionApplied.slice(bobSeenBefore).map((x) => x.actionSeq as number);
+    for (const s of bobAfter) expect(transcriptSeqs).toContain(s);
+  }, 45000);
 
   it('a mid-hand buy survives the hand settlement', async () => {
     const { players, room, host } = await setupRoom(['heala', 'healb', 'healc']);
@@ -736,8 +898,10 @@ describe('full hand integration', () => {
     host.send({ t: 'start_hand' });
     await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
     const firstHandId = players[0]!.handEnd!.handId;
-    // carol never clicks I'm ready: the deadline passes and the other two play
+    // carol never clicks I'm ready: opt her out of the (now default-on)
+    // server-side auto-ready, then the deadline passes and the other two play
     players[2]!.autoReady = false;
+    ctx.db.prepare('UPDATE users SET auto_ready = 0 WHERE id = ?').run(players[2]!.userId);
     await Promise.all(
       players
         .slice(0, 2)

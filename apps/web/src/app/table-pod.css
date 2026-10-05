@@ -1,0 +1,563 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * table-pod.css — seat-unit styles
+ *
+ * The seat plaque (dark card + gold-ringed avatar + quiet text lines), the
+ * hole cards riding the top edge (hero side-by-side face-up, opponents a
+ * small-angle burgundy fan), status pills below the unit, the gold dealer disc
+ * and the dark+gold bet label. Sizes/colors reference table-tokens.css;
+ * geometry stays in widgets/table/geometry.ts.
+ *
+ * Rules honored here: one hairline + one soft shadow per element, AT MOST ONE
+ * role corner per avatar (merged tooltip), dimmed folded / sitting-out /
+ * offline seats, flat gold acting state.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the seat unit card ── */
+.table-pod-card {
+  position: relative;
+  width: var(--table-pod-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--table-pod-pad-top) 8px var(--table-pod-pad-bottom, 8px);
+  border-radius: var(--radius-table-pod);
+  background: var(--table-surface-pod);
+  border: 1px solid var(--table-hairline);
+  box-shadow: var(--shadow-table-pod);
+  text-align: center;
+}
+.table-canvas:not(.table-canvas--narrow) .table-pod-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  min-height: 58px;
+  padding: 6px 8px;
+}
+.table-pod-info {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+.table-pod-info .table-pname {
+  margin-top: 0;
+}
+.table-pod-info .table-pstack {
+  padding-left: 0;
+}
+.table-canvas--narrow .table-pod-info {
+  display: contents;
+}
+.table-hero-cards {
+  position: absolute;
+  z-index: 25;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  display: flex;
+  padding: 5px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--table-felt-core) 72%, transparent);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+.table-hero-cards > div {
+  gap: 8px;
+}
+.table-hero-cards .playing-card {
+  flex: none;
+}
+.table-hero-cards--dim {
+  opacity: 0.45;
+  filter: saturate(0.45);
+}
+/* L6 phone canvas (548×410 oval, k≈0.55–0.7): the pod is compact EVERYWHERE
+   (78px wide, 10/6 padding, no spare line height) so a full showdown hero —
+   avatar → name → stack → action → strength — stays inside the geometry
+   budget (PHONE_CANVAS.podWorstPx=122 design px, the height the center
+   column clears the ring by). Text rides a size that survives the phone
+   scale: 13–14.5 design px ≈ 9–10 rendered px at 390×844, the same optical
+   weight the desktop plaque has on a monitor. */
+.table-canvas--narrow {
+  --pod-name-size: 14.5px;
+  --pod-money-size: 13px;
+  --pod-caption-size: 12px;
+  --pod-micro-size: 11px;
+  --pod-pill-size: 11px;
+  --pod-betamt-size: 12.5px;
+  --disc-size: 24px;
+  --disc-font: 11px;
+  /* 78 < the 80.5 design-px gap between the hero and its ±40° ring points —
+     the only ring clearance the 9-seat phone oval has, so the bottom-arc
+     pods (and their fans/pills) never touch */
+  --table-pod-w: 78px;
+  --table-pod-pad-top: 10px;
+  --table-pod-pad-bottom: 6px;
+  --table-pod-name-gap: 2px;
+  --table-pod-leading: 14px;
+  --table-fan-w: 48px;
+  --table-fan-shift: 18px;
+  --table-hole-h: 40px;
+  --table-holo-top: -9px;
+  --table-holo-top-side: -13px;
+}
+/* dense phone (7+ seats): RoundTable already swaps hole cards to xs; these
+   tighten the fan/pair box to match the xs footprint */
+.table-canvas--dense {
+  --table-fan-w: 46px;
+  --table-fan-shift: 18px;
+  --table-hole-h: 40px;
+  --table-holo-top: -8px;
+  --table-holo-top-side: -4px;
+}
+.table-pod-card--bare {
+  padding-top: var(--table-pod-pad-top-bare);
+}
+/* acting: faint gold border tint (the glow lives on the avatar ring) */
+.table-pod-card--acting {
+  border-color: var(--table-ring-gold-soft);
+  padding-bottom: 13px; /* keep the TurnProgress drain bar off the last line */
+}
+.table-pod-card--won {
+  border-color: color-mix(in srgb, var(--table-gold) 50%, transparent);
+}
+/* folded / offline / sitting-out: dim the whole unit (GG 2026 folded dimming) */
+.table-pod-card--dim {
+  opacity: 0.5;
+  filter: saturate(0.35);
+}
+
+/* ── avatar with the ornate gold ring ── */
+.table-avatar-ring {
+  position: relative;
+  border-radius: 9999px;
+  padding: 2.5px;
+  background: conic-gradient(
+    from 210deg,
+    var(--table-gold-lo),
+    var(--table-gold-hi) 12%,
+    #b8862b 25%,
+    var(--table-gold-pale) 38%,
+    var(--table-gold-lo) 55%,
+    var(--table-gold) 72%,
+    #6b4a10 88%,
+    var(--table-gold-lo)
+  );
+  box-shadow: var(--shadow-table-avatar);
+}
+.table-avatar-ring--dim {
+  background: conic-gradient(#4a453a, #2c281f, #4a453a);
+}
+.table-avatar-ring--speaking {
+  box-shadow:
+    0 0 0 2.5px var(--table-ring-speak),
+    var(--shadow-table-avatar);
+}
+.table-avatar-ring--acting {
+  box-shadow:
+    0 0 0 2.5px var(--table-gold-hi),
+    0 0 18px rgba(245, 214, 123, 0.55);
+}
+.table-avatar-ring--won {
+  box-shadow:
+    0 0 0 2.5px var(--table-gold-hi),
+    0 0 22px rgba(245, 214, 123, 0.5);
+}
+
+/* the ONE role corner (host ▸ / banker ◉ / leader  / muted) — rest in tooltip.
+   z-20: rides ABOVE the hole-card layer (.table-pod-holo is z-10) so the fan
+   or the face-up pair can never hide it. */
+.table-role-badge {
+  position: absolute;
+  z-index: 20;
+  width: var(--table-avatar-badge);
+  height: var(--table-avatar-badge);
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  background: #14110c;
+  color: var(--table-gold-hi);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--table-gold) 60%, transparent);
+}
+.table-role-badge--muted {
+  color: var(--table-muted);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--table-muted) 40%, transparent);
+}
+/* Bot identity badge: a cool cyan chip so a machine seat reads instantly
+   against the warm gold role corners, and never claims a gold role itself.
+   The plate is the pod's own surface token - no bot-specific raw color. */
+.table-role-badge--bot {
+  background: var(--table-surface-pod);
+  color: var(--table-stack);
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--table-stack) 55%, transparent),
+    0 0 6px color-mix(in srgb, var(--table-stack) 30%, transparent);
+}
+
+/* ── card back INSIDE THE SEAT UNIT ONLY (L2 oracle fix) ──
+   The GG burgundy lattice (cross-hatch, white inset border, small gold
+   diamond) paints the pod's face-down cards and flip back-faces. The global
+   .card-back night-grid (index.css) stays untouched, so TournamentWatch /
+   Hands / Player / the Profile deck preview are unaffected. NO position
+   declaration here — every .card-back inside a pod is already positioned
+   (fan backs: absolute via .table-pod-fan-back; flip back-face: absolute
+   inset-0), and the emblem rides as a background layer instead of ::after,
+   so the flip stack can never be broken by this scope. */
+.table-pod-card .card-back {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M10 3.5 L16.5 10 L10 16.5 L3.5 10 Z' fill='rgba(245,214,123,0.5)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.07) 0 3px, transparent 3px 9px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.2) 0 3px, transparent 3px 9px),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--back-color) 88%, white 12%),
+      color-mix(in srgb, var(--back-color) 68%, black 32%)
+    );
+  background-repeat: no-repeat, repeat, repeat, no-repeat;
+  background-position:
+    center,
+    0 0,
+    0 0,
+    0 0;
+  background-size:
+    16px 16px,
+    auto,
+    auto,
+    auto;
+  background-color: var(--back-color);
+  box-shadow:
+    inset 0 0 0 2px #f6f1e6,
+    inset 0 0 0 3px color-mix(in srgb, var(--back-color) 70%, black 30%);
+}
+/* the mockup's wine burgundy, pod-scoped: the crimson colorway renders
+   #5e1626 on the felt while other pages keep the original crimson rose —
+   revisit when the deck palette unifies (L3+/final). */
+.table-pod-card .card-back-crimson {
+  --back-color: #5e1626;
+}
+/* Preset back paint is shared by board and pod cards; pod-specific framing
+   keeps the existing two-pixel ivory edge and does not alter card geometry. */
+.table-pod-card .card-back-wine-lattice,
+.table-pod-card .card-back-black-gold,
+.table-pod-card .card-back-classic-red-blue,
+.table-pod-card .card-back-geometry,
+.table-pod-card .card-back-deep-blue-silver {
+  box-shadow:
+    inset 0 0 0 2px #f6f1e6,
+    inset 0 0 0 3px color-mix(in srgb, var(--back-color) 70%, black 30%);
+}
+
+/* ── hole cards riding the unit's top edge ── */
+.table-pod-holo {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+}
+.table-pod-holo--fan {
+  top: var(--table-holo-top);
+}
+.table-pod-holo--side {
+  top: var(--table-holo-top-side);
+}
+.table-canvas--narrow .table-pod-holo--side {
+  top: calc(var(--table-holo-top-side) - 94px);
+}
+.table-canvas--narrow .table-pod-holo--fan {
+  top: calc(var(--table-holo-top) - 62px);
+}
+/* opponents: two burgundy backs, small-angle fan (GG), slight overlap.
+   The rules stay scoped under .table-pod-fan for cascade robustness; note
+   .card-back itself declares NO position anywhere anymore (the pod emblem is
+   a background layer), so these fan rules are the sole positioning source
+   for the fan backs. */
+.table-pod-fan {
+  position: relative;
+  width: var(--table-fan-w);
+  height: var(--table-hole-h);
+}
+.table-pod-fan .table-pod-fan-back {
+  position: absolute;
+  top: 0;
+}
+.table-pod-fan .table-pod-fan-back--first {
+  left: 0;
+  transform: rotate(calc(var(--table-fan-tilt) * -1));
+}
+.table-pod-fan .table-pod-fan-back--last {
+  left: var(--table-fan-shift);
+  transform: rotate(var(--table-fan-tilt));
+  z-index: 1;
+}
+
+/* ── quiet in-card text lines (rev-3: action/strength/state collapsed here) ── */
+.table-pname {
+  margin-top: var(--table-pod-name-gap, 6px);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: var(--pod-name-size, var(--text-table-name));
+  line-height: var(--table-pod-leading, 15px);
+  color: var(--table-ink);
+}
+/* stack = a button: one tap flips pts ⇄ BB for EVERY seat (local pref) */
+.table-pstack {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 8px;
+  padding: 0 4px;
+  font-family: var(--font-table-num);
+  font-weight: 800;
+  font-size: var(--pod-money-size, var(--text-table-money));
+  font-variant-numeric: tabular-nums;
+  color: var(--table-stack);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.table-pstack:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.table-pstack:focus-visible {
+  outline: 2px solid var(--table-gold);
+  outline-offset: 1px;
+}
+.table-pstack .table-pstack-unit {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--table-stack-unit);
+  margin-left: 2px;
+}
+.table-pstack--out {
+  color: var(--table-down);
+}
+.table-paction {
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  font-size: var(--pod-caption-size, var(--text-table-caption));
+  color: var(--table-muted-3);
+  animation: table-paction-show 0.82s var(--table-ease-standard) both;
+}
+
+@keyframes table-paction-show {
+  0%,
+  18% {
+    filter: brightness(1.45);
+    text-shadow: 0 0 8px color-mix(in srgb, currentColor 65%, transparent);
+  }
+  72%,
+  100% {
+    filter: brightness(1);
+    text-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-paction {
+    animation: none;
+  }
+}
+.table-paction--aggr {
+  color: var(--table-gold-hi);
+}
+.table-paction--fold {
+  color: var(--table-muted);
+}
+.table-paction--allin {
+  color: var(--table-allin);
+}
+.table-pstrength {
+  font-weight: 600;
+  font-size: var(--pod-caption-size, var(--text-table-caption));
+  color: color-mix(in srgb, var(--table-gold-hi) 80%, transparent);
+}
+.table-pstate {
+  font-weight: 600;
+  font-size: var(--pod-micro-size, var(--text-table-micro));
+  letter-spacing: 0.04em;
+}
+.table-pstate--sit {
+  color: var(--table-muted-2);
+}
+.table-pstate--off {
+  color: var(--table-offline);
+}
+.table-pstate--out {
+  color: var(--table-out);
+}
+
+/* gold drain bar under the acting seat (TurnProgress paints itself with these) */
+.table-timer-track {
+  background: rgba(255, 255, 255, 0.08);
+}
+.table-timer-base {
+  background: var(--table-gold);
+}
+.table-timer-bank {
+  background: var(--table-commit);
+}
+.table-timer-hot {
+  background: var(--table-red);
+}
+
+/* ── pills riding below the unit ── */
+.table-pod-pills {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+/* phone: pills form ONE wrapped row capped at the unit's width — a wide pill
+   must never widen the pod container and push it into its neighbors (the
+   container sizes to its widest child, so the cap IS the collision budget:
+   ±40° ring points sit ~80 design px apart on the phone oval) */
+.table-canvas--narrow .table-pod-pills {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: var(--table-pod-w);
+}
+/* one long pill (a '+2,000 soon' buy note, a merged win badge) must never
+   poke past the row's cap and into the neighbour's ring slot */
+.table-canvas--narrow .table-pill {
+  max-width: 100%;
+  overflow: hidden;
+}
+.table-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  border-radius: var(--radius-table-pill);
+  padding: 3px 9px;
+  font-weight: 800;
+  font-size: var(--pod-pill-size, var(--text-table-caption));
+  letter-spacing: 0.04em;
+}
+.table-pill--acting {
+  background: var(--table-gold);
+  color: var(--table-gold-ink);
+}
+.table-pill--acting-hot {
+  background: var(--table-red);
+  color: #fff;
+}
+.table-pill--ready {
+  color: var(--table-ready);
+  background: none;
+  padding: 0 4px;
+  font-weight: 700;
+}
+.table-pill--wait {
+  color: var(--table-wait);
+  background: none;
+  padding: 0 4px;
+  font-weight: 600;
+  animation: table-pulse var(--table-dur-pulse) ease-in-out infinite;
+}
+@keyframes table-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-pill--wait {
+    animation: none;
+  }
+}
+.table-pill--bank {
+  background: var(--table-surface-bank);
+  color: var(--table-commit);
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  font-size: var(--pod-micro-size, var(--text-table-micro));
+  padding: 2px 8px;
+}
+.table-pill--bank-loud {
+  background: var(--table-commit);
+  color: var(--table-gold-ink);
+}
+.table-pill--bank-quiet {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--table-muted-2);
+}
+.table-pill--buy {
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--table-gold-hi) 40%, transparent);
+  color: var(--table-gold-hi);
+  font-family: var(--font-table-num);
+  font-weight: 700;
+  font-size: var(--pod-micro-size, var(--text-table-micro));
+  padding: 2px 8px;
+}
+/* bot lifecycle pill: the same cyan family as the seat's robot badge, so a
+   not-running bot explains itself in the pod's accent, not in felt gold */
+.table-pill--bot {
+  background: color-mix(in srgb, var(--table-stack) 12%, var(--table-surface-dock));
+  border: 1px solid color-mix(in srgb, var(--table-stack) 34%, transparent);
+  color: var(--table-stack);
+  font-weight: 700;
+  font-size: var(--pod-micro-size, var(--text-table-micro));
+  padding: 2px 8px;
+  animation: table-pulse var(--table-dur-pulse) ease-in-out infinite;
+}
+/* a bot parked in `error` stops breathing and reads as a fault, not a wait */
+.table-pill--bot-bad {
+  background: color-mix(in srgb, var(--table-red) 16%, var(--table-surface-dock));
+  border-color: color-mix(in srgb, var(--table-red) 45%, transparent);
+  color: color-mix(in srgb, var(--table-red) 70%, var(--table-ink));
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-pill--bot {
+    animation: none;
+  }
+}
+
+/* ── the felt bet slot: gold D disc + dark/gold amount label ── */
+.table-disc-d {
+  width: var(--disc-size, var(--table-disc-d));
+  height: var(--disc-size, var(--table-disc-d));
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: var(--disc-font, 11px);
+  color: var(--table-gold-ink);
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--table-gold-pale),
+    var(--table-gold) 60%,
+    var(--table-gold-lo)
+  );
+  box-shadow: var(--shadow-table-disc);
+}
+.table-bet-amt {
+  font-family: var(--font-table-num);
+  font-size: var(--pod-betamt-size, 11px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--table-gold-hi);
+  background: var(--table-surface-label);
+  border-radius: var(--radius-table-pill);
+  padding: 2px 8px;
+}
+
+/* L6 phone hero: the pill row (acting / bank / strength) rides ABOVE the card
+   so it cannot spill below the canvas into the console cluster at 320px. */
+.table-pod--hero-top {
+  flex-direction: column-reverse;
+}
+/* At 320px the hero card itself (avatar → strength) still out-runs the canvas
+   bottom into the console cluster; lift the whole pod so its base clears the
+   console top. 360px is the cut-off — wider phones fit without the lift. */
+@media (max-width: 360px) {
+  .table-canvas--narrow .table-pod--hero-top {
+    --table-pod-lift: -24px;
+  }
+}
