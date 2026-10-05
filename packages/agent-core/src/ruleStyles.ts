@@ -26,6 +26,13 @@ export interface RuleParams {
   valueBetScale: number;
   multiwayBluffScale: number;
   maxOverbetFrequency: number;
+  /**
+   * Experimental (default false): resolve first-in preflop spots from the
+   * headcount-adaptive charts (`preflopCharts/`) keyed by `behindUnacted`
+   * instead of the position-named legacy tables. Falls back to the legacy
+   * tables whenever the headcount/spot is not reliable.
+   */
+  adaptivePreflop: boolean;
 }
 
 export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
@@ -36,6 +43,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.5,
     maxOverbetFrequency: 0.15,
+    adaptivePreflop: false,
   },
   'loose-aggressive': {
     preflopScale: 1.5,
@@ -44,6 +52,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1.15,
     multiwayBluffScale: 0.8,
     maxOverbetFrequency: 0.35,
+    adaptivePreflop: false,
   },
   // A station opens a touch wide (but far less than a LAG) and almost never
   // 3-bets or bluffs.
@@ -54,6 +63,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.2,
     maxOverbetFrequency: 0,
+    adaptivePreflop: false,
   },
   'constrained-random': {
     preflopScale: 1.1,
@@ -62,10 +72,14 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.7,
     maxOverbetFrequency: 0.25,
+    adaptivePreflop: false,
   },
 };
 
-const PARAM_RANGES: Record<keyof RuleParams, [number, number]> = {
+/** Numeric knobs (everything except the boolean `adaptivePreflop`). */
+type NumericRuleParam = Exclude<keyof RuleParams, 'adaptivePreflop'>;
+
+const PARAM_RANGES: Record<NumericRuleParam, [number, number]> = {
   preflopScale: [0, 2],
   threeBetScale: [0, 2],
   bluffScale: [0, 2],
@@ -74,7 +88,7 @@ const PARAM_RANGES: Record<keyof RuleParams, [number, number]> = {
   maxOverbetFrequency: [0, 1],
 };
 
-const PARAM_KEYS = Object.keys(PARAM_RANGES) as (keyof RuleParams)[];
+const PARAM_KEYS = Object.keys(PARAM_RANGES) as NumericRuleParam[];
 
 /** Read the `engine` field without throwing, for the resolver's dispatch. */
 export function detectRulesEngine(json: string | null | undefined): string | null {
@@ -145,11 +159,20 @@ export function parseRuleConfig(kind: PolicyKind, json: string | null | undefine
   // keys appear in.
   for (const [key, value] of Object.entries(obj)) {
     if (key === 'engine' || key === 'rules') continue;
+    if (key === 'adaptivePreflop') {
+      if (typeof value !== 'boolean') {
+        errors.push(`rules parameter "adaptivePreflop" must be a boolean; kept default`);
+        continue;
+      }
+      params.adaptivePreflop = value;
+      applied = true;
+      continue;
+    }
     if (!(PARAM_KEYS as readonly string[]).includes(key)) {
       errors.push(`unknown rules parameter "${key}" ignored`);
       continue;
     }
-    const name = key as keyof RuleParams;
+    const name = key as NumericRuleParam;
     const [lo, hi] = PARAM_RANGES[name];
     if (typeof value !== 'number' || !Number.isFinite(value) || value < lo || value > hi) {
       errors.push(`rules parameter "${key}" must be a number in [${lo}, ${hi}]; kept default`);

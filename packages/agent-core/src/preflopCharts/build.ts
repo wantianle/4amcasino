@@ -1,0 +1,405 @@
+import { allHandClasses, type RangeEntry } from '../rangeParser.js';
+import { FRLA_RFI, MHL_HU } from './data/index.js';
+import { MAX_SLOT } from './headcount.js';
+import type {
+  ChartMix,
+  ChartSituation,
+  ChartSpot,
+  ChartSource,
+  PreflopChart,
+  RawChartFile,
+  RawSpot,
+  RawTriple,
+} from './types.js';
+
+/**
+ * Build the headcount-adaptive `preflop-chart/v1` charts from the extracted
+ * FRLA / MHL provider subsets.
+ *
+ * The only real work here is the **per-hand-class width rescaling**: a chart
+ * anchored at one width is transformed to a target width, never by multiplying
+ * the whole range by a constant (which would fold premiums). Instead:
+ *
+ *   narrow (target < raw):  p' = clamp((p - t) / (1 - t))
+ *   widen  (target > raw):  p' = clamp(p + a*(1 - p))
+ *
+ * with `t` / `a` solved by bisection so the combo-weighted width hits the
+ * target; `p = 1` stays `1` under both. Actions are then split back using the
+ * original raise/call ratios.
+ *
+ * Widening contract: a hand the anchor never plays (`p = 0`) stays folded, so
+ * the reachable width is capped at `maxReachableWidth` (see it below). A target
+ * above that ceiling throws rather than silently returning a too-narrow chart.
+ */
+
+/** Total preflop combos (13*6 + 78*4 + 78*12). */
+export const TOTAL_COMBOS = 1326;
+
+/** Combo multiplicity per canonical hand class. */
+const COMBOS: Record<string, number> = (() => {
+  const m: Record<string, number> = {};
+  for (const h of allHandClasses()) m[h.key] = h.combos;
+  return m;
+})();
+
+/** All 169 canonical hand-class keys in a stable order. */
+export const HAND_KEYS: readonly string[] = allHandClasses().map((h) => h.key);
+
+/** behind-unacted slot -> source RFI spot for B1..B5. */
+const SLOT_TO_SPOT: Record<number, string> = {
+  1: 'SB-RFI',
+  2: 'BTN-RFI',
+  3: 'CO-RFI',
+  4: 'MP-RFI',
+  5: 'UTG-RFI',
+};
+
+/** Human-readable canonical label per slot (documentation only). */
+const SLOT_ACTOR: Record<number, string> = {
+  0: 'BB',
+  1: 'SB',
+  2: 'BTN',
+  3: 'CO',
+  4: 'MP/HJ',
+  5: 'UTG/LJ',
+  6: 'MP',
+  7: 'UTG1',
+  8: 'UTG',
+};
+
+const UTG_WIDTH = 0.175546; // measured B5 (FRLA UTG-RFI) participation
+
+/**
+ * Target participation width per behind-unacted slot. B1..B5 are the measured
+ * FRLA anchor widths (identity transform); B6..B8 are the 9-max tail
+ * extrapolation `W(B) = 0.1755 * exp(-0.1089 * (B - 5))`.
+ */
+export function slotTargetWidth(slot: number): number {
+  if (slot <= 5) return NaN; // identity: use the anchor chart's own width
+  return UTG_WIDTH * Math.exp(-0.1089 * (slot - 5));
+}
+
+function participation(t: RawTriple): number {
+  return t[0] + t[1] + t[2];
+}
+
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  return Math.min(1, Math.max(0, x));
+}
+
+/** Combo-weighted participation of a raw spot, as a fraction of all combos. */
+export function rawSpotWidth(spot: RawSpot): number {
+  let sum = 0;
+  for (const key of HAND_KEYS) {
+    const t = spot[key];
+    if (!t) continue;
+    sum += (COMBOS[key] ?? 0) * participation(t);
+  }
+  return sum / TOTAL_COMBOS;
+}
+
+function widthAfterNarrow(spot: RawSpot, t: number): number {
+  const d = 1 - t;
+  let sum = 0;
+  for (const key of HAND_KEYS) {
+    const p = spot[key] ? participation(spot[key]!) : 0;
+    if (p > 0) sum += (COMBOS[key] ?? 0) * clamp01((p - t) / d);
+  }
+  return sum / TOTAL_COMBOS;
+}
+
+function widthAfterWiden(spot: RawSpot, a: number): number {
+  let sum = 0;
+  for (const key of HAND_KEYS) {
+    const p = spot[key] ? participation(spot[key]!) : 0;
+    if (p > 0) sum += (COMBOS[key] ?? 0) * clamp01(p + a * (1 - p));
+  }
+  return sum / TOTAL_COMBOS;
+}
+
+/**
+ * Upper bound on widening: as `a -> 1`, every hand that participates at all
+ * (`p > 0`) reaches `p' = 1`, while a hand the anchor never plays (`p = 0`,
+ * explicit or absent) stays folded by the `p > 0` guard. So no widening target
+ * above the combo share of the anchor's participating classes is reachable —
+ * widening can rescue *frequency*, but it never invents a class the chart does
+ * not play. `buildChartMix` rejects a target above this ceiling instead of
+ * silently returning the wrong (clamped) width.
+ */
+export function maxReachableWidth(spot: RawSpot): number {
+  let sum = 0;
+  for (const key of HAND_KEYS) {
+    const t = spot[key];
+    if (!t) continue;
+    if (participation(t) > 0) sum += COMBOS[key] ?? 0;
+  }
+  return sum / TOTAL_COMBOS;
+}
+
+/** Solve the narrowing threshold `t` that yields `target` width. */
+function solveNarrow(spot: RawSpot, target: number): number {
+  let lo = 0;
+  let hi = 1 - 1e-9;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (widthAfterNarrow(spot, mid) > target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/** Solve the widening factor `a` that yields `target` width. */
+function solveWiden(spot: RawSpot, target: number): number {
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (widthAfterWiden(spot, mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Rescale a raw provider spot to `targetWidth` (combo-weighted) and expand it to
+ * the full 169-class `ChartMix`. `targetWidth` NaN means "keep the anchor width".
+ */
+export function buildChartMix(raw: RawSpot, targetWidth: number): Record<string, ChartMix> {
+  const rawWidth = rawSpotWidth(raw);
+  const narrow = Number.isFinite(targetWidth) && targetWidth < rawWidth - 1e-9;
+  const widen = Number.isFinite(targetWidth) && targetWidth > rawWidth + 1e-9;
+  if (widen) {
+    const ceiling = maxReachableWidth(raw);
+    if (targetWidth > ceiling + 1e-9) {
+      throw new Error(
+        `buildChartMix: target width ${targetWidth} exceeds the reachable ceiling ${ceiling}; ` +
+          'widening keeps p=0 hands folded, so it can never add a class the anchor does not play',
+      );
+    }
+  }
+  const t = narrow ? solveNarrow(raw, targetWidth) : 0;
+  const a = widen ? solveWiden(raw, targetWidth) : 0;
+
+  const out: Record<string, ChartMix> = {};
+  for (const key of HAND_KEYS) {
+    const triple = raw[key] ?? ([0, 0, 0] as RawTriple);
+    const total = participation(triple);
+    if (total <= 0) {
+      out[key] = { raise: 0, allin: 0, call: 0, fold: 1, raiseRole: null };
+      continue;
+    }
+    const p = narrow ? clamp01((total - t) / (1 - t)) : widen ? clamp01(total + a * (1 - total)) : total;
+    const ratioRaise = triple[0] / total;
+    const ratioAllin = triple[1] / total;
+    const ratioCall = triple[2] / total;
+    const raise = clamp01(p * ratioRaise);
+    const allin = clamp01(p * ratioAllin);
+    const call = clamp01(p * ratioCall);
+    // Re-normalise any residual floating error so every cell sums to exactly 1.
+    const used = raise + allin + call;
+    const fold = clamp01(1 - used);
+    const raises = raise + allin;
+    const raiseRole = raises <= 0 ? null : fold <= 1e-6 ? 'value' : 'bluff';
+    out[key] = { raise, allin, call, fold, raiseRole };
+  }
+  return out;
+}
+
+interface ChartMeta {
+  id: string;
+  situation: ChartSituation;
+  actor: string | null;
+  actorSlot: number;
+  behindUnacted: number;
+  opener?: string | null;
+  openerSlot?: number | null;
+  seats: number;
+  format: '6max' | '9max' | 'short' | 'hu';
+  openSizeBB: number;
+}
+
+function sourceFrom(raw: RawChartFile, usage: string): ChartSource {
+  return {
+    provider: raw.provenance.provider,
+    url: raw.provenance.url,
+    commit: raw.provenance.commit,
+    capturedAt: raw.provenance.capturedAt,
+    usage,
+  };
+}
+
+function spotFrom(meta: ChartMeta): ChartSpot {
+  return {
+    situation: meta.situation,
+    actor: meta.actor,
+    actorSlot: meta.actorSlot,
+    opener: meta.opener ?? null,
+    openerSlot: meta.openerSlot ?? null,
+    activeCount: meta.actorSlot + 1,
+    behindUnacted: meta.behindUnacted,
+  };
+}
+
+/** The `B0` (big blind) RFI chart is empty: the BB never opens first in. */
+function emptyBbChart(): PreflopChart {
+  const mix: Record<string, ChartMix> = {};
+  for (const key of HAND_KEYS) mix[key] = { raise: 0, allin: 0, call: 0, fold: 1, raiseRole: null };
+  return {
+    schema: 'preflop-chart/v1',
+    id: 'rfi-b0-bb',
+    game: { seats: 0, format: 'short', depthBB: 100, openSizeBB: 2.5 },
+    spot: {
+      situation: 'unopened',
+      actor: 'BB',
+      actorSlot: 0,
+      opener: null,
+      openerSlot: null,
+      activeCount: 1,
+      behindUnacted: 0,
+    },
+    source: sourceFrom(FRLA_RFI, 'empty; the BB never opens first in'),
+    mix,
+  };
+}
+
+const chartCache = new Map<string, PreflopChart>();
+
+/**
+ * Build (and memoise) the RFI chart for a canonical behind-unacted slot B0..B8.
+ * `undefined` for slots outside the range.
+ */
+export function rfiChartForSlot(slot: number): PreflopChart | undefined {
+  const s = Math.trunc(slot);
+  if (s < 0 || s > MAX_SLOT) return undefined;
+  const cacheKey = `rfi:${s}`;
+  const cached = chartCache.get(cacheKey);
+  if (cached) return cached;
+
+  let chart: PreflopChart;
+  if (s === 0) {
+    chart = emptyBbChart();
+  } else {
+    const sourceSpot = SLOT_TO_SPOT[s] ?? 'UTG-RFI';
+    const raw = FRLA_RFI.spots[sourceSpot];
+    if (!raw) return undefined;
+    const isTail = s > 5;
+    const meta: ChartMeta = {
+      id: `rfi-b${s}`,
+      situation: 'unopened',
+      actor: SLOT_ACTOR[s] ?? null,
+      actorSlot: s,
+      behindUnacted: s,
+      seats: isTail ? 9 : 6,
+      format: isTail ? '9max' : '6max',
+      openSizeBB: 2.5,
+    };
+    chart = {
+      schema: 'preflop-chart/v1',
+      id: meta.id,
+      game: { seats: meta.seats, format: meta.format, depthBB: 100, openSizeBB: meta.openSizeBB },
+      spot: spotFrom(meta),
+      source: sourceFrom(
+        FRLA_RFI,
+        isTail
+          ? `9-max tail extrapolation of ${sourceSpot} to W(B)=0.1755*exp(-0.1089*(B-5))`
+          : `RFI anchor ${sourceSpot}`,
+      ),
+      mix: buildChartMix(raw, slotTargetWidth(s)),
+    };
+  }
+  chartCache.set(cacheKey, chart);
+  return chart;
+}
+
+/** Build (and memoise) the heads-up SB=BTN first-in chart. */
+export function huChart(): PreflopChart {
+  const cacheKey = 'hu:sb';
+  const cached = chartCache.get(cacheKey);
+  if (cached) return cached;
+  const raw = MHL_HU.spots['SB_OPEN'];
+  if (!raw) throw new Error('MHL_HU is missing the SB_OPEN spot');
+  const chart: PreflopChart = {
+    schema: 'preflop-chart/v1',
+    id: 'rfi-hu-sb',
+    game: { seats: 2, format: 'hu', depthBB: 100, openSizeBB: 2.5 },
+    spot: {
+      situation: 'unopened',
+      actor: 'SB',
+      actorSlot: 1,
+      opener: null,
+      openerSlot: null,
+      activeCount: 2,
+      behindUnacted: 1,
+    },
+    source: sourceFrom(MHL_HU, 'HU SB=BTN first-in: raise 2.5bb / limp / fold'),
+    mix: buildChartMix(raw, NaN),
+  };
+  chartCache.set(cacheKey, chart);
+  return chart;
+}
+
+export interface AdaptiveChartRequest {
+  actorSlot: number;
+  headsUp: boolean;
+}
+
+/** Pick the adaptive first-in chart for a spot, or null when none applies. */
+export function adaptiveChartFor(req: AdaptiveChartRequest): PreflopChart | null {
+  if (req.actorSlot <= 0) return null;
+  if (req.headsUp) return req.actorSlot === 1 ? huChart() : null;
+  return rfiChartForSlot(req.actorSlot) ?? null;
+}
+
+/** Convert a chart's per-hand mix into explicit-role `RangeEntry[]`. */
+export function chartToRangeEntries(chart: PreflopChart): RangeEntry[] {
+  const entries: RangeEntry[] = [];
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    const raise = m.raise + m.allin;
+    if (raise > 0) {
+      entries.push({ range: key, action: 'raise', weight: raise, role: m.raiseRole ?? 'value' });
+    }
+    if (m.call > 0) {
+      entries.push({ range: key, action: 'call', weight: m.call });
+    }
+  }
+  return entries;
+}
+
+/** Combo-weighted total participation of a chart. */
+export function chartWidth(chart: PreflopChart): number {
+  let sum = 0;
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    sum += (COMBOS[key] ?? 0) * (m.raise + m.allin + m.call);
+  }
+  return sum / TOTAL_COMBOS;
+}
+
+/** Fraction of a chart's participation that is a flat call / limp. */
+export function chartLimpShare(chart: PreflopChart): number {
+  let part = 0;
+  let call = 0;
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    const c = COMBOS[key] ?? 0;
+    part += c * (m.raise + m.allin + m.call);
+    call += c * m.call;
+  }
+  return part > 0 ? call / part : 0;
+}
+
+/** Validate the `sum == 1 (±1e-6)` invariant; returns the worst deviation. */
+export function worstCellDeviation(chart: PreflopChart): number {
+  let worst = 0;
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    worst = Math.max(worst, Math.abs(m.raise + m.allin + m.call + m.fold - 1));
+  }
+  return worst;
+}

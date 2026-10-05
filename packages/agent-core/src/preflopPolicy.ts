@@ -19,6 +19,13 @@ import {
   type PositionGroup,
 } from './preflopRanges.js';
 import {
+  adaptiveChartFor,
+  canonicalSlot,
+  chartToRangeEntries,
+  computeBehindUnacted,
+  preflopActionOrder,
+} from './preflopCharts/index.js';
+import {
   compileRangeMix,
   handClassForCards,
   mixFor,
@@ -72,6 +79,8 @@ export interface PreflopContext {
   /** Position of the first raiser, or null when unknown / incomplete history. */
   opener: Position | null;
   openerGroup: PositionGroup | null;
+  /** Canonical behind-unacted slot of the first raiser (B0..B8), or null. */
+  openerSlot: number | null;
   /** Number of preflop bets/raises observed (implied opens included). */
   raises: number;
   /** Number of preflop calls observed. */
@@ -83,6 +92,26 @@ export interface PreflopContext {
   limped: boolean;
   /** `currentBet > bb` with no observed raise: an open we did not see. */
   incompleteOpen: boolean;
+  /** Players dealt into the hand (dealing-order length). */
+  dealtCount: number;
+  /** Players still able to act (not folded / all-in / sitting out). */
+  activeCount: number;
+  /**
+   * Active players after the hero in preflop action order who have not yet
+   * completed their preflop action. The primary independent variable of the
+   * adaptive charts; only meaningful when `headcountReliable`.
+   */
+  behindUnacted: number;
+  /** `clamp(behindUnacted, 0, 8)`, the canonical chart slot B0..B8. */
+  actorSlot: number;
+  /** True for a two-handed (heads-up) hand. */
+  headsUp: boolean;
+  /**
+   * True when the seat states let us trust `dealtCount` / `behindUnacted`: the
+   * server supplied a dealing order that names every known seat. Missing history
+   * is tracked separately by `historyComplete`.
+   */
+  headcountReliable: boolean;
 }
 
 /**
@@ -182,6 +211,64 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
   );
   const opener = firstRaise ? positionForSeat(firstRaise.seat, seatOrder) : null;
 
+  // --- headcount model -----------------------------------------------------
+  // `behindUnacted` is measured from the actual preflop action order, so it
+  // needs the seats' live state plus the actions already completed. We deliberately
+  // do not fall back to "nobody acted" for a missing history: `headcountReliable`
+  // (and the separate `historyComplete` gate) keep the adaptive charts off when
+  // the seat states are not trustworthy.
+  const order = preflopActionOrder(seatOrder);
+  const activeSeats = new Set<number>();
+  if (me && !me.folded && !me.allIn && !me.sittingOut) activeSeats.add(mySeat);
+  for (const o of view.opponents) {
+    if (!o.folded && !o.allIn && !o.sittingOut) activeSeats.add(o.seat);
+  }
+  // NOTE (step-2 limitation, must-fix 5): `actedSeats` only records *that* a
+  // seat acted at some point, not whether it still owes action after a raise
+  // reopened the betting round. Preflop action can reopen (a player who called
+  // an open must act again facing a 3-bet), so this set over-counts "completed"
+  // actors once the auction has a raise. Step 1 only feeds `behindUnacted` into
+  // the `unopened` spot (nobody has acted yet), so the error cannot surface; the
+  // step-2 defensive charts MUST replace this with the server's `needToAct` /
+  // current-betting-round criterion before shipping.
+  const actedSeats = new Set(actions.map((a) => a.seat));
+  const behindUnacted = computeBehindUnacted({
+    order,
+    heroSeat: mySeat,
+    activeSeats,
+    actedSeats,
+  });
+  const actorSlot = canonicalSlot(behindUnacted);
+  const dealtCount = seatOrder.length;
+  const headsUp = dealtCount === 2;
+  const suppliedOrder = view.seatOrder;
+  const knownSeats = new Set<number>([mySeat, ...view.opponents.map((o) => o.seat)]);
+  const suppliedSet = suppliedOrder ? new Set(suppliedOrder) : null;
+  const headcountReliable =
+    !!suppliedOrder &&
+    !!suppliedSet &&
+    suppliedOrder.length >= 2 &&
+    suppliedOrder.length <= 9 &&
+    // No duplicate seats: a repeated seat would inflate the count and make a
+    // short table look longer (or double-count a dealing slot).
+    suppliedSet.size === suppliedOrder.length &&
+    // The order must name exactly the known seats — no more, no fewer. A subset
+    // check alone would accept `[0,1]` while `{0,1,2}` is seated and misread a
+    // 3-handed table as heads-up; the size + coverage pair forces equality.
+    suppliedSet.size === knownSeats.size &&
+    [...knownSeats].every((s) => suppliedSet.has(s));
+  const openerSlot =
+    firstRaise !== undefined
+      ? canonicalSlot(
+          computeBehindUnacted({
+            order,
+            heroSeat: firstRaise.seat,
+            activeSeats,
+            actedSeats,
+          }),
+        )
+      : null;
+
   let spot: PreflopSpot;
   if (raises === 0) {
     spot = callers === 0 ? 'unopened' : 'limped';
@@ -220,6 +307,7 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
     spot,
     opener,
     openerGroup: opener ? positionGroup(opener) : null,
+    openerSlot,
     raises,
     callers,
     heroRaised,
@@ -230,6 +318,12 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
       (spot === 'limped' && callers >= 2),
     limped: spot === 'limped',
     incompleteOpen,
+    dealtCount,
+    activeCount: activeSeats.size,
+    behindUnacted,
+    actorSlot,
+    headsUp,
+    headcountReliable,
   };
 }
 
@@ -240,13 +334,11 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
  */
 const mixCache = new Map<string, Map<string, CompiledMix>>();
 
-function buildMix(ctx: PreflopContext): Map<string, CompiledMix> {
-  const openerKey =
-    ctx.spot === 'unopened' || ctx.spot === 'limped' ? '' : (ctx.openerGroup ?? 'EP');
-  const cacheKey = `${ctx.spot}|${ctx.position}|${openerKey}`;
-  const cached = mixCache.get(cacheKey);
-  if (cached) return cached;
-
+/**
+ * The legacy position-named baseline charts. Kept as the default and as the
+ * fallback when the headcount-adaptive path is disabled or not trustworthy.
+ */
+function buildLegacyMix(ctx: PreflopContext): Map<string, CompiledMix> {
   let mix: Map<string, CompiledMix>;
   switch (ctx.spot) {
     case 'unopened': {
@@ -293,6 +385,76 @@ function buildMix(ctx: PreflopContext): Map<string, CompiledMix> {
       break;
     }
   }
+  return mix;
+}
+
+/**
+ * True when the adaptive headcount charts may serve this decision: the flag is
+ * on, the spot is a first-in, the history is complete, and the seat states give
+ * a trustworthy behind-unacted count. Anything else falls back to the legacy
+ * tables — missing history is never read as "nobody acted".
+ */
+export function adaptivePreflopAvailable(ctx: PreflopContext, params: RuleParams): boolean {
+  if (!params.adaptivePreflop) return false;
+  if (ctx.spot !== 'unopened') return false;
+  if (!ctx.historyComplete || !ctx.headcountReliable) return false;
+  if (!(ctx.dealtCount >= 2 && ctx.dealtCount <= 9)) return false;
+  if (!Number.isFinite(ctx.behindUnacted)) return false;
+  if (ctx.headsUp) return ctx.actorSlot === 1;
+  return ctx.actorSlot >= 1 && ctx.actorSlot <= 8;
+}
+
+function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
+  const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
+  if (!chart) return null;
+  return compileRangeMix(chartToRangeEntries(chart));
+}
+
+/**
+ * Cache key for a compiled preflop mix. It carries every input that can change
+ * the result across decisions: the headcount slot, the auction shape, the depth
+ * band, and — crucially — the **final route** the context resolves to.
+ *
+ * The route, not the raw `adaptivePreflop` flag, is what must be encoded: the
+ * flag alone says adaptive is *allowed*, while `adaptivePreflopAvailable` also
+ * folds in `historyComplete` / `headcountReliable` / `spot` / `dealtCount` /
+ * `actorSlot`. Two contexts that differ only in, say, `historyComplete` resolve
+ * to different mixes (adaptive vs legacy) but would share a flag-only key — the
+ * first one to populate `mixCache` would then poison the other, breaking the
+ * "any failure falls back to the legacy tables" guarantee. Exported so tests can
+ * pin that two contexts which must not share do not.
+ */
+export function preflopMixCacheKey(ctx: PreflopContext, params: RuleParams): string {
+  const openerKey =
+    ctx.spot === 'unopened' || ctx.spot === 'limped' ? '' : (ctx.openerGroup ?? 'EP');
+  const route = adaptivePreflopAvailable(ctx, params) ? 'adaptive' : 'legacy';
+  return [
+    ctx.spot,
+    ctx.position,
+    openerKey,
+    ctx.dealtCount,
+    ctx.actorSlot,
+    ctx.openerSlot ?? 'n',
+    ctx.raises,
+    ctx.callers,
+    Math.round(ctx.stackBB),
+    route,
+  ].join('|');
+}
+
+/**
+ * Resolve the compiled mix for `ctx`. With `params.adaptivePreflop` on and a
+ * trustworthy headcount, first-in spots use the slot-keyed adaptive charts; in
+ * every other case the legacy position-named tables run unchanged.
+ */
+function buildMix(ctx: PreflopContext, params: RuleParams): Map<string, CompiledMix> {
+  const cacheKey = preflopMixCacheKey(ctx, params);
+  const cached = mixCache.get(cacheKey);
+  if (cached) return cached;
+
+  let mix: Map<string, CompiledMix> | null = null;
+  if (adaptivePreflopAvailable(ctx, params)) mix = buildAdaptiveMix(ctx);
+  if (!mix) mix = buildLegacyMix(ctx);
   mixCache.set(cacheKey, mix);
   return mix;
 }
@@ -414,7 +576,7 @@ export function choosePreflopIntent(
   const ctx = derivePreflopContext(view);
   const cards = view.hand?.myCards ?? [];
   const handClass = handClassForCards(cards[0] ?? 0, cards[1] ?? 1);
-  const mix = mixFor(buildMix(ctx), handClass.key);
+  const mix = mixFor(buildMix(ctx, params), handClass.key);
   const freqs = effectiveFrequencies(mix, handClass.key, ctx, params);
 
   const roll = rand();

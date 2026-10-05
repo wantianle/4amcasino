@@ -9,6 +9,7 @@ export * from './stylePolicy.js';
 export * from './difficultyPolicy.js';
 export * from './rangeParser.js';
 export * from './preflopRanges.js';
+export * from './preflopCharts/index.js';
 export * from './preflopPolicy.js';
 export * from './ruleStyles.js';
 export * from './rulesSeed.js';
