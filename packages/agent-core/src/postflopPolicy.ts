@@ -34,13 +34,24 @@ import type { RuleParams } from './ruleStyles.js';
  *     the old `mdf = P/(P+B)` percentile mix inside the band. This is still an
  *     approximation (no range propagation) but no longer a pure frequency
  *     argument against uniform unknown combos.
- *  2. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
+ *  2. **Flush stratification (P1)** — a made flush is not a flat nuts-weight:
+ *     `flushLayerOf` splits it into nut / second / middle / low from the hand's
+ *     own same-suit ranks versus every flush still makeable, and the villain
+ *     range is weighted by that layer. Hero's own flush holding is folded into
+ *     the range as a blocker correction (`heroFlushBlockFactor`): a nut/second
+ *     blocker lightens the opponent's flush range, while holding no card of the
+ *     suit keeps the flush range at full value and slightly heavier. Only an
+ *     **overpair** with no card of that suit (`isOverpair && heroFlushExposed`)
+ *     is treated as a bluff-catcher and has its bet/raise frequency dialled
+ *     down; every other made-hand category keeps its normal aggression.
+ *  3. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
  *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
  *     range advantage.
- *  3. **Value:bluff ratio** — approximates bluffs ≈ `f/(1+f)` × value for an
+ *  4. **Value:bluff ratio** — approximates bluffs ≈ `f/(1+f)` × value for an
  *     `f`-pot bet.
- *  4. **Blockers** — a hand-built score preferring bluffs that block the
- *     opponent's continuing/nut range and avoiding those that block their folds.
+ *  5. **Blockers** — a hand-built score preferring bluffs that block the
+ *     opponent's continuing/nut range and avoiding those that block their folds;
+ *     P1 also uses the flush-block factor above inside the facing-a-bet equity.
  *
  * Exported pure helpers (`mdf`, `classifyTexture`, `chooseBetFraction`,
  * `bluffToValueRatio`, `blockerScore`, `handPercentile`, ...) carry the logic
@@ -211,6 +222,202 @@ export function classifyTexture(board: readonly CardId[]): BoardTexture {
     lowConnected: connected && maxRank <= 9,
     wet: suited || connected,
   };
+}
+
+// ---------------------------------------------------------------------------
+// P1: flush stratification (nut / second / middle / low)
+// ---------------------------------------------------------------------------
+
+/** Suit/flush tier of a five-card flush for range weighting. */
+export type FlushLayer = 'nut' | 'second' | 'middle' | 'low';
+
+interface BoardFlushInfo {
+  /** The board's dominant suit (the only suit with `count >= 3`). */
+  suit: number;
+  /** Number of board cards of that suit (>= 3). */
+  count: number;
+  /** The board's ranks of that suit, descending. */
+  ranks: number[];
+}
+
+/** Board's dominant suit when it reaches three cards, else `null`. */
+function boardFlushInfo(board: readonly CardId[]): BoardFlushInfo | null {
+  const suitCount = [0, 0, 0, 0];
+  const ranksBySuit: number[][] = [[], [], [], []];
+  for (const card of board) {
+    const s = suitOf(card);
+    suitCount[s] = suitCount[s]! + 1;
+    ranksBySuit[s]!.push(rankOf(card));
+  }
+  let suit = -1;
+  let count = 0;
+  for (let s = 0; s < 4; s++) {
+    if (suitCount[s]! > count) {
+      count = suitCount[s]!;
+      suit = s;
+    }
+  }
+  if (count < 3) return null;
+  ranksBySuit[suit]!.sort((a, b) => b - a);
+  return { suit, count, ranks: ranksBySuit[suit]! };
+}
+
+/** The suit a flush would be made in, or `null` when the board is not suited. */
+export function dominantFlushSuit(board: readonly CardId[]): number | null {
+  return boardFlushInfo(board)?.suit ?? null;
+}
+
+/**
+ * Lexicographic strength key of a five-card flush: the five ranks sorted
+ * descending, packed base-13 with the highest rank in the most-significant
+ * position. Because every rank is in `[0, 12]` and the tuple length is fixed at
+ * five, integer order equals the true lexicographic "highest card first, then
+ * next, ..." flush order. A rank *sum* is NOT a valid flush key: on a
+ * three-flush board the two completion cards reshape the whole tuple, so e.g.
+ * `A Q 9 4 2` (A-high) is stronger than `K Q J 9 4` (K-high) despite a lower
+ * rank sum.
+ */
+function flushStrengthKey(ranksDesc: readonly number[]): number {
+  let key = 0;
+  for (let i = 0; i < 5; i++) key = key * 13 + (ranksDesc[i] ?? 0);
+  return key;
+}
+
+/**
+ * Lexicographically sorted strength keys of every distinct five-card flush the
+ * board allows, as a board-keyed cache. For a three-flush board that is C(10,2)
+ * two-card completions; for a four-flush board the nine one-card completions; a
+ * five-flush board has a single key.
+ */
+const flushDistCache = new Map<string, number[]>();
+
+function flushKeyDistribution(board: readonly CardId[], info: BoardFlushInfo): number[] {
+  const key = [...board].sort((a, b) => a - b).join(',');
+  const cached = lruGet(flushDistCache, key);
+  if (cached) return cached;
+  const boardRanks = new Set(info.ranks);
+  const remaining: number[] = [];
+  for (let r = 0; r < 13; r++) if (!boardRanks.has(r)) remaining.push(r);
+  const need = Math.max(0, 5 - info.count);
+  const keys: number[] = [];
+  const push = (extra: number[]) => {
+    const merged = [...info.ranks, ...extra].sort((a, b) => b - a);
+    keys.push(flushStrengthKey(merged));
+  };
+  if (need === 0) {
+    push([]);
+  } else if (need === 1) {
+    for (const r of remaining) push([r]);
+  } else if (need === 2) {
+    for (let i = 0; i < remaining.length; i++) {
+      for (let j = i + 1; j < remaining.length; j++) push([remaining[i]!, remaining[j]!]);
+    }
+  }
+  keys.sort((a, b) => a - b);
+  lruSet(flushDistCache, key, keys);
+  return keys;
+}
+
+/**
+ * Layer a made flush by the strength of its five cards relative to every flush
+ * the board still allows: no stronger flush possible is the nuts, exactly one is
+ * second, the upper half of the remaining distribution is middle, and the lower
+ * half is a low flush. Strength is compared **lexicographically** (see
+ * `flushStrengthKey`), never by rank sum. `hole` may be hero's or a villain
+ * combo's; `null` when those held cards cannot make a flush on this board.
+ */
+export function flushLayerOf(hole: readonly CardId[], board: readonly CardId[]): FlushLayer | null {
+  const info = boardFlushInfo(board);
+  if (!info) return null;
+  const handRanks = hole.filter((c) => suitOf(c) === info.suit).map(rankOf);
+  const need = Math.max(0, 5 - info.count);
+  if (handRanks.length < need) return null;
+  const union = [...info.ranks, ...handRanks].sort((a, b) => b - a).slice(0, 5);
+  if (union.length < 5) return null;
+  const flushKey = flushStrengthKey(union);
+  const dist = flushKeyDistribution(board, info);
+  if (dist.length === 0) return null;
+  // Number of board-possible flushes strictly stronger than this one.
+  let lo = 0;
+  let hi = dist.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (dist[mid]! <= flushKey) lo = mid + 1;
+    else hi = mid;
+  }
+  const stronger = dist.length - lo;
+  if (stronger === 0) return 'nut';
+  if (stronger === 1) return 'second';
+  if (stronger * 2 < dist.length) return 'middle';
+  return 'low';
+}
+
+/** Tier value of each flush layer used by `villainStrengthTier`. */
+const FLUSH_TIER: Record<FlushLayer, number> = {
+  nut: 1,
+  second: 0.97,
+  middle: 0.93,
+  low: 0.88,
+};
+
+/**
+ * True when the board offers a flush (>= 3 of a suit) and hero holds **no** card
+ * of that suit - the "no-suit-protection" overpair spot. Such hands are a bluff
+ * target against a flush-heavy value range, so their aggression is dialled down.
+ */
+export function heroFlushExposed(hole: readonly CardId[], board: readonly CardId[]): boolean {
+  const info = boardFlushInfo(board);
+  if (!info) return false;
+  return !hole.some((card) => suitOf(card) === info.suit);
+}
+
+/**
+ * True when hero holds a pocket pair strictly above every board card (an
+ * overpair): both hole cards share a rank that is absent from the board, and
+ * that rank is higher than the board's highest rank. A pocket pair at or below
+ * the board is an underpair, and a pocket pair matching the board is a set /
+ * trips - neither is an overpair. Pure and side-effect free.
+ *
+ * `ev`, when supplied, only short-circuits on the hand category (an overpair is
+ * always a one-pair hand); callers that already evaluated the hand pass it to
+ * avoid a second classification.
+ */
+export function isOverpair(
+  hole: readonly CardId[],
+  board: readonly CardId[],
+  ev?: HandEval,
+): boolean {
+  if (hole.length !== 2 || board.length < 3) return false;
+  if (ev && ev.category !== 1) return false;
+  const pairRank = rankOf(hole[0]!);
+  if (pairRank !== rankOf(hole[1]!)) return false;
+  let maxBoard = -1;
+  for (const card of board) {
+    const boardRank = rankOf(card);
+    if (boardRank === pairRank) return false; // set / trips, not an overpair
+    if (boardRank > maxBoard) maxBoard = boardRank;
+  }
+  return pairRank > maxBoard;
+}
+
+/**
+ * Multiplier applied to every villain **flush** combo before sampling, from
+ * hero's own same-suit holding. Holding the nut blocker removes the opponent's
+ * nut flushes (already excluded) and further discounts the flush range, raising
+ * hero equity; holding no card of the suit leaves the flush range relatively
+ * heavier, discounting hero's unprotected made hands.
+ */
+function heroFlushBlockFactor(hole: readonly CardId[], info: BoardFlushInfo): number {
+  const handRanks = hole.filter((c) => suitOf(c) === info.suit).map(rankOf);
+  if (handRanks.length === 0) return 1.12; // no protection: flush range heavier
+  const used = new Set<number>([...info.ranks, ...handRanks]);
+  let heroHigh = -1;
+  for (const r of handRanks) if (r > heroHigh) heroHigh = r;
+  let higher = 0;
+  for (let r = heroHigh + 1; r < 13; r++) if (!used.has(r)) higher++;
+  if (higher === 0) return 0.75; // nut blocker
+  if (higher === 1) return 0.9; // second-nut blocker
+  return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -680,13 +887,30 @@ export function chooseVillainModel(input: VillainModelInput): VillainRangeModel 
  * Heuristic strength tier in [0, 1] for one opponent combo on the current board:
  * made hands dominate, strong draws sit in the middle, air at the bottom. Purely
  * a ranking aid for range weighting - never used to compare hero's hand.
+ *
+ * P1: a made flush is no longer a flat 1.0 - it is stratified into nut / second
+ * / middle / low from the combo's own same-suit ranks (see `flushLayerOf`), so a
+ * value-heavy continuing range is weighted by flush percentile rather than
+ * treating every flush as equally strong.
  */
 export function villainStrengthTier(
   hole: readonly CardId[],
   board: readonly CardId[],
 ): number {
-  const ev = evaluateHand(hole, board);
-  if (ev.category >= 5) return 1; // flush or better (a full house/quads also won here)
+  return strengthTierFromEval(evaluateHand(hole, board), hole, board);
+}
+
+/** Tier from an already-computed `HandEval` (avoids a second board sweep). */
+function strengthTierFromEval(
+  ev: HandEval,
+  hole: readonly CardId[],
+  board: readonly CardId[],
+): number {
+  if (ev.category >= 6) return 1; // full house / quads / straight flush
+  if (ev.category === 5) {
+    // P1 flush stratification: nut 1.0, second .97, middle .93, low .88.
+    return FLUSH_TIER[flushLayerOf(hole, board) ?? 'low'];
+  }
   // On a four-flush board every non-flush made hand loses to any flush, so it
   // cannot be part of a value-heavy continuing range.
   const boardSuits = [0, 0, 0, 0];
@@ -737,6 +961,8 @@ interface VillainBaseCombo {
   a: CardId;
   b: CardId;
   tier: number;
+  /** P1: combo makes a flush on this board (gets hero's flush-block factor). */
+  isFlush: boolean;
 }
 
 const villainTierCache = new Map<string, VillainBaseCombo[]>();
@@ -757,7 +983,13 @@ function villainBaseCombos(board: readonly CardId[]): VillainBaseCombo[] {
     for (let j = i + 1; j < deck.length; j++) {
       const a = deck[i]!;
       const b = deck[j]!;
-      combos.push({ a, b, tier: villainStrengthTier([a, b], board) });
+      const ev = evaluateHand([a, b], board);
+      combos.push({
+        a,
+        b,
+        tier: strengthTierFromEval(ev, [a, b], board),
+        isFlush: ev.category === 5,
+      });
     }
   }
   lruSet(villainTierCache, key, combos);
@@ -768,6 +1000,18 @@ function villainBaseCombos(board: readonly CardId[]): VillainBaseCombo[] {
  * Weighted villain combos for the board, excluding hero's own cards. Returned as
  * an explicit `VillainRange` so `estimateEquity` samples it without re-running
  * any hand evaluation.
+ *
+ * P1: hero's flush holding is folded in as an equity correction - every villain
+ * flush combo is scaled by `heroFlushBlockFactor`, so a nut/second-nut blocker
+ * lightens the opponent's flush range (hero defends more) while holding no card
+ * of the suit makes it relatively heavier (hero's unprotected made hands are
+ * discounted). When hero holds **no** card of the board's flush suit, every
+ * villain flush is additionally pinned to `villainModelWeight(1, ...)` instead
+ * of its P1 layer weight. That is a deliberately **conservative prior specific
+ * to the no-suit hero** - it is NOT a general statement that all flushes are
+ * nuts, and it must not be read as one; it exists only so an unprotected made
+ * hand is evaluated against a flush-saturated range. This is a heuristic range
+ * tilt, not a solved conditional range.
  */
 export function buildVillainRange(
   hole: readonly CardId[],
@@ -775,10 +1019,24 @@ export function buildVillainRange(
   model: VillainRangeModel,
 ): VillainCombo[] {
   const heroSet = new Set(hole);
+  const info = boardFlushInfo(board);
+  const exposed = info ? !hole.some((card) => suitOf(card) === info.suit) : false;
+  const flushFactor = info && !exposed ? heroFlushBlockFactor(hole, info) : 1;
+  const exposedFlushFactor = info && exposed ? heroFlushBlockFactor(hole, info) : 1;
   const out: VillainCombo[] = [];
   for (const combo of villainBaseCombos(board)) {
     if (heroSet.has(combo.a) || heroSet.has(combo.b)) continue;
-    out.push({ cards: [combo.a, combo.b], weight: villainModelWeight(combo.tier, model) });
+    let weight = villainModelWeight(combo.tier, model);
+    if (combo.isFlush && info) {
+      // Hero holds no card of the suit: do not apply the flush stratification
+      // (which would under-weight the many low flushes and inflate hero's
+      // unprotected made hands); keep the flush range at full value and tilt it
+      // slightly heavier, the blocker correction against hero.
+      weight = exposed
+        ? villainModelWeight(1, model) * exposedFlushFactor
+        : weight * flushFactor;
+    }
+    out.push({ cards: [combo.a, combo.b], weight });
   }
   return out;
 }
@@ -1023,6 +1281,11 @@ export class PostflopPolicy {
     const draw = ev.flushDraw || ev.straightDraw >= 1;
     const value = ev.category >= 3 || percentile >= 0.8;
     const bluffCandidate = !value && percentile < 0.6 && (draw || blocker >= 0.4);
+    // P1: an **overpair** with no card of the board's flush suit is a
+    // bluff-catcher against a flush-heavy continuing range, so it bets less
+    // often. The discount is deliberately scoped to exposed overpairs only -
+    // sets, two pair, straights and strong draws keep their normal frequency.
+    const exposedOverpair = isOverpair(hole, board, ev) && heroFlushExposed(hole, board);
 
     if (la.canBet) {
       const sizingCtx: SizingContext = {
@@ -1032,8 +1295,8 @@ export class PostflopPolicy {
         overbetRoll: rng(),
         maxOverbetFrequency: this.params.maxOverbetFrequency,
       };
-      if (value && rng() < valueBetProbability(this.params, adv)) {
-        return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)})`);
+      if (value && rng() < valueBetProbability(this.params, adv) * (exposedOverpair ? 0.6 : 1)) {
+        return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
       }
       if (bluffCandidate) {
         const fraction = chooseBetFraction(texture, sizingCtx);
@@ -1138,9 +1401,17 @@ export class PostflopPolicy {
     };
 
     // `equity` is already available; a clear equity edge also counts as value.
-    const strong = ev.category >= 3 || percentile >= 0.85 || equity >= 0.8;
-    if (strong && la.canRaise && rng() < 0.6) {
-      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)})`);
+    // P1: only an **overpair** with no card of the flush suit is a bluff-catcher
+    // on a suited board - it is held back from value raising (a much tighter
+    // equity gate and a lower raise frequency). Sets, two pair, straights and
+    // strong draws are unaffected.
+    const exposedOverpair = isOverpair(hole, board, ev) && heroFlushExposed(hole, board);
+    const strong =
+      ev.category >= 3 ||
+      percentile >= 0.85 ||
+      equity >= (exposedOverpair ? 0.86 : 0.8);
+    if (strong && la.canRaise && rng() < (exposedOverpair ? 0.2 : 0.6)) {
+      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
     }
 
     const blocker = blockerScore(hole, board);
@@ -1148,7 +1419,7 @@ export class PostflopPolicy {
     if (
       la.canRaise &&
       (draw || blocker >= 0.5) &&
-      rng() < 0.35 * this.aggressionMultiplier(view, blocker, active)
+      rng() < 0.35 * (exposedOverpair ? 0.5 : 1) * this.aggressionMultiplier(view, blocker, active)
     ) {
       return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop semibluff raise (blocker ${blocker.toFixed(2)})`);
     }
