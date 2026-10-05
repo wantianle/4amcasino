@@ -5,6 +5,10 @@
 // chip counts stay bare numbers. Radar axes use short poker words (§1.4:
 // 允许一点玩家黑话) : Loose/Aggressive → 松/激进, showdown → 摊牌.
 const stats: Record<string, string> = {
+  'Big hot streak': '大火：手气很热',
+  'Hot streak': '小火：手气热',
+  'Cold streak': '小冰：手气冷',
+  'Big cold streak': '大冰：手气很冷',
   'Professional mode': '专业模式',
   'Normal mode': '普通模式',
   'Hand history mode': '手牌记录模式',
@@ -37,6 +41,8 @@ const stats: Record<string, string> = {
   'This room only · minimum {n} hands': '仅本桌数据 · 至少 {n} 手后显示',
   'Statistics hidden': '统计已隐藏',
   'No players yet.': '暂无玩家。',
+  'Last 50 hands: {net} bb · {sample} hands': '近 50 手 {net} bb · {sample} 手',
+  'Last 50 hands: unavailable': '近 50 手：暂无数据',
   // Net winnings card
   'Net winnings': '净胜筹码',
   '{n} hands played · chips': '已打 {n} 手 · 筹码',

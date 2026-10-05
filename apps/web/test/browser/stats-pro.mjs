@@ -9,14 +9,17 @@ const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXEC
 const errors = [];
 const assert = (ok, message) => { if (!ok) throw new Error(message); };
 const m = (hits, opportunities, unit = 'pct') => ({ hits, opportunities, pct: opportunities && unit !== 'chips' ? hits / opportunities * (unit === 'pct' ? 100 : 1) : null, unit });
-function fixture(sample) {
+function fixture(sample, streakSample = sample) {
   const stats = { vpip: m(32, sample), pfr: m(24, sample), threeBet: m(6, 40), fourBet: m(0, 0), cbet: m(15, 24), foldToCbet: m(5, 14), af: m(45, 20, 'ratio'), afq: m(45, 80, 'ratio'), wwsf: m(25, 48), wsd: m(9, 16), bb100: m(2400, sample, 'bb/100'), net: m(480, sample, 'chips') };
   if (sample === 30) { stats.vpip = m(9, 30); stats.pfr = m(6, 30); }
   if (!sample) for (const key of Object.keys(stats)) stats[key] = m(0, 0, stats[key].unit);
   if (sample === 8) for (const key of Object.keys(stats)) stats[key] = m(key === 'net' ? -80 : 2, 8, stats[key].unit);
+  // This fixture uses eligible poker hands only, capped at the latest 50.
   const bucket = { sample, stats };
-  return { userId: 2, metricVersion: 1, ...bucket, minHands: 20, sufficient: sample >= 20, dataQuality: { exact: sample, legacy: 0, partial: 0, total: sample }, byPosition: sample ? { BTN: bucket, CO: bucket, SB: { sample: 8, stats }, BB: bucket } : {}, byStreet: sample ? Object.fromEntries(['preflop', 'flop', 'turn', 'river'].map((s) => [s, { sample, af: stats.af, afq: stats.afq }])) : {}, byIpOop: { ip: bucket, oop: bucket }, trend: sample ? [0, 1, 2, 3, 4].map((i) => ({ ts: Date.now() - (4 - i) * 3600000, hands: (i + 1) * sample / 5, net: [-40, 100, 20, 300, stats.net.hits][i] })) : [], approximations: ['byIpOop uses the table-wide postflop action order, not a strict pairwise action order', 'cbet opportunities infer "not all-in" from having a flop action (the projection has no all-in flag)', 'bb/100 only counts hands with a known positive nominal bb'] };
+  const streak = sample >= 20 && streakSample >= 20 ? { tier: 'hot1', netBB: 42, sample: streakSample } : null;
+  return { userId: 2, metricVersion: 2, streak, ...bucket, minHands: 20, sufficient: sample >= 20, dataQuality: { exact: sample, legacy: 0, partial: 0, total: sample }, byPosition: sample ? { BTN: bucket, CO: bucket, SB: { sample: 8, stats }, BB: bucket } : {}, byStreet: sample ? Object.fromEntries(['preflop', 'flop', 'turn', 'river'].map((s) => [s, { sample, af: stats.af, afq: stats.afq }])) : {}, byIpOop: { ip: bucket, oop: bucket }, trend: sample ? [0, 1, 2, 3, 4].map((i) => ({ ts: Date.now() - (4 - i) * 3600000, hands: (i + 1) * sample / 5, net: [-40, 100, 20, 300, stats.net.hits][i] })) : [], approximations: ['byIpOop uses the table-wide postflop action order, not a strict pairwise action order', 'cbet opportunities infer "not all-in" from having a flop action (the projection has no all-in flag)', 'bb/100 only counts hands with a known positive nominal bb'] };
 }
+assert(fixture(30, 19).streak === null, 'streak sample gate fixture mismatch');
 try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
@@ -30,7 +33,7 @@ try {
       let body = { ok: true, userId: 2, username: 'alex', displayName: 'Alex', rooms: [], requests: [], rows: [], friends: [], incoming: [], outgoing: [], hands: [], bots: [], isPlatform: false, cardBack: 'crimson', fourColor: true };
       if (path === '/api/me/stats') body = fixture(sample);
       if (path === '/api/rooms/baseline') body = room;
-      if (path.endsWith('/hud')) body = { roomId: 'baseline', metricVersion: 1, minHands: 20, players: room.players.map((p, i) => ({ ...p, hidden: i === 1, sample: i === 0 ? 30 : i === 1 ? 0 : 8, minHands: 20, sufficient: i === 0, confidence: i === 0 ? 'low' : 'insufficient', dataConfidence: i === 1 ? null : 'exact', stats: i === 0 ? fixture(30).stats : null })) };
+      if (path.endsWith('/hud')) body = { roomId: 'baseline', metricVersion: 2, minHands: 20, players: room.players.map((p, i) => ({ ...p, streak: i === 0 ? { tier: 'hot1', netBB: 42, sample: 30 } : null, hidden: i === 1, sample: i === 0 ? 30 : i === 1 ? 0 : 8, minHands: 20, sufficient: i === 0, confidence: i === 0 ? 'low' : 'insufficient', dataConfidence: i === 1 ? null : 'exact', stats: i === 0 ? fixture(30).stats : null })) };
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
     });
     await page.routeWebSocket('**/*', (ws) => ws.onMessage((data) => { if (JSON.parse(String(data)).t === 'join_room') ws.send(JSON.stringify(room)); }));

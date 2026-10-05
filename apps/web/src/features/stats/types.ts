@@ -6,6 +6,8 @@ export interface Metric {
   unit: 'pct' | 'ratio' | 'bb/100' | 'chips';
 }
 export interface MetricBucket { sample: number; stats: Record<string, Metric> }
+export type StreakTier = 'hot2' | 'hot1' | 'cold1' | 'cold2';
+export interface StreakResult { tier: StreakTier | null; netBB: number; sample: number }
 export interface HandStats extends MetricBucket {
   userId: number;
   hidden?: false;
@@ -18,9 +20,10 @@ export interface HandStats extends MetricBucket {
   byIpOop: Record<'ip' | 'oop', MetricBucket>;
   trend: { ts: number; hands: number; net: number }[];
   approximations: string[];
+  streak: StreakResult | null;
 }
-export type HiddenStats = Omit<HandStats, 'hidden' | 'stats' | 'byPosition' | 'byStreet' | 'byIpOop' | 'trend'> & {
-  hidden: true; stats: null; byPosition: null; byStreet: null; byIpOop: null; trend: null;
+export type HiddenStats = Omit<HandStats, 'hidden' | 'stats' | 'byPosition' | 'byStreet' | 'byIpOop' | 'trend' | 'streak'> & {
+  hidden: true; stats: null; byPosition: null; byStreet: null; byIpOop: null; trend: null; streak: null;
 };
 export interface HudPlayer {
   userId: number; username: string; displayName: string; hidden: boolean;
@@ -28,6 +31,7 @@ export interface HudPlayer {
   confidence: 'insufficient' | 'low' | 'ok';
   dataConfidence: 'exact' | 'legacy' | 'partial' | null;
   stats: Record<string, Metric> | null;
+  streak: StreakResult | null;
 }
 export interface RoomHud { roomId: string; metricVersion: number; minHands: number; players: HudPlayer[] }
 export interface StatsQuery { roomId?: string; minHands?: number; limit?: number }
