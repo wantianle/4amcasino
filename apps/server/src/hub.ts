@@ -7,6 +7,7 @@ import { userForToken, touchPresence } from './auth.js';
 import { isMember, isSpectator, roomEvents } from './rooms.js';
 import {
   GameRoom,
+  GameError,
   AUTO_DEAL_INTERVAL_MS,
   AUTO_DEAL_READY_CHECK_MS,
   type GameOpts,
@@ -125,11 +126,28 @@ export function attachHub(
     rooms.get(roomId)?.settingsChanged(options?.restartAutoDeal);
   roomEvents.on('changed', onRoomChanged);
 
-  app.addHook('onClose', async () => {
+  // `preClose`, not `onClose`: Fastify runs `onClose` hooks only AFTER the
+  // HTTP server has stopped, and `server.close()` waits for open upgraded
+  // websockets - so an `onClose` drain would not run until the very sockets it
+  // needs to read are gone (observed as a ~60s stall). `preClose` runs first,
+  // while the sockets are still open and the DB is still up.
+  app.addHook('preClose', async () => {
     roomEvents.off('changed', onRoomChanged);
-    for (const room of rooms.values()) room.shutdown();
-    // wss.close() alone waits for clients to hang up, which stalls shutdown
-    // (and stretches the deploy gap) - drop them; the web app auto-reconnects
+    // Drain rooms FIRST, while their sockets are still open, so a live hand can
+    // either finish or be aborted into a terminal `hand_lifecycle` state. A
+    // `running` row left behind would freeze the room on the next boot.
+    //
+    // Sequential, not `Promise.all`: `abortForShutdown` temporarily lowers the
+    // connection-level `busy_timeout` pragma, and every room shares one SQLite
+    // connection. Serializing removes any chance of one room's abort observing
+    // another's shortened timeout (or restoring the wrong value). The abort
+    // window itself is synchronous, so this is belt-and-braces, but it makes the
+    // connection-global mutation provably single-owner. Cost: a deploy's
+    // worst-case wait is the SUM over rooms with a live unsettled hand, not the
+    // max; each room contributes `shutdownDrainMs + two short DB ops`.
+    for (const room of rooms.values()) await room.shutdown();
+    // Once every room is terminal, drop the sockets so `server.close()` is not
+    // made to wait for clients to hang up; the web app auto-reconnects.
     for (const client of wss.clients) client.terminate();
     wss.close();
   });
@@ -243,7 +261,32 @@ export function attachHub(
         ws.send(JSON.stringify({ t: 'error', message: 'join a room first' }));
         return;
       }
-      current.handleMessage(userId, msg);
+      // A single failing command must never take down the socket loop or the
+      // process. Settlement/db failures are isolated inside the room, but this
+      // is the last backstop for anything that still escapes.
+      try {
+        current.handleMessage(userId, msg);
+      } catch (err) {
+        // A GameError is a known, expected business failure: answer the client
+        // and leave the room healthy. Anything else (TypeError, ...) is a
+        // programming error - log it, fail the room closed, and never pretend
+        // it was an ordinary client error.
+        if (err instanceof GameError) {
+          try {
+            ws.send(JSON.stringify({ t: 'error', message: err.message }));
+          } catch {
+            /* socket already gone; nothing more to do */
+          }
+          return;
+        }
+        console.error('room message handler failed (unexpected)', err);
+        current.markUnhealthy(err instanceof Error ? err.message : String(err));
+        try {
+          ws.send(JSON.stringify({ t: 'error', message: 'server error handling that command' }));
+        } catch {
+          /* socket already gone; nothing more to do */
+        }
+      }
     });
 
     ws.on('close', () => {
@@ -255,11 +298,13 @@ export function attachHub(
       if (left <= 0) socketsPerUser.delete(userId);
       else socketsPerUser.set(userId, left);
       // a room with nobody in it and no hand running holds timers and per-hand
-      // maps alive for the life of the process; let it go
+      // maps alive for the life of the process; let it go. `isIdle()` proves
+      // `hand === null`, so `shutdown()` completes synchronously here and the
+      // promise is already resolved; `void` makes that explicit.
       if (current && current.isIdle()) {
         for (const [id, room] of rooms) {
           if (room === current) {
-            room.shutdown();
+            void room.shutdown();
             rooms.delete(id);
             break;
           }

@@ -94,6 +94,12 @@ export class HeadlessClient {
   seats: { seat: number; userId: number; username: string }[] = [];
   myCards: CardId[] = [];
   myCardPoints: { deckIndex: number; point: string }[] = [];
+  /**
+   * The hand `myCardPoints` belong to. A peek is answered against the ended
+   * hand's key, so the points must be bound to that same hand id - a stale
+   * offer for an older hand must never be answered with a newer hand's points.
+   */
+  myCardPointsHandId: string | null = null;
   board: CardId[] = [];
   betting: BettingState | null = null;
   actionSeq = -1;
@@ -133,7 +139,7 @@ export class HeadlessClient {
   result: Extract<ServerMsg, { t: 'hand_end' }> | null = null;
   showdown: Extract<ServerMsg, { t: 'showdown' }> | null = null;
   abort: Extract<ServerMsg, { t: 'hand_abort' }> | null = null;
-  peekOffers: { offerId: string; fromName: string; amount: number }[] = [];
+  peekOffers: { offerId: string; handId: string; fromName: string; amount: number }[] = [];
   events: string[] = [];
   /**
    * Public actions observed since this hand was dealt, accumulated from
@@ -413,6 +419,7 @@ export class HeadlessClient {
     this.seats = [];
     this.myCards = [];
     this.myCardPoints = [];
+    this.myCardPointsHandId = null;
     this.board = [];
     this.betting = null;
     this.actionSeq = -1;
@@ -554,6 +561,7 @@ export class HeadlessClient {
           this.seats = msg.seats;
           this.myCards = [];
           this.myCardPoints = [];
+          this.myCardPointsHandId = null;
           this.board = [];
           this.betting = null;
           this.actionSeq = -1;
@@ -631,6 +639,7 @@ export class HeadlessClient {
         if (card !== null) {
           this.myCards.push(card);
           this.myCardPoints.push({ deckIndex: msg.deckIndex, point: msg.point });
+          this.myCardPointsHandId = msg.handId;
         }
         break;
       }
@@ -809,10 +818,18 @@ export class HeadlessClient {
         // A peek is about the just-ended hand, not the live one: drop a stale
         // offer so it can never be answered against a newer hand id.
         if (!this.isRecentEndedHand(msg.handId)) break;
-        this.peekOffers.push({ offerId: msg.offerId, fromName: msg.fromName, amount: msg.amount });
+        this.peekOffers.push({
+          offerId: msg.offerId,
+          handId: msg.handId,
+          fromName: msg.fromName,
+          amount: msg.amount,
+        });
         this.log(
           `${msg.fromName} offers ${msg.amount} chips to privately see your last hand (offerId ${msg.offerId})`,
         );
+        // A robot has nothing to hide and the peek is a fixed, trivial 1bb, so
+        // it always agrees. It travels the same offer/accept path a human does.
+        this.answerPeek(msg.offerId, true);
         break;
       case 'peek_result':
         if (!this.isRecentEndedHand(msg.handId)) break;
@@ -1041,24 +1058,32 @@ export class HeadlessClient {
   answerPeek(offerId: string, accept: boolean): void {
     // Only answer an offer we actually hold: a stale/unknown id (e.g. a filtered
     // previous-hand offer) must never trigger an outbound frame.
-    if (!this.peekOffers.some((o) => o.offerId === offerId)) return;
-    if (!this.handId) throw new Error('no hand context');
+    const offer = this.peekOffers.find((o) => o.offerId === offerId);
+    if (!offer) return;
     this.peekOffers = this.peekOffers.filter((o) => o.offerId !== offerId);
-    if (!accept) {
-      this.send({ t: 'peek_decline', handId: this.handId, offerId });
+    // Answer against the offer's own hand id: the offer can outlive a newer
+    // hand's context, and the server verifies the signature against that hand.
+    const handId = offer.handId;
+    // Never mint a key for a hand we did not play: `keyFor` would implicitly
+    // create one, then the shares would unmask against the wrong key and the
+    // server would reject an "accept" while the requester got no result. A
+    // missing key (or points from a different hand) is a decline, not a gamble.
+    const k = this.handKeys.get(handId);
+    const points = this.myCardPointsHandId === handId ? this.myCardPoints : [];
+    if (!accept || !k || points.length === 0) {
+      this.send({ t: 'peek_decline', handId, offerId });
       return;
     }
-    const k = this.keyFor(this.handId);
-    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
+    const shares = points.map(({ deckIndex, point }) => {
       const { out, proof } = proveUnmask(k, pointFromHex(point));
       return { deckIndex, out: pointHex(out), proof };
     });
     this.send({
       t: 'peek_accept',
-      handId: this.handId,
+      handId,
       offerId,
       shares,
-      sig: this.signed(this.handId, 'peek_accept', { offerId, shares }),
+      sig: this.signed(handId, 'peek_accept', { offerId, shares }),
     });
   }
 

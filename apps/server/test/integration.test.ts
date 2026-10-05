@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { AddressInfo } from 'node:net';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../src/app.js';
 import { attachHub } from '../src/hub.js';
 import {
@@ -23,9 +26,15 @@ import { awardPots, computePots, splitAmountEven, startBombPot } from '@4am/shar
 import { createSession, createUser } from '../src/auth.js';
 import { setPlatformUserId } from '../src/platform.js';
 import { activeHands } from '../src/liveHands.js';
-import { applyHandSettlement } from '../src/game.js';
-import { verifyLedger } from '../src/ledger.js';
-import { recoverOrphanedFeatureTriggers } from '../src/db.js';
+import { applyHandSettlement, type GameClock } from '../src/game.js';
+import { rechainRoom, verifyLedger } from '../src/ledger.js';
+import {
+  auditMarkerlessTranscripts,
+  firstPendingHandLifecycle,
+  reconcileMissingSettlements,
+  recoverOrphanedFeatureTriggers,
+} from '../src/db.js';
+import Database from 'better-sqlite3';
 
 type Strategy = 'passive' | 'fold-first' | 'allin-first' | 'shove-flop';
 
@@ -90,16 +99,35 @@ class TestClient {
   myCards: CardId[] = [];
   myCardPoints: { deckIndex: number; point: string }[] = [];
   board: CardId[] = [];
+  /** When set, this seat shuffles with this exact permutation instead of a
+   *  random one. Combined with identity permutations on the other seats it makes
+   *  the whole deal (board + hole cards) deterministic for forced-showdown
+   *  tests such as the 7-2 bounty. */
+  forcedShufflePerm: number[] | null = null;
   cardsShown: { seat: number; cards: CardId[] }[] = [];
   peekOffers: { offerId: string; fromUserId: number; amount: number }[] = [];
   peekResults: { targetSeat: number; status: string; cards?: CardId[] }[] = [];
   sawShowdown = false;
+  /** Wall-clock when the showdown/ hand_end frame arrived, for timing tests. */
+  showdownAt: number | null = null;
+  handStartAt: number | null = null;
+  handEndAt: number | null = null;
+  /** Every freshly-dealt hand (id change) with its local arrival time. */
+  handStartLog: { handId: string; at: number }[] = [];
   handEnd:
     | (Extract<ServerMsg, { t: 'hand_end' }> & {
         pokerDeltas?: { seat: number; delta: number }[];
         squidDeltas?: { seat: number; delta: number }[];
       })
     | null = null;
+  /** How many `hand_end` frames this client has seen for the current hand. */
+  handEndCount = 0;
+  /** Transcript heads seen on live `transcript_entry` frames (chain-mutation probe). */
+  transcriptHeads: string[] = [];
+  /** `settlement_failed` frames observed (durable-write failures). */
+  settlementFailures: { handId: string; attempt: number; retrying: boolean }[] = [];
+  /** Set false to simulate a client that never answers the TV-replay key ask. */
+  respondKeys = true;
   handAbort: Extract<ServerMsg, { t: 'hand_abort' }> | null = null;
   lastRespondedActionSeq = -1;
   roomState: Extract<ServerMsg, { t: 'room_state' }> | null = null;
@@ -253,6 +281,47 @@ class TestClient {
     });
   }
 
+  declinePeek(offerId: string): void {
+    this.send({ t: 'peek_decline', handId: this.handId, offerId });
+  }
+
+  /** Accept with a deliberately broken DLEQ proof (should be rejected). */
+  acceptPeekBadProof(offerId: string): void {
+    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
+      const { out, proof } = proveUnmask(this.handKey!, pointFromHex(point));
+      return { deckIndex, out: pointHex(out), proof: { ...proof, z: '00' } };
+    });
+    this.send({
+      t: 'peek_accept',
+      handId: this.handId,
+      offerId,
+      shares,
+      sig: this.signed('peek_accept', { offerId, shares }),
+    });
+  }
+
+  /** Accept with a valid proof but a corrupted signature (should be rejected). */
+  acceptPeekBadSig(offerId: string): void {
+    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
+      const { out, proof } = proveUnmask(this.handKey!, pointFromHex(point));
+      return { deckIndex, out: pointHex(out), proof };
+    });
+    const sig = this.signed('peek_accept', { offerId, shares });
+    const bad = (sig[0] === '0' ? '1' : '0') + sig.slice(1);
+    this.send({ t: 'peek_accept', handId: this.handId, offerId, shares, sig: bad });
+  }
+
+  /** Send the per-hand reveal key on demand (the audit-timeout test). */
+  sendRevealKey(): void {
+    const key = this.handKey!.toString(16);
+    this.send({
+      t: 'reveal_key',
+      handId: this.handId,
+      key,
+      sig: this.signed('reveal_key', { key }),
+    });
+  }
+
   handle(msg: ServerMsg): void {
     switch (msg.t) {
       case 'room_state':
@@ -273,6 +342,10 @@ class TestClient {
           this.board3 = [];
           this.cardsShown = [];
           this.sawShowdown = false;
+          this.showdownAt = null;
+          this.handEndAt = null;
+          this.handStartAt = Date.now();
+          this.handStartLog.push({ handId: msg.handId, at: Date.now() });
           this.handEnd = null;
           this.handAbort = null;
           this.sawOwnFold = false;
@@ -301,7 +374,8 @@ class TestClient {
       case 'shuffle_turn': {
         if (msg.seat !== this.seat) break;
         const deck = msg.deck.map(pointFromHex);
-        const out = maskAndShuffle(deck, this.handKey!, randomPerm(52)).map(pointHex);
+        const perm = this.forcedShufflePerm ?? randomPerm(52);
+        const out = maskAndShuffle(deck, this.handKey!, perm).map(pointHex);
         this.send({
           t: 'shuffle_deck',
           handId: this.handId,
@@ -486,11 +560,26 @@ class TestClient {
       }
       case 'showdown': {
         this.sawShowdown = true;
+        this.showdownAt = Date.now();
         this.lastShowdown = msg;
         break;
       }
       case 'hand_end': {
         this.handEnd = msg;
+        this.handEndAt = Date.now();
+        this.handEndCount++;
+        break;
+      }
+      case 'transcript_entry': {
+        this.transcriptHeads.push(msg.head);
+        break;
+      }
+      case 'settlement_failed': {
+        this.settlementFailures.push({
+          handId: msg.handId,
+          attempt: msg.attempt,
+          retrying: msg.retrying,
+        });
         break;
       }
       case 'hand_abort': {
@@ -498,6 +587,7 @@ class TestClient {
         break;
       }
       case 'need_keys': {
+        if (!this.respondKeys) break;
         const key = this.handKey!.toString(16);
         this.send({
           t: 'reveal_key',
@@ -540,19 +630,113 @@ class TestClient {
   }
 }
 
+/**
+ * The clock that drives the showdown settle hold. In `auto` mode it delegates
+ * to real timers, so every ordinary WS test behaves exactly as before. A test
+ * calls `freeze()` to take manual control: the hold timer is captured instead
+ * of scheduled, and `advance(ms)` fires it. That makes the ordering contract
+ * (durable write → reveal → hold → hand_end) deterministic instead of racing
+ * wall-clock sleeps under load.
+ */
+class ManualClock implements GameClock {
+  private manual = false;
+  private base = 1_000_000;
+  private offset = 0;
+  private seq = 1;
+  private timers = new Map<number, { at: number; fn: () => void }>();
+
+  now(): number {
+    return this.manual ? this.base + this.offset : Date.now();
+  }
+  setTimer(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+    if (!this.manual) return setTimeout(fn, ms);
+    const handle = this.seq++;
+    this.timers.set(handle, { at: this.now() + ms, fn });
+    return handle as unknown as ReturnType<typeof setTimeout>;
+  }
+  clearTimer(handle: ReturnType<typeof setTimeout>): void {
+    if (!this.manual) {
+      clearTimeout(handle);
+      return;
+    }
+    this.timers.delete(handle as unknown as number);
+  }
+  freeze(): void {
+    this.manual = true;
+    this.offset = 0;
+  }
+  advance(ms: number): void {
+    if (!this.manual) throw new Error('ManualClock.advance requires freeze()');
+    this.offset += ms;
+    const due = [...this.timers.entries()].filter(([, t]) => t.at <= this.now());
+    for (const [handle, t] of due) {
+      this.timers.delete(handle);
+      t.fn();
+    }
+  }
+}
+
 let ctx: ReturnType<typeof createApp>;
 let baseUrl: string;
 let clients: TestClient[] = [];
+let hub: ReturnType<typeof attachHub>;
+let clock: ManualClock;
+/** Mutable fault switches consulted by the hub's test-only fault injection. */
+let fault: {
+  persistFailThrough: number;
+  broadcastThrowT: string | null;
+  sevenDeuceFailOnce: boolean;
+  /** A coded error thrown by the 7-2 bounty hook, to exercise the transient-vs-
+   *  programming classification with real SQLite result codes. */
+  sevenDeuceError: Error | null;
+  /** Injected INSIDE the 7-2 bounty transaction; not special-cased, so it
+   *  exercises the internal-error (unhealthy) classification. */
+  sevenDeuceInternal: (() => void) | null;
+};
 
 beforeEach(async () => {
+  clock = new ManualClock();
+  fault = {
+    persistFailThrough: 0,
+    broadcastThrowT: null,
+    sevenDeuceFailOnce: false,
+    sevenDeuceError: null,
+    sevenDeuceInternal: null,
+  };
   ctx = createApp(':memory:');
-  attachHub(ctx.app, ctx.db, {
+  hub = attachHub(ctx.app, ctx.db, {
     cryptoTimeoutMs: 1500,
     actionTimeoutMs: 1500,
     autoDealMs: 800,
     readyCheckMs: 1500,
+    // short holds so the reveal/settle ordering is observable in real time
+    showdownHoldMs: 400,
+    settleHoldMs: 1500,
     ritVoteMs: 1500,
     runItTwice: true,
+    clock,
+    faultInjection: {
+      persist: (attempt) => {
+        if (fault.persistFailThrough >= attempt) throw new Error('injected persist failure');
+      },
+      broadcast: (msg) => {
+        if (fault.broadcastThrowT === msg.t) throw new Error('injected broadcast failure');
+      },
+      sevenDeuce: () => {
+        if (fault.sevenDeuceError) {
+          const err = fault.sevenDeuceError;
+          fault.sevenDeuceError = null;
+          throw err;
+        }
+        if (fault.sevenDeuceFailOnce) {
+          fault.sevenDeuceFailOnce = false;
+          throw new Error('injected seven-deuce failure');
+        }
+      },
+      sevenDeuceInternal: () => {
+        fault.sevenDeuceInternal?.();
+      },
+    },
   });
   await ctx.app.listen({ port: 0 });
   const addr = ctx.app.server.address() as AddressInfo;
@@ -791,6 +975,158 @@ describe('full hand integration', () => {
     expect(Math.max(...deltas.map((d) => d.delta))).toBe(10); // BB wins the small blind
   });
 
+  it('persists the settlement BEFORE the reveal hold, then broadcasts hand_end on expiry', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze(); // take manual control of the settle hold
+    host.send({ t: 'start_hand' });
+    // the reveal is broadcast as soon as the hand settles...
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    const showdown = host.lastShowdown!;
+
+    // ...but the terminal frame is still held: the durable write is decoupled
+    // from the broadcast, so there is no "publicly revealed but unsettled" gap.
+    expect(host.handEnd).toBeNull();
+    expect(players[1]!.handEnd).toBeNull();
+
+    // DB already holds the whole hand: settlement marker, ledger, transcript,
+    // and the moved stacks - all before any `hand_end`.
+    const marker = ctx.db
+      .prepare('SELECT hand_id FROM hand_settlements WHERE hand_id = ?')
+      .get(handId) as { hand_id: string } | undefined;
+    expect(marker?.hand_id).toBe(handId);
+    const transcript = ctx.db
+      .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
+      .get(handId) as { head: string } | undefined;
+    expect(transcript).toBeDefined();
+    const settledStacks = ctx.db
+      .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
+      .get(room.id) as { total: number };
+    expect(settledStacks.total).toBe(2000);
+
+    // release the hold: `hand_end` lands, carrying the same stacks/head
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null);
+    expect(host.handEnd!.handId).toBe(handId);
+    expect(host.handEnd!.head).toBe(transcript!.head);
+    expect(host.lastShowdown!.reveals).toEqual(showdown.reveals);
+    expect(players[1]!.handEnd).not.toBeNull();
+
+    const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
+    expect(ledger.verified.ok).toBe(true);
+  }, 20000);
+
+  it('a showdown frame precedes hand_end over the real socket (smoke)', async () => {
+    const { players, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    const p0 = players[0]!;
+    expect(p0.sawShowdown).toBe(true);
+    expect(p0.showdownAt).not.toBeNull();
+    expect(p0.handEndAt).not.toBeNull();
+    expect(p0.handEndAt!).toBeGreaterThanOrEqual(p0.showdownAt!);
+  }, 20000);
+
+  it('a fold-out skips the reveal and has no showdown hold', async () => {
+    const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    const p0 = players[0]!;
+    // no reveal frame at all, and settlement is not delayed by a showdown hold
+    expect(p0.sawShowdown).toBe(false);
+    expect(p0.showdownAt).toBeNull();
+    expect(p0.handEnd).not.toBeNull();
+  }, 20000);
+
+  it('a shutdown during the hold keeps the durable settlement and drops only hand_end', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    // wait for the reveal but NOT the settlement broadcast
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    expect(host.handEnd).toBeNull();
+
+    // The settlement is already durable when the reveal goes out, so a crash /
+    // shutdown in the hold can only lose the `hand_end` frame, never the hand.
+    expect(
+      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+    ).toBeTruthy();
+
+    void hub.rooms.get(room.id)?.shutdown();
+    // well past the hold: the timer was cancelled, so no hand_end...
+    clock.advance(5000);
+    expect(host.handEnd).toBeNull();
+    expect(players[1]!.handEnd).toBeNull();
+    expect(activeHands.has(room.id)).toBe(false);
+    // ...but the hand is fully recoverable from the database.
+    expect(
+      ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId),
+    ).toBeTruthy();
+    expect(
+      (
+        ctx.db
+          .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
+          .get(handId) as { n: number }
+      ).n,
+    ).toBe(1);
+  }, 20000);
+
+  it('restarts onto the same DB and recovers the settlement written during the hold', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-hold-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      showdownHoldMs: 400,
+      settleHoldMs: 0,
+      clock,
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
+      clock.freeze();
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.showdownAt !== null);
+      const handId = host.handId!;
+      expect(host.handEnd).toBeNull();
+      // "crash" the box: no graceful hand_end, close the db handle
+      for (const c of players) c.close();
+      await app.app.close();
+
+      // a fresh process opening the same file sees the settled hand
+      const restarted = createApp(dbPath);
+      const tr = restarted.db
+        .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
+        .get(handId) as { head: string } | undefined;
+      expect(tr).toBeDefined();
+      expect(
+        (
+          restarted.db
+            .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
+            .get(handId) as { n: number }
+        ).n,
+      ).toBe(1);
+      const total = restarted.db
+        .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
+        .get(room.id) as { total: number };
+      expect(total.total).toBe(2000);
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 25000);
+
   it('a stalling player causes an abort that blames them and leaves stacks untouched', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob', 'mallory']);
     players[2]!.respondShares = false; // mallory never answers unmask requests
@@ -832,38 +1168,687 @@ describe('full hand integration', () => {
     expect(players[0]!.handAbort).toBeNull();
   });
 
-  it('a paid peek reveals cards only to the buyer and moves the chips', async () => {
-    const { players, room, host } = await setupRoom(
-      ['host', 'bob', 'carol'],
-      ['fold-first', 'fold-first', 'passive'],
-    );
-    const [h, bob, carol] = players as [TestClient, TestClient, TestClient];
+  it('a paid peek costs a fixed 1bb, reveals only to the buyer and is ledger-conserving', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    // park the table between hands: this test is about the peek, not auto-deal
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
 
-    // carol (won by folds) pays 100 to see host's mucked cards
-    carol.send({ t: 'peek_offer', handId: carol.handId, targetSeat: h.seat, amount: 100 });
+    // heads-up, host folded: bob pays the server-fixed 1bb (=bb=20) to see
+    // host's mucked cards. The client's 100 is deliberately ignored.
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat, amount: 100 });
     await h.waitFor(() => h.peekOffers.length > 0);
-    expect(h.peekOffers[0]!.amount).toBe(100);
+    expect(h.peekOffers[0]!.amount).toBe(20);
     h.acceptPeek(h.peekOffers[0]!.offerId);
-    await carol.waitFor(() => carol.peekResults.length > 0);
+    await bob.waitFor(() => bob.peekResults.length > 0);
 
-    const result = carol.peekResults[0]!;
+    const result = bob.peekResults[0]!;
     expect(result.status).toBe('accepted');
     expect(result.cards!.slice().sort()).toEqual(h.myCards.slice().sort());
     // the reveal went only to the buyer
-    expect(bob.peekResults).toHaveLength(0);
-    expect(bob.cardsShown).toHaveLength(0);
+    expect(h.peekResults).toHaveLength(0);
+    expect(h.cardsShown).toHaveLength(0);
 
-    // chips moved: carol paid host 100 on top of the blind results
+    // chips moved: bob paid host exactly 20 on top of the blind results
     const state = await host.api(`/api/rooms/${room.id}`);
     const stack = (name: string) => state.players.find((p: any) => p.username === name).stack;
-    expect(stack('host')).toBe(1100); // folded for free, then sold a look for 100
-    expect(stack('carol')).toBe(910); // won the 10 blind, paid 100
+    expect(stack('host')).toBe(1010); // folded the sb, then sold a look for 1bb
+    expect(stack('bob')).toBe(990); // won the 10 blind, paid 20
     const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
     expect(ledger.verified.ok).toBe(true);
-    expect(ledger.entries.filter((e: any) => e.kind === 'peek')).toHaveLength(2);
+    const peeks = ledger.entries.filter((e: any) => e.kind === 'peek');
+    expect(peeks).toHaveLength(2);
+    expect(peeks.reduce((s: number, e: any) => s + e.delta, 0)).toBe(0); // zero-sum
   });
+
+  it('refuses peeks in a ring hand and in a showdown hand', async () => {
+    // Ring: three players, still a fold-out, but not heads-up.
+    const ring = await setupRoom(['ra', 'rb', 'rc'], ['fold-first', 'fold-first', 'passive']);
+    ring.host.send({ t: 'start_hand' });
+    await Promise.all(ring.players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of ring.players) p.send({ t: 'sit_out', sittingOut: true });
+    const rc = ring.players[2]!;
+    rc.errors = [];
+    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat: ring.host.seat });
+    await rc.waitFor(() => rc.errors.length > 0);
+    expect(rc.errors[0]).toMatch(/heads-up/i);
+    expect(ring.players[0]!.peekOffers).toHaveLength(0);
+
+    // Heads-up but decided at showdown: no private cards left to sell.
+    const hu = await setupRoom(['sa', 'sb'], ['passive', 'passive']);
+    hu.host.send({ t: 'start_hand' });
+    await Promise.all(hu.players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of hu.players) p.send({ t: 'sit_out', sittingOut: true });
+    const sb = hu.players[1]!;
+    sb.errors = [];
+    sb.send({ t: 'peek_offer', handId: sb.handId, targetSeat: hu.host.seat });
+    await sb.waitFor(() => sb.errors.length > 0);
+    expect(sb.errors[0]).toMatch(/showdown/i);
+    expect(hu.players[0]!.peekOffers).toHaveLength(0);
+  });
+
+  it('refuses a peek for a hand that is not the last one', async () => {
+    const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+    bob.errors = [];
+    bob.send({ t: 'peek_offer', handId: 'deadbeef', targetSeat: h.seat });
+    await bob.waitFor(() => bob.errors.length > 0);
+    expect(bob.errors[0]).toMatch(/between hands|no such hand|last hand/i);
+  });
+
+  it('expires an unanswered peek offer after the 5s contract and tells the requester', async () => {
+    const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    // the target never answers (disconnected/ignoring): the offer must lapse
+    await bob.waitFor(() => bob.peekResults.length > 0, 9000);
+    expect(bob.peekResults.at(-1)!.status).toBe('expired');
+    // answering the lapsed id is rejected, not silently accepted
+    h.errors = [];
+    h.acceptPeek(h.peekOffers[0]!.offerId);
+    await h.waitFor(() => h.errors.length > 0);
+    expect(h.errors[0]).toMatch(/gone/i);
+  }, 15000);
+
+  it('fails the peek explicitly when the buyer cannot pay at accept time', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    // the buyer spends/loses chips after offering: the accept must not silently
+    // hang the requester - it gets an explicit failed result.
+    ctx.db
+      .prepare('UPDATE room_players SET stack = 0 WHERE room_id = ? AND user_id = ?')
+      .run(room.id, bob.userId);
+    h.acceptPeek(h.peekOffers[0]!.offerId);
+    await bob.waitFor(() => bob.peekResults.length > 0);
+    expect(bob.peekResults.at(-1)!.status).toBe('failed');
+    // not public: the reveal never reached the buyer
+    expect(bob.peekResults.at(-1)!.cards).toBeUndefined();
+  }, 20000);
+
+  it('allows a peek with exactly 1bb and rejects one chip short', async () => {
+    const first = await setupRoom(['h1a', 'b1a'], ['fold-first', 'passive']);
+    first.host.send({ t: 'start_hand' });
+    await Promise.all(first.players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of first.players) p.send({ t: 'sit_out', sittingOut: true });
+    const h1 = first.players[0]!;
+    const b1 = first.players[1]!;
+    ctx.db
+      .prepare('UPDATE room_players SET stack = 20 WHERE room_id = ? AND user_id = ?')
+      .run(first.room.id, b1.userId);
+    b1.send({ t: 'peek_offer', handId: b1.handId, targetSeat: h1.seat });
+    await h1.waitFor(() => h1.peekOffers.length > 0);
+    expect(h1.peekOffers).toHaveLength(1);
+    // exactly 1bb is enough: the offer must be answerable and the payment complete
+    h1.acceptPeek(h1.peekOffers[0]!.offerId);
+    await b1.waitFor(() => b1.peekResults.length > 0);
+    expect(b1.peekResults.at(-1)!.status).toBe('accepted');
+    expect(b1.peekResults.at(-1)!.cards!.slice().sort()).toEqual(h1.myCards.slice().sort());
+    const stack1 = (u: number) =>
+      (
+        ctx.db
+          .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+          .get(first.room.id, u) as { stack: number }
+      ).stack;
+    expect(stack1(b1.userId)).toBe(0);
+    expect(stack1(h1.userId)).toBe(1010);
+    const peekRows1 = ctx.db
+      .prepare("SELECT delta FROM ledger WHERE room_id = ? AND kind = 'peek'")
+      .all(first.room.id) as { delta: number }[];
+    expect(peekRows1.reduce((s, r) => s + r.delta, 0)).toBe(0);
+
+    const second = await setupRoom(['h2a', 'b2b'], ['fold-first', 'passive']);
+    second.host.send({ t: 'start_hand' });
+    await Promise.all(second.players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of second.players) p.send({ t: 'sit_out', sittingOut: true });
+    const h2 = second.players[0]!;
+    const b2 = second.players[1]!;
+    ctx.db
+      .prepare('UPDATE room_players SET stack = 19 WHERE room_id = ? AND user_id = ?')
+      .run(second.room.id, b2.userId);
+    b2.errors = [];
+    b2.send({ t: 'peek_offer', handId: b2.handId, targetSeat: h2.seat });
+    await b2.waitFor(() => b2.errors.length > 0);
+    expect(b2.errors[0]).toMatch(/enough chips/i);
+    expect(h2.peekOffers).toHaveLength(0);
+  }, 25000);
+
+  it('a declined, badly-signed, badly-proven, or superseded peek sends exactly one result and moves no chips', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    // disable auto-deal so an offer can be exercised across the between-hands window
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    const peekLedger = () =>
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
+          .get(room.id) as { n: number }
+      ).n;
+    const stacks = () =>
+      (
+        ctx.db
+          .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+          .all(room.id) as { user_id: number; stack: number }[]
+      );
+    const before = stacks();
+
+    // decline: one terminal receipt, no money
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    h.declinePeek(h.peekOffers.at(-1)!.offerId);
+    await bob.waitFor(() => bob.peekResults.length > 0);
+    expect(bob.peekResults.at(-1)!.status).toBe('declined');
+    // a second answer is rejected and never yields a second receipt
+    h.errors = [];
+    h.declinePeek(h.peekOffers.at(-1)!.offerId);
+    await h.waitFor(() => h.errors.length > 0);
+    expect(bob.peekResults).toHaveLength(1);
+
+    // bad signature: explicit failure, no money
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 1);
+    h.acceptPeekBadSig(h.peekOffers.at(-1)!.offerId);
+    await bob.waitFor(() => bob.peekResults.length > 1);
+    expect(bob.peekResults.at(-1)!.status).toBe('failed');
+    expect(bob.peekResults).toHaveLength(2);
+
+    // bad proof: explicit failure, no money
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 2);
+    h.acceptPeekBadProof(h.peekOffers.at(-1)!.offerId);
+    await bob.waitFor(() => bob.peekResults.length > 2);
+    expect(bob.peekResults.at(-1)!.status).toBe('failed');
+    expect(bob.peekResults.at(-1)!.cards).toBeUndefined();
+
+    expect(peekLedger()).toBe(0);
+    expect(stacks()).toEqual(before);
+
+    // a new hand supersedes an open offer with exactly one expiry receipt
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 3);
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: false });
+    await Promise.all(
+      players.map((p) =>
+        p.waitFor(
+          () =>
+            p.roomState?.players.find((x) => x.userId === p.userId)?.sittingOut === false,
+          3000,
+        ),
+      ),
+    );
+    host.send({ t: 'start_hand' });
+    await bob.waitFor(() => bob.peekResults.length > 3, 5000);
+    expect(bob.peekResults.at(-1)!.status).toBe('expired');
+    expect(bob.peekResults).toHaveLength(4);
+    expect(peekLedger()).toBe(0);
+  }, 30000);
+
+  it('still refuses a heads-up peek after a player leaves their seat from a 3-way hand', async () => {
+    const ring = await setupRoom(
+      ['la', 'lb', 'lc'],
+      ['fold-first', 'fold-first', 'passive'],
+    );
+    ring.host.send({ t: 'start_hand' });
+    await Promise.all(ring.players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of ring.players) p.send({ t: 'sit_out', sittingOut: true });
+    // one participant walks away from their seat
+    const leaver = ring.players[0]!;
+    leaver.send({ t: 'leave_seat' });
+    await leaver.waitFor(
+      () => leaver.roomState?.players.find((p) => p.userId === leaver.userId)?.seat === null,
+      5000,
+    );
+    const rc = ring.players[2]!;
+    rc.errors = [];
+    rc.send({ t: 'peek_offer', handId: rc.handId, targetSeat: ring.players[1]!.seat! });
+    await rc.waitFor(() => rc.errors.length > 0);
+    expect(rc.errors[0]).toMatch(/heads-up/i);
+  }, 20000);
+
+  it('replays the showdown to a client that reconnects during the hold', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    // the reconnected client has no cached reveal: ask the server to replay it
+    host.disconnect();
+    host.sawShowdown = false;
+    host.lastShowdown = null;
+    await host.connect(room.id);
+    await host.waitFor(() => host.sawShowdown && host.lastShowdown !== null, 5000);
+    expect(host.lastShowdown!.handId).toBe(handId);
+    expect(host.handEnd).toBeNull(); // still inside the hold
+    // release the hold so the room tears down cleanly
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEnd!.handId).toBe(handId);
+  }, 20000);
+
+  it('pays the automatic 7-2 showdown bounty durably, before hand_end and across a hold shutdown', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    // Deterministic deal: one seat applies a fixed permutation, the other the
+    // identity, so the final deck is exactly `deck[Q]`. Seat 0 gets hole
+    // indexes 0/2 -> cards 0 (2s) and 21 (7h): 7-2 offsuit. Board 4..8 is
+    // 7s 7d 7c 9c Kc, so the 7-2 holder wins with quads.
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+
+    expect(host.myCards.slice().sort((a, b) => a - b)).toEqual([0, 21]);
+    expect(host.board).toEqual([20, 22, 23, 31, 47]);
+    expect(host.lastShowdown!.awards.find((a) => a.seat === 0)!.amount).toBeGreaterThan(0);
+
+    // The bounty is part of the durable settlement: paid BEFORE hand_end and
+    // while the reveal is still on screen.
+    const bountyRows = () =>
+      ctx.db
+        .prepare("SELECT user_id, delta FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
+        .all(room.id) as { user_id: number; delta: number }[];
+    const rows = bountyRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.reduce((s, r) => s + r.delta, 0)).toBe(0);
+    expect(rows.find((r) => r.delta === 25)).toBeTruthy();
+    const hostRow = ctx.db
+      .prepare('SELECT user_id FROM room_players WHERE room_id = ? AND seat = 0')
+      .get(room.id) as { user_id: number };
+    expect(rows.find((r) => r.delta === 25)!.user_id).toBe(hostRow.user_id);
+    expect(host.handEnd).toBeNull();
+
+    // A crash/shutdown inside the hold can no longer lose the bounty.
+    void hub.rooms.get(room.id)?.shutdown();
+    clock.advance(5000);
+    expect(host.handEnd).toBeNull();
+    expect(bountyRows()).toHaveLength(2);
+    expect(
+      (
+        ctx.db
+          .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
+          .get(handId) as { n: number }
+      ).n,
+    ).toBe(1);
+    const total = ctx.db
+      .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
+      .get(room.id) as { total: number };
+    // 2000 chips in, 0 rake on this tiny pot, bounty is zero-sum: conserved.
+    expect(total.total).toBe(2000);
+  }, 20000);
+
+  it('B1: the 7-2 bounty is reflected in every settlement output consistently', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    expect(host.handEnd).toBeNull();
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 8000);
+
+    const stackRows = ctx.db
+      .prepare('SELECT user_id, stack, seat FROM room_players WHERE room_id = ?')
+      .all(room.id) as { user_id: number; stack: number; seat: number }[];
+    const byUser = new Map(stackRows.map((r) => [r.user_id, r.stack]));
+    const seatByUser = new Map(stackRows.map((r) => [r.user_id, r.seat]));
+
+    // room_players.stack === hand_end.stacks
+    for (const s of host.handEnd!.stacks) {
+      const uid = [...seatByUser.entries()].find(([, seat]) => seat === s.seat)![0];
+      expect(s.stack).toBe(byUser.get(uid));
+    }
+    // room_players.stack === hand_settlements.final_stacks
+    const finalStacks = JSON.parse(
+      (
+        ctx.db
+          .prepare('SELECT final_stacks FROM hand_settlements WHERE hand_id = ?')
+          .get(handId) as { final_stacks: string }
+      ).final_stacks,
+    ) as { userId: number; stack: number }[];
+    for (const f of finalStacks) expect(f.stack).toBe(byUser.get(f.userId));
+    // room_players.stack === projection.ending_stack, and
+    // net_delta === ending_stack - starting_stack
+    const proj = ctx.db
+      .prepare(
+        'SELECT user_id, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
+      )
+      .all(handId) as {
+      user_id: number;
+      starting_stack: number;
+      ending_stack: number;
+      net_delta: number;
+    }[];
+    expect(proj).toHaveLength(2);
+    for (const p of proj) {
+      expect(p.ending_stack).toBe(byUser.get(p.user_id));
+      expect(p.ending_stack - p.starting_stack).toBe(p.net_delta);
+    }
+    // hand_end.deltas are zero-sum and carry the bounty transfer
+    const end = host.handEnd!;
+    expect(end.commission).toBe(0);
+    expect(end.deltas.reduce((s, d) => s + d.delta, 0)).toBe(0);
+    const deltaBySeat = new Map(end.deltas.map((d) => [d.seat, d.delta]));
+    const pokerBySeat = new Map(end.pokerDeltas!.map((d) => [d.seat, d.delta]));
+    expect(host.myCards.slice().sort((a, b) => a - b)).toEqual([0, 21]);
+    expect(deltaBySeat.get(0)! - pokerBySeat.get(0)!).toBe(25);
+    expect(deltaBySeat.get(1)! - pokerBySeat.get(1)!).toBe(-25);
+  }, 20000);
+
+  it('B2: a settled showdown bounty is never paid again by a later voluntary show', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    const bountyRows = () =>
+      ctx.db
+        .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
+        .get(room.id) as { n: number };
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 8000);
+    expect(bountyRows().n).toBe(2);
+    // the showdown winner voluntarily shows once more: no second bounty
+    host.showCards();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(bountyRows().n).toBe(2);
+  }, 20000);
+
+  it('B2: a fold-winner bounty retries after a rolled-back transfer and pays once', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    // seat 1 (bob) is dealt 7-2 offsuit; host folds, so bob wins by fold
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    const bob = players[1]!;
+    expect(bob.myCards.slice().sort((a, b) => a - b)).toEqual([0, 21]);
+    const bountyRows = () =>
+      ctx.db
+        .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
+        .get(room.id) as { n: number };
+    expect(bountyRows().n).toBe(0);
+
+    // the first voluntary show rolls the transfer back: it must stay unpaid
+    fault.sevenDeuceFailOnce = true;
+    bob.showCards();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(bountyRows().n).toBe(0);
+
+    // retry: the show succeeds and pays exactly once
+    bob.showCards();
+    await host.waitFor(() => bountyRows().n === 2, 3000);
+  }, 20000);
+
+  it('a fresh client reconnecting during the hold restores the board and private cards, not just the reveal', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    const board = host.board.slice();
+    const cards = host.myCards.slice();
+    expect(board).toHaveLength(5);
+    expect(cards).toHaveLength(2);
+
+    // Simulate a page refresh: no cached hand context at all.
+    host.disconnect();
+    host.board = [];
+    host.board2 = [];
+    host.board3 = [];
+    host.myCards = [];
+    host.myCardPoints = [];
+    host.sawShowdown = false;
+    host.lastShowdown = null;
+    await host.connect(room.id);
+
+    await host.waitFor(
+      () => host.myCards.length === 2 && host.board.length === 5 && host.sawShowdown,
+      5000,
+    );
+    expect(host.board).toEqual(board);
+    expect(host.myCards.slice().sort((a, b) => a - b)).toEqual(
+      cards.slice().sort((a, b) => a - b),
+    );
+    expect(host.lastShowdown!.handId).toBe(handId);
+
+    // release the hold so the room tears down cleanly
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEnd!.handId).toBe(handId);
+  }, 20000);
+
+  it('B3: a spectator connecting during the hold receives the public replay', async () => {
+    const { room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    const handId = host.handId!;
+    // a brand-new observer joins while the settlement is committed and held
+    const spec = new TestClient(baseUrl, 'watcher');
+    clients.push(spec);
+    await spec.register();
+    await spec.api('/api/rooms/join', { joinCode: room.joinCode });
+    await spec.connect(room.id);
+    await spec.waitFor(() => spec.board.length === 5 && spec.sawShowdown, 5000);
+    expect(spec.handId).toBeNull(); // no seat: no private hand_start
+    expect(spec.myCards).toHaveLength(0);
+    expect(spec.lastShowdown!.handId).toBe(handId);
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+  }, 20000);
+
+  it('B4: exhausted settlement retries freeze the table and host retry settles once', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    fault.persistFailThrough = 1000; // every durable-write attempt fails
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.settlementFailures.length === 1, 5000);
+    const handId = host.handId!;
+    for (let i = 0; i < 4; i++) {
+      clock.advance(250);
+      await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
+    }
+    expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
+    // frozen: nothing committed, and no new hand may be dealt over it
+    expect(
+      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+    ).toBeUndefined();
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /hand already running/i.test(e)), 3000);
+
+    // host recovery: clear the fault and retry; pays exactly once
+    fault.persistFailThrough = 0;
+    host.send({ t: 'retry_settlement' });
+    await host.waitFor(() => host.sawShowdown, 5000);
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(
+      (
+        ctx.db
+          .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
+          .get(handId) as { n: number }
+      ).n,
+    ).toBe(1);
+    expect(
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE ref = ? AND kind = 'seven-deuce'")
+          .get(handId) as { n: number }
+      ).n,
+    ).toBe(2);
+  }, 25000);
+
+  it('holds hand_end for exactly the reveal window and broadcasts it only once', async () => {
+    const { host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null);
+    // one tick short of the 400ms reveal hold: still held
+    clock.advance(399);
+    expect(host.handEnd).toBeNull();
+    // the exact due tick releases it
+    clock.advance(1);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEndCount).toBe(1);
+    // later timers/advances must never emit a second terminal frame
+    clock.advance(10000);
+    expect(host.handEndCount).toBe(1);
+  }, 20000);
+
+  it('a fold-out under a frozen clock ends without any clock advance', async () => {
+    const { host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEndCount).toBe(1);
+    expect(host.sawShowdown).toBe(false);
+  }, 20000);
+
+  it('isolates a failed durable settlement, blocks the next hand, and retries to success', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    fault.persistFailThrough = 1; // first attempt fails; the retry succeeds
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.settlementFailures.length > 0, 8000);
+    const handId = host.handId!;
+    expect(host.settlementFailures[0]!.retrying).toBe(true);
+    // NOT committed: no marker, no reveal, no terminal frame
+    expect(
+      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+    ).toBeUndefined();
+    expect(host.sawShowdown).toBe(false);
+    expect(host.handEnd).toBeNull();
+
+    // the next hand is blocked rather than dealt over an unsettled one
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /hand already running/i.test(e)), 3000);
+
+    // the clock-driven retry commits the same deterministic result
+    clock.advance(300);
+    await host.waitFor(() => host.sawShowdown, 5000);
+    expect(
+      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+    ).toBeTruthy();
+    expect(host.settlementFailures).toHaveLength(1);
+    const total = ctx.db
+      .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
+      .get(room.id) as { total: number };
+    expect(total.total).toBe(2000);
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEndCount).toBe(1);
+  }, 25000);
+
+  it('a lost settlement broadcast still lets the room finish without a refund', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    fault.broadcastThrowT = 'showdown';
+    host.send({ t: 'start_hand' });
+    // The reveal frame is lost, but the terminal frame still arrives...
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const handId = host.handId!;
+    expect(host.handEnd!.handId).toBe(handId);
+    // ...and the hand was committed, not refunded/aborted.
+    expect(host.handAbort).toBeNull();
+    expect(
+      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+    ).toBeTruthy();
+    const total = ctx.db
+      .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
+      .get(room.id) as { total: number };
+    expect(total.total).toBe(2000);
+  }, 25000);
+
+  it('seals the transcript: a late audit key and a hold-time voluntary show never change the head', async () => {
+    const { players, room, host } = await setupRoom(
+      ['host', 'bob', 'carol'],
+      ['passive', 'passive', 'fold-first'],
+    );
+    ctx.db.prepare('UPDATE rooms SET tv_replays = 1, auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, , carol] = players as [TestClient, TestClient, TestClient];
+    clock.freeze();
+    h.respondKeys = false; // force the audit timeout to settle best-effort
+    h.send({ t: 'start_hand' });
+    await h.waitFor(() => h.sawShowdown, 8000);
+    const handId = h.handId!;
+    const persisted = ctx.db
+      .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
+      .get(handId) as { head: string } | undefined;
+    expect(persisted).toBeTruthy();
+    const entryCount = h.transcriptHeads.length;
+    const headBefore = h.transcriptHeads.at(-1);
+
+    // A key that missed the audit deadline and a folded player's voluntary show
+    // during the hold are live-only: neither may append to the sealed chain.
+    h.sendRevealKey();
+    carol.showCards();
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(h.transcriptHeads).toHaveLength(entryCount);
+    expect(h.transcriptHeads.at(-1) ?? headBefore).toBe(headBefore);
+    expect(
+      (ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId) as {
+        head: string;
+      }).head,
+    ).toBe(persisted!.head);
+
+    clock.advance(400);
+    await h.waitFor(() => h.handEnd !== null, 5000);
+    expect(h.handEndCount).toBe(1);
+  }, 20000);
 
   it('the next hand deals itself while the host stays online', async () => {
     const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
@@ -1737,10 +2722,12 @@ describe('P2 gameplay integration', () => {
     expect(players[0]!.featureStarted.some((f) => f.bombPot)).toBe(true);
     expect(players[0]!.multiRunResult).toMatchObject({ runs: 2 });
     expect(players[1]!.squidResult).not.toBeNull();
-    // `hand_end.stacks` exclude the rake credited separately, so the room total
-    // is conserved once that commission is added back
+    // B1: `room_players.stack` (hence `hand_end.stacks`) is authoritative. This
+    // room has no platform user, so the rake is credited to the in-room banker
+    // and the table total is fully conserved; the players' combined deltas are
+    // still net of that commission.
     const end = players[0]!.handEnd!;
-    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before - (end.commission ?? 0));
+    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before);
     expect(players[0]!.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
     const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
     expect(ledger.verified.ok).toBe(true);
@@ -1829,6 +2816,47 @@ describe('P2 hardening', () => {
       ) as { n: number }).n,
     ).toBe(1);
     expect(verifyLedger(ctx.db, room.id).ok).toBe(true);
+  });
+
+  it('idempotency: a duplicate settlement never re-pays the 7-2 bounty', async () => {
+    const { players, room } = await setupRoom(['dupa', 'dupb']);
+    const a = players[0]!.userId;
+    const b = players[1]!.userId;
+    const args = {
+      handId: 'dup-bounty-1',
+      roomId: room.id,
+      head: 'dup-head-1',
+      entries: [],
+      rake: 0,
+      commissionBps: 50,
+      stackDeltas: [
+        { userId: a, delta: -20 },
+        { userId: b, delta: 20 },
+      ],
+      pokerLedger: [],
+      squidLedger: [],
+      squidNote: 'Squid Game penalty/payout',
+      timeBanks: [],
+      timeBankEpoch: null,
+      triggerIds: [],
+      bombRan: false,
+      rakeRecipientId: null,
+      sevenDeuce: {
+        winnerUserId: b,
+        winnerSeat: 1,
+        winnerAmount: 20,
+        payerAmounts: [{ userId: a, amount: 20 }],
+      },
+      now: Date.now(),
+    };
+    const bountyRows = () =>
+      ctx.db
+        .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
+        .get(room.id) as { n: number };
+    expect(applyHandSettlement(ctx.db, args).status).toBe('applied');
+    expect(bountyRows().n).toBe(2);
+    expect(applyHandSettlement(ctx.db, args).status).toBe('duplicate');
+    expect(bountyRows().n).toBe(2); // the bounty is never paid twice
   });
 
   it('recovery: releases a claimed trigger only when its settlement marker is absent', async () => {
@@ -2195,7 +3223,9 @@ describe('P2 hardening', () => {
     expect(players[0]!.handAbort).toBeNull();
     expect(players[0]!.multiRunResult).toMatchObject({ runs: 2 });
     const end = players[0]!.handEnd!;
-    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before - (end.commission ?? 0));
+    // B1: the table total is the authoritative `room_players.stack`; with no
+    // platform user the rake returns to the in-room banker, so it is conserved.
+    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(before);
     expect(end.deltas.reduce((s, d) => s + d.delta, 0)).toBe(-(end.commission ?? 0));
     const ledger = await host.api(`/api/rooms/${room.id}/ledger`);
     expect(ledger.verified.ok).toBe(true);
@@ -2295,4 +3325,1038 @@ describe('auto-deal cadence', () => {
       await ctx2.app.close();
     }
   }, 40000);
+});
+
+describe('settlement lifecycle v5', () => {
+  it('P0-1: when the banker is in the hand the rake is an explicit per-seat commissionDelta', async () => {
+    const { players, room, host } = await setupRoom(['bankera', 'bankerb'], ['passive', 'passive']);
+    // No platform account: rake falls back to the in-room banker (the host).
+    ctx.db.prepare("DELETE FROM meta WHERE key = 'platform_user_id'").run();
+    ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(host.handAbort).toBeNull();
+    const end = host.handEnd!;
+    const rake = end.commission ?? 0;
+    expect(rake).toBeGreaterThan(0);
+
+    // Per-seat contract: ending - starting === net_delta + wire commissionDelta.
+    const proj = ctx.db
+      .prepare(
+        'SELECT user_id, seat, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
+      )
+      .all(end.handId) as {
+      user_id: number;
+      seat: number;
+      starting_stack: number;
+      ending_stack: number;
+      net_delta: number;
+    }[];
+    const comm = ctx.db
+      .prepare(
+        "SELECT user_id, SUM(delta) AS d FROM ledger WHERE ref = ? AND kind = 'commission' GROUP BY user_id",
+      )
+      .all(end.head) as { user_id: number; d: number }[];
+    const commByUser = new Map(comm.map((c) => [c.user_id, c.d]));
+    expect(commByUser.size).toBe(1);
+    expect([...commByUser.values()][0]).toBe(rake);
+    const bankerId = (
+      ctx.db.prepare('SELECT banker_id FROM rooms WHERE id = ?').get(room.id) as {
+        banker_id: number;
+      }
+    ).banker_id;
+    const bankerSeat = proj.find((p) => p.user_id === bankerId)!.seat;
+    // Direct wire assertion, not an inference from a ledger query.
+    const commissionLeg = end.commissionDeltas ?? [];
+    expect(commissionLeg).toEqual([{ seat: bankerSeat, delta: rake }]);
+    const wireCommissionBySeat = new Map(commissionLeg.map((c) => [c.seat, c.delta]));
+    for (const p of proj) {
+      expect(p.ending_stack - p.starting_stack).toBe(
+        p.net_delta + (wireCommissionBySeat.get(p.seat) ?? 0),
+      );
+    }
+    // The game leg remains -rake zero-sum; the commission leg is +rake, and
+    // because the recipient is in hand the aggregate is exactly zero.
+    const gameSum = end.deltas.reduce((s, d) => s + d.delta, 0);
+    const commissionSum = commissionLeg.reduce((s, d) => s + d.delta, 0);
+    expect(gameSum).toBe(-rake);
+    expect(commissionSum).toBe(rake);
+    expect(gameSum + commissionSum).toBe(0); // recipient in hand
+    // The rake never left the table: total hand stacks are conserved.
+    expect(end.stacks.reduce((s, x) => s + x.stack, 0)).toBe(2000);
+  }, 20000);
+
+  it('P0-1: with an out-of-hand platform recipient every seat still reconciles net_delta', async () => {
+    const { players, room, host } = await setupRoom(['plata', 'platb'], ['passive', 'passive']);
+    const { userId: platformId } = createUser(ctx.db, 'platformv5', 'c'.repeat(64), 'd'.repeat(64));
+    setPlatformUserId(ctx.db, platformId);
+    ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const end = host.handEnd!;
+    const rake = end.commission ?? 0;
+    expect(rake).toBeGreaterThan(0);
+    expect(end.commissionDeltas ?? []).toHaveLength(0); // platform has no seat
+
+    const proj = ctx.db
+      .prepare(
+        'SELECT user_id, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
+      )
+      .all(end.handId) as {
+      user_id: number;
+      starting_stack: number;
+      ending_stack: number;
+      net_delta: number;
+    }[];
+    for (const p of proj) expect(p.ending_stack - p.starting_stack).toBe(p.net_delta);
+    // Conditional aggregate: sum(deltas) is always -rake, but with the
+    // recipient out of hand the in-hand commission leg is empty, so the sum is
+    // -rake (NOT 0). The credit lives on the external account's ledger row.
+    const gameSum = end.deltas.reduce((s, d) => s + d.delta, 0);
+    const commissionSum = (end.commissionDeltas ?? []).reduce((s, d) => s + d.delta, 0);
+    expect(gameSum).toBe(-rake);
+    expect(gameSum + commissionSum).toBe(-rake);
+    const platformStack = ctx.db
+      .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(room.id, platformId) as { stack: number };
+    expect(platformStack.stack).toBe(rake);
+  }, 20000);
+
+  it('P0-3: an unresolvable pre-lifecycle transcript is quarantined and freezes the room', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-legacy-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      clock,
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['lega', 'legb'], ['passive', 'passive']);
+      // Simulate a database written before hand_lifecycle existed: a transcript
+      // with no settlement marker and no reconcilable ledger/projection.
+      ctx.db
+        .prepare(
+          "INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, '[]', ?)",
+        )
+        .run('legacy-hand-1', room.id, 'legacyhead', 1);
+      for (const c of players) c.close();
+      await app.app.close();
+
+      // Reopen: the strict reconciliation cannot prove this hand settled, so it
+      // is QUARANTINED (fail closed) rather than whitelisted as history.
+      const restarted = createApp(dbPath);
+      const row = restarted.db
+        .prepare('SELECT status, last_error FROM hand_lifecycle WHERE hand_id = ?')
+        .get('legacy-hand-1') as { status: string; last_error: string | null } | undefined;
+      expect(row?.status).toBe('quarantined');
+      expect(firstPendingHandLifecycle(restarted.db, room.id)).toBe('legacy-hand-1');
+
+      const nextHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = nextHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      for (const p of players) {
+        p.baseUrl = baseUrl;
+        await p.connect(room.id);
+      }
+      host.errors = [];
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.errors.some((e) => /never settled|frozen/i.test(e)), 4000);
+      for (const p of players) p.close();
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 30000);
+
+  it('P0-2: a rolled-back settlement leaves a durable running row that a graceful shutdown resolves', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-rollback-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      showdownHoldMs: 400,
+      settleHoldMs: 0,
+      clock,
+      faultInjection: {
+        persist: (attempt) => {
+          if (fault.persistFailThrough >= attempt) throw new Error('injected persist failure');
+        },
+      },
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['rba', 'rbb'], ['passive', 'passive']);
+      fault.persistFailThrough = 1000;
+      clock.freeze();
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.settlementFailures.length === 1, 8000);
+      const handId = host.handId!;
+      for (let i = 0; i < 4; i++) {
+        clock.advance(250);
+        await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
+      }
+      expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
+
+      // The rollback left no transcript and no marker - the old detector saw
+      // nothing - but the durable lifecycle row survived.
+      expect(
+        ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      ).toBeUndefined();
+      expect(ctx.db.prepare('SELECT 1 FROM transcripts WHERE hand_id = ?').get(handId)).toBeUndefined();
+      expect(
+        ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
+      ).toEqual({ status: 'running' });
+
+      for (const c of players) c.close();
+      // A graceful shutdown drains the frozen, never-settled hand: it is
+      // aborted (no chips moved) so the room is not permanently frozen.
+      await app.app.close();
+
+      const restarted = createApp(dbPath);
+      expect(
+        restarted.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
+      ).toEqual({ status: 'aborted' });
+      expect(firstPendingHandLifecycle(restarted.db, room.id)).toBeNull();
+      fault.persistFailThrough = 0;
+      const restartHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        showdownHoldMs: 0,
+        settleHoldMs: 0,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = restartHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      // The old DB lifecycle protocol resumes: a fresh hand deals and settles.
+      for (const p of players) {
+        p.baseUrl = baseUrl;
+        await p.connect(room.id);
+      }
+      host.send({ t: 'start_hand' });
+      await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+      expect(players[0]!.handAbort).toBeNull();
+      for (const p of players) p.close();
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 30000);
+
+  it('P1-1/P1-2: a rolled-back 7-2 bounty is retryable, does not lock the room, and does not re-broadcast the show', async () => {
+    const { players, room, host } = await setupRoom(['uha', 'uhb'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?').run(room.id);
+    // Seat 1 (bob) is dealt 7-2 offsuit; the host folds, so bob wins by fold.
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const bob = players[1]!;
+    const gameRoom = hub.rooms.get(room.id)!;
+
+    fault.sevenDeuceFailOnce = true;
+    bob.showCards();
+    await new Promise((r) => setTimeout(r, 200));
+    // A known, retryable business failure: the room must not go unhealthy...
+    expect(gameRoom.isUnhealthy()).toBe(false);
+    // ...and the public `cards_shown` frame must not have been sent before the
+    // payment committed (so a retry cannot duplicate it).
+    expect(host.cardsShown).toHaveLength(0);
+
+    bob.showCards();
+    await host.waitFor(() => host.cardsShown.length === 1, 3000);
+    expect(host.cardsShown).toHaveLength(1);
+    expect(bob.cardsShown).toHaveLength(1);
+    expect(gameRoom.isUnhealthy()).toBe(false);
+  }, 20000);
+
+  it('P1-1: a recoverable mark clears only on the exact verified reason and then deals again', async () => {
+    const { players, room, host } = await setupRoom(['mha', 'mhb'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = hub.rooms.get(room.id)!;
+    gameRoom.markUnhealthy('settlement failed: busy', { recoverable: true });
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    expect(gameRoom.clearUnhealthy('some other reason')).toBe(false);
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    expect(gameRoom.clearUnhealthy('settlement failed: busy')).toBe(true);
+    expect(gameRoom.isUnhealthy()).toBe(false);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.handAbort).toBeNull();
+  }, 20000);
+
+  it('P1-1: an unknown (non-recoverable) mark is not clearable and stays fail-closed', async () => {
+    const { room, host } = await setupRoom(['nra', 'nrb'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = hub.rooms.get(room.id)!;
+    gameRoom.markUnhealthy('TypeError: boom');
+    expect(gameRoom.clearUnhealthy('TypeError: boom')).toBe(false);
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /held for an operator/i.test(e)), 3000);
+    expect(host.handEnd).toBeNull();
+  }, 20000);
+});
+
+describe('settlement lifecycle v6', () => {
+  it('P0-1: a fallback banker outside the hand gets no seat leg and the aggregate is conditional', async () => {
+    const { players, room, host } = await setupRoom(['fba', 'fbb'], ['passive', 'passive']);
+    ctx.db.prepare("DELETE FROM meta WHERE key = 'platform_user_id'").run();
+    const { userId: bankerId } = createUser(ctx.db, 'outbanker', 'e'.repeat(64), 'f'.repeat(64));
+    ctx.db
+      .prepare('UPDATE rooms SET commission_bps = 500, banker_id = ? WHERE id = ?')
+      .run(bankerId, room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const end = host.handEnd!;
+    const rake = end.commission ?? 0;
+    expect(rake).toBeGreaterThan(0);
+    // The recipient has no seat: the wire commission leg is empty.
+    expect(end.commissionDeltas ?? []).toHaveLength(0);
+    const gameSum = end.deltas.reduce((s, d) => s + d.delta, 0);
+    const commissionSum = (end.commissionDeltas ?? []).reduce((s, d) => s + d.delta, 0);
+    expect(gameSum).toBe(-rake); // unconditional
+    expect(gameSum + commissionSum).toBe(-rake); // NOT 0: recipient out of hand
+    // Every seat still reconciles without a commission delta.
+    const proj = ctx.db
+      .prepare(
+        'SELECT user_id, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
+      )
+      .all(end.handId) as {
+      user_id: number;
+      starting_stack: number;
+      ending_stack: number;
+      net_delta: number;
+    }[];
+    for (const p of proj) expect(p.ending_stack - p.starting_stack).toBe(p.net_delta);
+    const banker = ctx.db
+      .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(room.id, bankerId) as { stack: number };
+    expect(banker.stack).toBe(rake);
+  }, 20000);
+
+  it('P0-2: a post-cutoff transcript without a marker is quarantined and freezes the room', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-qtn-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      clock,
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['qta', 'qtb'], ['passive', 'passive']);
+      // A transcript created AFTER the lifecycle cutoff with no settlement
+      // marker: cannot be assumed settled (half-settled / corrupted), so it
+      // must be quarantined rather than whitelisted as legacy.
+      ctx.db
+        .prepare(
+          "INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, '[]', ?)",
+        )
+        .run('orphan-hand-1', room.id, 'orphanhead', Date.now() + 1000);
+      for (const c of players) c.close();
+      await app.app.close();
+
+      const restarted = createApp(dbPath);
+      const row = restarted.db
+        .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+        .get('orphan-hand-1') as { status: string } | undefined;
+      expect(row?.status).toBe('quarantined');
+      expect(firstPendingHandLifecycle(restarted.db, room.id)).toBe('orphan-hand-1');
+
+      const nextHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = nextHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      for (const p of players) {
+        p.baseUrl = baseUrl;
+        await p.connect(room.id);
+      }
+      host.errors = [];
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.errors.some((e) => /never settled|frozen/i.test(e)), 4000);
+      for (const p of players) p.close();
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 30000);
+
+  it('P0-3: a graceful shutdown drains a live hand to terminal so restart is not frozen', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-drain-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      shutdownDrainMs: 120,
+      clock,
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['sda', 'sdb'], ['passive', 'passive']);
+      // Stall the hand so the drain window must abort it.
+      players[1]!.respondShares = false;
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.handId !== null, 5000);
+      const handId = host.handId!;
+
+      // Graceful shutdown drains the live hand: the stalled hand cannot reach a
+      // terminal state, so after the bounded window it is aborted and its
+      // lifecycle row becomes terminal. This is exactly what the hub's onClose
+      // awaits before dropping sockets.
+      await hub.rooms.get(room.id)!.shutdown();
+      expect(
+        ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
+      ).toEqual({ status: 'aborted' });
+
+      // Tear the first server down, then "restart" on the same file.
+      for (const p of players) p.close();
+      await app.app.close();
+
+      const restarted = createApp(dbPath);
+      const row = restarted.db
+        .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+        .get(handId) as { status: string } | undefined;
+      expect(row?.status).toBe('aborted');
+      expect(firstPendingHandLifecycle(restarted.db, room.id)).toBeNull();
+
+      const nextHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        shutdownDrainMs: 120,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = nextHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      players[1]!.respondShares = true;
+      for (const p of players) {
+        p.baseUrl = baseUrl;
+        await p.connect(room.id);
+      }
+      host.send({ t: 'start_hand' });
+      await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+      expect(players[0]!.handAbort).toBeNull();
+      for (const p of players) p.close();
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 40000);
+
+  it('P1-4: an unexpected internal TypeError in the 7-2 bounty is NOT classified retryable', async () => {
+    const { players, room, host } = await setupRoom(['i4a', 'i4b'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?').run(room.id);
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const bob = players[1]!;
+    const gameRoom = hub.rooms.get(room.id)!;
+
+    fault.sevenDeuceInternal = () => {
+      throw new TypeError('internal boom');
+    };
+    bob.showCards();
+    await host.waitFor(() => gameRoom.isUnhealthy(), 3000);
+    fault.sevenDeuceInternal = null;
+    // A programming error is a permanent mark: never clearable.
+    expect(gameRoom.clearUnhealthy('anything')).toBe(false);
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /held for an operator/i.test(e)), 3000);
+  }, 20000);
+
+  it('P1-5: an unknown error after a recoverable mark escalates and survives a settlement success', async () => {
+    const { room, host } = await setupRoom(['i5a', 'i5b'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = hub.rooms.get(room.id)!;
+    gameRoom.markUnhealthy('settlement failed: busy', { recoverable: true });
+    // A later, genuinely unknown programming error must escalate the mark.
+    gameRoom.markUnhealthy('TypeError: late');
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    // A settlement success can no longer clear it.
+    gameRoom.settlementRecovered();
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    expect(gameRoom.clearUnhealthy('TypeError: late')).toBe(false);
+    expect(gameRoom.clearUnhealthy('settlement failed: busy')).toBe(false);
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /held for an operator/i.test(e)), 3000);
+  }, 20000);
+
+  it('P1-5b: an unknown error first is not downgraded by a later recoverable mark', async () => {
+    const { room } = await setupRoom(['i5c', 'i5d'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = hub.rooms.get(room.id)!;
+    gameRoom.markUnhealthy('TypeError: first');
+    gameRoom.markUnhealthy('settlement failed: busy', { recoverable: true });
+    gameRoom.settlementRecovered();
+    expect(gameRoom.isUnhealthy()).toBe(true);
+    expect(gameRoom.clearUnhealthy('TypeError: first')).toBe(false);
+  }, 20000);
+
+  it('P1-6: mid-hand buy breaks ending-starting === net_delta even with commission', async () => {
+    const { players, room, host } = await setupRoom(['m6a', 'm6b'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
+    host.send({ t: 'start_hand' });
+    const req = await host.api(`/api/rooms/${room.id}/buy`, { amount: 500 });
+    await host.api(`/api/rooms/${room.id}/approve`, { requestId: req.id, approve: true });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    const end = host.handEnd!;
+    const rake = end.commission ?? 0;
+    expect(rake).toBeGreaterThan(0);
+    const hostUser = ctx.db
+      .prepare('SELECT user_id FROM room_players WHERE room_id = ? AND seat = 0')
+      .get(room.id) as { user_id: number };
+    const p = ctx.db
+      .prepare(
+        'SELECT starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ? AND user_id = ?',
+      )
+      .get(end.handId, hostUser.user_id) as {
+      starting_stack: number;
+      ending_stack: number;
+      net_delta: number;
+    };
+    const comm = ctx.db
+      .prepare(
+        "SELECT COALESCE(SUM(delta), 0) AS d FROM ledger WHERE ref = ? AND kind = 'commission' AND user_id = ?",
+      )
+      .get(end.head, hostUser.user_id) as { d: number };
+    // The buy is an intervening account delta: the naive identity explicitly
+    // does NOT hold, and the exception is the 500 chips bought mid-hand (plus
+    // any commission leg this seat happens to receive).
+    expect(p.ending_stack - p.starting_stack).not.toBe(p.net_delta);
+    expect(p.ending_stack - p.starting_stack).toBe(p.net_delta + 500 + comm.d);
+  }, 20000);
+
+  it('P1-7: resolving a pending lifecycle row unblocks dealing without a restart', async () => {
+    const { players, room, host } = await setupRoom(['c7a', 'c7b'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    ctx.db
+      .prepare(
+        "INSERT INTO hand_lifecycle (hand_id, room_id, status, created_at, updated_at) VALUES ('stale-cache-hand', ?, 'running', 1, 1)",
+      )
+      .run(room.id);
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /never settled|frozen/i.test(e)), 3000);
+    // The operator resolves the row in the same process: the next deal must see
+    // it (no stale startup cache).
+    ctx.db
+      .prepare("UPDATE hand_lifecycle SET status = 'committed', resolved_at = ? WHERE hand_id = 'stale-cache-hand'")
+      .run(Date.now());
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.handAbort).toBeNull();
+  }, 20000);
+});
+
+describe('settlement lifecycle v7', () => {
+  const playOneHand = async (names: [string, string]) => {
+    const { players, room, host } = await setupRoom(names, ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.handAbort).toBeNull();
+    return { players, room, host };
+  };
+  /** Drop the settlement marker and lifecycle row: exactly the state a database
+   *  written by the pre-lifecycle protocol is in. */
+  const makePreLifecycle = (handId: string) => {
+    ctx.db.prepare('DELETE FROM hand_settlements WHERE hand_id = ?').run(handId);
+    ctx.db.prepare('DELETE FROM hand_lifecycle WHERE hand_id = ?').run(handId);
+  };
+  const lifecycleRow = (handId: string) =>
+    ctx.db.prepare('SELECT status, last_error FROM hand_lifecycle WHERE hand_id = ?').get(handId) as
+      | { status: string; last_error: string | null }
+      | undefined;
+
+  it('P0-2: a fully reconciled historical hand is committed (not frozen) and the dry run is read-only', async () => {
+    const { host, room } = await playOneHand(['ra', 'rb']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+
+    // Dry run first: it sees one markerless transcript and reconciles it.
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.transcripts).toBe(1);
+    expect(audit.markerless).toBe(1);
+    expect(audit.reconciled).toBe(1);
+    expect(audit.quarantined).toEqual([]);
+    // read-only: the dry run wrote nothing
+    expect(lifecycleRow(handId)).toBeUndefined();
+
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)).toEqual({ status: 'committed', last_error: 'legacy reconciled' });
+    expect(firstPendingHandLifecycle(ctx.db, room.id)).toBeNull();
+
+    // The removed `legacy` status is re-reconciled on the next pass (the old
+    // "flag already exists -> no-op" hole is gone).
+    ctx.db.prepare("UPDATE hand_lifecycle SET status = 'legacy' WHERE hand_id = ?").run(handId);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('committed');
+  }, 25000);
+
+  it('P0-2: a missing settlement leg quarantines the hand and freezes the room', async () => {
+    const { host, room } = await playOneHand(['qa', 'qb']);
+    const handId = host.handEnd!.handId;
+    const head = host.handEnd!.head;
+    makePreLifecycle(handId);
+    // Remove one hand-settlement leg: the per-hand sum no longer matches -rake.
+    ctx.db
+      .prepare(
+        "DELETE FROM ledger WHERE id = (SELECT MIN(id) FROM ledger WHERE room_id = ? AND ref = ? AND kind = 'hand-settlement')",
+      )
+      .run(room.id, head);
+
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.reconciled).toBe(0);
+    expect(audit.quarantined).toHaveLength(1);
+    expect(audit.quarantined[0]!.reason).toMatch(/hand-settlement legs sum/);
+
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+    expect(firstPendingHandLifecycle(ctx.db, room.id)).toBe(handId);
+    // Frozen: the next deal is refused while the quarantined row stands.
+    host.errors = [];
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.errors.some((e) => /never settled|frozen/i.test(e)), 3000);
+  }, 25000);
+
+  it('P0-2: a head that does not match the transcript chain quarantines the hand', async () => {
+    const { host, room } = await playOneHand(['ha', 'hb']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    ctx.db.prepare('UPDATE transcripts SET head = ? WHERE hand_id = ?').run('deadbeef', handId);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.reconciled).toBe(0);
+    expect(audit.quarantined[0]!.reason).toMatch(/head does not match|legs sum/);
+    reconcileMissingSettlements(ctx.db);
+    expect(firstPendingHandLifecycle(ctx.db, room.id)).toBe(handId);
+  }, 25000);
+
+  it('P0-2: a missing stats projection quarantines the hand', async () => {
+    const { host, room } = await playOneHand(['pa', 'pb']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    ctx.db.prepare('DELETE FROM hand_players WHERE hand_id = ?').run(handId);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.reconciled).toBe(0);
+    expect(audit.quarantined[0]!.reason).toMatch(/no hand_players projection rows/);
+    reconcileMissingSettlements(ctx.db);
+    expect(firstPendingHandLifecycle(ctx.db, room.id)).toBe(handId);
+  }, 25000);
+
+  // --- v8 hardening: the reconciliation must not trust self-consistent fakes ---
+
+  /** Insert a raw ledger leg; every negative test re-chains afterwards so the
+   *  ONLY failing rule is the one under test. */
+  const addLeg = (roomId: string, userId: number, delta: number, kind: string, ref: string) =>
+    ctx.db
+      .prepare(
+        "INSERT INTO ledger (room_id,user_id,delta,kind,ref,ts,prev_hash,entry_hash) VALUES (?,?,?,?,?,?,'seed','seed')",
+      )
+      .run(roomId, userId, delta, kind, ref, Date.now());
+
+  const playerIds = (roomId: string): number[] =>
+    (
+      ctx.db
+        .prepare('SELECT user_id FROM room_players WHERE room_id = ? ORDER BY user_id')
+        .all(roomId) as { user_id: number }[]
+    ).map((r) => r.user_id);
+
+  const playRakeHand = async (names: [string, string]) => {
+    const { players, room, host } = await setupRoom(names, ['passive', 'passive']);
+    // No platform account: the rake falls back to the in-room banker and the
+    // hand has a real commission leg.
+    ctx.db.prepare("DELETE FROM meta WHERE key = 'platform_user_id'").run();
+    ctx.db
+      .prepare('UPDATE rooms SET auto_deal = 0, commission_bps = 500 WHERE id = ?')
+      .run(room.id);
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    expect(players[0]!.handAbort).toBeNull();
+    expect(host.handEnd!.commission ?? 0).toBeGreaterThan(0);
+    return { players, room, host };
+  };
+
+  const corruptCommission = (handId: string, value: unknown) => {
+    const row = ctx.db
+      .prepare('SELECT entries FROM transcripts WHERE hand_id = ?')
+      .get(handId) as { entries: string };
+    const entries = JSON.parse(row.entries) as { type?: string; payload?: Record<string, unknown> }[];
+    const settlement = entries.find((e) => e.type === 'settlement')!;
+    settlement.payload!.commission = value;
+    ctx.db
+      .prepare('UPDATE transcripts SET entries = ? WHERE hand_id = ?')
+      .run(JSON.stringify(entries), handId);
+  };
+
+  it('v8/项2: a hand-settlement leg for a user outside hand_players is rejected', async () => {
+    const { host, room } = await playOneHand(['e2a', 'e2b']);
+    const handId = host.handEnd!.handId;
+    const head = host.handEnd!.head;
+    makePreLifecycle(handId);
+    // A self-consistent pair of external legs: the sum stays -rake and the
+    // projection players are untouched, so only the participant rule catches it.
+    addLeg(room.id, 90001, 100, 'hand-settlement', head);
+    addLeg(room.id, 90002, -100, 'hand-settlement', head);
+    rechainRoom(ctx.db, room.id);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(/is not a seat in this hand/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+  it('v9/项2d: a non-seven-deuce leg on the hand-id ref is rejected', async () => {
+    const wrong: [string, string][] = [
+      ['commission', 'cc'],
+      ['hand-settlement', 'hh'],
+      ['squid-game', 'ss'],
+    ];
+    for (const [kind, tag] of wrong) {
+      const { host, room } = await playOneHand([`q9${tag}`, `r9${tag}`]);
+      const handId = host.handEnd!.handId;
+      makePreLifecycle(handId);
+      addLeg(room.id, playerIds(room.id)[0]!, 10, kind, handId);
+      rechainRoom(ctx.db, room.id);
+      const audit = auditMarkerlessTranscripts(ctx.db);
+      expect(audit.quarantined[0]?.reason).toMatch(/unexpected ledger kind .* on the hand-id ref/);
+      reconcileMissingSettlements(ctx.db);
+      expect(lifecycleRow(handId)?.status).toBe('quarantined');
+      ctx.db.prepare('DELETE FROM transcripts WHERE hand_id = ?').run(handId);
+    }
+  }, 40000);
+
+  it('v9/项2d: a seven-deuce leg on the settlement-head ref is rejected', async () => {
+    const { host, room } = await playOneHand(['q9sd', 'r9sd']);
+    const handId = host.handEnd!.handId;
+    const head = host.handEnd!.head;
+    makePreLifecycle(handId);
+    addLeg(room.id, playerIds(room.id)[0]!, 10, 'seven-deuce', head);
+    rechainRoom(ctx.db, room.id);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(
+      /unexpected ledger kind 'seven-deuce' on the settlement head/,
+    );
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+
+  it('v8/项3: two commission recipients are rejected (single-rake-recipient contract)', async () => {
+    const { host, room } = await playRakeHand(['c3a', 'c3b']);
+    const handId = host.handEnd!.handId;
+    const head = host.handEnd!.head;
+    const legs = ctx.db
+      .prepare(
+        "SELECT user_id, delta FROM ledger WHERE room_id = ? AND ref = ? AND kind = 'commission'",
+      )
+      .all(room.id, head) as { user_id: number; delta: number }[];
+    expect(legs).toHaveLength(1);
+    const total = legs[0]!.delta;
+    const others = playerIds(room.id).filter((u) => u !== legs[0]!.user_id);
+    makePreLifecycle(handId);
+    ctx.db
+      .prepare("DELETE FROM ledger WHERE room_id = ? AND ref = ? AND kind = 'commission'")
+      .run(room.id, head);
+    const half = Math.floor(total / 2);
+    addLeg(room.id, legs[0]!.user_id, half, 'commission', head);
+    addLeg(room.id, others[0]!, total - half, 'commission', head);
+    rechainRoom(ctx.db, room.id);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(/exactly one commission leg/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+  it('v8/项4a: a duplicate seven-deuce leg on the hand-id ref is rejected', async () => {
+    const { host, room } = await playOneHand(['d4a', 'd4b']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    const [u1] = playerIds(room.id);
+    // Duplicate is only catchable when the hand-id ref is covered too.
+    addLeg(room.id, u1!, 25, 'seven-deuce', handId);
+    addLeg(room.id, u1!, 25, 'seven-deuce', handId);
+    rechainRoom(ctx.db, room.id);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(/duplicate seven-deuce leg/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+  it('v8/项4b: a seven-deuce winner not funded by its payers is rejected', async () => {
+    const { host, room } = await playOneHand(['d4c', 'd4d']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    const [u1, u2] = playerIds(room.id);
+    addLeg(room.id, u1!, 100, 'seven-deuce', handId); // winner
+    addLeg(room.id, u2!, -50, 'seven-deuce', handId); // payer underpays
+    rechainRoom(ctx.db, room.id);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(/seven-deuce payers 50 != winner 100/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+  it('v8/项5: a projection from a different room is rejected', async () => {
+    const { host, room } = await playOneHand(['e5a', 'e5b']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    ctx.db.prepare('UPDATE hands SET room_id = ? WHERE hand_id = ?').run('other-room', handId);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.quarantined[0]?.reason).toMatch(/projection room_id .* != transcript room_id/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+  }, 25000);
+
+  it('v8/项6: a fractional or negative rake is rejected', async () => {
+    for (const bad of [1.5, -5, '5']) {
+      const { host, room } = await playOneHand([`r6${String(bad).length}`, `s6${String(bad).length}`]);
+      const handId = host.handEnd!.handId;
+      makePreLifecycle(handId);
+      corruptCommission(handId, bad);
+      const audit = auditMarkerlessTranscripts(ctx.db);
+      expect(audit.quarantined[0]?.reason).toMatch(/commission is not a non-negative integer/);
+      reconcileMissingSettlements(ctx.db);
+      expect(lifecycleRow(handId)?.status).toBe('quarantined');
+      ctx.db.prepare('DELETE FROM transcripts WHERE hand_id = ?').run(handId);
+    }
+  }, 40000);
+
+  it('v8/项7: a consistent marker overrides a stale running/quarantined/legacy/aborted row', async () => {
+    for (const stale of ['running', 'prepared', 'quarantined', 'legacy', 'aborted'] as const) {
+      const { host, room } = await playOneHand([`m7${stale[0]}`, `n7${stale[0]}`]);
+      const handId = host.handEnd!.handId;
+      // The hand actually settled (marker present); force a stale lifecycle row.
+      ctx.db
+        .prepare(
+          `INSERT INTO hand_lifecycle (hand_id, room_id, status, created_at, updated_at, resolved_at)
+           VALUES (?, ?, ?, 1, 1, NULL)
+           ON CONFLICT(hand_id) DO UPDATE SET status = excluded.status, resolved_at = NULL`,
+        )
+        .run(handId, room.id, stale);
+      expect(firstPendingHandLifecycle(ctx.db, room.id)).toBe(
+        stale === 'legacy' || stale === 'aborted' ? null : handId,
+      );
+      reconcileMissingSettlements(ctx.db);
+      expect(lifecycleRow(handId)?.status).toBe('committed');
+      expect(firstPendingHandLifecycle(ctx.db, room.id)).toBeNull();
+      ctx.db.prepare('DELETE FROM transcripts WHERE hand_id = ?').run(handId);
+    }
+  }, 40000);
+
+  it('v8/项7: a marker that disagrees with the transcript is quarantined, not trusted', async () => {
+    const { host, room } = await playOneHand(['m7x', 'n7x']);
+    const handId = host.handEnd!.handId;
+    ctx.db.prepare('UPDATE hand_settlements SET head = ? WHERE hand_id = ?').run('wrong', handId);
+    const audit = auditMarkerlessTranscripts(ctx.db);
+    expect(audit.markerConflicts).toHaveLength(1);
+    expect(audit.markerConflicts[0]!.reason).toMatch(/marker disagrees/);
+    reconcileMissingSettlements(ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('quarantined');
+    expect(firstPendingHandLifecycle(ctx.db, room.id)).toBe(handId);
+  }, 25000);
+
+  it('P0-3: the real app.close() path drains a live hand before it resolves and terminates the sockets', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-close-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub };
+    const app = createApp(dbPath);
+    const appHub = attachHub(app.app, app.db, {
+      cryptoTimeoutMs: 1500,
+      actionTimeoutMs: 1500,
+      autoDealMs: 3_600_000,
+      readyCheckMs: 1500,
+      shutdownDrainMs: 100,
+      clock,
+    });
+    await app.app.listen({ port: 0 });
+    const addr = app.app.server.address() as AddressInfo;
+    ctx = app;
+    hub = appHub;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    try {
+      const { players, room, host } = await setupRoom(['dca', 'dcb'], ['passive', 'passive']);
+      players[1]!.respondShares = false; // a stuck hand the drain must abort
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.handId !== null, 5000);
+      const handId = host.handId!;
+
+      // The REAL deployment path: close the Fastify app with the websockets
+      // still open. Its preClose hook must drain the rooms and only then let
+      // the server close.
+      await app.app.close();
+
+      const probe = new Database(dbPath, { readonly: true });
+      const row = probe
+        .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+        .get(handId) as { status: string } | undefined;
+      probe.close();
+      expect(row?.status).toBe('aborted');
+      // The sockets were terminated as part of the same close.
+      await host.waitFor(() => players[0]!.ws.readyState === WebSocket.CLOSED, 3000);
+      expect(players[0]!.ws.readyState).toBe(WebSocket.CLOSED);
+
+      // Restart: the room is not frozen and can deal again.
+      const restarted = createApp(dbPath);
+      expect(firstPendingHandLifecycle(restarted.db, room.id)).toBeNull();
+      const nextHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        shutdownDrainMs: 100,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = nextHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      players[1]!.respondShares = true;
+      for (const p of players) {
+        p.baseUrl = baseUrl;
+        await p.connect(room.id);
+      }
+      host.send({ t: 'start_hand' });
+      await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+      expect(players[0]!.handAbort).toBeNull();
+      for (const p of players) p.close();
+      await restarted.app.close();
+    } finally {
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+    }
+  }, 60000);
+});
+
+describe('7-2 bounty transfer error classification', () => {
+  const setupSevenDeuceHand = async () => {
+    const { players, room, host } = await setupRoom(['tca', 'tcb'], ['fold-first', 'passive']);
+    ctx.db
+      .prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?')
+      .run(room.id);
+    // Seat 1 (bob) is dealt 7-2 offsuit; the host folds, so bob wins by fold.
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
+    const seen = new Set(wanted);
+    const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = Q;
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
+    return { players, room, host, bob: players[1]!, gameRoom: hub.rooms.get(room.id)! };
+  };
+
+  it('P1-4: a real transient SQLITE_BUSY is retryable and never locks the room', async () => {
+    const { host, bob, gameRoom } = await setupSevenDeuceHand();
+    fault.sevenDeuceError = Object.assign(new Error('database is locked'), {
+      code: 'SQLITE_BUSY',
+    });
+    bob.showCards();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(gameRoom.isUnhealthy()).toBe(false);
+    expect(host.cardsShown).toHaveLength(0);
+    bob.showCards();
+    await host.waitFor(() => host.cardsShown.length === 1, 3000);
+    expect(host.cardsShown).toHaveLength(1);
+    expect(gameRoom.isUnhealthy()).toBe(false);
+  }, 20000);
+
+  it('P1-4: an extended SQLITE_IOERR_READ is a programming/environmental error, not retryable', async () => {
+    const { host, bob, gameRoom } = await setupSevenDeuceHand();
+    fault.sevenDeuceError = Object.assign(new Error('disk I/O error'), {
+      code: 'SQLITE_IOERR_READ',
+    });
+    bob.showCards();
+    await host.waitFor(() => gameRoom.isUnhealthy(), 3000);
+    // Not clearable: it is not a recoverable settlement mark.
+    expect(gameRoom.clearUnhealthy('anything')).toBe(false);
+  }, 20000);
+
+  it('P1-4: SQLITE_FULL/SQLITE_NOMEM/SQLITE_PROTOCOL are not treated as retryable', async () => {
+    const { host, bob, gameRoom } = await setupSevenDeuceHand();
+    fault.sevenDeuceError = Object.assign(new Error('database or disk is full'), {
+      code: 'SQLITE_FULL',
+    });
+    bob.showCards();
+    await host.waitFor(() => gameRoom.isUnhealthy(), 3000);
+  }, 20000);
 });

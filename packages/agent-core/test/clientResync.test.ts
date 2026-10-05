@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BettingState, CardId, ServerMsg } from '@4am/shared';
-import { identityFromSeed } from '@4am/mental-poker';
+import { cardPoint, identityFromSeed, pointHex } from '@4am/mental-poker';
 import { HeadlessClient } from '../src/client.js';
 
 /**
@@ -473,30 +473,83 @@ describe('HeadlessClient reconnect resync barrier', () => {
 
   it('drops a stale peek_offer and never answers it', () => {
     const { c, s } = staleTurnThenReconnect(); // holds hand h1
+    const send = vi.spyOn(c, 'send');
     s.handle(peekOffer('h-old', 'o-old'));
     expect(c.peekOffers).toEqual([]);
-
-    // Answering the dropped id must not emit any frame.
-    const send = vi.spyOn(c, 'send');
+    // A stale offer triggers no automatic answer, and answering the dropped id
+    // must not emit any frame either.
+    expect(send).not.toHaveBeenCalled();
     c.answerPeek('o-old', true);
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('accepts a peek_offer for the recent hand and can answer it', () => {
+  it('auto-accepts a peek_offer for the recent hand with shares and a signature', () => {
     const { c, s } = freshClient();
+    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
     s.handle(roomState(true));
     s.handle(handStart('h1'));
     s.handle(bettingState('h1', 3, 0));
     s.handle(handEnd('h1')); // recent hand is h1
-
-    s.handle(peekOffer('h1', 'o1'));
-    expect(c.peekOffers.map((o) => o.offerId)).toEqual(['o1']);
+    s.handKeys.set('h1', 123456789n);
+    c.myCardPoints = [
+      { deckIndex: 0, point: pointHex(cardPoint(0)) },
+      { deckIndex: 1, point: pointHex(cardPoint(1)) },
+    ];
+    c.myCardPointsHandId = 'h1';
 
     const send = vi.spyOn(c, 'send');
-    c.answerPeek('o1', false);
+    s.handle(peekOffer('h1', 'o1'));
+    // No manual answer: the bot agrees on its own.
+    expect(send).toHaveBeenCalledTimes(1);
+    const frame = send.mock.calls[0]![0] as Record<string, unknown>;
+    expect(frame).toMatchObject({ t: 'peek_accept', handId: 'h1', offerId: 'o1' });
+    expect((frame.shares as unknown[]).length).toBe(2);
+    expect(typeof frame.sig).toBe('string');
+    expect(c.peekOffers).toEqual([]);
+  });
+
+  it('declines a peek instead of minting a key for a hand it did not play', () => {
+    const { c, s } = freshClient();
+    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
+    s.handle(roomState(true));
+    s.handle(handStart('h1'));
+    s.handle(bettingState('h1', 3, 0));
+    s.handle(handEnd('h1'));
+    // Points from the ended hand, but the per-hand key was already cleared (a
+    // new hand_start drops every key except the current one). Answering must
+    // decline, never implicitly mint a fresh key and sign bogus shares.
+    c.myCardPoints = [
+      { deckIndex: 0, point: pointHex(cardPoint(0)) },
+      { deckIndex: 1, point: pointHex(cardPoint(1)) },
+    ];
+    c.myCardPointsHandId = 'h1';
+    s.handKeys.delete('h1');
+
+    const send = vi.spyOn(c, 'send');
+    s.handle(peekOffer('h1', 'o1'));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toMatchObject({
+      t: 'peek_decline',
+      handId: 'h1',
+      offerId: 'o1',
+    });
+    expect(c.peekOffers).toEqual([]);
+  });
+
+  it('auto-declines a peek_offer when it has no cards to reveal', () => {
+    const { c, s } = freshClient();
+    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
+    s.handle(roomState(true));
+    s.handle(handStart('h1'));
+    s.handle(bettingState('h1', 3, 0));
+    s.handle(handEnd('h1'));
+
+    const send = vi.spyOn(c, 'send');
+    s.handle(peekOffer('h1', 'o1'));
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ t: 'peek_decline', offerId: 'o1' }),
     );
+    expect(c.peekOffers).toEqual([]);
   });
 
   it('does not record a transcript entry for an unrelated hand', () => {

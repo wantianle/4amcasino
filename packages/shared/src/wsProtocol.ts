@@ -40,6 +40,9 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('sit'), seat: z.number().int().min(0).max(8) }),
   z.object({ t: z.literal('leave_seat') }),
   z.object({ t: z.literal('start_hand') }),
+  // Host-only: re-attempt a durable settlement whose bounded retries were
+  // exhausted (the table is frozen until this or a restart). Idempotent.
+  z.object({ t: z.literal('retry_settlement') }),
   z.object({ t: z.literal('key_commit'), handId: z.string(), commit: hex(64), sig: hex(128) }),
   z.object({
     t: z.literal('shuffle_deck'),
@@ -85,7 +88,9 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
     t: z.literal('peek_offer'),
     handId,
     targetSeat: z.number().int().min(0).max(8),
-    amount: z.number().int().positive().max(1_000_000),
+    // Legacy/ignored: peeks cost a server-fixed 1bb, so an old client's amount
+    // is accepted for wire compatibility but never trusted or used.
+    amount: z.number().int().positive().max(1_000_000).optional(),
   }),
   z.object({
     t: z.literal('peek_accept'),
@@ -367,8 +372,35 @@ export type ServerMsg =
       head: string;
       stacks: { seat: number; stack: number }[];
       deltas: { seat: number; delta: number }[];
+      /**
+       * In-hand SEAT projection of the commission (rake) recipient leg. Only a
+       * recipient who is also a hand participant appears; a platform / fallback
+       * banker outside the hand has no seat and is expressed by the external
+       * `commission` ledger row instead, so this is empty there.
+       *
+       * `deltas` is the game leg (poker + squid + 7-2 bounty). Aggregate:
+       *   sum(deltas) === -commission                       ALWAYS
+       *   sum(deltas) + sum(commissionDeltas) === 0         ONLY when the
+       *                                                     recipient is in hand
+       * Per seat `ending - starting === delta + commissionDelta` (plus any
+       * mid-hand buy, which is an intervening account delta).
+       */
+      commissionDeltas?: { seat: number; delta: number }[];
       commission?: number;
       commissionBps?: number;
+    }
+  | {
+      /**
+       * The durable settlement write failed. When `retrying` the server keeps
+       * the deterministic result and re-attempts the commit; when false the
+       * table is frozen until an operator intervenes. Clients should surface a
+       * "settling / manual" state and NOT treat this as a refund/abort.
+       */
+      t: 'settlement_failed';
+      handId: string;
+      reason: string;
+      attempt: number;
+      retrying: boolean;
     }
   | { t: 'cards_shown'; handId: string; seat: number; cards: CardId[] }
   | {
@@ -385,7 +417,12 @@ export type ServerMsg =
       offerId: string;
       handId: string;
       targetSeat: number;
-      status: 'accepted' | 'declined';
+      /** `expired` = the target never answered within the 5s offer window;
+       *  `failed` = the offer lapsed first (new hand, bad signature/shares, or
+       *  the buyer's balance fell). Both are terminal and tell the requester
+       *  explicitly instead of leaving them waiting. Older clients treat any
+       *  non-`accepted` status as "not revealed". */
+      status: 'accepted' | 'declined' | 'expired' | 'failed';
       amount: number;
       cards?: CardId[];
     }

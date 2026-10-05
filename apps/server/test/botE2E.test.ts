@@ -353,4 +353,58 @@ describe('bot vs human end to end', () => {
     expect(human.myTurn()).toBe(false);
     expect(probes.some((p) => p.resynced && p.myTurn)).toBe(false);
   }, 40_000);
+
+  it('a bot auto-accepts a human peek and the fixed 1bb moves through the ledger', async () => {
+    const { room, bot } = await createTable();
+    await startBot(bot.bot.id, room.id, bot.bot.userId);
+
+    human.send({ t: 'start_hand' });
+    // Heads-up: the human is the button/SB and acts first. Fold so the hand
+    // ends without a showdown (the bot's cards stay private and peekable).
+    const foldDriver = (async () => {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline && !human.result && !human.abort) {
+        await human.waitForTurn(100);
+        if (human.result || human.abort) break;
+        if (!human.isResynced || !human.myTurn()) continue;
+        try {
+          human.act({ type: 'fold' });
+        } catch {
+          /* the table advanced between the check and the send */
+        }
+      }
+    })();
+    await waitFor(() => human.result !== null || human.abort !== null, 25_000);
+    await foldDriver;
+    expect(human.abort).toBeNull();
+
+    const botSeat = bot.bot.seat;
+    const stackOf = (seat: number) =>
+      (
+        ctx.db
+          .prepare('SELECT stack FROM room_players WHERE room_id = ? AND seat = ?')
+          .get(room.id, seat) as { stack: number }
+      ).stack;
+    const humanBefore = stackOf(0);
+    const botBefore = stackOf(botSeat);
+
+    // The human asks to see the bot's mucked cards, passing a bogus 100: the
+    // server must charge the fixed 1bb anyway.
+    human.send({ t: 'peek_offer', handId: human.handId, targetSeat: botSeat, amount: 100 });
+    // The bot answers on its own; the human receives the private reveal.
+    await waitFor(() => human.events.some((e) => e.includes('peek accepted')), 10_000);
+    expect(human.events.some((e) => e.includes(`peek accepted: seat ${botSeat + 1}`))).toBe(true);
+
+    const bb = (ctx.db.prepare('SELECT bb FROM rooms WHERE id = ?').get(room.id) as { bb: number })
+      .bb;
+    expect(bb).toBe(20);
+    expect(stackOf(0)).toBe(humanBefore - bb);
+    expect(stackOf(botSeat)).toBe(botBefore + bb);
+
+    const peekRows = ctx.db
+      .prepare("SELECT delta FROM ledger WHERE room_id = ? AND kind = 'peek'")
+      .all(room.id) as { delta: number }[];
+    expect(peekRows).toHaveLength(2);
+    expect(peekRows.reduce((s, r) => s + r.delta, 0)).toBe(0);
+  }, 40_000);
 });

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { computeHead, type TranscriptEntry } from '@4am/mental-poker';
 import { openDb, type DB } from '../src/db.js';
 import {
+  auditMarkerlessTranscripts,
+  reconcileMissingSettlements,
+} from '../src/db.js';
+import {
   HAND_PARSER_VERSION,
   VOIDED_HAND_EXCLUSION_SQL,
   backfillHandStats,
@@ -1117,6 +1121,63 @@ describe('backfill', () => {
       "INSERT INTO ledger (room_id, user_id, delta, kind, ref, ts, prev_hash, entry_hash) VALUES ('r1', 1, 0, 'void-hand', 'h1', 1, 'p', 'e')",
     ).run();
     expect(visible()).toEqual([]);
+    db.close();
+  });
+});
+
+describe('pre-lifecycle reconciliation of a genuine seven-deuce bounty', () => {
+  it('reconciles a real auto 7-2 bounty hand to committed (no over-quarantine)', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    // A heads-up hand whose winner also takes the automatic 7-2 bounty (6 from
+    // the loser). The combined stack move is 16/-16 while the pure poker ledger
+    // legs stay 10/-10; the writer stores the bounty as separate seven-deuce
+    // legs, so the reconciliation must tie them back together.
+    const entries = huEntries();
+    const settle = entries.find((e) => e.type === 'settlement')!;
+    (settle.payload as Record<string, unknown>).deltas = [
+      { seat: 0, delta: 16 },
+      { seat: 1, delta: -16 },
+    ];
+    (settle.payload as Record<string, unknown>).pokerDeltas = [
+      { seat: 0, delta: 16 },
+      { seat: 1, delta: -16 },
+    ];
+    const out = applyHandSettlement(db, {
+      ...settleArgs(entries),
+      stackDeltas: [
+        { userId: 1, delta: 16 },
+        { userId: 2, delta: -16 },
+      ],
+      pokerLedger: [
+        { userId: 1, delta: 10 },
+        { userId: 2, delta: -10 },
+      ],
+      projectionPokerLedger: [
+        { userId: 1, delta: 16 },
+        { userId: 2, delta: -16 },
+      ],
+      sevenDeuce: {
+        winnerUserId: 1,
+        winnerSeat: 0,
+        winnerAmount: 6,
+        payerAmounts: [{ userId: 2, amount: 6 }],
+      },
+    });
+    expect(out.status).toBe('applied');
+    // Now pretend it was a markerless pre-lifecycle hand.
+    db.prepare('DELETE FROM hand_settlements WHERE hand_id = ?').run('h1');
+    db.prepare('DELETE FROM hand_lifecycle WHERE hand_id = ?').run('h1');
+
+    const audit = auditMarkerlessTranscripts(db);
+    expect(audit.markerless).toBe(1);
+    expect(audit.reconciled).toBe(1);
+    expect(audit.quarantined).toEqual([]);
+    reconcileMissingSettlements(db);
+    const row = db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get('h1') as {
+      status: string;
+    };
+    expect(row.status).toBe('committed');
     db.close();
   });
 });

@@ -46,6 +46,9 @@ it('stores only a token hash and denies account/bank access', async () => {
   });
   expect(res.statusCode).toBe(401);
   expect(agentMaySend(resolveAgentGrant(ctx.db, g.token)!, { t: 'action' })).toBe(true);
+  // a bot is a player: it may answer a paid peek like anyone else
+  expect(agentMaySend(resolveAgentGrant(ctx.db, g.token)!, { t: 'peek_accept' })).toBe(true);
+  expect(agentMaySend(resolveAgentGrant(ctx.db, g.token)!, { t: 'peek_decline' })).toBe(true);
   expect(agentMaySend(resolveAgentGrant(ctx.db, g.token)!, { t: 'kick' })).toBe(false);
   const read = await grant(false);
   expect(agentMaySend(resolveAgentGrant(ctx.db, read.token)!, { t: 'action' })).toBe(false);

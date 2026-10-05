@@ -40,7 +40,7 @@ import {
   type ServerMsg,
   signedBody,
 } from '@4am/shared';
-import type { DB } from './db.js';
+import { firstPendingHandLifecycle, type DB } from './db.js';
 import { materializeHandProjection, positionAssignments } from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
@@ -60,6 +60,13 @@ export interface GameOpts {
   /** How long the pre-deal ready check waits before dealing without stragglers
    *  (default AUTO_DEAL_READY_CHECK_MS; it ends immediately once everyone is in). */
   readyCheckMs?: number;
+  /** How long the showdown reveal frame is held on screen before `hand_end` is
+   *  broadcast. The durable settlement is already written by then (default
+   *  SHOWDOWN_HOLD_MS). */
+  showdownHoldMs?: number;
+  /** After a showdown hand settles, how long before the next auto-deal may start
+   *  (default SETTLE_HOLD_MS). Fold-outs carry no reveal animation and skip it. */
+  settleHoldMs?: number;
   /** How long the run-it-twice vote stays open when everyone is all-in (default 15s). */
   ritVoteMs?: number;
   /** Offer run-it-twice at all. Off by default: the second-board unmask chains
@@ -67,7 +74,50 @@ export interface GameOpts {
   runItTwice?: boolean;
   /** TV replays: save every player's hand key post-hand so replays show all cards. */
   tvReplays?: boolean;
+  /** Grace period a graceful shutdown gives a live, not-yet-settled hand to
+   *  reach a terminal lifecycle state before it is aborted. Defaults to
+   *  `SHUTDOWN_DRAIN_MS`. Tests use a short value. */
+  shutdownDrainMs?: number;
+  /** Injectable clock for the showdown settle hold, so tests can drive the
+   *  reveal/settlement/`hand_end` ordering deterministically instead of racing
+   *  wall-clock timers. Defaults to the real clock (`Date.now`/`setTimeout`). */
+  clock?: GameClock;
+  /**
+   * Test-only fault injection for the settlement durability boundary. Never set
+   * in production. `persist(attempt)` is called before each durable-write
+   * attempt (1-based) and throwing simulates a failed commit; `broadcast(msg)`
+   * is called before each settlement-path broadcast and throwing simulates a
+   * lost notification after a committed write.
+   */
+  faultInjection?: {
+    persist?: (attempt: number) => void;
+    broadcast?: (msg: ServerMsg) => void;
+    /** Called before the fold-winner 7-2 bounty transaction; throwing
+     *  simulates a rolled-back transfer (the bounty must stay retryable). */
+    sevenDeuce?: () => void;
+    /** Called INSIDE the fold-winner 7-2 bounty transaction. Not special-cased:
+     *  throwing exercises the internal-error classification (a TypeError here
+     *  must stay a programming error, not become a retryable one). */
+    sevenDeuceInternal?: () => void;
+  };
 }
+
+/**
+ * The only clock the settlement hold needs. Injected through `GameOpts.clock`
+ * so a test can freeze/advance time and prove the ordering contract (durable
+ * write → showdown → hold → hand_end) without wall-clock sleeps.
+ */
+export interface GameClock {
+  now(): number;
+  setTimer(fn: () => void, ms: number): ReturnType<typeof setTimeout>;
+  clearTimer(handle: ReturnType<typeof setTimeout>): void;
+}
+
+export const realClock: GameClock = {
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle),
+};
 
 interface Identity {
   publicKey: string;
@@ -99,8 +149,110 @@ const HOST_HANDOVER_MS = 60_000;
 export { activeHands };
 
 /** With auto-deal on, the next hand starts this soon after the previous one
- *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one). */
-export const AUTO_DEAL_INTERVAL_MS = 2_500;
+ *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one).
+ *  Must stay >= SETTLE_HOLD_MS so a showdown's post-settle pause is respected
+ *  even when `autoDealMs` overrides the cadence. */
+export const AUTO_DEAL_INTERVAL_MS = 3_000;
+
+/**
+ * How long the showdown reveal frame is held before `hand_end` is broadcast, so
+ * clients can run the win/lose animation before the stacks jump. The durable
+ * settlement (`applyHandSettlement`) is written BEFORE the reveal is broadcast -
+ * the hold only delays the `hand_end` broadcast and auto-deal cadence, never the
+ * database write. Overridable via `GameOpts.showdownHoldMs`.
+ */
+export const SHOWDOWN_HOLD_MS = 3_000;
+
+/**
+ * Product contract: a paid peek offer stays open for five seconds. After that
+ * the server expires it and tells the requester, so a target who disconnects or
+ * ignores the offer can never leave the requester waiting forever.
+ */
+export const PEEK_OFFER_TTL_MS = 5_000;
+
+/**
+ * After a showdown hand has settled, how long the table waits before the next
+ * auto-deal. Gives the client's settlement animation room to finish. Fold-outs
+ * (no reveal) skip it and rely on the normal AUTO_DEAL_INTERVAL_MS cadence.
+ * Overridable via `GameOpts.settleHoldMs`.
+ */
+export const SETTLE_HOLD_MS = 3_000;
+
+/** How long to wait before retrying a failed durable settlement write. */
+export const SETTLE_RETRY_MS = 250;
+
+/** Failed durable-write attempts before the table is frozen for a human. */
+export const SETTLE_MAX_RETRIES = 4;
+
+/** How long a graceful shutdown waits for a live, not-yet-settled hand to
+ *  reach a terminal lifecycle state before it aborts the hand. Must be short:
+ *  a deploy cannot block on a full action timeout. */
+export const SHUTDOWN_DRAIN_MS = 3_000;
+
+/**
+ * A known, expected game-level failure (a business rule or a bad client
+ * request), as opposed to a programming error. The hub answers the client with
+ * the message and leaves the room healthy; anything else marks the room
+ * unhealthy and fails closed.
+ */
+export class GameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GameError';
+  }
+}
+
+/**
+ * A known, expected failure that is safe (and worthwhile) for the client to
+ * retry: a rolled-back post-hand bounty transfer, a transient write the caller
+ * can repeat. It is still a `GameError` - the hub must answer the client and
+ * leave the room healthy - but it is explicitly NOT a programming error, so it
+ * must never mark the room unhealthy. (Before this, a rolled-back 7-2 bounty
+ * escaped `trySevenDeuce` as a raw sqlite error, hit the hub's unknown branch
+ * and permanently locked the room.)
+ */
+export class RetryableGameError extends GameError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RetryableGameError';
+  }
+}
+
+/** SQLite result codes for a failure that means "the write did not land but
+ *  retrying the SAME statement can win": lock contention and an explicit
+ *  interrupt. An EXACT allow-list of the base codes and their real extended
+ *  forms - not a prefix match, which would wrongly accept look-alikes such as
+ *  `SQLITE_BUSYNESS`, `SQLITE_LOCKED_BROKEN` or `SQLITE_INTERRUPT_FOO`.
+ *
+ *  `SQLITE_INTERRUPT` is retryable because it means the statement was aborted
+ *  before commit - a rolled-back transaction, so re-running it is safe and the
+ *  caller bounds the number of retries.
+ *
+ *  Deliberately NOT included (policy): `SQLITE_IOERR*`, `SQLITE_FULL`,
+ *  `SQLITE_NOMEM`, `SQLITE_PROTOCOL`, and every unknown error. Those are
+ *  environmental or programming failures where a blind retry is wrong (a full
+ *  disk or a closed/broken database does not heal by repeating the statement);
+ *  they must propagate so the room goes fail-closed instead of being told a
+ *  retry will fix it. `SQLITE_LOCKED_VTAB` is deliberately excluded too: it is
+ *  not generic lock contention but a virtual-table locking failure. */
+const TRANSIENT_SQLITE_CODES = new Set([
+  'SQLITE_BUSY',
+  'SQLITE_BUSY_RECOVERY',
+  'SQLITE_BUSY_SNAPSHOT',
+  'SQLITE_BUSY_TIMEOUT',
+  'SQLITE_LOCKED',
+  'SQLITE_LOCKED_SHAREDCACHE',
+  'SQLITE_INTERRUPT',
+]);
+
+/** True for a recognisably transient DB/transfer failure (contention/interrupt),
+ *  false for anything that should propagate to the hub's unexpected-error
+ *  (unhealthy) branch. */
+export function isTransientTransferError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as Error & { code?: unknown }).code;
+  return typeof code === 'string' && TRANSIENT_SQLITE_CODES.has(code);
+}
 
 /**
  * Env-gated structured diagnostics for the hand engine. Off by default; set
@@ -148,6 +300,9 @@ interface ShowSnapshot {
   revealedSeats: Set<number>;
   winnerSeats: number[];
   reveals: Map<number, CardId[]>;
+  /** True when no one had to show: the hand was decided by a fold. Peeking is
+   *  only offered out of a heads-up fold, never out of a public showdown. */
+  endedByFold: boolean;
 }
 
 type Share = { deckIndex: number; out: string; proof: { A1: string; A2: string; z: string } };
@@ -214,8 +369,17 @@ export interface HandSettlementWrite {
   commissionBps: number;
   /** Combined poker+squid stack deltas, one per hand seat. */
   stackDeltas: { userId: number; delta: number }[];
-  /** Poker-only ledger rows (kind 'hand-settlement'). */
+  /** Poker-only ledger rows (kind 'hand-settlement'). Excludes the 7-2 bounty. */
   pokerLedger: { userId: number; delta: number }[];
+  /**
+   * Poker deltas as they appear in the transcript/stats projection: the
+   * poker-only deltas PLUS the automatic 7-2 bounty transfer. The bounty is a
+   * zero-sum transfer, so `sum(projectionPokerLedger) === sum(pokerLedger)`;
+   * it is kept separate only so the ledger can record it under its own
+   * `seven-deuce` kind while the projection's `net_delta` still reconciles with
+   * `ending_stack - starting_stack`. Defaults to `pokerLedger`.
+   */
+  projectionPokerLedger?: { userId: number; delta: number }[];
   /** Squid-only ledger rows (kind 'squid-game'). */
   squidLedger: { userId: number; delta: number }[];
   squidNote: string;
@@ -227,6 +391,25 @@ export interface HandSettlementWrite {
   bombRan: boolean;
   /** Rake recipient, or null if there is nowhere to credit it. */
   rakeRecipientId: number | null;
+  /**
+   * Automatic showdown 7-2 offsuit bounty, applied INSIDE this same
+   * transaction so a crash can never commit a settled hand without paying it.
+   * The exact amounts are computed by `GameRoom` against the post-pot stacks
+   * (`this.settlement.stacks`) and folded into `stackDeltas`; the writer only
+   * records the matching `seven-deuce` ledger rows. The transfer is zero-sum
+   * and therefore does not disturb the conservation check. Null when no
+   * showdown winner held 7-2, or when the bounty is disabled. A fold winner's
+   * *voluntary* show stays a separate, post-settlement transaction
+   * (`GameRoom.trySevenDeuce`).
+   */
+  sevenDeuce?: {
+    winnerUserId: number;
+    winnerSeat: number;
+    /** The exact total the winner receives (already clamped to payer stacks). */
+    winnerAmount: number;
+    /** Per-payer debits for the ledger. */
+    payerAmounts: { userId: number; amount: number }[];
+  } | null;
   now: number;
 }
 
@@ -234,6 +417,26 @@ export interface HandSettlementOutcome {
   status: 'applied' | 'duplicate';
   timeBankSkipped: number[];
   finalStacks: { userId: number; stack: number }[];
+  /** What the embedded 7-2 bounty actually moved (seat + total), or null. */
+  sevenDeuce: { seat: number; amount: number } | null;
+  /**
+   * The explicit commission (rake) recipient leg credited in the SAME
+   * transaction. This is the ACCOUNT-level leg: exactly one entry
+   * `{ rakeRecipientId, +rake }` when rake > 0 and a recipient exists, empty
+   * when rake is 0 or there is no recipient. The recipient may have no seat.
+   *
+   * Contract (see `hand_end.commissionDeltas` and DESIGN):
+   *   gameDelta(u)        = poker + squid + 7-2 bounty   // = projection net_delta
+   *   transactionDelta(u) = gameDelta(u) + commissionDelta(u)
+   *   ending_stack(u) - starting_stack(u) = gameDelta(u) + commissionDelta(u)
+   *                                         (+ any mid-hand buy)
+   *
+   * Aggregate: `sum(gameDeltas) = -rake` ALWAYS; `sum(gameDeltas) +
+   * sum(commissionDeltas) = 0` ONLY when the recipient is in the hand. When the
+   * recipient is out of hand the credited account is expressed by its own
+   * commission ledger leg, not by a hand seat.
+   */
+  commissionDeltas: { userId: number; delta: number }[];
 }
 
 /**
@@ -259,8 +462,23 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       )
       .run(w.handId, w.roomId, w.head, w.rake, w.now);
     if (claim.changes === 0) {
-      // already settled by an earlier (committed) call - apply nothing
-      return { status: 'duplicate', timeBankSkipped: [], finalStacks: [] };
+      // already settled by an earlier (committed) call - apply nothing. The
+      // marker is proof the whole hand committed, so reconcile the lifecycle to
+      // `committed` too (a marker without a committed row can only come from
+      // pre-lifecycle history or an operator-copied DB).
+      db.prepare(
+        `INSERT INTO hand_lifecycle (hand_id, room_id, status, created_at, updated_at, resolved_at)
+         VALUES (?, ?, 'committed', ?, ?, ?)
+         ON CONFLICT(hand_id) DO UPDATE SET status = 'committed',
+           updated_at = excluded.updated_at, resolved_at = excluded.resolved_at`,
+      ).run(w.handId, w.roomId, w.now, w.now, w.now);
+      return {
+        status: 'duplicate',
+        timeBankSkipped: [],
+        finalStacks: [],
+        sevenDeuce: null,
+        commissionDeltas: [],
+      };
     }
 
     const userIds = [...new Set(w.stackDeltas.map((d) => d.userId))];
@@ -335,6 +553,37 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       });
     }
 
+    // Automatic showdown 7-2 bounty, in the SAME transaction. It is a zero-sum
+    // transfer among the hand's seats, so it cannot break conservation; it is
+    // applied after the pot/rake (matching the old post-settlement order) and
+    // before `finalStacks` is read so `room_players.stack`,
+    // `hand_settlements.final_stacks` and the stats projection all agree.
+    let sevenDeuce: { seat: number; amount: number } | null = null;
+    if (w.sevenDeuce && w.sevenDeuce.winnerAmount > 0) {
+      // The stack movement already rode `stackDeltas` (the bounty is folded
+      // into the combined deltas), so this only records the ledger legs.
+      for (const payer of w.sevenDeuce.payerAmounts) {
+        if (payer.amount <= 0) continue;
+        appendLedger(db, {
+          roomId: w.roomId,
+          userId: payer.userId,
+          delta: -payer.amount,
+          kind: 'seven-deuce',
+          ref: w.handId,
+          note: 'paid the 7-2 offsuit bounty',
+        });
+      }
+      appendLedger(db, {
+        roomId: w.roomId,
+        userId: w.sevenDeuce.winnerUserId,
+        delta: w.sevenDeuce.winnerAmount,
+        kind: 'seven-deuce',
+        ref: w.handId,
+        note: 'won with 7-2 offsuit',
+      });
+      sevenDeuce = { seat: w.sevenDeuce.winnerSeat, amount: w.sevenDeuce.winnerAmount };
+    }
+
     // `afterRows` above is the pre-rake stack and is only used for the
     // conservation check. settleRake credits the rake recipient, which may be a
     // player in this hand, so re-read the TRUE final stacks after every money
@@ -401,7 +650,10 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       // Live settlement is strict: malformed/mismatched transcripts roll back.
       strict: true,
       verifyHead: true,
-      pokerLedger: w.pokerLedger,
+      // The projection compares `net_delta` (= poker + squid) against these
+      // poker deltas: the bounty is folded into the projection view so
+      // `net_delta === ending_stack - starting_stack`.
+      pokerLedger: w.projectionPokerLedger ?? w.pokerLedger,
       squidLedger: w.squidLedger,
       stackDeltas: w.stackDeltas,
       rake: w.rake,
@@ -440,7 +692,25 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       JSON.stringify(finalStacks),
       w.handId,
     );
-    return { status: 'applied', timeBankSkipped, finalStacks };
+    // Mark the durable lifecycle terminal in the SAME transaction. A crash
+    // after this commit leaves a `committed` row and the marker; a rollback
+    // leaves the `running` row written at deal time, which is exactly what the
+    // restart scan needs to see.
+    db.prepare(
+      `INSERT INTO hand_lifecycle (hand_id, room_id, status, created_at, updated_at, resolved_at)
+       VALUES (?, ?, 'committed', ?, ?, ?)
+       ON CONFLICT(hand_id) DO UPDATE SET status = 'committed',
+         updated_at = excluded.updated_at, resolved_at = excluded.resolved_at`,
+    ).run(w.handId, w.roomId, w.now, w.now, w.now);
+    // The explicit commission recipient leg. `stackDeltas` is the game leg
+    // (poker + squid + bounty); this leg is the rake credit. Consumers must add
+    // the two to reconcile a seat's stack change; neither alone is the whole
+    // story when the recipient is in the hand.
+    const commissionDeltas =
+      w.rake > 0 && w.rakeRecipientId !== null
+        ? [{ userId: w.rakeRecipientId, delta: w.rake }]
+        : [];
+    return { status: 'applied', timeBankSkipped, finalStacks, sevenDeuce, commissionDeltas };
   });
   return write();
 }
@@ -504,7 +774,14 @@ export class GameRoom {
   private lastHandShow: ShowSnapshot | null = null;
   private peekOffers = new Map<
     string,
-    { handId: string; fromUserId: number; targetSeat: number; amount: number }
+    {
+      handId: string;
+      fromUserId: number;
+      targetSeat: number;
+      amount: number;
+      /** Server-side 5s expiry; cleared when the offer is answered or swept. */
+      timer: NodeJS.Timeout;
+    }
   >();
   private sevenDeucePaid = new Set<string>();
   private autoDeal: NodeJS.Timeout | null = null;
@@ -512,6 +789,9 @@ export class GameRoom {
   private autoDealPaused = false;
   private autoDealEligibility = '';
   private reconcilingAutoDeal = false;
+  /** After a showdown, no auto-deal may start before this wall-clock time, so
+   *  the client's settle animation is not cut off. Set in broadcastHandEnd. */
+  private settleHoldUntil = 0;
   // no hand auto-starts until everyone is ready: a 20s ready check runs
   // before each auto-deal, and whoever has not clicked by the deadline is
   // left out of that hand (requested by notpritam, docs/FEATURES.md)
@@ -522,6 +802,15 @@ export class GameRoom {
     ready: Set<number>;
   } | null = null;
   private hostHandover: NodeJS.Timeout | null = null;
+  /** Set when an unexpected (non-business) handler error escaped. A room in
+   *  this state fails closed: `startHand` refuses. A `recoverable` mark (a
+   *  settlement failure whose retry can prove the room is consistent) can be
+   *  cleared by `clearUnhealthy()` once the verifying action succeeds; an
+   *  unknown programming error cannot, and needs a process restart. */
+  private unhealthyReason: string | null = null;
+  private unhealthyRecoverable = false;
+  /** True once a graceful shutdown has begun: no new hand may be dealt. */
+  private draining = false;
   /** Monotonic per-room hand counter used only to mint reproducible test ids. */
   private testHandSeq = 0;
   private lookup = cardLookup();
@@ -531,7 +820,19 @@ export class GameRoom {
     readonly roomId: string,
     private serverId: Identity,
     private opts: GameOpts,
-  ) {}
+  ) {
+    // Startup recovery scan: a hand dealt but never settled leaves a
+    // non-terminal `hand_lifecycle` row even when its settlement transaction
+    // rolled back (transcript and marker both absent). This is a log only; the
+    // authoritative per-deal guard re-queries `firstUnsettledHand()` every time
+    // so an operator resolving the row is never blocked by a stale cache.
+    const pending = firstPendingHandLifecycle(db, roomId);
+    if (pending) {
+      console.error(
+        `room ${roomId} has an unsettled hand ${pending}: dealing is frozen until it is resolved`,
+      );
+    }
+  }
 
   join(userId: number, ws: WebSocket): void {
     // Deliberately does NOT close the socket it replaces. Closing it made two
@@ -541,15 +842,16 @@ export class GameRoom {
     // they are dealt into stalls out. The orphan is cheap; the loop was not.
     this.sockets.set(userId, ws);
     this.broadcastRoomState();
+    // A rejoining participant gets the whole hand context back (hand_start,
+    // their private cards, the board, the reveal) BEFORE any courtesy frames,
+    // so a freshly-created client never drops a frame that arrived first.
+    this.hand?.resendPending(userId);
     // late joiners and reconnects still get to see voluntarily shown cards
     if (this.shownHandId) {
       for (const [seat, cards] of this.shown) {
         this.send(userId, { t: 'cards_shown', handId: this.shownHandId, seat, cards });
       }
     }
-    // a rejoining participant gets the whole hand context back, plus any
-    // request (shuffle turn, unmask share) the table is still waiting on
-    this.hand?.resendPending(userId);
   }
 
   leave(userId: number, ws: WebSocket): void {
@@ -574,10 +876,14 @@ export class GameRoom {
    *  money authority must never change hands on a timer - if the banker is gone,
    *  the table waits for them or names a backup by hand. */
   private scheduleHostHandover(goneUserId: number): void {
+    if (this.draining) return;
     const room = getRoom(this.db, this.roomId);
     if (!room || room.host_id !== goneUserId || this.hostHandover) return;
     this.hostHandover = setTimeout(() => {
       this.hostHandover = null;
+      // The process may have begun shutting down (db closed) after this timer
+      // was armed; touching the DB then would be an unhandled crash.
+      if (!this.db.open || this.draining) return;
       const current = getRoom(this.db, this.roomId);
       // they came back, or someone already took it: nothing to do
       if (!current || current.host_id !== goneUserId || this.isConnected(goneUserId)) return;
@@ -607,16 +913,121 @@ export class GameRoom {
     return this.sockets.size === 0 && this.hand === null && this.readyCheck === null;
   }
 
-  shutdown(): void {
+  /**
+   * Graceful shutdown. Stop dealing, then give an in-flight, not-yet-settled
+   * hand a bounded window to reach a terminal lifecycle state; if it does not,
+   * abort it so no `running` row survives to freeze the room on restart. A hand
+   * whose settlement already committed is never aborted (its chips moved).
+   *
+   * Async because the hub awaits it on close. Never throws: a shutdown must
+   * complete so the process can exit.
+   */
+  async shutdown(): Promise<void> {
+    this.draining = true;
     if (this.hostHandover) clearTimeout(this.hostHandover);
     this.hostHandover = null;
-    this.hand?.clearTimer();
-    this.hand = null;
-    activeHands.delete(this.roomId);
+    this.clearPeekOffers();
     if (this.autoDeal) clearTimeout(this.autoDeal);
     this.autoDeal = null;
     this.autoDealAt = null;
     this.cancelReadyCheck(false);
+    const hand = this.hand;
+    let terminated = true;
+    if (hand && !hand.isSettlementCommitted()) {
+      const deadline = Date.now() + (this.opts.shutdownDrainMs ?? SHUTDOWN_DRAIN_MS);
+      while (this.hand === hand && !hand.isTerminal() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      if (this.hand === hand && !hand.isSettlementCommitted()) {
+        // Bounded retries inside `abortForShutdown`; it returns whether the
+        // durable lifecycle row is now provably terminal.
+        terminated = hand.abortForShutdown();
+      }
+    }
+    if (!terminated) {
+      // The abort could not be proven durable (db already closed, SQLITE_BUSY,
+      // ...). Do NOT tear the hand down: keep the room fail-closed so the
+      // `running` row is left for the restart scan rather than silently
+      // pretending the hand is resolved.
+      console.error(
+        `room ${this.roomId}: shutdown could not confirm a terminal lifecycle; leaving the hand fail-closed`,
+      );
+      return;
+    }
+    this.hand?.clearTimer();
+    this.hand = null;
+    activeHands.delete(this.roomId);
+  }
+
+  /**
+   * Mark the room unhealthy after an unexpected (programming) error escaped a
+   * message handler. It fails closed: no new hand is dealt over an
+   * indeterminate state. `recoverable: true` is for a failure whose successful
+   * retry proves the room is consistent again (a settlement write); an unknown
+   * error is not recoverable and can only be cleared by a process restart.
+   *
+   * First-wins is NOT safe across severities: a recoverable settlement mark set
+   * first must be UPGRADED to non-recoverable if a real programming error then
+   * appears, otherwise a later settlement success would clear the room while
+   * the unknown error is still unexplained. A non-recoverable mark is sticky.
+   */
+  markUnhealthy(reason: string, opts: { recoverable?: boolean } = {}): void {
+    const recoverable = !!opts.recoverable;
+    if (this.unhealthyReason && !this.unhealthyRecoverable) return; // already permanent
+    if (this.unhealthyReason && this.unhealthyRecoverable && recoverable) return; // same class
+    if (this.unhealthyReason && this.unhealthyRecoverable && !recoverable) {
+      this.unhealthyReason = reason;
+      this.unhealthyRecoverable = false;
+      console.error(`room ${this.roomId} escalated unhealthy (non-recoverable): ${reason}`);
+      return;
+    }
+    this.unhealthyReason = reason;
+    this.unhealthyRecoverable = recoverable;
+    console.error(`room ${this.roomId} marked unhealthy: ${reason}`);
+  }
+
+  /**
+   * Controlled clearing path for an unhealthy room. It only clears the state it
+   * is asked to clear (`reason` must match the stored one) AND only when that
+   * state was marked recoverable: blindly clearing a programming-error mark
+   * would let the room deal over an unrepaired invariant violation.
+   * Returns whether the room is healthy again.
+   */
+  clearUnhealthy(reason: string): boolean {
+    if (!this.unhealthyReason || !this.unhealthyRecoverable) return false;
+    if (this.unhealthyReason !== reason) return false;
+    this.unhealthyReason = null;
+    this.unhealthyRecoverable = false;
+    console.error(`room ${this.roomId} cleared unhealthy state: ${reason}`);
+    return true;
+  }
+
+  isUnhealthy(): boolean {
+    return this.unhealthyReason !== null;
+  }
+
+  /**
+   * A settlement retry finally committed: the room was only ever unhealthy
+   * because the durable write could not be proven, so clear that specific
+   * recoverable mark. This is the "retry success" half of the controlled
+   * clearing path; an unknown (non-recoverable) mark is left alone.
+   */
+  settlementRecovered(): void {
+    if (this.unhealthyRecoverable && this.unhealthyReason)
+      this.clearUnhealthy(this.unhealthyReason);
+  }
+
+  /**
+   * The authoritative fail-closed guard: a durable `hand_lifecycle` row that
+   * was written at deal time but never reached `committed`/`aborted`. This
+   * catches a settlement transaction that rolled back entirely (no transcript,
+   * no marker) - which the old "transcript without marker" query could not.
+   * A healthy DB yields null. See DESIGN.md ("Settlement recovery").
+   */
+  private firstUnsettledHand(): string | null {
+    // Re-query every time: an operator may have resolved the lifecycle row in
+    // this same process, and a cached value would freeze the room forever.
+    return firstPendingHandLifecycle(this.db, this.roomId);
   }
 
   private cancelAutoDeal(): void {
@@ -674,9 +1085,22 @@ export class GameRoom {
     }
   }
 
+  /** Called by the hand as it finalizes: after a showdown the client needs a
+   *  beat to animate the settlement, so the next auto-deal waits out a hold.
+   *  Fold-outs pass false and are gated only by the normal cadence. */
+  setSettlementHold(hadShowdown: boolean): void {
+    this.settleHoldUntil = hadShowdown
+      ? Date.now() + (this.opts.settleHoldMs ?? SETTLE_HOLD_MS)
+      : 0;
+  }
+
   private scheduleAutoDeal(): void {
     if (this.autoDeal || this.hand || this.readyCheck) return;
-    const delay = this.opts.autoDealMs ?? AUTO_DEAL_INTERVAL_MS;
+    let delay = this.opts.autoDealMs ?? AUTO_DEAL_INTERVAL_MS;
+    // A showdown's post-settle animation hold (SETTLE_HOLD_MS) can be longer
+    // than the configured cadence: never deal before it elapses.
+    const hold = this.settleHoldUntil - Date.now();
+    if (hold > delay) delay = hold;
     if (this.autoDealerId() === null || this.eligiblePlayers().length < 2) return;
     this.autoDealAt = Date.now() + delay;
     this.autoDeal = setTimeout(() => {
@@ -944,6 +1368,14 @@ export class GameRoom {
         this.startHand();
         return;
       }
+      case 'retry_settlement': {
+        const room = getRoom(this.db, this.roomId)!;
+        if (room.host_id !== userId)
+          return this.send(userId, { t: 'error', message: 'only the host can retry a settlement' });
+        if (!this.hand) return this.send(userId, { t: 'error', message: 'no hand to retry' });
+        this.hand.retrySettlement();
+        return;
+      }
       case 'im_ready': {
         this.onReady(userId);
         return;
@@ -1020,6 +1452,20 @@ export class GameRoom {
       // claimed trigger and no hand behind. Returns null to abort the deal.
       const current = getRoom(this.db, roomId);
       if (!current || current.archived || current.deleted) return null;
+      // Durable hand lifecycle, in the SAME transaction as the feature claim:
+      // the hand is registered before a single card is dealt (spec B9b). If any
+      // later settlement write rolls back, this `running` row survives and the
+      // restart scan can prove a hand was dealt. A hand id collision (only the
+      // test seed can mint one) must abort the deal rather than clobber a
+      // committed row.
+      const lifecycle = this.db
+        .prepare(
+          `INSERT INTO hand_lifecycle (hand_id, room_id, status, created_at, updated_at)
+           VALUES (?, ?, 'running', ?, ?)
+           ON CONFLICT(hand_id) DO NOTHING`,
+        )
+        .run(handId, roomId, now, now);
+      if (lifecycle.changes === 0) return null;
       const pending = this.db
         .prepare(
           "SELECT id, kind, source FROM room_feature_triggers WHERE room_id = ? AND status = 'pending'",
@@ -1145,6 +1591,26 @@ export class GameRoom {
   private startHand(auto = false, onlyIds?: Set<number>): void {
     const room = getRoom(this.db, this.roomId)!;
     if (this.hand || room.archived || room.deleted) return;
+    // A graceful shutdown has begun: never deal a hand that would be aborted
+    // moments later.
+    if (this.draining) return;
+    // Fail closed on an unexpected handler error: an indeterminate room must
+    // not deal another hand over whatever state it is in.
+    if (this.unhealthyReason) {
+      if (!auto)
+        this.broadcast({ t: 'error', message: 'this table is held for an operator (unhealthy)' });
+      return;
+    }
+    // A public hand whose chips never moved must never be dealt over.
+    const unsettled = this.firstUnsettledHand();
+    if (unsettled) {
+      if (!auto)
+        this.broadcast({
+          t: 'error',
+          message: `table is frozen: hand ${unsettled} was never settled (fail-closed)`,
+        });
+      return;
+    }
     const eligible = this.eligiblePlayers().filter((p) => !onlyIds || onlyIds.has(p.userId));
     if (eligible.length < 2) {
       if (!auto)
@@ -1181,7 +1647,10 @@ export class GameRoom {
     };
     this.shown.clear();
     this.shownHandId = null;
-    this.peekOffers.clear();
+    // an offer cannot outlive its hand: end it explicitly rather than silently
+    this.clearPeekOffers('expired');
+    // a hand is starting: any previous showdown's settle hold no longer applies
+    this.settleHoldUntil = 0;
     // The hand id is minted before feature claiming so a claimed trigger can be
     // bound to the hand that will actually carry it through to a transcript.
     const testSeed = process.env.BOT_TEST_SHUFFLE_SEED;
@@ -1213,15 +1682,18 @@ export class GameRoom {
         this.lastHandShow = this.hand?.showSnapshot() ?? null;
         this.hand = null;
         this.autoDealPaused = false;
-        // showdown winners already revealed their cards: the 7-2 bounty applies now
-        const snap = this.lastHandShow;
-        if (snap) {
-          for (const seat of snap.winnerSeats) {
-            const cards = snap.reveals.get(seat);
-            if (cards) this.trySevenDeuce(snap.handId, seat, cards);
-          }
+        // NOTE: the automatic showdown 7-2 bounty is paid inside the durable
+        // settlement transaction (see Hand.persistSettlement) - it must not be
+        // a late presentation side effect. A fold winner's *voluntary* show is
+        // still credited by `recordShow` (independent, post-settlement).
+        try {
+          this.broadcastRoomState();
+        } catch (err) {
+          hdbg('onDoneBroadcastFailed', {
+            room: this.roomId,
+            message: err instanceof Error ? err.message : String(err),
+          });
         }
-        this.broadcastRoomState();
       },
     );
     this.hand.begin();
@@ -1235,10 +1707,27 @@ export class GameRoom {
     }
     if (this.shown.has(seat)) return false;
     this.shown.set(seat, cards);
+    // Pay the fold-winner 7-2 bounty BEFORE announcing the show. If the
+    // transfer's transaction rolls back, the seat is un-marked and a retryable
+    // error is thrown; the client can send `show_cards` again. Broadcasting
+    // first would re-send the same public `cards_shown` on every retry (P1-2).
+    try {
+      this.trySevenDeuce(handId, seat, cards);
+    } catch (err) {
+      this.shown.delete(seat);
+      throw err;
+    }
     this.broadcast({ t: 'cards_shown', handId, seat, cards });
-    // a fold-winner proving 7-2 offsuit collects the bounty too
-    this.trySevenDeuce(handId, seat, cards);
     return true;
+  }
+
+  /**
+   * Marks a hand's 7-2 bounty as already paid. Called by the durable settlement
+   * for an automatic showdown bounty, so a later voluntary show cannot pay it
+   * twice.
+   */
+  markSevenDeucePaid(handId: string): void {
+    this.sevenDeucePaid.add(handId);
   }
 
   /** Pays the 7-2 offsuit bounty to a verified winner, once per hand. */
@@ -1250,48 +1739,83 @@ export class GameRoom {
     if (!room || room.seven_deuce_bonus <= 0) return;
     const winner = snap.bySeat.get(seat);
     if (!winner) return;
-    this.sevenDeucePaid.add(handId);
     const bonus = room.seven_deuce_bonus;
     let total = 0;
-    const apply = this.db.transaction(() => {
-      for (const [payerSeat, payer] of snap.bySeat) {
-        if (payerSeat === seat) continue;
-        const row = this.db
-          .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
-          .get(this.roomId, payer.userId) as { stack: number } | undefined;
-        const amt = Math.min(bonus, row?.stack ?? 0);
-        if (amt <= 0) continue;
-        appendLedger(this.db, {
-          roomId: this.roomId,
-          userId: payer.userId,
-          delta: -amt,
-          kind: 'seven-deuce',
-          ref: handId,
-          note: 'paid the 7-2 offsuit bounty',
-        });
-        this.db
-          .prepare('UPDATE room_players SET stack = stack - ? WHERE room_id = ? AND user_id = ?')
-          .run(amt, this.roomId, payer.userId);
-        total += amt;
+    let injectedFault = false;
+    try {
+      // Test-only: a thrown error simulates a rolled-back transfer (transient).
+      if (this.opts.faultInjection?.sevenDeuce) {
+        injectedFault = true;
+        this.opts.faultInjection.sevenDeuce();
+        injectedFault = false;
       }
-      if (total > 0) {
-        appendLedger(this.db, {
-          roomId: this.roomId,
-          userId: winner.userId,
-          delta: total,
-          kind: 'seven-deuce',
-          ref: handId,
-          note: 'won with 7-2 offsuit',
-        });
-        this.db
-          .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
-          .run(total, this.roomId, winner.userId);
+      const apply = this.db.transaction(() => {
+        // Test-only internal fault: deliberately NOT special-cased, so a
+        // TypeError/schema/invariant failure here stays a programming error.
+        this.opts.faultInjection?.sevenDeuceInternal?.();
+        for (const [payerSeat, payer] of snap.bySeat) {
+          if (payerSeat === seat) continue;
+          const row = this.db
+            .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+            .get(this.roomId, payer.userId) as { stack: number } | undefined;
+          const amt = Math.min(bonus, row?.stack ?? 0);
+          if (amt <= 0) continue;
+          appendLedger(this.db, {
+            roomId: this.roomId,
+            userId: payer.userId,
+            delta: -amt,
+            kind: 'seven-deuce',
+            ref: handId,
+            note: 'paid the 7-2 offsuit bounty',
+          });
+          this.db
+            .prepare('UPDATE room_players SET stack = stack - ? WHERE room_id = ? AND user_id = ?')
+            .run(amt, this.roomId, payer.userId);
+          total += amt;
+        }
+        if (total > 0) {
+          appendLedger(this.db, {
+            roomId: this.roomId,
+            userId: winner.userId,
+            delta: total,
+            kind: 'seven-deuce',
+            ref: handId,
+            note: 'won with 7-2 offsuit',
+          });
+          this.db
+            .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
+            .run(total, this.roomId, winner.userId);
+        }
+      });
+      apply();
+    } catch (err) {
+      // The injected transient fault (a plain error, no result code) simulates a
+      // rolled-back transfer and is retryable. A coded error is classified by
+      // its real SQLite code; anything else (TypeError, invariant, schema,
+      // SQLITE_IOERR/FULL/NOMEM/PROTOCOL) is a programming/environmental error
+      // and must propagate to the hub's unhealthy branch.
+      const coded = typeof (err as { code?: unknown })?.code === 'string';
+      if (isTransientTransferError(err) || (injectedFault && !coded)) {
+        throw new RetryableGameError(
+          `7-2 bounty transfer failed, retry the show: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
-    });
-    apply();
+      throw err;
+    }
+    // Mark the bounty as paid only AFTER the transfer committed: a failed
+    // transaction leaves it unpaid and retryable (see `recordShow`/`onShowCards`).
+    this.sevenDeucePaid.add(handId);
     if (total > 0) {
-      this.broadcast({ t: 'seven_deuce', handId, seat, amount: total });
-      this.broadcastRoomState();
+      try {
+        this.broadcast({ t: 'seven_deuce', handId, seat, amount: total });
+        this.broadcastRoomState();
+      } catch (err) {
+        // Notification only: the money already moved. A lost frame must never
+        // escape into the hub and mark the room unhealthy.
+        console.error('7-2 bounty broadcast failed', err);
+      }
     }
   }
 
@@ -1311,11 +1835,23 @@ export class GameRoom {
     this.recordShow(msg.handId, seat, cards);
   }
 
-  /** A paid request to privately see someone's cards from the last hand. */
+  /**
+   * A paid request to privately see someone's cards from the last hand.
+   *
+   * House rule (server-authoritative): a peek costs a FIXED 1bb, paid by the
+   * requester to the player being looked at, and is only offered out of a
+   * heads-up hand that ended by a fold (so the target's cards are still hidden).
+   * A full ring game or any hand decided at showdown has no private cards left
+   * to sell. The client's `amount` is ignored.
+   */
   private onPeekOffer(userId: number, msg: Extract<ClientMsg, { t: 'peek_offer' }>): void {
     const snap = this.lastHandShow;
     if (this.hand || !snap || snap.handId !== msg.handId)
       return this.send(userId, { t: 'error', message: 'peek offers only work between hands' });
+    if (snap.bySeat.size !== 2)
+      return this.send(userId, { t: 'error', message: 'peeks are only for a heads-up hand' });
+    if (!snap.endedByFold)
+      return this.send(userId, { t: 'error', message: 'that hand was decided at showdown' });
     const target = snap.bySeat.get(msg.targetSeat);
     if (!target)
       return this.send(userId, { t: 'error', message: 'that player was not in the last hand' });
@@ -1326,6 +1862,10 @@ export class GameRoom {
       (this.shownHandId === msg.handId && this.shown.has(msg.targetSeat))
     )
       return this.send(userId, { t: 'error', message: 'those cards are already public' });
+    const room = getRoom(this.db, this.roomId);
+    if (!room) return;
+    // fixed price, never the client's number
+    const amount = room.bb;
     const buyer = this.db
       .prepare(
         `SELECT rp.stack, COALESCE(u.display_name, u.username) as name
@@ -1334,14 +1874,19 @@ export class GameRoom {
       )
       .get(this.roomId, userId) as { stack: number; name: string } | undefined;
     if (!buyer) return;
-    if (buyer.stack < msg.amount)
+    if (buyer.stack < amount)
       return this.send(userId, { t: 'error', message: 'not enough chips for that offer' });
     const offerId = randomBytes(6).toString('hex');
+    // Server-authoritative expiry: a target who disconnects, ignores the frame,
+    // or has their grant revoked must never leave the requester waiting forever.
+    const timer = setTimeout(() => this.expirePeekOffer(offerId), PEEK_OFFER_TTL_MS);
+    timer.unref?.();
     this.peekOffers.set(offerId, {
       handId: msg.handId,
       fromUserId: userId,
       targetSeat: msg.targetSeat,
-      amount: msg.amount,
+      amount,
+      timer,
     });
     this.send(target.userId, {
       t: 'peek_offer',
@@ -1350,7 +1895,41 @@ export class GameRoom {
       fromUserId: userId,
       fromName: buyer.name,
       targetSeat: msg.targetSeat,
-      amount: msg.amount,
+      amount,
+    });
+  }
+
+  /** Terminally end every outstanding offer, optionally telling each requester
+   *  why. Used at hand start (an offer cannot outlive its hand) and shutdown. */
+  private clearPeekOffers(reason?: 'expired' | 'declined'): void {
+    for (const [offerId, offer] of this.peekOffers) {
+      clearTimeout(offer.timer);
+      if (reason)
+        this.send(offer.fromUserId, {
+          t: 'peek_result',
+          offerId,
+          handId: offer.handId,
+          targetSeat: offer.targetSeat,
+          status: reason,
+          amount: offer.amount,
+        });
+    }
+    this.peekOffers.clear();
+  }
+
+  /** A 5s offer lapsed: drop it and tell the requester explicitly. */
+  private expirePeekOffer(offerId: string): void {
+    const offer = this.peekOffers.get(offerId);
+    if (!offer) return;
+    this.peekOffers.delete(offerId);
+    clearTimeout(offer.timer);
+    this.send(offer.fromUserId, {
+      t: 'peek_result',
+      offerId,
+      handId: offer.handId,
+      targetSeat: offer.targetSeat,
+      status: 'expired',
+      amount: offer.amount,
     });
   }
 
@@ -1365,28 +1944,46 @@ export class GameRoom {
     const target = snap?.bySeat.get(offer.targetSeat);
     if (!snap || !target || target.userId !== userId)
       return this.send(userId, { t: 'error', message: 'that offer is not yours to answer' });
-    this.peekOffers.delete(msg.offerId);
-    if (msg.t === 'peek_decline') {
+    // Validate FIRST, then terminally end the offer. Every failure path reports
+    // an explicit result to the requester, so a bad signature/short balance can
+    // never strand them with no `peek_result` at all.
+    const finish = (status: 'accepted' | 'declined' | 'failed', cards?: CardId[]): void => {
+      this.peekOffers.delete(msg.offerId);
+      clearTimeout(offer.timer);
       this.send(offer.fromUserId, {
         t: 'peek_result',
         offerId: msg.offerId,
         handId: offer.handId,
         targetSeat: offer.targetSeat,
-        status: 'declined',
+        status,
         amount: offer.amount,
+        ...(cards ? { cards } : {}),
       });
+    };
+    if (msg.t === 'peek_decline') {
+      finish('declined');
       return;
     }
-    if (this.hand) return this.send(userId, { t: 'error', message: 'a new hand already started' });
-    if (!verifyContent(target.pubkey, offer.handId, 'peek_accept', signedBody(msg), msg.sig))
+    if (this.hand) {
+      finish('failed');
+      return this.send(userId, { t: 'error', message: 'a new hand already started' });
+    }
+    if (!verifyContent(target.pubkey, offer.handId, 'peek_accept', signedBody(msg), msg.sig)) {
+      finish('failed');
       return this.send(userId, { t: 'error', message: 'bad signature' });
+    }
     const cards = verifySnapshotShares(target, msg.shares, this.lookup);
-    if (!cards) return this.send(userId, { t: 'error', message: 'invalid card reveal' });
+    if (!cards) {
+      finish('failed');
+      return this.send(userId, { t: 'error', message: 'invalid card reveal' });
+    }
     const buyerRow = this.db
       .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(this.roomId, offer.fromUserId) as { stack: number } | undefined;
-    if (!buyerRow || buyerRow.stack < offer.amount)
+    if (!buyerRow || buyerRow.stack < offer.amount) {
+      finish('failed');
       return this.send(userId, { t: 'error', message: 'the buyer no longer has enough chips' });
+    }
     const apply = this.db.transaction(() => {
       appendLedger(this.db, {
         roomId: this.roomId,
@@ -1412,15 +2009,7 @@ export class GameRoom {
         .run(offer.amount, this.roomId, userId);
     });
     apply();
-    this.send(offer.fromUserId, {
-      t: 'peek_result',
-      offerId: msg.offerId,
-      handId: offer.handId,
-      targetSeat: offer.targetSeat,
-      status: 'accepted',
-      amount: offer.amount,
-      cards,
-    });
+    finish('accepted', cards);
     this.broadcastRoomState();
   }
 }
@@ -1496,6 +2085,27 @@ class Hand {
   private turnBaseDeadline: number | null = null;
   private goneTimer: NodeJS.Timeout | null = null;
   private timer: NodeJS.Timeout | null = null;
+  /** Holds the `hand_end` broadcast until the showdown reveal has been on screen
+   *  for SHOWDOWN_HOLD_MS. Never gates the durable write. Cleared by
+   *  `clearTimer` (abort/shutdown). */
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
+  private showdownHoldUntil = 0;
+  /** True once `applyHandSettlement` has committed this hand. */
+  private settlementApplied = false;
+  /** True once `hand_end` has been broadcast (no further replay is owed). */
+  private handEndBroadcast = false;
+  /** Number of failed durable-write attempts for this hand (retry bookkeeping). */
+  private settlementAttempts = 0;
+  /** Last durable-write error, kept for the manual-intervention frame. */
+  private settlementError: string | null = null;
+  /** The 7-2 bounty the durable settlement already paid (for the live frame). */
+  private settlementSevenDeuce: { seat: number; amount: number } | null = null;
+  /** The committed commission recipient leg, per seat (empty when the recipient
+   *  is not in the hand or rake is 0). `hand_end.deltas` is the game leg; a
+   *  consumer adds this to reconcile the true per-seat stack change:
+   *  `ending - starting === net_delta + commissionDelta`. */
+  private settlementCommissionDeltas: { seat: number; delta: number }[] = [];
+  private clock: GameClock;
   private lookup = cardLookup();
   readonly commissionBps: number;
   private settlement: {
@@ -1505,6 +2115,8 @@ class Hand {
     showdown: ServerMsg | null;
     rake: number;
     squid: SquidSettlement | null;
+    /** Automatic showdown 7-2 bounty, resolved against the post-pot stacks. */
+    bounty: { seat: number; amount: number; payout: { seat: number; delta: number }[] } | null;
   } | null = null;
 
   constructor(
@@ -1526,6 +2138,7 @@ class Hand {
     this.n = seats.length;
     this.retriesLeft = opts.cryptoRetries ?? 3;
     this.commissionBps = getRoom(db, roomId)!.commission_bps;
+    this.clock = opts.clock ?? realClock;
   }
 
   // ---------- lifecycle ----------
@@ -1589,11 +2202,36 @@ class Hand {
       hdbg('clearTimer', { id: this.id, phase: this.phase, toAct: this.betting?.toAct });
     }
     this.timer = null;
+    this.clearSettleTimer();
+  }
+
+  /** Cancel a pending post-showdown `hand_end` broadcast. The durable write has
+   *  already committed by the time this timer exists, so cancelling it can only
+   *  lose the broadcast, never the settlement. */
+  private clearSettleTimer(): void {
+    if (this.settleTimer) this.clock.clearTimer(this.settleTimer);
+    this.settleTimer = null;
   }
 
   private armTimer(ms: number): void {
-    this.clearTimer();
-    this.timer = setTimeout(() => this.onTimeout(), ms);
+    // Only the crypto/action clock is re-armed here. A pending showdown-hold
+    // settlement is NOT a turn timer and must survive (a re-arm happens while
+    // the audit phase is waiting for keys, for instance).
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      // A timer-driven failure (settle invariants, a broadcast) must never take
+      // down the process. Hand-level settlement failures are isolated further
+      // inside `publishSettlement`; this is the timer backstop.
+      try {
+        this.onTimeout();
+      } catch (err) {
+        hdbg('onTimeoutFailed', {
+          id: this.id,
+          phase: this.phase,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }, ms);
     hdbg('armTimer', {
       id: this.id,
       phase: this.phase,
@@ -1689,7 +2327,7 @@ class Hand {
           }
           if (cards.length === 2) this.appendServer('hole_cards', { seat, cards });
         }
-        this.finalizeSettlement();
+        this.publishSettlement();
         return;
       }
       case 'multirun': {
@@ -1702,9 +2340,20 @@ class Hand {
     }
   }
 
-  private abort(reason: string, blamedSeat: number | null): void {
-    if (this.phase === 'done') return;
+  private abort(reason: string, blamedSeat: number | null, force = false): void {
+    // `force` lets a graceful shutdown abort a hand whose phase is already
+    // 'done' because its settlement retries were exhausted: no chips moved, so
+    // marking the lifecycle `aborted` is what keeps a restart from freezing the
+    // room. It must never touch a hand whose settlement committed.
+    if (this.settlementApplied) return;
+    if (this.phase === 'done' && !force) return;
     this.clearTimer();
+    // Durable intent FIRST: a forced abort must not tear the hand down (or
+    // broadcast an abort) unless the `aborted` row is confirmed, otherwise a
+    // failed durable update would leave a `running` row behind while the room
+    // was silently cleared.
+    const confirmed = this.markLifecycleAborted();
+    if (force && !confirmed) throw new Error('lifecycle abort could not be confirmed');
     this.phase = 'done';
     this.appendServer('hand_abort', { reason, blamedSeat });
     // an aborted hand moves no chips, no ledger rows and no time bank: put any
@@ -1712,7 +2361,7 @@ class Hand {
     this.releaseFeatureClaims();
     // no sitting-out penalty: the next deal already skips disconnected players,
     // and punishing a flaky connection kept locking people out of their seat
-    this.room.broadcast({ t: 'hand_abort', handId: this.id, reason, blamedSeat });
+    this.safeBroadcast({ t: 'hand_abort', handId: this.id, reason, blamedSeat });
     this.onDone();
   }
 
@@ -1748,6 +2397,38 @@ class Hand {
     })();
   }
 
+  /** Mark this hand's durable lifecycle aborted. Only ever clears a
+   *  non-terminal row: a hand that already committed its settlement is left
+   *  `committed` (a late abort must not rewrite history). Returns whether the
+   *  durable row is now provably terminal (`aborted` or `committed`) - a caller
+   *  that needs the guarantee (shutdown) must not tear the hand down otherwise. */
+  private markLifecycleAborted(): boolean {
+    try {
+      this.db
+        .prepare(
+          `UPDATE hand_lifecycle SET status = 'aborted', updated_at = ?, resolved_at = ?
+            WHERE hand_id = ? AND status IN ('running','prepared','quarantined')`,
+        )
+        .run(Date.now(), Date.now(), this.id);
+    } catch {
+      // fall through to the read-back below: a failed write is only fatal if the
+      // row is not already terminal.
+    }
+    return this.lifecycleTerminal();
+  }
+
+  /** Read back whether this hand's durable lifecycle row is terminal. */
+  private lifecycleTerminal(): boolean {
+    try {
+      const row = this.db
+        .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+        .get(this.id) as { status?: string } | undefined;
+      return row?.status === 'committed' || row?.status === 'aborted';
+    } catch {
+      return false;
+    }
+  }
+
   /** Re-send whatever request the stalled player(s) may have missed. */
   private renudge(): void {
     switch (this.phase) {
@@ -1772,29 +2453,39 @@ class Hand {
   /** Bring a (re)connecting participant fully back into the hand. */
   resendPending(userId: number): void {
     const info = this.seatOf(userId);
-    if (!info || this.phase === 'done') return;
-    if (this.startMsg) this.room.send(userId, this.startMsg);
-    const orderIdx = this.seats.findIndex((s) => s.seat === info.seat);
-    for (const idx of this.holeIndexes(orderIdx)) {
-      const pt = this.holeFinal.get(idx);
-      if (pt)
+    // A hand whose terminal `hand_end` already went out is fully over: `onDone`
+    // clears `GameRoom.hand` in the same tick, so nothing is owed here.
+    if (this.handEndBroadcast) return;
+    // During the post-showdown hold the settlement is already durable and the
+    // reveal was broadcast exactly once. A participant who reconnects in that
+    // window must get the FULL terminal context back - not just the reveal - so
+    // a freshly-created client (page refresh) can rebuild the board and its own
+    // private cards. Never replay a betting snapshot here: the hand is over.
+    if (this.settlementApplied) {
+      // A seated participant gets their own `hand_start` + private cards; a
+      // spectator (no seat) still gets the public replay: the board, the
+      // showdown reveal and the squid result. Private frames never go to a
+      // non-seat, so a late spectator neither sees cards nor opens a turn.
+      if (info && this.startMsg) this.room.send(userId, this.startMsg);
+      this.replayPublicState(userId, info);
+      if (this.settlement?.showdown) this.room.send(userId, this.settlement.showdown);
+      const squid = this.settlement?.squid;
+      if (squid)
         this.room.send(userId, {
-          t: 'your_card',
+          t: 'squid_result',
           handId: this.id,
-          deckIndex: idx,
-          point: pointHex(pt),
-        });
+          winners: squid.winners,
+          transfers: squid.transfers,
+          requestedPerLoser: squid.requestedPerLoser,
+          paidBySeat: squid.paidBySeat,
+          noClaimant: squid.noClaimant,
+          netBySeat: [...squid.netBySeat.entries()].map(([seat, net]) => ({ seat, net })),
+        } as ServerMsg);
+      return;
     }
-    for (const [deckIndex, card] of this.boardCards) {
-      const run = this.runForDeckIndex(deckIndex);
-      this.room.send(userId, {
-        t: 'board_open',
-        handId: this.id,
-        deckIndex,
-        card,
-        ...(run > 1 ? { run: run as 2 | 3 } : {}),
-      });
-    }
+    if (!info) return;
+    if (this.startMsg) this.room.send(userId, this.startMsg);
+    this.replayPublicState(userId, info);
     if (this.phase === 'shuffle' && this.seats[this.shuffleIdx]?.seat === info.seat) {
       this.requestShuffle();
     }
@@ -1823,6 +2514,37 @@ class Hand {
     }
     if (this.phase === 'audit' && !this.revealedKeys.has(info.seat)) {
       this.room.send(userId, { t: 'need_keys', handId: this.id });
+    }
+  }
+
+  /**
+   * Replay the frames that reconstruct the public board and this seat's own
+   * private cards. These frames are idempotent context (not a betting snapshot),
+   * so replaying them mid-hand or after settlement is always safe.
+   */
+  private replayPublicState(userId: number, info: HandSeatInfo | undefined): void {
+    if (info) {
+      const orderIdx = this.seats.findIndex((s) => s.seat === info.seat);
+      for (const idx of this.holeIndexes(orderIdx)) {
+        const pt = this.holeFinal.get(idx);
+        if (pt)
+          this.room.send(userId, {
+            t: 'your_card',
+            handId: this.id,
+            deckIndex: idx,
+            point: pointHex(pt),
+          });
+      }
+    }
+    for (const [deckIndex, card] of this.boardCards) {
+      const run = this.runForDeckIndex(deckIndex);
+      this.room.send(userId, {
+        t: 'board_open',
+        handId: this.id,
+        deckIndex,
+        card,
+        ...(run > 1 ? { run: run as 2 | 3 } : {}),
+      });
     }
   }
 
@@ -1930,9 +2652,15 @@ class Hand {
     if (this.shownSeats.has(info.seat)) return;
     const cards = this.verifyShowShares(info.seat, shares);
     if (!cards) return this.err(info.userId, 'invalid card reveal');
+    // Record the show first: if the fold-winner 7-2 bounty transfer throws, it
+    // un-marks the table's shown seat, so a retry can still pay it. Only mark
+    // this hand as shown once that succeeded.
+    if (!this.room.recordShow(this.id, info.seat, cards)) return;
     this.shownSeats.add(info.seat);
-    this.appendPlayer('show_cards', info.pubkey, { shares }, sig);
-    this.room.recordShow(this.id, info.seat, cards);
+    // After settlement the transcript is sealed (its head is already committed
+    // to `hand_settlements`/`transcripts`), so a show during the reveal hold is
+    // a live-only courtesy: broadcast it, but never append to the sealed chain.
+    if (!this.settlementApplied) this.appendPlayer('show_cards', info.pubkey, { shares }, sig);
   }
 
   private verifyShowShares(
@@ -1985,6 +2713,7 @@ class Hand {
       revealedSeats: new Set(this.reveals.keys()),
       winnerSeats,
       reveals: new Map(this.reveals),
+      endedByFold: this.betting?.winnerByFold !== null && this.betting?.winnerByFold !== undefined,
     };
   }
 
@@ -2703,6 +3432,9 @@ class Hand {
   private foldDroppedIfDecisive(seat: number): void {
     const st = this.betting;
     if (!st || st.winnerByFold !== null) return;
+    // A showdown settlement already computed (holding for its reveal) must not
+    // be re-settled by a disconnect racing the hold.
+    if (this.settlement) return;
     const mine = st.seats.find((s) => s.seat === seat);
     if (!mine || mine.folded) return;
     const seats = st.seats.map((s) => (s.seat === seat ? { ...s, folded: true } : { ...s }));
@@ -3029,6 +3761,10 @@ class Hand {
   // ---------- settlement ----------
 
   private settle(): void {
+    // `settle` computes the outcome exactly once per hand. A disconnect racing
+    // the showdown hold can call foldDroppedIfDecisive, but a settlement already
+    // in flight must never be recomputed or double-broadcast.
+    if (this.settlement || this.phase === 'done') return;
     this.clearTimer();
     const st = this.betting!;
     const board = this.currentBoard();
@@ -3124,7 +3860,36 @@ class Hand {
       seat: s.seat,
       stack: s.stack + (squid?.netBySeat.get(s.seat) ?? 0),
     }));
-    this.settlement = { awards, pokerDeltas, stacks, showdown: showdownMsg, rake, squid };
+    this.settlement = {
+      awards,
+      pokerDeltas,
+      stacks,
+      showdown: showdownMsg,
+      rake,
+      squid,
+      bounty: null,
+    };
+    // Resolve the automatic showdown 7-2 bounty now, against the post-pot
+    // stacks, so it is part of the hand's deltas and `ending_stack` from the
+    // start. The durable writer moves the chips exactly once via `stackDeltas`
+    // (the bounty is folded in) and only records the `seven-deuce` ledger legs.
+    const bountyInfo = this.sevenDeuceBounty();
+    if (bountyInfo) {
+      const available = new Map(stacks.map((s) => [s.seat, Math.max(0, s.stack)]));
+      const payout: { seat: number; delta: number }[] = [];
+      let total = 0;
+      for (const info of this.seats) {
+        if (info.seat === bountyInfo.winnerSeat) continue;
+        const amt = Math.min(bountyInfo.bonus, available.get(info.seat) ?? 0);
+        if (amt <= 0) continue;
+        payout.push({ seat: info.seat, delta: -amt });
+        total += amt;
+      }
+      if (total > 0) {
+        payout.push({ seat: bountyInfo.winnerSeat, delta: total });
+        this.settlement.bounty = { seat: bountyInfo.winnerSeat, amount: total, payout };
+      }
+    }
 
     // Invariants checked BEFORE anything is persisted. A violation is a
     // programming error and must never reach the ledger.
@@ -3142,9 +3907,20 @@ class Hand {
           throw new Error(`squid payment ${p.amount} out of range on hand ${this.id}`);
       }
     }
+    const bountyBySeat = new Map(
+      (this.settlement.bounty?.payout ?? []).map((d) => [d.seat, d.delta]),
+    );
+    // Combined poker+squid+bounty nets: the `settlement` transcript entry's
+    // deltas and the hand_end deltas, and the exact per-seat stack movement.
     const combined = pokerDeltas.map((d) => ({
       seat: d.seat,
-      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
+      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0) + (bountyBySeat.get(d.seat) ?? 0),
+    }));
+    // Poker view as the stats projection must see it, so its
+    // `net_delta === ending_stack - starting_stack` (the bounty is zero-sum).
+    const pokerDeltasForProjection = pokerDeltas.map((d) => ({
+      seat: d.seat,
+      delta: d.delta + (bountyBySeat.get(d.seat) ?? 0),
     }));
     const netBySeat = [...(squid?.netBySeat.entries() ?? [])].map(([seat, net]) => ({ seat, net }));
     this.appendServer('settlement', {
@@ -3155,9 +3931,10 @@ class Hand {
       ...(rake > 0 ? { commission: rake } : {}),
       awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
       deltas: combined,
-      // Poker-only split so stats never have to reverse-engineer squid out of
-      // the combined deltas (old transcripts have no such field).
-      pokerDeltas,
+      // Poker split so stats never have to reverse-engineer squid out of the
+      // combined deltas (old transcripts have no such field). Carries the
+      // bounty too, so `net_delta === poker + squid` holds in the projection.
+      pokerDeltas: pokerDeltasForProjection,
       runCount: runs,
       grossPot: totalPot + rake,
       showdown: showdownMsg !== null,
@@ -3177,33 +3954,21 @@ class Hand {
           ? showdownMsg.reveals.map((r) => ({ seat: r.seat, cards: r.cards }))
           : [],
     });
-    if (showdownMsg) this.room.broadcast(showdownMsg);
-    if (squid)
-      // `netBySeat` is the authoritative per-seat outcome: with multiple losers
-      // a seat can both pay and receive, so consumers must not assume only
-      // `winners` receive chips.
-      this.room.broadcast({
-        t: 'squid_result',
-        handId: this.id,
-        winners: squid.winners,
-        transfers: squid.transfers,
-        requestedPerLoser: squid.requestedPerLoser,
-        paidBySeat: squid.paidBySeat,
-        noClaimant: squid.noClaimant,
-        netBySeat,
-      } as ServerMsg);
-
     if (this.auditMode === 'strict-audit' || this.opts.tvReplays) {
       // TV replays: collect everyone's per-hand key so the stored transcript
-      // can show ALL hole cards, WSOP broadcast style. Settlement still
-      // happens on timeout if someone vanishes - keys are best-effort.
+      // can show ALL hole cards, WSOP broadcast style. The audit entries are
+      // part of the persisted transcript, so the durable write (and the reveal)
+      // wait for the keys - or the timeout, which settles best-effort.
       // (requested by notpritam, docs/FEATURES.md)
       this.phase = 'audit';
       this.room.broadcast({ t: 'need_keys', handId: this.id });
       this.armTimer(this.opts.cryptoTimeoutMs);
-    } else {
-      this.finalizeSettlement();
+      if (this.revealedKeys.size === this.n) this.publishSettlement();
+      return;
     }
+    // No audit: settle + reveal immediately. `publishSettlement` writes the
+    // durable settlement BEFORE broadcasting the reveal, then holds `hand_end`.
+    this.publishSettlement();
   }
 
   /**
@@ -3263,7 +4028,11 @@ class Hand {
   }
 
   private onRevealKey(info: HandSeatInfo, keyHex: string, sig: string): void {
-    if (this.phase !== 'audit') return;
+    // The transcript was sealed by `persistSettlement`; once we are past the
+    // audit phase a key is DISCARDED, not a live frame: no `hole_cards` are
+    // broadcast (unlike `show_cards`, which is live-only) and the committed
+    // head cannot change. It is simply lost.
+    if (this.phase !== 'audit' || this.settlementApplied) return;
     let valid = false;
     try {
       const commit = this.commits.get(info.seat)!;
@@ -3287,24 +4056,271 @@ class Hand {
       }
       if (cards.length === 2) this.appendServer('hole_cards', { seat: info.seat, cards });
     }
-    if (this.revealedKeys.size === this.n) this.finalizeSettlement();
+    if (this.revealedKeys.size === this.n) this.publishSettlement();
   }
 
-  private finalizeSettlement(): void {
-    if (this.phase === 'done' || !this.settlement) return;
+  /**
+   * Publish a computed settlement. This is the ordering contract:
+   *
+   *   1. `persistSettlement()` writes the whole hand (chips, ledger, transcript,
+   *      stats projection, `hand_settlements` marker) in ONE synchronous
+   *      transaction - the durability point. A crash any time after this can
+   *      never lose a hand whose cards were already made public.
+   *   2. Only then is the `showdown` reveal broadcast.
+   *   3. `hand_end` is delayed by the reveal hold (and, for audit hands, waits
+   *      for the replay keys - which are part of the persisted transcript).
+   *
+   * Any early/repeated call (an audit key arriving after the timeout, a
+   * disconnect racing the hold) is a no-op.
+   */
+  private publishSettlement(): void {
+    if (!this.settlement || this.settlementApplied) return;
+    let outcome: HandSettlementOutcome;
+    try {
+      outcome = this.persistSettlement();
+    } catch (err) {
+      // NOT committed: isolate, keep the deterministic result for a retry, and
+      // never let the failure escape into a WS/timer callback.
+      this.onPersistFailed(err);
+      return;
+    }
+    // The durable write is proven (applied or an idempotent duplicate): a
+    // recoverable settlement-failure mark can never be true any more.
+    this.room.settlementRecovered();
+    if (outcome.status === 'duplicate') {
+      // a committed finalize already moved every chip for this hand: replay
+      // nothing. Re-mark the bounty (idempotent) so a later voluntary show can
+      // never pay a showdown 7-2 bounty a second time.
+      if (this.settlement.bounty && this.settlement.bounty.amount > 0)
+        this.room.markSevenDeucePaid(this.id);
+      this.onDone();
+      return;
+    }
+    this.settlementSevenDeuce = outcome.sevenDeuce;
+    const { showdown, squid } = this.settlement;
+    // 2. the reveal frame, now that the chips are guaranteed to have moved.
+    //    A failed notification must never undo a committed settlement.
+    if (showdown) {
+      this.safeBroadcast(showdown);
+      this.showdownHoldUntil =
+        this.clock.now() + (this.opts.showdownHoldMs ?? SHOWDOWN_HOLD_MS);
+    }
+    if (squid)
+      // `netBySeat` is the authoritative per-seat outcome: with multiple losers
+      // a seat can both pay and receive, so consumers must not assume only
+      // `winners` receive chips.
+      this.safeBroadcast({
+        t: 'squid_result',
+        handId: this.id,
+        winners: squid.winners,
+        transfers: squid.transfers,
+        requestedPerLoser: squid.requestedPerLoser,
+        paidBySeat: squid.paidBySeat,
+        noClaimant: squid.noClaimant,
+        netBySeat: [...squid.netBySeat.entries()].map(([seat, net]) => ({ seat, net })),
+      } as ServerMsg);
+    // The automatic 7-2 bounty already moved inside the durable transaction;
+    // only its live frame is presentation and may be lost without harm.
+    if (this.settlementSevenDeuce && this.settlementSevenDeuce.amount > 0) {
+      this.safeBroadcast({
+        t: 'seven_deuce',
+        handId: this.id,
+        seat: this.settlementSevenDeuce.seat,
+        amount: this.settlementSevenDeuce.amount,
+      });
+      this.safeBroadcastRoomState();
+    }
+    // 3. terminal frame only after the reveal hold elapses
+    this.scheduleHandEnd();
+  }
+
+  /** A settlement-path broadcast is notification only: swallow transport/DB
+   *  failures so a committed hand always finishes and never triggers a refund. */
+  private safeBroadcast(msg: ServerMsg): void {
+    try {
+      this.opts.faultInjection?.broadcast?.(msg);
+      this.room.broadcast(msg);
+    } catch (err) {
+      const detail = {
+        id: this.id,
+        t: msg.t,
+        message: err instanceof Error ? err.message : String(err),
+      };
+      hdbg('broadcastFailed', detail);
+      // hdbg is off by default, so a lost settlement frame would otherwise be
+      // completely silent in production. Surface it on the normal error log.
+      console.error('hand settlement broadcast failed', detail);
+    }
+  }
+
+  private safeBroadcastRoomState(): void {
+    try {
+      this.room.broadcastRoomState();
+    } catch (err) {
+      const detail = {
+        room: this.roomId,
+        message: err instanceof Error ? err.message : String(err),
+      };
+      hdbg('broadcastRoomStateFailed', detail);
+      console.error('hand settlement room_state broadcast failed', detail);
+    }
+  }
+
+  /**
+   * A durable-write attempt failed (SQLITE_BUSY, projection rejection, ...).
+   * The settlement is NOT committed, so the hand must not be torn down and no
+   * next hand may be dealt over it. The already-computed settlement is kept
+   * (retryable and deterministic); the failure is surfaced explicitly and
+   * retried a bounded number of times before the table is held for a human.
+   */
+  private onPersistFailed(err: unknown): void {
+    const reason = err instanceof Error ? err.message : String(err);
+    this.settlementError = reason;
+    this.settlementAttempts++;
+    hdbg('settlementPersistFailed', {
+      id: this.id,
+      attempt: this.settlementAttempts,
+      reason,
+    });
+    const canRetry = this.settlementAttempts <= SETTLE_MAX_RETRIES;
+    this.safeBroadcast({
+      t: 'settlement_failed',
+      handId: this.id,
+      reason,
+      attempt: this.settlementAttempts,
+      retrying: canRetry,
+    } as ServerMsg);
+    if (!canRetry) {
+      // Terminal: freeze the hand in place so the table cannot deal again until
+      // an operator intervenes. `this.hand` stays set on the GameRoom. Mark the
+      // room unhealthy as RECOVERABLE: a successful host `retry_settlement` is
+      // proof the write finally committed, and clears this specific mark. It is
+      // deliberately not a permanent lock.
+      this.phase = 'done';
+      this.room.markUnhealthy(`settlement failed: ${reason}`, { recoverable: true });
+      return;
+    }
+    if (!this.settleTimer) {
+      this.settleTimer = this.clock.setTimer(() => {
+        this.settleTimer = null;
+        this.publishSettlement();
+      }, SETTLE_RETRY_MS);
+    }
+  }
+
+  /**
+   * Host/operator recovery from a frozen settlement (retries exhausted). The
+   * already-computed settlement is deterministic, and the writer is idempotent
+   * on the `hand_settlements` marker, so clearing the retry budget and writing
+   * again is safe and can never double-pay. Returns whether the hand is now
+   * settled. See DESIGN.md ("Settlement recovery").
+   */
+  retrySettlement(): boolean {
+    if (this.settlementApplied || !this.settlement) return false;
+    this.settlementAttempts = 0;
+    this.settlementError = null;
     this.clearTimer();
-    this.phase = 'done';
-    const { stacks, rake, squid } = this.settlement;
+    this.publishSettlement();
+    return this.settlementApplied;
+  }
+
+  /** True once the durable write has exhausted its retries (table frozen). */
+  isSettlementFrozen(): boolean {
+    return !this.settlementApplied && this.settlementAttempts > SETTLE_MAX_RETRIES;
+  }
+
+  /** True once this hand's settlement transaction has committed. */
+  isSettlementCommitted(): boolean {
+    return this.settlementApplied;
+  }
+
+  /** True once the hand has reached a lifecycle-terminal point: settled, its
+   *  terminal frame broadcast, or aborted. A hand whose settlement retries were
+   *  exhausted reports terminal (phase 'done') but is not committed. */
+  isTerminal(): boolean {
+    return this.settlementApplied || this.handEndBroadcast || this.phase === 'done';
+  }
+
+  /** Graceful-shutdown abort: force past the `phase === 'done'` early return so
+   *  a frozen, never-settled hand still records `aborted` and cannot freeze the
+   *  restart. Refuses a committed settlement (guard inside `abort`).
+   *
+   *  The abort is a SINGLE durable attempt, and its busy budget is temporarily
+   *  shortened so a stuck writer cannot stretch shutdown far past
+   *  `shutdownDrainMs` (the connection default is 10s; retries could have taken
+   *  ~30s). The shortened budget covers EVERY DB touch here - including the
+   *  initial terminal read-back - not just the UPDATE. Returns whether the
+   *  lifecycle row is provably terminal; `false` means the caller must keep the
+   *  hand fail-closed rather than pretend it was resolved (spec P0-3). */
+  abortForShutdown(): boolean {
+    let previous: number | null = null;
+    try {
+      const row = this.db.pragma('busy_timeout', { simple: true }) as number | undefined;
+      if (typeof row === 'number') previous = row;
+    } catch {
+      // DB already closed: nothing can be persisted, stay fail-closed.
+      return false;
+    }
+    // Shorten BEFORE the first read-back: that SELECT can itself hit a lock and
+    // would otherwise wait out the full default (spec P0-3a).
+    try {
+      this.db.pragma('busy_timeout = 250');
+    } catch {
+      return false;
+    }
+    try {
+      if (this.lifecycleTerminal()) return true;
+      try {
+        this.abort('server shutdown (drain timeout)', null, true);
+      } catch {
+        // The durable update was not confirmed; fall through to the read-back.
+      }
+      return this.lifecycleTerminal();
+    } finally {
+      try {
+        if (previous !== null) this.db.pragma(`busy_timeout = ${previous}`);
+      } catch {
+        // connection gone; the process is shutting down anyway
+      }
+    }
+  }
+
+  /**
+   * Durably write the settlement exactly once. Throws when the transaction
+   * fails (the caller isolates and retries). A `duplicate` outcome means a
+   * committed earlier call already moved the chips.
+   */
+  private persistSettlement(): HandSettlementOutcome {
+    if (this.settlementApplied)
+      return {
+        status: 'duplicate',
+        timeBankSkipped: [],
+        finalStacks: [],
+        sevenDeuce: null,
+        commissionDeltas: [],
+      };
+    if (!this.settlement) throw new Error('settlement not computed');
+    this.clearTimer();
+    const { rake, squid, bounty } = this.settlement;
     const room = getRoom(this.db, this.roomId);
     const now = Date.now();
     const pokerDeltas = this.settlement.pokerDeltas;
+    const bountyBySeat = new Map((bounty?.payout ?? []).map((d) => [d.seat, d.delta]));
     const squidDeltas = this.seats.map((s) => ({
       seat: s.seat,
       delta: squid?.netBySeat.get(s.seat) ?? 0,
     }));
+    // The per-seat stack movement: poker + squid + bounty.
     const combinedDeltas = pokerDeltas.map((d) => ({
       seat: d.seat,
-      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0),
+      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0) + (bountyBySeat.get(d.seat) ?? 0),
+    }));
+    // The stats projection must see the bounty inside the poker view so its
+    // `net_delta === ending_stack - starting_stack`; the ledger keeps the bounty
+    // in its own `seven-deuce` kind (see `sevenDeuce` below).
+    const projectionPokerDeltas = pokerDeltas.map((d) => ({
+      seat: d.seat,
+      delta: d.delta + (bountyBySeat.get(d.seat) ?? 0),
     }));
     const bySeat = (seat: number) => this.seats.find((x) => x.seat === seat)!;
 
@@ -3337,6 +4353,22 @@ class Hand {
     if (mismatchedSeats.length)
       this.appendServer('time_bank_epoch_mismatch', { seats: mismatchedSeats });
 
+    // The auto 7-2 bounty was already resolved against the post-pot stacks in
+    // `settle()`; here we only hand the writer its exact amounts.
+    const sevenDeuceWrite =
+      bounty && bounty.amount > 0
+        ? {
+            winnerUserId: bySeat(bounty.seat).userId,
+            winnerSeat: bounty.seat,
+            winnerAmount: bounty.amount,
+            payerAmounts: bounty.payout
+              .filter((d) => d.delta < 0)
+              .map((d) => ({ userId: bySeat(d.seat).userId, amount: -d.delta })),
+          }
+        : null;
+    // Test-only commit fault injection (never wired in production).
+    this.opts.faultInjection?.persist?.(this.settlementAttempts + 1);
+
     const head = this.transcript.head;
     const outcome = applyHandSettlement(this.db, {
       handId: this.id,
@@ -3347,6 +4379,10 @@ class Hand {
       commissionBps: this.commissionBps,
       stackDeltas: combinedDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta })),
       pokerLedger: pokerDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta })),
+      projectionPokerLedger: projectionPokerDeltas.map((d) => ({
+        userId: bySeat(d.seat).userId,
+        delta: d.delta,
+      })),
       squidLedger: squid
         ? squidDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta }))
         : [],
@@ -3356,27 +4392,143 @@ class Hand {
       triggerIds: [this.features.squid.triggerId, this.features.bomb.triggerId],
       bombRan: !!this.features.bomb.settings,
       rakeRecipientId: rake > 0 && room ? (platformUserId(this.db) ?? room.banker_id) : null,
+      sevenDeuce: sevenDeuceWrite,
       now,
     });
-    if (outcome.status === 'duplicate') {
-      // a committed finalize already moved every chip for this hand: replay nothing
-      this.onDone();
+    this.settlementApplied = true;
+    // B1 single authority: the writer re-reads the TRUE final stacks after every
+    // money move (pot, rake, squid, bounty). Those rows are now the only source
+    // for `this.settlement.stacks` and therefore for `hand_end.stacks`.
+    if (outcome.status === 'applied') {
+      this.applyFinalStacks(outcome);
+      // Seat-map the explicit commission leg the writer just committed.
+      const seatByUser = new Map(this.seats.map((s) => [s.userId, s.seat]));
+      this.settlementCommissionDeltas = outcome.commissionDeltas
+        .map((c) => ({ seat: seatByUser.get(c.userId), delta: c.delta }))
+        .filter((c): c is { seat: number; delta: number } => c.seat !== undefined);
+    }
+    // A showdown winner who held 7-2 has now been paid (once per hand): mark it
+    // so a later voluntary show can never pay the bounty a second time.
+    if (sevenDeuceWrite) this.room.markSevenDeucePaid(this.id);
+    return outcome;
+  }
+
+  /**
+   * Adopt the writer's re-read `room_players.stack` as the hand's final stacks.
+   * Called exactly once, on the `applied` outcome, after the transaction has
+   * committed. Seats only (a platform rake recipient has no seat and is
+   * ignored); the hand's own seats are always all present.
+   */
+  private applyFinalStacks(outcome: HandSettlementOutcome): void {
+    if (!this.settlement) return;
+    const seatByUser = new Map(this.seats.map((s) => [s.userId, s.seat]));
+    const finalBySeat = new Map<number, number>();
+    for (const f of outcome.finalStacks) {
+      const seat = seatByUser.get(f.userId);
+      if (seat !== undefined) finalBySeat.set(seat, f.stack);
+    }
+    if (finalBySeat.size !== this.seats.length) return;
+    this.settlement.stacks = this.seats.map((s) => ({ seat: s.seat, stack: finalBySeat.get(s.seat)! }));
+  }
+
+  /**
+   * The automatic 7-2 offsuit bounty for a hand decided at SHOWDOWN, or null.
+   * Fold winners are deliberately excluded here: their cards only become public
+   * through a voluntary show, which pays via `GameRoom.recordShow` after the
+   * fact. Only the first qualifying winner is paid, matching the old behavior.
+   */
+  private sevenDeuceBounty(): {
+    winnerUserId: number;
+    winnerSeat: number;
+    payerUserIds: number[];
+    bonus: number;
+  } | null {
+    if (!this.settlement) return null;
+    if (this.betting?.winnerByFold !== null && this.betting?.winnerByFold !== undefined)
+      return null;
+    const room = getRoom(this.db, this.roomId);
+    if (!room || room.seven_deuce_bonus <= 0) return null;
+    for (const [seat, amount] of this.settlement.awards) {
+      if (amount <= 0) continue;
+      const cards = this.reveals.get(seat);
+      if (!cards || !isSevenDeuce(cards)) continue;
+      const info = this.seats.find((s) => s.seat === seat);
+      if (!info) continue;
+      return {
+        winnerUserId: info.userId,
+        winnerSeat: seat,
+        payerUserIds: this.seats.filter((s) => s.seat !== seat).map((s) => s.userId),
+        bonus: room.seven_deuce_bonus,
+      };
+    }
+    return null;
+  }
+
+  /** `hand_end` after the reveal hold. The chips already moved in
+   *  `persistSettlement`, so this only controls the broadcast + auto-deal pause. */
+  private scheduleHandEnd(): void {
+    const wait = this.showdownHoldUntil - this.clock.now();
+    if (wait <= 0) {
+      this.broadcastHandEnd();
       return;
     }
-    // `hand_end.deltas` are the combined poker+squid nets; the split is kept
-    // alongside for clients/stats that want to attribute each source.
+    if (this.settleTimer) return;
+    this.settleTimer = this.clock.setTimer(() => {
+      this.settleTimer = null;
+      this.broadcastHandEnd();
+    }, wait);
+  }
+
+  private broadcastHandEnd(): void {
+    if (this.handEndBroadcast || !this.settlement) return;
+    this.handEndBroadcast = true;
+    // The hand is now fully over: reject any late crypto/betting frame. The
+    // reveal hold deliberately keeps the phase open, so a folded player can
+    // still volunteer a show while the frame is on screen (as before).
+    this.phase = 'done';
+    const { stacks, rake, squid } = this.settlement;
+    const pokerDeltas = this.settlement.pokerDeltas;
+    const squidDeltas = this.seats.map((s) => ({
+      seat: s.seat,
+      delta: squid?.netBySeat.get(s.seat) ?? 0,
+    }));
+    const bountyBySeat = new Map(
+      (this.settlement.bounty?.payout ?? []).map((d) => [d.seat, d.delta]),
+    );
+    const combinedDeltas = pokerDeltas.map((d) => ({
+      seat: d.seat,
+      delta: d.delta + (squid?.netBySeat.get(d.seat) ?? 0) + (bountyBySeat.get(d.seat) ?? 0),
+    }));
+    // `hand_end.deltas` are the combined poker+squid+bounty game nets - the
+    // exact numbers the durable writer applied for the game leg.
+    // `commissionDeltas` is the SEAT-filtered commission leg: only a rake
+    // recipient who is also in this hand appears. Aggregate contract:
+    //   sum(deltas) === -commission                        ALWAYS
+    //   sum(deltas) + sum(commissionDeltas) === 0          ONLY IF the recipient
+    //                                                      is in this hand
+    // When the recipient is out of hand the credit is expressed by its own
+    // `commission` ledger row on that external account, not by a hand seat.
+    // Per seat `ending - starting === delta + commissionDelta` (plus any
+    // mid-hand buy). Keeping the legs apart preserves `net_delta = poker+squid`.
     const endMsg = {
       t: 'hand_end' as const,
       handId: this.id,
-      head,
+      head: this.transcript.head,
       stacks,
       deltas: combinedDeltas,
       pokerDeltas,
       squidDeltas,
+      commissionDeltas: this.settlementCommissionDeltas,
       commission: rake,
       commissionBps: this.commissionBps,
     };
-    this.room.broadcast(endMsg as ServerMsg);
+    this.safeBroadcast(endMsg as ServerMsg);
+    // A showdown must not roll straight into the next auto-deal: hold the table
+    // for SETTLE_HOLD_MS so the client's settlement animation can finish. A
+    // fold-out carries no reveal and passes false (normal cadence only).
+    this.room.setSettlementHold(this.settlement.showdown !== null);
+    // Room teardown must run even if the notification above failed: a lost
+    // `hand_end` frame can never keep the room from advancing.
     this.onDone();
   }
 }

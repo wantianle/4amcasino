@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
+import Database from 'better-sqlite3';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import { genIdentity } from '@4am/mental-poker';
 import type { ServerMsg } from '@4am/shared';
 import { createApp } from '../src/app.js';
@@ -227,6 +231,7 @@ describe('close stops dealing, and history stays readable', () => {
       actionTimeoutMs: 30_000,
       autoDealMs: 1_000_000,
       readyCheckMs: 100_000,
+      shutdownDrainMs: 50,
     });
     const sent: ServerMsg[] = [];
     const ws = { send: (text: string) => sent.push(JSON.parse(text)) } as unknown as WebSocket;
@@ -253,7 +258,7 @@ describe('close stops dealing, and history stays readable', () => {
     expect(state.room.archived).toBe(true);
     expect(state.room.archivedAt).toBe(close.json().closedAt);
 
-    game.shutdown();
+    await game.shutdown();
     await ctx.app.close();
   });
 
@@ -647,6 +652,7 @@ describe('B2: close and hand start are mutually exclusive', () => {
     actionTimeoutMs: 30_000,
     autoDealMs: 1_000_000,
     readyCheckMs: 100_000,
+    shutdownDrainMs: 50,
   };
   const fakeWs = (sink: ServerMsg[]) =>
     ({ send: (text: string) => sink.push(JSON.parse(text)) }) as unknown as WebSocket;
@@ -701,7 +707,7 @@ describe('B2: close and hand start are mutually exclusive', () => {
       .get(room.id) as { status: string };
     expect(trigger.status).toBe('pending');
 
-    game.shutdown();
+    await game.shutdown();
     await ctx.app.close();
   });
 
@@ -732,7 +738,7 @@ describe('B2: close and hand start are mutually exclusive', () => {
     expect(activeHands.has(room.id)).toBe(true);
     expect((game as unknown as { hand: unknown }).hand).not.toBeNull();
 
-    game.shutdown();
+    await game.shutdown();
     expect(activeHands.has(room.id)).toBe(false);
     await ctx.app.close();
   });
@@ -752,6 +758,7 @@ describe('close freezes seating and money movement', () => {
       actionTimeoutMs: 30_000,
       autoDealMs: 1_000_000,
       readyCheckMs: 100_000,
+      shutdownDrainMs: 50,
     });
     const sent: ServerMsg[] = [];
     const ws = { send: (text: string) => sent.push(JSON.parse(text)) } as unknown as WebSocket;
@@ -782,7 +789,7 @@ describe('close freezes seating and money movement', () => {
       .get(room.id, host.userId) as { sitting_out: number };
     expect(after.sitting_out).toBe(1);
 
-    game.shutdown();
+    await game.shutdown();
     await ctx.app.close();
   });
 
@@ -1066,4 +1073,167 @@ describe('watcher semantics after close', () => {
 
     await ctx.app.close();
   });
+});
+
+describe('shutdown fail-closed when the abort cannot be persisted', () => {
+  const fakeWs = (sink: ServerMsg[]) =>
+    ({ send: (text: string) => sink.push(JSON.parse(text)) }) as unknown as WebSocket;
+
+  it('keeps the hand fail-closed when the durable lifecycle update is impossible', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'fc_host');
+    const bob = await register(ctx.app, 'fc_bob');
+    const room = await createRoom(ctx, host.token);
+    await join(ctx, bob.token, room.joinCode);
+    seat(ctx, room.id, host.userId, 0, 1000);
+    seat(ctx, room.id, bob.userId, 1, 1000);
+
+    const game = new GameRoom(ctx.db, room.id, genIdentity(), {
+      cryptoTimeoutMs: 60_000,
+      actionTimeoutMs: 30_000,
+      autoDealMs: 1_000_000,
+      readyCheckMs: 100_000,
+      shutdownDrainMs: 30,
+    });
+    const sent: ServerMsg[] = [];
+    game.join(host.userId, fakeWs(sent));
+    game.join(bob.userId, fakeWs(sent));
+    (game as unknown as { startHand: () => void }).startHand();
+    expect(activeHands.has(room.id)).toBe(true);
+
+    // Make the durable abort impossible: the hand_lifecycle table disappears.
+    ctx.db.prepare('DROP TABLE hand_lifecycle').run();
+
+    await game.shutdown();
+
+    // The abort could not be proven, so the room must stay fail-closed rather
+    // than be silently cleared with a `running` row left in the DB.
+    expect(activeHands.has(room.id)).toBe(true);
+    expect((game as unknown as { hand: unknown }).hand).not.toBeNull();
+
+    // cleanup
+    (game as unknown as { hand: { clearTimer: () => void } | null }).hand?.clearTimer();
+    activeHands.delete(room.id);
+    await ctx.app.close();
+  }, 20000);
+});
+
+describe('shutdown abort is time-bounded', () => {
+  const fakeWs = (sink: ServerMsg[]) =>
+    ({ send: (text: string) => sink.push(JSON.parse(text)) }) as unknown as WebSocket;
+
+  it('does not block on a locked database beyond its short busy budget', async () => {
+    const dir = mkdtempSync(joinPath(tmpdir(), '4am-abort-'));
+    const dbPath = joinPath(dir, 'game.db');
+    const ctx = createApp(dbPath);
+    const host = await register(ctx.app, 'tb_host');
+    const bob = await register(ctx.app, 'tb_bob');
+    const room = await createRoom(ctx, host.token);
+    await join(ctx, bob.token, room.joinCode);
+    seat(ctx, room.id, host.userId, 0, 1000);
+    seat(ctx, room.id, bob.userId, 1, 1000);
+
+    const game = new GameRoom(ctx.db, room.id, genIdentity(), {
+      cryptoTimeoutMs: 60_000,
+      actionTimeoutMs: 30_000,
+      autoDealMs: 1_000_000,
+      readyCheckMs: 100_000,
+      shutdownDrainMs: 30,
+    });
+    const sent: ServerMsg[] = [];
+    game.join(host.userId, fakeWs(sent));
+    game.join(bob.userId, fakeWs(sent));
+    (game as unknown as { startHand: () => void }).startHand();
+    expect(activeHands.has(room.id)).toBe(true);
+
+    // A second connection holds an EXCLUSIVE lock. Switching the DB to a
+    // rollback journal first makes that lock block READS too, so this exercises
+    // the initial terminal read-back - not just the UPDATE. If the shortening
+    // were installed after that first read, it would wait out the 10s default.
+    const before = ctx.db.pragma('busy_timeout', { simple: true }) as number;
+    ctx.db.pragma('journal_mode = DELETE');
+    const lock = new Database(dbPath);
+    lock.pragma('busy_timeout = 0');
+    lock.exec('BEGIN EXCLUSIVE');
+
+    const started = Date.now();
+    const confirmed = (
+      game as unknown as { hand: { abortForShutdown: () => boolean } }
+    ).hand.abortForShutdown();
+    const elapsed = Date.now() - started;
+
+    lock.exec('ROLLBACK');
+    lock.close();
+
+    // Not confirmed -> fail-closed, and bounded by the short busy budget, not
+    // the 10s connection default. An unshortened first read alone would cost
+    // >=10s, so anything well under that proves it was covered. The pragma must
+    // be restored afterwards.
+    expect(confirmed).toBe(false);
+    expect(elapsed).toBeLessThan(3000);
+    expect(ctx.db.pragma('busy_timeout', { simple: true })).toBe(before);
+
+    (game as unknown as { hand: { clearTimer: () => void } | null }).hand?.clearTimer();
+    activeHands.delete(room.id);
+    await ctx.app.close();
+  }, 20000);
+});
+
+describe('multi-room shutdown shares one connection without pragma cross-contamination', () => {
+  const fakeWs = (sink: ServerMsg[]) =>
+    ({ send: (text: string) => sink.push(JSON.parse(text)) }) as unknown as WebSocket;
+
+  it('restores busy_timeout and aborts both live hands', async () => {
+    const ctx = createApp(':memory:');
+    const h1 = await register(ctx.app, 'mr_h1');
+    const b1 = await register(ctx.app, 'mr_b1');
+    const h2 = await register(ctx.app, 'mr_h2');
+    const b2 = await register(ctx.app, 'mr_b2');
+    const r1 = await createRoom(ctx, h1.token, 'Room One');
+    const r2 = await createRoom(ctx, h2.token, 'Room Two');
+    await join(ctx, b1.token, r1.joinCode);
+    await join(ctx, b2.token, r2.joinCode);
+    seat(ctx, r1.id, h1.userId, 0, 1000);
+    seat(ctx, r1.id, b1.userId, 1, 1000);
+    seat(ctx, r2.id, h2.userId, 0, 1000);
+    seat(ctx, r2.id, b2.userId, 1, 1000);
+
+    const opts = {
+      cryptoTimeoutMs: 60_000,
+      actionTimeoutMs: 30_000,
+      autoDealMs: 1_000_000,
+      readyCheckMs: 100_000,
+      shutdownDrainMs: 30,
+    };
+    const g1 = new GameRoom(ctx.db, r1.id, genIdentity(), opts);
+    const g2 = new GameRoom(ctx.db, r2.id, genIdentity(), opts);
+    const sent: ServerMsg[] = [];
+    g1.join(h1.userId, fakeWs(sent));
+    g1.join(b1.userId, fakeWs(sent));
+    g2.join(h2.userId, fakeWs(sent));
+    g2.join(b2.userId, fakeWs(sent));
+    (g1 as unknown as { startHand: () => void }).startHand();
+    (g2 as unknown as { startHand: () => void }).startHand();
+
+    const before = ctx.db.pragma('busy_timeout', { simple: true }) as number;
+    // Both rooms share ctx.db; shut them down concurrently. The connection-level
+    // pragma must be restored to its original value, with no room seeing 250.
+    await Promise.all([g1.shutdown(), g2.shutdown()]);
+    expect(ctx.db.pragma('busy_timeout', { simple: true })).toBe(before);
+
+    for (const roomId of [r1.id, r2.id]) {
+      expect(
+        (
+          ctx.db
+            .prepare(
+              "SELECT COUNT(*) AS n FROM hand_lifecycle WHERE room_id = ? AND status = 'aborted'",
+            )
+            .get(roomId) as { n: number }
+        ).n,
+      ).toBe(1);
+    }
+    expect(activeHands.has(r1.id)).toBe(false);
+    expect(activeHands.has(r2.id)).toBe(false);
+    await ctx.app.close();
+  }, 20000);
 });

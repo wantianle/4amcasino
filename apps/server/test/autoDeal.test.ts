@@ -141,6 +141,7 @@ describe('automatic dealer lifecycle', () => {
       actionTimeoutMs: 30000,
       autoDealMs: 1000,
       readyCheckMs: 2000,
+      shutdownDrainMs: 50,
     });
     messages = [[], [], [], []];
     sockets = messages.map(
@@ -148,10 +149,12 @@ describe('automatic dealer lifecycle', () => {
     );
     for (let id = 1; id <= 4; id++) room.join(id, sockets[id - 1]!);
   });
-  afterEach(() => {
-    room.shutdown();
-    db.close();
+  afterEach(async () => {
+    // Real timers first: the async drain uses setTimeout, which fake timers
+    // would never fire.
     vi.useRealTimers();
+    await room.shutdown();
+    db.close();
   });
   const state = () => messages[1]!.filter((m) => m.t === 'room_state').at(-1)!;
   const kinds = (kind: ServerMsg['t']) => messages[1]!.filter((m) => m.t === kind);
