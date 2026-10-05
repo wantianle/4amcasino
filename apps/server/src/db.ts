@@ -18,6 +18,11 @@ export function openDb(path: string): DB {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  // Give a competing writer (another server process opening the same file at
+  // the same time) room to finish before SQLITE_BUSY is raised. The one-time
+  // migrations below take an immediate write lock; without this wait the loser
+  // of a startup race would fail outright instead of waiting its turn.
+  db.pragma('busy_timeout = 10000');
   migrate(db);
   migrateAgentPlatform(db);
   // Runs after the agent platform so `agent_grants` already exists when the bot
@@ -216,6 +221,32 @@ function migrate(db: DB): void {
   // column for a fresh DB - an existing DB keeps its old default, so new
   // signups are written explicitly in `createUser` (old rows are never touched).
   ensureColumn(db, 'users', 'auto_ready', 'INTEGER NOT NULL DEFAULT 1');
+  // One-time data migration, keyed in `meta` like stack-ledger-heal-1 above.
+  // `auto_ready` historically defaulted to 0 and `ensureColumn` only adds a
+  // column when it is missing, so flipping the DEFAULT to 1 in the source never
+  // reached accounts created before the change: they were still stored as 0 and
+  // `beginReadyCheck` therefore left them out of the auto-ready set, forcing a
+  // manual tap every hand. Flip those rows exactly once. After the flag is in
+  // `meta`, a later explicit opt-out (PUT /api/profile writes 0) is never
+  // re-flipped on the next start. The column definition itself is untouched.
+  // The check, the UPDATE and the marker write must be ONE immediate
+  // (write-locked) transaction. Kept separate they had two holes: a crash after
+  // the UPDATE committed but before the marker did would re-run the UPDATE on
+  // the next start and could clobber a manual opt-out, and two servers opening
+  // the same file at once could double-update or collide on the marker's
+  // primary key. BEGIN IMMEDIATE takes the write lock up front - waiting up to
+  // busy_timeout (10s, set in openDb) for the other process - so the second
+  // starter reads the committed marker and skips. Same `.immediate()` style as
+  // the rest of the codebase (auth.ts, tournaments.ts, ...).
+  const AUTO_READY_MARKER = 'auto-ready-default-on-1';
+  db.transaction(() => {
+    const autoReadyFlag = db
+      .prepare('SELECT value FROM meta WHERE key = ?')
+      .get(AUTO_READY_MARKER);
+    if (autoReadyFlag) return;
+    db.prepare('UPDATE users SET auto_ready = 1 WHERE auto_ready = 0').run();
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(AUTO_READY_MARKER, '1');
+  }).immediate();
   ensureColumn(db, 'users', 'poker_hotkeys', 'TEXT');
   // Quick-bet ratios (A10): the four table action-bar slots, stored as a JSON
   // array of pot fractions (with -1 as the all-in sentinel).

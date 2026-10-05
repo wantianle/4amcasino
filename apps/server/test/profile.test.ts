@@ -1,12 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/app.js';
 import { createUser } from '../src/auth.js';
 import { openDb } from '../src/db.js';
 import { appendLedger } from '../src/ledger.js';
+
+// Two real processes (not two connections in one process - better-sqlite3 is
+// synchronous and cannot interleave) opening the same file, used to prove the
+// immediate migration transaction is safe under a concurrent startup.
+const DB_SOURCE_URL = new URL('../src/db.ts', import.meta.url).href;
+const SERVER_DIR = fileURLToPath(new URL('..', import.meta.url));
+function openInChild(dbPath: string): Promise<{ code: number | null; stderr: string }> {
+  const script = `import { openDb } from ${JSON.stringify(DB_SOURCE_URL)};\nconst db = openDb(process.env.READY_DB_PATH);\ndb.close();`;
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '--eval', script],
+      { cwd: SERVER_DIR, env: { ...process.env, READY_DB_PATH: dbPath }, stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let stderr = '';
+    child.stderr.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('error', (e) => resolve({ code: -1, stderr: String(e) }));
+    child.on('exit', (code) => resolve({ code, stderr }));
+  });
+}
 
 let ctx: ReturnType<typeof createApp>;
 beforeEach(() => {
@@ -78,12 +102,12 @@ describe('profile', () => {
     expect(on.autoReady).toBe(true);
   });
 
-  it('writes autoReady=1 for new accounts on a legacy database without touching old rows', () => {
+  it('flips legacy auto_ready=0 rows to 1 and keeps new accounts on 1', () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-ready-'));
     const path = join(dir, 'old.sqlite');
     try {
       // An existing database whose auto_ready column predates the flip and still
-      // defaults to 0, with one user explicitly opted out.
+      // defaults to 0, with old rows already stored as 0.
       const old = new Database(path);
       old.exec(`CREATE TABLE users (
         id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
@@ -96,15 +120,19 @@ describe('profile', () => {
 
       const db = openDb(path);
       try {
-        const { userId } = createUser(db, 'readyfresh', 'a'.repeat(64), 'p');
         const legacy = db
           .prepare("SELECT auto_ready FROM users WHERE username = 'legacyoff'")
           .get() as { auto_ready: number };
-        expect(legacy.auto_ready).toBe(0); // old row never rewritten
+        expect(legacy.auto_ready).toBe(1); // one-time migration flips the old default
+        const flag = db
+          .prepare("SELECT value FROM meta WHERE key = 'auto-ready-default-on-1'")
+          .get() as { value: string } | undefined;
+        expect(flag?.value).toBe('1');
+        const { userId } = createUser(db, 'readyfresh', 'a'.repeat(64), 'p');
         const fresh = db
           .prepare('SELECT auto_ready FROM users WHERE id = ?')
           .get(userId) as { auto_ready: number };
-        expect(fresh.auto_ready).toBe(1); // new account gets the new default
+        expect(fresh.auto_ready).toBe(1); // new account gets the current default
       } finally {
         db.close();
       }
@@ -112,6 +140,143 @@ describe('profile', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('runs the auto-ready migration exactly once, so a later opt-out survives a restart', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-ready-once-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        auto_ready INTEGER NOT NULL DEFAULT 0)`);
+      const insert = old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, auto_ready) VALUES (?,?,?,?,?,0)',
+      );
+      insert.run('m1', 'h', 's', 'p', 1);
+      insert.run('m2', 'h', 's', 'p', 2);
+      insert.run('m3', 'h', 's', 'p', 3);
+      old.close();
+
+      // First start: every legacy 0 flips to 1 and the flag is written.
+      const first = openDb(path);
+      expect(first.prepare('SELECT auto_ready FROM users ORDER BY id').all()).toEqual([
+        { auto_ready: 1 },
+        { auto_ready: 1 },
+        { auto_ready: 1 },
+      ]);
+      // The player then explicitly turns it off.
+      first.prepare('UPDATE users SET auto_ready = 0 WHERE username = ?').run('m2');
+      first.close();
+
+      // Second start: the flag is present, the migration must not run again, so
+      // the explicit opt-out stays 0 while everyone else stays 1.
+      const second = openDb(path);
+      expect(second.prepare('SELECT auto_ready FROM users ORDER BY id').all()).toEqual([
+        { auto_ready: 1 },
+        { auto_ready: 0 },
+        { auto_ready: 1 },
+      ]);
+      expect(
+        (
+          second
+            .prepare("SELECT COUNT(*) as n FROM meta WHERE key = 'auto-ready-default-on-1'")
+            .get() as { n: number }
+        ).n,
+      ).toBe(1);
+      second.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls the whole migration back when the marker write fails inside the transaction', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-ready-atomic-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        auto_ready INTEGER NOT NULL DEFAULT 0)`);
+      old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, auto_ready) VALUES (?,?,?,?,?,0)',
+      ).run('victim', 'h', 's', 'p', 1);
+      // A trigger makes the marker INSERT throw, emulating a failure in the
+      // window between the UPDATE and the marker write.
+      old.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)');
+      old.exec(`CREATE TRIGGER block_auto_ready_marker BEFORE INSERT ON meta
+        WHEN NEW.key = 'auto-ready-default-on-1'
+        BEGIN SELECT RAISE(ABORT, 'marker write failed'); END`);
+      old.close();
+
+      expect(() => openDb(path)).toThrow(/marker write failed/);
+
+      // The UPDATE rolled back with the failed INSERT: nothing was flipped and
+      // no marker survived.
+      const check = new Database(path);
+      try {
+        expect(
+          check.prepare("SELECT auto_ready FROM users WHERE username = 'victim'").get(),
+        ).toEqual({ auto_ready: 0 });
+        expect(
+          check
+            .prepare("SELECT COUNT(*) as n FROM meta WHERE key = 'auto-ready-default-on-1'")
+            .get(),
+        ).toEqual({ n: 0 });
+      } finally {
+        check.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lets two processes open the same database at once without a duplicate migration', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-ready-conc-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      // Build the full schema once, then reset to the un-migrated state (marker
+      // gone, legacy rows 0) so the two processes race exactly the ready
+      // migration instead of every other DDL statement.
+      const seed = new Database(path);
+      seed.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        auto_ready INTEGER NOT NULL DEFAULT 0)`);
+      seed.close();
+      const setup = openDb(path);
+      setup.prepare("DELETE FROM meta WHERE key = 'auto-ready-default-on-1'").run();
+      const insert = setup.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, auto_ready) VALUES (?,?,?,?,?,0)',
+      );
+      for (let i = 1; i <= 4; i++) insert.run(`c${i}`, 'h', 's', 'p', i);
+      setup.close();
+
+      const [a, b] = await Promise.all([openInChild(path), openInChild(path)]);
+      expect(a.code, a.stderr).toBe(0);
+      expect(b.code, b.stderr).toBe(0);
+
+      const check = new Database(path);
+      try {
+        expect(check.prepare('SELECT auto_ready FROM users ORDER BY id').all()).toEqual([
+          { auto_ready: 1 },
+          { auto_ready: 1 },
+          { auto_ready: 1 },
+          { auto_ready: 1 },
+        ]);
+        expect(
+          check
+            .prepare("SELECT COUNT(*) as n FROM meta WHERE key = 'auto-ready-default-on-1'")
+            .get(),
+        ).toEqual({ n: 1 });
+      } finally {
+        check.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
 
   it('keeps an already-stored card preference instead of forcing the new default', async () => {
     const alice = await user('deckold');
@@ -240,7 +405,6 @@ describe('profile', () => {
     expect(huge.statusCode).toBe(400);
   });
 });
-
 describe('leaderboards', () => {
   it('ranks players by net hand winnings with hands played and biggest win', async () => {
     const host = await user('host');
