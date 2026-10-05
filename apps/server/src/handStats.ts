@@ -33,13 +33,51 @@ import { VOIDED_HAND_EXCLUSION_SQL } from './handProjection.js';
  * metric implementations below.
  */
 
-export const METRIC_VERSION = 1;
+export const METRIC_VERSION = 2;
 
 /** HUD sample gates (spec §6): below `minHands` the sample is unusable, below
  *  {@link HUD_LOW_CONFIDENCE} it is returned but flagged low-confidence. These
  *  are fixed: a caller cannot lower the floor with a query parameter. */
 export const HUD_MIN_SAMPLE = 20;
 export const HUD_LOW_CONFIDENCE = 50;
+
+// ---------------------------------------------------------------------------
+// Hot/cold "streak" badge (热/冷徽标)
+//
+// Calibration (real projected data + bootstrap): a single hand's poker
+// result expressed in big blinds is winsorized to +/-{@link STREAK_WINSOR_BB}bb,
+// which leaves a per-hand sigma of ~8.2bb. A {STREAK_WINDOW}-hand sum therefore
+// has sigma_50 ~= 54bb, so the two symmetric bands below are fixed multiples of
+// that noise floor:
+//   small  = 0.55 * sigma_50 ~= 30bb
+//   large  = 1.55 * sigma_50 ~= 85bb
+// The neutral band (|net| < small) is ~40% of the distribution and shows no
+// badge. These are fixed constants, not query parameters. If the window or the
+// per-hand model changes (more hands -> smaller sigma_50), refit the two
+// multipliers rather than re-tuning the raw bb values.
+// ---------------------------------------------------------------------------
+
+/** Number of newest target hands the streak looks at. */
+export const STREAK_WINDOW = 50;
+/** Per-hand winsorization of `poker_delta / bb`, in bb. */
+export const STREAK_WINSOR_BB = 15;
+/** Minimum eligible hands before a badge is shown at all. */
+export const STREAK_MIN_SAMPLE = 20;
+/** Small band edge, ~0.55 * sigma_50. Inside it the badge is neutral (null). */
+export const STREAK_SMALL_BB = 30;
+/** Large band edge, ~1.55 * sigma_50. */
+export const STREAK_LARGE_BB = 85;
+
+/** 小冰 / 大冰 / 小火 / 大火. `null` is the neutral band (or too small a sample). */
+export type StreakTier = 'cold1' | 'cold2' | 'hot1' | 'hot2';
+
+export interface StreakResult {
+  tier: StreakTier | null;
+  /** Winsorized sum of the window's `poker_delta / bb`, in big blinds. */
+  netBB: number;
+  /** Eligible hands (known positive nominal bb) actually inside the window. */
+  sample: number;
+}
 
 const DEFAULT_HAND_LIMIT = 5000;
 const MAX_HAND_LIMIT = 100_000;
@@ -108,6 +146,8 @@ export interface StatsResult {
   byStreet: Record<string, { sample: number; af: Metric; afq: Metric }>;
   byIpOop: Record<IpOop, MetricBucket>;
   trend: { ts: number; hands: number; net: number }[];
+  /** Hot/cold badge over the newest {@link STREAK_WINDOW} hands. */
+  streak: StreakResult;
   approximations: string[];
 }
 
@@ -128,6 +168,7 @@ export interface RedactedStats {
   byStreet: null;
   byIpOop: null;
   trend: null;
+  streak: null;
   approximations: string[];
 }
 
@@ -164,6 +205,10 @@ interface BaseRow {
   wonPoker: number;
   dataConfidence: string;
   playerCount: number;
+  /** 1 when the hand belongs to the general stats target set. */
+  inStats: number;
+  /** 1 when the hand belongs to the streak (newest-50) target set. */
+  inStreak: number;
 }
 
 interface PlayerLite {
@@ -564,6 +609,44 @@ function trendFor(rows: BaseRow[], factsByHand: Map<string, HandFacts>): StatsRe
   return out;
 }
 
+/** Map a winsorized net to one of the four badge tiers; neutral or a sample
+ *  below {@link STREAK_MIN_SAMPLE} is `null`. Edges are inclusive, so exactly
+ *  +30bb is 小火 and exactly +85bb is 大火. */
+export function streakTier(netBB: number, sample: number): StreakTier | null {
+  if (sample < STREAK_MIN_SAMPLE) return null;
+  if (netBB >= STREAK_LARGE_BB) return 'hot2';
+  if (netBB >= STREAK_SMALL_BB) return 'hot1';
+  if (netBB <= -STREAK_LARGE_BB) return 'cold2';
+  if (netBB <= -STREAK_SMALL_BB) return 'cold1';
+  return null;
+}
+
+/**
+ * Hot/cold streak over the newest {@link STREAK_WINDOW} facts. Each hand is
+ * normalised by ITS OWN big blind (`poker_delta / bb`) and winsorized to
+ * +/-{@link STREAK_WINSOR_BB}bb so a single cooler cannot dominate a 50-hand
+ * sum. Hands without a known positive nominal bb cannot be normalised and are
+ * skipped from both the sum and the sample.
+ *
+ * The caller hands over the ALREADY-WINDOWED streak facts: the SQL target set
+ * applies `ORDER BY settled_at DESC, hand_id DESC LIMIT 50` (binary collation,
+ * the same order as the outer fetch), so this function neither re-sorts nor
+ * re-slices. That keeps SQLite and JS from disagreeing on a tie at the 50-hand
+ * boundary and makes the 50-hand bound verifiable in the query itself.
+ */
+export function streakFor(facts: HandFacts[]): StreakResult {
+  let net = 0;
+  let sample = 0;
+  for (const f of facts) {
+    if (f.bb <= 0) continue;
+    sample++;
+    const raw = f.pokerDelta / f.bb;
+    net += Math.max(-STREAK_WINSOR_BB, Math.min(STREAK_WINSOR_BB, raw));
+  }
+  const netBB = round2(net);
+  return { tier: streakTier(netBB, sample), netBB, sample };
+}
+
 function dataQualityFor(rows: BaseRow[]): DataQuality {
   const q: DataQuality = { exact: 0, legacy: 0, partial: 0, total: rows.length };
   for (const r of rows) {
@@ -654,15 +737,18 @@ function scopeWhere(filter: StatsFilter): { sql: string; params: Record<string, 
   return { sql: conds.join(' AND '), params };
 }
 
-/** The newest `@limit` target hands. The same fragment is reused for the row
- *  fetch and for the context load, so the context can never widen past it. */
-function scopeHandsSql(whereSql: string): string {
+/** The newest target hands. `limitExpr` defaults to the `@limit` bind used by
+ *  the general stats window; the streak window passes the literal
+ *  {@link STREAK_WINDOW} so its 50-hand bound is enforced in SQL, not in JS.
+ *  Both windows share this fragment so their scope (void / settlement / room)
+ *  can never diverge. */
+function scopeHandsSql(whereSql: string, limitExpr = '@limit'): string {
   return `SELECT hands.hand_id AS hand_id
             FROM hand_players p
             JOIN hands ON hands.hand_id = p.hand_id
            WHERE ${whereSql}
            ORDER BY hands.settled_at DESC, hands.hand_id DESC
-           LIMIT @limit`;
+           LIMIT ${limitExpr}`;
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -718,26 +804,36 @@ function buildResult(
   );
   if (filter.ipOop !== undefined) facts = facts.filter((f) => f.ipOop === filter.ipOop);
 
-  const keptIds = new Set(facts.map((f) => f.handId));
+  // The row fetch returns the UNION of two SQL target sets: the general stats
+  // window and the streak window (a 50-hand bound enforced in SQL). Split them
+  // back apart so widening the streak window can never inflate the sample, and
+  // a small `limit` can never shrink the streak window.
+  const statsIds = new Set(rows.filter((r) => r.inStats === 1).map((r) => r.handId));
+  const streakIds = new Set(rows.filter((r) => r.inStreak === 1).map((r) => r.handId));
+  const statsFacts = facts.filter((f) => statsIds.has(f.handId));
+  const streakFacts = facts.filter((f) => streakIds.has(f.handId));
+
+  const keptIds = new Set(statsFacts.map((f) => f.handId));
   const keptRows = rows.filter((r) => keptIds.has(r.handId));
-  const factsByHand = new Map(facts.map((f) => [f.handId, f]));
-  const ipFacts = facts.filter((f) => f.ipOop === 'ip');
-  const oopFacts = facts.filter((f) => f.ipOop === 'oop');
+  const factsByHand = new Map(statsFacts.map((f) => [f.handId, f]));
+  const ipFacts = statsFacts.filter((f) => f.ipOop === 'ip');
+  const oopFacts = statsFacts.filter((f) => f.ipOop === 'oop');
 
   return {
     metricVersion: METRIC_VERSION,
-    sample: facts.length,
+    sample: statsFacts.length,
     minHands,
-    sufficient: facts.length >= minHands,
+    sufficient: statsFacts.length >= minHands,
     dataQuality: dataQualityFor(keptRows),
-    stats: metricsFor(facts),
-    byPosition: aggregateByKey(facts, (f) => f.position),
-    byStreet: byStreetFor(facts),
+    stats: metricsFor(statsFacts),
+    byPosition: aggregateByKey(statsFacts, (f) => f.position),
+    byStreet: byStreetFor(statsFacts),
     byIpOop: {
       ip: { sample: ipFacts.length, stats: metricsFor(ipFacts) },
       oop: { sample: oopFacts.length, stats: metricsFor(oopFacts) },
     },
     trend: trendFor(keptRows, factsByHand),
+    streak: streakFor(streakFacts),
     approximations: STATS_APPROXIMATIONS,
   };
 }
@@ -759,17 +855,31 @@ export function computeHandStatsMany(
   const limit = clampLimit(filter.limit);
   const minHands = filter.minHands ?? 0;
   const where = scopeWhere(filter);
-  const limitSql = scopeHandsSql(where.sql);
+  // Two target sets over the SAME scope, fetched in one per-user query:
+  //  - stats:  the newest `@limit` hands (current behaviour),
+  //  - streak: the newest STREAK_WINDOW hands, bounded in SQL by a literal
+  //            LIMIT so no more than 50 are ever pulled for the badge.
+  // `in_stats`/`in_streak` markers let buildResult() split them without a
+  // second per-player scan and without letting a small `limit` shrink the badge.
+  const statsScope = scopeHandsSql(where.sql);
+  const streakScope = scopeHandsSql(where.sql, String(STREAK_WINDOW));
+  const scopeUnion = `SELECT hand_id, MAX(in_stats) AS in_stats, MAX(in_streak) AS in_streak
+    FROM (
+      SELECT hand_id, 1 AS in_stats, 0 AS in_streak FROM (${statsScope})
+      UNION ALL
+      SELECT hand_id, 0 AS in_stats, 1 AS in_streak FROM (${streakScope})
+    ) GROUP BY hand_id`;
   const rowsByUser = new Map<number, BaseRow[]>();
   const allHandIds = new Set<string>();
   for (const userId of userIds) {
     if (rowsByUser.has(userId)) continue;
     const raw = db
       .prepare(
-        `${BASE_SELECT}
-           JOIN (${limitSql}) scope ON scope.hand_id = hands.hand_id
-          WHERE p.user_id = @userId
-          ORDER BY hands.settled_at DESC, hands.hand_id DESC`,
+        `SELECT b.*, t.in_stats AS inStats, t.in_streak AS inStreak
+           FROM (${BASE_SELECT}) b
+           JOIN (${scopeUnion}) t ON t.hand_id = b.handId
+          WHERE b.userId = @userId
+          ORDER BY b.settledAt DESC, b.handId DESC`,
       )
       .all({ ...where.params, userId, limit }) as BaseRow[];
     const seen = new Set<string>();
@@ -808,6 +918,7 @@ export function redactedStats(userId: number, minHands = 0): RedactedStats {
     byStreet: null,
     byIpOop: null,
     trend: null,
+    streak: null,
     approximations: STATS_APPROXIMATIONS,
   };
 }
@@ -893,6 +1004,8 @@ interface HudEntry extends HudBase {
   byStreet: StatsResult['byStreet'] | null;
   byIpOop: StatsResult['byIpOop'] | null;
   trend: StatsResult['trend'] | null;
+  /** Hot/cold badge, withheld exactly like `stats` when the sample is short. */
+  streak: StreakResult | null;
   approximations: string[];
 }
 
@@ -911,8 +1024,29 @@ function hudHiddenEntry(base: HudBase, minHands: number): HudEntry {
     byStreet: null,
     byIpOop: null,
     trend: null,
+    streak: null,
     approximations: STATS_APPROXIMATIONS,
   };
+}
+
+/**
+ * HTTP-contract gate for the hot/cold badge. Pure computation always returns a
+ * non-null {@link StreakResult} (its `tier` may be `null`); whether the client
+ * is allowed to see it is a display/redaction decision made HERE, at the
+ * contract layer, so `StatsResult.streak` stays non-nullable and callers never
+ * have to reason about a half-computed badge.
+ *
+ * A badge requires BOTH:
+ *  - the bundle is `sufficient` for its `minHands` (and not hidden/redacted), and
+ *  - at least {@link STREAK_MIN_SAMPLE} ELIGIBLE hands in the window, i.e.
+ *    hands with a known positive nominal bb that can be normalised.
+ *
+ * So 20 settled hands containing one `bb=0` hand (stats.sample=20, eligible
+ * streak.sample=19) exposes `null`, never a fake `netBB`/tier. Shared verbatim
+ * by the HUD entry and both stats routes.
+ */
+function displayStreak(stats: StatsResult): StreakResult | null {
+  return stats.sufficient && stats.streak.sample >= STREAK_MIN_SAMPLE ? stats.streak : null;
 }
 
 function hudVisibleEntry(base: HudBase, stats: StatsResult, minHands: number): HudEntry {
@@ -931,6 +1065,10 @@ function hudVisibleEntry(base: HudBase, stats: StatsResult, minHands: number): H
     byStreet: sufficient ? stats.byStreet : null,
     byIpOop: sufficient ? stats.byIpOop : null,
     trend: sufficient ? stats.trend : null,
+    // The badge has its own ELIGIBLE-sample gate (hands with bb>0): a player
+    // with enough total hands but fewer than STREAK_MIN_SAMPLE normalisable ones
+    // must not show a badge at all.
+    streak: displayStreak(stats),
     approximations: STATS_APPROXIMATIONS,
   };
 }
@@ -939,10 +1077,13 @@ export function registerHandStatsRoutes(app: FastifyInstance, db: DB): void {
   const authed = { preHandler: requireUser(db) };
 
   // My own stats: full breakdown, holes only ever the aggregate projection.
+  // The hot/cold badge is display-gated here (eligible bb>0 sample >= 20), NOT
+  // left as the raw non-null StatsResult.streak.
   app.get('/api/me/stats', authed, async (req, reply) => {
     const filter = parseStatsQuery(req.query);
     if (!filter) return reply.code(400).send({ error: 'invalid query' });
-    return { userId: req.userId, ...computeHandStats(db, req.userId, filter) };
+    const stats = computeHandStats(db, req.userId, filter);
+    return { userId: req.userId, ...stats, streak: displayStreak(stats) };
   });
 
   // Someone else's stats. Private mode hides the bundle from everyone but the
@@ -959,7 +1100,16 @@ export function registerHandStatsRoutes(app: FastifyInstance, db: DB): void {
     const filter = parseStatsQuery(req.query);
     if (!filter) return reply.code(400).send({ error: 'invalid query' });
     if (user.privateMode && req.userId !== id) return redactedStats(id, filter.minHands ?? 0);
-    return { userId: id, hidden: false, ...computeHandStats(db, id, filter) };
+    const stats = computeHandStats(db, id, filter);
+    // Even when the bundle is visible, the hot/cold badge is owner-only here:
+    // a third party reading someone's public stats does not get a fresh-form
+    // read on their recent results (same stricter stance as private_mode).
+    return {
+      userId: id,
+      hidden: false,
+      ...stats,
+      streak: req.userId === id ? displayStreak(stats) : null,
+    };
   });
 
   // Room HUD: one entry per presentable player, sample-gated so a fresh seat is

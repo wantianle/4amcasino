@@ -48,15 +48,19 @@ function joinRoom(db: DB, roomId: string, userId: number, seat: number): void {
 }
 
 /** Write one settled hand + projection where `handId !== head`, plus the two
- *  settlement ledger rows the real void route reverses. `hero` wins 10. */
+ *  settlement ledger rows the real void route reverses. `hero` defaults to
+ *  winning 10 (1bb at bb=10); `heroDelta`/`bb` override for streak scenarios. */
 function addSettledHand(
   db: DB,
-  args: { id: string; roomId: string; head: string; hero: number; villain: number },
+  args: { id: string; roomId: string; head: string; hero: number; villain: number; heroDelta?: number; bb?: number },
 ): void {
+  const bb = args.bb ?? 10;
+  const heroDelta = args.heroDelta ?? 10;
+  const villainDelta = -heroDelta;
   db.prepare(
     `INSERT INTO hands (hand_id, room_id, source_head, status, game_kind, bb, settled_at, transcript_ts, parser_version, projection_status)
-     VALUES (?, ?, ?, 'settled', 'normal', 10, 1000, 1000, 1, 'ok')`,
-  ).run(args.id, args.roomId, args.head);
+     VALUES (?, ?, ?, 'settled', 'normal', ?, 1000, 1000, 1, 'ok')`,
+  ).run(args.id, args.roomId, args.head, bb);
   db.prepare(
     "INSERT INTO hand_settlements (hand_id, room_id, head, rake, final_stacks, applied_at) VALUES (?, ?, ?, 0, '[]', ?)",
   ).run(args.id, args.roomId, args.head, 1000);
@@ -67,10 +71,22 @@ function addSettledHand(
        net_delta, folded, fold_street, saw_flop, went_to_showdown, won_poker, data_confidence
      ) VALUES (?, ?, ?, ?, NULL, NULL, ?, 'none', 0, 0, 0, 0, ?, 0, ?, 0, NULL, 0, 0, 0, 'exact')`,
   );
-  insPlayer.run(args.id, 0, args.hero, 'BTN', 1, 10, 10);
-  insPlayer.run(args.id, 1, args.villain, 'BB', 0, -10, -10);
-  appendLedger(db, { roomId: args.roomId, userId: args.hero, delta: 10, kind: 'hand-settlement', ref: args.head });
-  appendLedger(db, { roomId: args.roomId, userId: args.villain, delta: -10, kind: 'hand-settlement', ref: args.head });
+  insPlayer.run(args.id, 0, args.hero, 'BTN', 1, heroDelta, heroDelta);
+  insPlayer.run(args.id, 1, args.villain, 'BB', 0, villainDelta, villainDelta);
+  appendLedger(db, {
+    roomId: args.roomId,
+    userId: args.hero,
+    delta: heroDelta,
+    kind: 'hand-settlement',
+    ref: args.head,
+  });
+  appendLedger(db, {
+    roomId: args.roomId,
+    userId: args.villain,
+    delta: villainDelta,
+    kind: 'hand-settlement',
+    ref: args.head,
+  });
 }
 
 async function meStats(token: string): Promise<number> {
@@ -98,6 +114,23 @@ async function hudSample(token: string, roomId: string, userId: number): Promise
     (x) => x.userId === userId,
   )!;
   return p.sample;
+}
+
+async function hudStreak(
+  token: string,
+  roomId: string,
+  userId: number,
+): Promise<{ tier: string | null; netBB: number; sample: number } | null> {
+  const res = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/rooms/${roomId}/hud`,
+    headers: auth(token),
+  });
+  expect(res.statusCode).toBe(200);
+  const p = (
+    res.json() as { players: { userId: number; streak: { tier: string | null; netBB: number; sample: number } | null }[] }
+  ).players.find((x) => x.userId === userId)!;
+  return p.streak;
 }
 
 describe('void-hand excludes a hand from every global stats read model', () => {
@@ -210,5 +243,59 @@ describe('void-hand excludes a hand from every global stats read model', () => {
       payload: { handId: 'head_scope' },
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('a real POST /void-hand with the head removes the hand from the streak net/tier', async () => {
+    const host = await register('vs_host');
+    const bob = await register('vs_bob');
+    makeRoom(ctx.db, 'r1', host.userId);
+    joinRoom(ctx.db, 'r1', host.userId, 0);
+    joinRoom(ctx.db, 'r1', bob.userId, 1);
+
+    // 25 wins of +15 chips (1.5bb each at bb=10) -> +37.5bb -> hot1
+    for (let i = 0; i < 25; i++) {
+      addSettledHand(ctx.db, {
+        id: `vs_${i}`,
+        roomId: 'r1',
+        head: `head_vs_${i}`,
+        hero: bob.userId,
+        villain: host.userId,
+        heroDelta: 15,
+      });
+    }
+    // newest hand is a monster loss: counted it winsorizes to -15bb and
+    // cancels the badge (37.5 - 15 = 22.5bb -> neutral); voided it must vanish.
+    addSettledHand(ctx.db, {
+      id: 'vs_big',
+      roomId: 'r1',
+      head: 'head_vs_big',
+      hero: bob.userId,
+      villain: host.userId,
+      heroDelta: -10_000,
+    });
+
+    expect(await hudStreak(host.token, 'r1', bob.userId)).toEqual({
+      tier: null,
+      netBB: 22.5,
+      sample: 26,
+    });
+
+    // the void route makes the winner give the pot back, so it needs chips
+    ctx.db
+      .prepare("UPDATE room_players SET stack = 50000 WHERE room_id = 'r1' AND user_id = ?")
+      .run(host.userId);
+    const voidRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/rooms/r1/void-hand',
+      headers: auth(host.token),
+      payload: { handId: 'head_vs_big' },
+    });
+    expect(voidRes.statusCode).toBe(200);
+
+    expect(await hudStreak(host.token, 'r1', bob.userId)).toEqual({
+      tier: 'hot1',
+      netBB: 37.5,
+      sample: 25,
+    });
   });
 });

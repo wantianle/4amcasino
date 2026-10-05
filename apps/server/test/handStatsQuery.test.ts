@@ -760,6 +760,7 @@ describe('hand stats routes', () => {
       byStreet: null,
       byIpOop: null,
       trend: null,
+      streak: null,
     });
     expect(hidden.json().dataQuality).toEqual({ exact: 0, legacy: 0, partial: 0, total: 0 });
 
@@ -883,6 +884,7 @@ describe('hand stats routes', () => {
       byStreet: null,
       byIpOop: null,
       trend: null,
+      streak: null,
     });
     expect(bobSeenByAlice.dataQuality).toEqual({ exact: 0, legacy: 0, partial: 0, total: 0 });
     expect(Array.isArray(bobSeenByAlice.approximations)).toBe(true);
