@@ -497,6 +497,21 @@ packages/agent-core/src/
 ### 批次 9：`GameRoom`/`Hand` 高风险解耦
 仅在批次 8 稳定后进行：`Hand` 依赖改显式 `HandPorts`；settlement 纯计算改 snapshot 输入；DB settlement writer 只接收已解析的 `HandSettlementWrite`；multi-run equity 经端口注入；audit/transcript 只经事件 writer；room lifecycle 不再直读 Hand 私有字段。目标依赖方向：`game/room -> game/hand facade`；`game/hand/* -> shared protocol / mental-poker / injected ports`；`game/settlementWriter -> db / ledger / projection`；`stats -> db projection only`。不做：全局 event bus、reducer 化、协议变更、DB writer 异步队列、时钟模型变更、最终一致性结算。验证除全部单测外，必须运行 server 全量 + browser baseline + post-hand deal + poker hotkeys + bot live + `evalInfra.test.mjs` + `botEval.mjs` duplicate + 至少一次真实多跑/strict-audit/断线恢复与 timeout。**高风险批次必须在独立分支提交，失败整体回滚，不做局部热修复。**
 
+### 批次 10：中间产物与临时文件清理（已拍板不归档，独立提交）
+目标：回收仓库体积、清掉一次性中间证据与冗余 dotfile。**只删产物与文件，不改业务代码。**
+
+实测基线（`6828fb3` 工作区）：`docs/qa` 92M / 429 文件，其中 **201 个未跟踪 / 约 65M**（`table-layout-b` 95、`table-motion` 68、`stats-pro` 14、`bot-playtest` 14、`table-hero-clear` 10）；仓库内无一次性 probe/tmp 脚本、无 `*.log/tmp/bak/orig/rej`、无 tracked `dist/`；`.impeccable/` 根与 `apps/web/` 两处并存。
+
+顺序与约束：
+1. **先 grep 并修正引用**：删除前确认 `docs/plans/*.md`、各 feature README、代码注释中是否引用待删文件（已报 `table-layout-b/README.md`、`stats-pro/README.md` 引用未跟踪截图），先改文档再删。
+2. **裁定 `docs/qa/table-hero-clear/`**：确认为最新结论则补提交，否则删——不能悬着。
+3. **按文件/子目录精确删除**未跟踪的中间证据与被取代的报告；保留各 feature 的 README、最终 sign-off、关键基线图与仍被 probe 使用的 fixture。
+4. **`.impeccable` 重复**：先确认工具读取路径，再删冗余的一份。
+5. **`/tmp` 本项目产物**（实测约 2.2G，`/tmp/4am-*`、`/tmp/opencode/4am-*`）：不在仓库内、**不属于任何提交**，可随时直接清理；不影响仓库体积，不必等重构。
+6. **不做**：`rm -rf docs/qa` 式整目录删除；删除仍被 harness/probe 引用的 fixture；与源码重构混在同一提交。
+
+验证：`git status` 干净、`docs/qa` 体积下降、所有 harness 与 probe 仍可运行、`git diff --find-renames` 不出现意外的源码改动。
+
 ---
 
 ## 6. 不做清单
@@ -507,7 +522,7 @@ packages/agent-core/src/
 4. **不合并两种 equity**（安全边界不同）。
 5. **不大规模重排 `packages/shared`**（只做 hotkey/house/偏好三处）。
 6. **本轮不拆全部大文件**（tournaments/social/botRoutes/profile/tournaments 页面/admin 页面/PlayerPage/postflopPolicy 登记后续）。
-7. **`docs/qa` 历史报告归档不直删**：HEAD 220 文件 / 139 图片 / 审计约 44M。保留每个 feature 的 README、最终 sign-off、关键基线图、关键 result JSON、仍用于 probe 的 fixture；历史截图/重复报告/旧 JSON 外部归档（含 manifest.json + 原始相对路径 + commit + 生成时间 + sha256）；顺序为先上传归档 → 校验 → 独立提交删除 → 保留 `docs/qa/README.md` 与恢复说明。**不建议直接 `rm -rf docs/qa`。**
+7. **`docs/qa` 清理**（已拍板：**不归档，直接删**，见批次 10）：保留每个 feature 的 README、最终 sign-off、关键基线图、仍用于 probe 的 fixture 与最终 result JSON；删除中间过程截图、被后续轮次取代的证据、旧时间戳报告、重复 JSON。**先修正引用它的 tracked 文档，再删，独立提交。** 仍不建议 `rm -rf docs/qa`（按文件/子目录精确删除）。
 
 ---
 
@@ -530,7 +545,7 @@ packages/agent-core/src/
 | 结算事务边界被无意改变 | 先只移动文件；writer 单独提交；强制保留 `db.transaction(...)` 外层；duplicate settle / negative stack / projection rollback 测试 |
 | 统计投影与实时结算解耦错误 | writer 仍同步调用 projection；API 保持同步；只改文件位置 |
 | `TablePage` effect 生命周期变化 | `useTableSession` 先单独抽取 + unmount 测试；保留 `pokerActionLatch`；不改 dependency array；probe 验证 resize/route change/unmount |
-| QA 清理误删证据 | QA 清理独立于源码重构；先归档 hash 校验；未归档不删 |
+| QA 清理误删证据 | QA 清理独立于源码重构；先 grep 出所有引用并修正 tracked 文档，再按文件/子目录精确删除；保留各 feature 的 README、最终结论与仍被 probe 使用的 fixture |
 | 重构分支与功能 lane 冲突 | 功能 lane 全部完成后再做批次 4+；批次 1–3 可先做；每批从最新主线 rebase；不在重构提交顺手修 bug |
 
 ---
@@ -547,5 +562,5 @@ packages/agent-core/src/
 8. 每批可独立测试、提交和回滚。
 9. 三包基线测试全部通过。
 10. browser baseline、bot/eval harness、ledger invariants 全部通过。
-11. `docs/qa` 历史证据在归档校验前不删除。
+11. `docs/qa` 中间过程证据在修正引用后按批次 10 精确删除；各 feature 的最终结论与 probe fixture 保留。
 12. 任何结构提交都不含功能扩展或产品行为修改。
