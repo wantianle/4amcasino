@@ -9,15 +9,21 @@ import { HeadlessClient } from '../src/client.js';
  *
  * On the first snapshot after a socket open with `handActive=true`, the stale
  * `betting` snapshot is dropped, so a pre-reconnect `myTurn()` can never be
- * trusted. The gate (`isResynced`) then opens on ANY authoritative hand-context
- * frame the server replays in `Hand.resendPending` - a `hand_start`, a crypto
- * shuffle/share/card frame (still in the deal), a `multi_run_offer`/`need_keys`,
- * or a `betting_state` (while betting). Only a real `betting_state` rebuilds a
+ * trusted. The server then replays the hand via `Hand.resendPending`, in this
+ * order: `hand_start`, the content frames (`your_card`/`board_open`), then the
+ * frame for the hand's current phase. The gate (`isResynced`) must NOT open on
+ * the bare `hand_start` (it only establishes the hand identity) nor on the
+ * content-only replay: a settlement hold still has the board, the private cards
+ * and the `showdown` to come, so opening early would read a half-replayed hand.
+ * It opens only on a frame that proves the hand's current phase/result - a
+ * crypto request frame (`shuffle_turn`/`need_share`), a `multi_run_offer`, an
+ * audit `need_keys`, a `betting_state` (while betting), a `showdown`, or a
+ * terminal `hand_end`/`hand_abort`. Only a real `betting_state` rebuilds a
  * decidable `betting`; a non-betting frame leaves the table undecidable. A
- * terminal `hand_end`/`hand_abort` also opens the gate (and invalidates betting)
- * so a reconnect that only ever sees the end can never freeze. When the snapshot
- * reports no live hand it is complete on its own and any stale hand is cleared
- * (a missed `hand_end`).
+ * terminal frame also opens the gate (and invalidates betting) so a reconnect
+ * that only ever sees the end can never freeze. When the snapshot reports no
+ * live hand it is complete on its own and any stale hand is cleared (a missed
+ * `hand_end`).
  */
 
 type TestSeams = {
@@ -189,7 +195,7 @@ function freshClient(): { c: HeadlessClient; s: TestSeams } {
 }
 
 describe('HeadlessClient reconnect resync barrier', () => {
-  it('keeps the gate closed for a live hand until its replayed hand_start establishes context', () => {
+  it('keeps the gate closed for a live hand until its authoritative state is replayed', () => {
     const { c, s } = freshClient();
     expect(c.isResynced).toBe(false);
 
@@ -201,12 +207,14 @@ describe('HeadlessClient reconnect resync barrier', () => {
     s.handle(bettingState('other', 3, 0));
     expect(c.isResynced).toBe(false);
 
-    // The replayed `hand_start` establishes the hand context...
+    // The replayed `hand_start` only establishes the hand identity: a partial
+    // replay (only `hand_start`) is NOT a completed resync.
     s.handle(handStart('h1'));
-    expect(c.isResynced).toBe(true);
-    // ...but the table stays undecidable until a real `betting_state`.
+    expect(c.isResynced).toBe(false);
     expect(c.betting).toBeNull();
+    // A phase/terminal frame for this hand completes the resync.
     s.handle(bettingState('h1', 3, 0));
+    expect(c.isResynced).toBe(true);
     expect(c.betting).not.toBeNull();
   });
 
@@ -234,11 +242,13 @@ describe('HeadlessClient reconnect resync barrier', () => {
     s.handle(roomState(true));
     expect(c.betting).toBeNull(); // the stale snapshot is cleared on resync
     expect(c.isResynced).toBe(false);
-    // The replayed `hand_start` establishes context...
+    // The replayed `hand_start` establishes the identity but not the resync...
     s.handle(handStart('h1'));
-    expect(c.isResynced).toBe(true);
-    // ...and the server has moved on: the replay says seat 1 acts, not us.
+    expect(c.isResynced).toBe(false);
+    // ...the authoritative `betting_state` completes it, and the server has
+    // moved on: the replay says seat 1 acts, not us.
     s.handle(bettingState('h1', 5, 1));
+    expect(c.isResynced).toBe(true);
     expect(c.myTurn()).toBe(false);
   });
 
@@ -294,18 +304,25 @@ describe('HeadlessClient reconnect resync barrier', () => {
     s.handle(handEnd('h1-old'));
     expect(c.isResynced).toBe(false);
 
-    // Only the current hand's `hand_start` — then its frames — may open the gate.
+    // The current hand's `hand_start` establishes its identity, but a stale
+    // previous-hand terminal frame still cannot open the gate.
     s.handle(handStart('h1'));
+    expect(c.isResynced).toBe(false);
+    // Only a frame belonging to the current hand may open it.
+    s.handle(handEnd('h1'));
     expect(c.isResynced).toBe(true);
   });
 
   it('opens the gate on a crypto frame but keeps the table undecidable', () => {
     const { c, s } = staleTurnThenReconnect();
-    s.handle(handStart('h1')); // resendPending's first frame establishes context
-    expect(c.isResynced).toBe(true);
+    // A bare `hand_start` is a partial replay: the gate stays closed.
+    s.handle(handStart('h1'));
+    expect(c.isResynced).toBe(false);
     expect(c.betting).toBeNull();
 
-    s.handle(shuffleTurn('h1')); // crypto frame must not rebuild betting
+    // The crypto phase frame completes the resync but must not rebuild betting.
+    s.handle(shuffleTurn('h1'));
+    expect(c.isResynced).toBe(true);
     expect(c.betting).toBeNull();
     expect(c.myTurn()).toBe(false);
 
@@ -315,29 +332,86 @@ describe('HeadlessClient reconnect resync barrier', () => {
     expect(c.myTurn()).toBe(true);
   });
 
-  it('opens the gate on deal/reveal frames without rebuilding betting', () => {
-    for (const frame of [needShare('h1'), yourCard('h1'), boardOpen('h1')]) {
+  it('opens the gate on a deal/reveal share request without rebuilding betting', () => {
+    // `need_share` is a phase marker (the deal is waiting on this seat), so it
+    // completes the resync without rebuilding betting.
+    const { c, s } = staleTurnThenReconnect();
+    s.handle(handStart('h1'));
+    expect(c.isResynced).toBe(false);
+    s.handle(needShare('h1'));
+    expect(c.isResynced).toBe(true);
+    expect(c.betting).toBeNull();
+    expect(c.myTurn()).toBe(false);
+  });
+
+  it('does not open the gate on content-only replay (your_card / board_open)', () => {
+    // The server replays content BEFORE the phase frame; a private card or a
+    // board card alone is a partial replay and must not open the gate.
+    for (const frame of [yourCard('h1'), boardOpen('h1')]) {
       const { c, s } = staleTurnThenReconnect();
       s.handle(handStart('h1'));
       s.handle(frame);
-      expect(c.isResynced).toBe(true);
+      expect(c.isResynced).toBe(false);
       expect(c.betting).toBeNull();
       expect(c.myTurn()).toBe(false);
     }
   });
 
-  it('opens the gate on a hand_start replay (commit phase) without rebuilding betting', () => {
+  it('does not open the gate on a bare hand_start replay; it only establishes identity', () => {
     const { c, s } = staleTurnThenReconnect();
     s.handle(handStart('h1'));
-    expect(c.isResynced).toBe(true);
+    expect(s.resyncHandId).toBe('h1');
+    expect(c.isResynced).toBe(false);
     expect(c.betting).toBeNull();
     expect(c.myTurn()).toBe(false);
+  });
+
+  it('waits for the settlement reveal before declaring a reconnect resynced', () => {
+    const { c, s } = staleTurnThenReconnect();
+    // A settlement hold replays: hand_start -> content (private cards/board) ->
+    // showdown. A partial replay (no reveal yet) must not read as synced.
+    s.handle(handStart('h1'));
+    s.handle(yourCard('h1'));
+    s.handle(boardOpen('h1'));
+    expect(c.isResynced).toBe(false);
+    // The handId-bound `showdown` proves the hand's result has been replayed.
+    s.handle(showdown('h1'));
+    expect(c.isResynced).toBe(true);
+    expect(c.showdown).not.toBeNull();
+    // It leaves the terminal `result` for the later `hand_end`.
+    expect(c.result).toBeNull();
+    expect(c.betting).toBeNull();
+    expect(c.myTurn()).toBe(false);
+  });
+
+  it('waits for hand_end when the settlement replays without a showdown', () => {
+    const { c, s } = staleTurnThenReconnect();
+    s.handle(handStart('h1'));
+    s.handle(yourCard('h1'));
+    expect(c.isResynced).toBe(false);
+    // A quiet/fold win replays no showdown; the terminal frame is what settles it.
+    s.handle(handEnd('h1'));
+    expect(c.isResynced).toBe(true);
+    expect(c.result).not.toBeNull();
+    expect(c.myTurn()).toBe(false);
+  });
+
+  it('does not open the gate on a showdown bound to a different hand', () => {
+    const { c, s } = staleTurnThenReconnect();
+    s.handle(handStart('h1'));
+    s.handle(showdown('h-old'));
+    expect(c.isResynced).toBe(false);
+    expect(c.showdown).toBeNull();
+    // Only the hand being resynced may complete it.
+    s.handle(showdown('h1'));
+    expect(c.isResynced).toBe(true);
   });
 
   it('opens the gate on a multirun offer and an audit need_keys', () => {
     {
       const { c, s } = staleTurnThenReconnect();
       s.handle(handStart('h1'));
+      expect(c.isResynced).toBe(false); // hand_start alone is partial
       s.handle(multiRunOffer('h1'));
       expect(c.isResynced).toBe(true);
       expect(c.betting).toBeNull();
@@ -346,6 +420,7 @@ describe('HeadlessClient reconnect resync barrier', () => {
     {
       const { c, s } = staleTurnThenReconnect();
       s.handle(handStart('h1'));
+      expect(c.isResynced).toBe(false);
       s.handle(needKeys('h1'));
       expect(c.isResynced).toBe(true);
       expect(c.betting).toBeNull();
@@ -357,6 +432,7 @@ describe('HeadlessClient reconnect resync barrier', () => {
     for (const frame of [handAbort('h1'), handEnd('h1')]) {
       const { c, s } = staleTurnThenReconnect();
       s.handle(handStart('h1'));
+      expect(c.isResynced).toBe(false); // hand_start alone is partial
       s.handle(frame);
       expect(c.isResynced).toBe(true);
       expect(c.betting).toBeNull();
@@ -429,12 +505,18 @@ describe('HeadlessClient reconnect resync barrier', () => {
     s.handle(bettingState('h1', 9, 0));
     expect(c.betting).toBeNull();
 
-    // The legitimate replay establishes context, but must not rebuild the old
-    // betting snapshot (only a subsequent betting_state may).
+    // The legitimate replay establishes identity, but must not rebuild the old
+    // betting snapshot and does not open the gate on its own.
     s.handle(handStart('h1'));
-    expect(c.isResynced).toBe(true);
+    expect(c.isResynced).toBe(false);
     expect(c.betting).toBeNull();
     expect(c.myTurn()).toBe(false);
+
+    // Only a real, post-resync betting_state opens the gate and restores betting.
+    s.handle(bettingState('h1', 7, 0));
+    expect(c.isResynced).toBe(true);
+    expect(c.betting).not.toBeNull();
+    expect(c.myTurn()).toBe(true);
   });
 
   it('establishes the next hand even when the previous hand_end was missed', () => {

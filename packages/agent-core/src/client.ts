@@ -86,6 +86,8 @@ export class HeadlessClient {
    * The hand id whose context this connection epoch is syncing. Reset on a
    * resync/close and set only by the replayed `hand_start`; every other context
    * frame must match it, so a stale previous-hand frame cannot open the gate.
+   * Setting it is NOT itself a sync signal: `hand_start` only establishes the
+   * identity, and the gate opens on a later phase/terminal frame.
    */
   private resyncHandId: string | null = null;
 
@@ -129,11 +131,16 @@ export class HeadlessClient {
    */
   roomStateEpoch = 0;
   /**
-   * The connection epoch whose live-hand context has been applied. When the
-   * resync `room_state` reports a live hand, `isResynced` additionally requires
-   * that hand's authoritative `betting_state` (the server replays it via
-   * `Hand.resendPending` right after `room_state`). The room snapshot alone does
-   * not prove the cached turn, so it must not open the decision gate.
+   * The connection epoch whose live-hand context has been authoritatively
+   * synced. When the resync `room_state` reports a live hand the gate is closed
+   * (`= 0`) until the server replays a frame that proves the hand's current
+   * phase/result. The replayed `hand_start` only establishes the hand IDENTITY,
+   * not completeness, so it must not open the gate on its own - in a settlement
+   * hold the board, the private cards and the `showdown` still follow. The gate
+   * opens on a phase/terminal frame: a crypto request frame, a `betting_state`,
+   * a `showdown`, or a `hand_end`/`hand_abort`. Pure content replay
+   * (`your_card`/`board_open`) refreshes visible state but does not open it
+   * either. The room snapshot alone never proves the cached turn.
    */
   handContextEpoch = 0;
   result: Extract<ServerMsg, { t: 'hand_end' }> | null = null;
@@ -432,12 +439,21 @@ export class HeadlessClient {
   }
 
   /**
-   * Mark this connection epoch's hand context as synced. Any frame that proves
-   * the current hand context (a `hand_start` replay, a crypto shuffle/share/card
-   * frame, a multirun/audit request, a `betting_state`, or a terminal
-   * `hand_end`/`hand_abort`) calls this. It deliberately does NOT rebuild
-   * `betting`: a non-betting phase frame proves the context is fresh but leaves
-   * the table undecidable, so only a real `betting_state` restores `betting`.
+   * Mark this connection epoch's hand context as synced, but only from a frame
+   * that proves the hand's CURRENT phase/result: a phase marker (a crypto
+   * shuffle/share request or a `betting_state`), a settlement reveal
+   * (`showdown`), or a terminal `hand_end`/`hand_abort`. Callers MUST NOT invoke
+   * this for the bare `hand_start` (it only establishes the hand identity) nor
+   * for pure content replay (`your_card`/`board_open`): receiving part of a
+   * reconnect replay is not proof that the hand's authoritative state is
+   * complete, so it must never open the decision gate early. In the server's
+   * `Hand.resendPending` ordering the content (private cards, board) is replayed
+   * BEFORE the phase/terminal frame, so opening on the latter still guarantees
+   * the former was applied.
+   *
+   * It deliberately does NOT rebuild `betting`: a non-betting phase frame proves
+   * the context is fresh but leaves the table undecidable, so only a real
+   * `betting_state` restores `betting`.
    */
   /**
    * Whether a hand-specific frame belongs to the hand this epoch is resyncing.
@@ -527,8 +543,11 @@ export class HeadlessClient {
           this.handContextEpoch = this.connectionEpoch;
         } else if (this.reconnected) {
           // A live hand is only fully resynced once the server's `resendPending`
-          // replays an authoritative frame for this hand (a `hand_start`/crypto
-          // frame in the non-betting phases, or a `betting_state` while betting).
+          // replays a phase/terminal frame for this hand (a `shuffle_turn`/`need_share`
+          // during crypto, a `betting_state` while betting, or a terminal
+          // `showdown`/`hand_end`/`hand_abort`). The replayed `hand_start` only
+          // (re)establishes the hand identity, and replayed private/board content
+          // alone does not open the gate.
           // Clear the cached turn snapshot NOW so the stale `betting` can never
           // render `myTurn()` true while the gate is closed.
           this.betting = null;
@@ -551,11 +570,13 @@ export class HeadlessClient {
         this.roomStateEpoch = this.connectionEpoch;
         break;
       case 'hand_start': {
-        // The hand's opening context: the resync barrier is satisfied even when
-        // the hand is still in a crypto phase and no `betting_state` will come.
-        // This is the ONE frame allowed to establish the hand identity.
+        // The hand's opening context. This is the ONE frame allowed to establish
+        // the hand identity, but it deliberately does NOT open the resync gate:
+        // it carries no proof that the server has finished replaying this hand's
+        // authoritative state (in a settlement hold the board, the private cards
+        // and the `showdown` still follow). The gate opens on the next
+        // phase/terminal frame this hand replays.
         this.resyncHandId = msg.handId;
-        this.markHandContextSynced();
         if (this.handId !== msg.handId) {
           this.handId = msg.handId;
           this.seats = msg.seats;
@@ -631,7 +652,9 @@ export class HeadlessClient {
       }
       case 'your_card': {
         if (!this.isCurrentHandFrame(msg.handId)) break;
-        this.markHandContextSynced(msg.handId);
+        // Content replay, not a phase marker: it refreshes my private card but
+        // does not prove the hand's replay is complete, so it must NOT open the
+        // resync gate.
         if (!this.identity || msg.handId !== this.handId || !this.handKeys.has(msg.handId)) break;
         if (this.myCardPoints.some((c) => c.deckIndex === msg.deckIndex)) break;
         const plain = mulPoint(pointFromHex(msg.point), invScalar(this.keyFor(msg.handId)));
@@ -645,7 +668,9 @@ export class HeadlessClient {
       }
       case 'board_open':
         if (!this.isCurrentHandFrame(msg.handId)) break;
-        this.markHandContextSynced(msg.handId);
+        // Content replay, not a phase marker: it refreshes the board but does
+        // not prove the hand's replay is complete, so it must NOT open the
+        // resync gate. (The phase/terminal frame that follows it does.)
         // run-2 cards belong to the second runout, never to the main board
         if (msg.run !== 2 && !this.board.includes(msg.card)) this.board.push(msg.card);
         break;
@@ -917,13 +942,17 @@ export class HeadlessClient {
   /**
    * True only once this connection epoch's resync is complete. An open socket
    * (`connected = true`) does not imply the state is fresh: between a (re)open
-   * and the snapshot arriving the cached hand/turn may be stale.
+   * and the authoritative hand state arriving the cached hand/turn may be stale.
    *
-   * A bare `room_state` is not always enough. When it reports a live hand the
-   * server replays this hand's `betting_state` right afterwards
-   * (`resendPending`), and only that frame proves the current turn - so
-   * `isResynced` additionally requires `handContextEpoch` to have caught up.
-   * When there is no live hand the room snapshot is complete on its own.
+   * A bare `room_state` is not enough when it reports a live hand: the server
+   * replays the hand's context (`Hand.resendPending`), and the replayed
+   * `hand_start` merely establishes the hand identity - it is NOT proof the
+   * replay is complete. The gate opens only on a frame that proves the hand's
+   * current phase/result: a crypto/phase request frame, a `betting_state`, a
+   * `showdown`, or a terminal `hand_end`/`hand_abort`. Content-only replay
+   * (`your_card`/`board_open`) does not open it. This is why the gate cannot be
+   * opened by "any frame at all" during a reconnect. When there is no live hand
+   * the room snapshot is complete on its own.
    */
   get isResynced(): boolean {
     // `connected` is false before the first open and immediately after close(),
