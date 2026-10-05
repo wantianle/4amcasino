@@ -1,3 +1,11 @@
+// Generated from packages/agent-core/src/postflopPolicy.ts at HEAD f4a5904 (P0/P1
+// baseline) via `git show f4a5904:packages/agent-core/src/postflopPolicy.ts`. Only
+// three normalisations were applied: relative imports redirected to ../../src, the
+// class renamed to BaselinePostflopPolicy, and this header comment added. The
+// decision logic body is byte-for-byte the f4a5904 engine; it exists so a test can
+// run "current policy with all P2 switches off" against the true baseline per input.
+// DO NOT EDIT BY HAND - regenerate from git if the baseline ever changes.
+
 import {
   ALL_CARDS,
   evaluate5,
@@ -7,18 +15,17 @@ import {
   suitOf,
   type CardId,
 } from '@4am/shared';
-import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from './decisionView.js';
+import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from '../../src/decisionView.js';
 import {
   estimateEquity,
   mulberry32,
   type VillainCombo,
   type VillainRange,
-} from './equity.js';
-import type { PolicyDecision } from './policy.js';
-import { seatsInDealingOrder } from './preflopPolicy.js';
-import { deriveRulesSeed } from './rulesSeed.js';
-import type { RuleParams } from './ruleStyles.js';
-import { estimateOpponent } from './sessionMemory.js';
+} from '../../src/equity.js';
+import type { PolicyDecision } from '../../src/policy.js';
+import { seatsInDealingOrder } from '../../src/preflopPolicy.js';
+import { deriveRulesSeed } from '../../src/rulesSeed.js';
+import type { RuleParams } from '../../src/ruleStyles.js';
 
 /**
  * Rules-v1 postflop engine.
@@ -101,13 +108,7 @@ export interface HandEval {
    */
   score: number;
   flushDraw: boolean;
-  /**
-   * Straight-draw *heuristic*: 0 none, 1 gutshot, 2 open-ended / double-gutter.
-   * A completion counts only when it uses a rank hero **uniquely supplies**
-   * (neither already on the board nor the completing card itself), and this is
-   * always 0 once hero already has a straight or better (see `evaluateHand`).
-   * It is not an exact outs count.
-   */
+  /** 0 none, 1 gutshot, 2 open-ended / double-gutter (draw heuristic only). */
   straightDraw: number;
   overcards: number;
 }
@@ -127,58 +128,24 @@ function bestScore(cards: readonly CardId[]): number {
   return best;
 }
 
-/**
- * The five-rank windows (wheel included) that constitute a straight. Kept as
- * explicit rank lists so `straightOuts` can ask not only *whether* a straight
- * exists but *which ranks* it uses.
- */
-const STRAIGHT_WINDOWS: readonly (readonly number[])[] = (() => {
-  const windows: number[][] = [[12, 0, 1, 2, 3]]; // A-2-3-4-5 wheel
-  for (let i = 0; i + 4 < 13; i++) windows.push([i, i + 1, i + 2, i + 3, i + 4]);
-  return windows;
-})();
+/** Straight presence in a 13-rank count array, wheel (A2345) included. */
+function hasStraight(counts: number[]): boolean {
+  const p = counts.map((n) => n > 0);
+  if (p[12] && p[0] && p[1] && p[2] && p[3]) return true; // A-2-3-4-5
+  for (let i = 0; i + 4 < 13; i++) {
+    if (p[i] && p[i + 1] && p[i + 2] && p[i + 3] && p[i + 4]) return true;
+  }
+  return false;
+}
 
-/**
- * Straight outs that hero actually contributes to.
- *
- * A completing rank counts only when at least one straight it makes uses a rank
- * that hero **uniquely supplies** - i.e. a rank that neither the board nor the
- * completing card already provides. This is a rank-*source* test, not a set
- * intersection:
- *
- *  - `9-8-7-6` on the board completed by `5` / `T` is a **board-only
- *    completion**; hero's hole cards take no part and it is not hero's draw.
- *  - `hole = As 2d` on `Ah Qc Jd Tc` completed by the board's `K`: the `A` rank
- *    is already on the board, so hero's `As` is not a unique contribution and
- *    the `A-K-Q-J-T` straight is board-only.
- *  - `hole = Th Jd` on `9-8-2` completed by `Q`: the window `8-9-T-J-Q` needs
- *    hero's `T`/`J` (neither on the board), so it DOES count.
- *
- * Because a held rank is skipped by the loop, the completing card can never be
- * a hero rank: `heroRankSet.has(rank) && !boardRankSet.has(rank)` is exactly
- * "only hero supplies this rank". Pure.
- */
-function straightOuts(
-  rankCount: number[],
-  boardLength: number,
-  heroRanks: readonly number[],
-  boardRanks: readonly number[],
-): number {
+function straightOuts(rankCount: number[], boardLength: number): number {
   if (boardLength >= 5) return 0;
-  const heroRankSet = new Set(heroRanks);
-  const boardRankSet = new Set(boardRanks);
   let outs = 0;
   for (let r = 0; r < 13; r++) {
     if (rankCount[r]! > 0) continue; // the rank is already held
     const trial = rankCount.slice();
     trial[r] = trial[r]! + 1;
-    const present = trial.map((n) => n > 0);
-    const usesHero = STRAIGHT_WINDOWS.some(
-      (window) =>
-        window.every((rank) => present[rank]) &&
-        window.some((rank) => heroRankSet.has(rank) && !boardRankSet.has(rank)),
-    );
-    if (usesHero) outs++;
+    if (hasStraight(trial)) outs++;
   }
   return outs;
 }
@@ -199,174 +166,21 @@ export function evaluateHand(hole: readonly CardId[], board: readonly CardId[]):
   const score = bestScore(cards);
   const category = handCategory(score);
 
-  const boardRanks = board.map(rankOf);
-  const maxBoardRank = board.length ? Math.max(...boardRanks) : -1;
+  const maxBoardRank = board.length ? Math.max(...board.map(rankOf)) : -1;
   const overcards = hole.filter((c) => rankOf(c) > maxBoardRank).length;
-  const outs = straightOuts(rankCount, board.length, hole.map(rankOf), boardRanks);
+  const outs = straightOuts(rankCount, board.length);
   // A flush draw needs four to a suit *and* at least one of them in our hand.
   const flushDraw =
     board.length < 5 &&
     suitCount.some((n, s) => n === 4 && hole.some((c) => suitOf(c) === s));
-  // `straightDraw` means "not made yet, can still improve". Once the best five
-  // cards already form a straight or better (category >= 4) there is nothing
-  // left to draw to, so it is 0 by definition - consistent with `flushDraw`,
-  // which is likewise only true for a four-card (unmade) suit.
-  const straightDraw = category >= 4 ? 0 : outs >= 2 ? 2 : outs === 1 ? 1 : 0;
 
   return {
     category,
     score,
     flushDraw,
-    straightDraw,
+    straightDraw: outs >= 2 ? 2 : outs === 1 ? 1 : 0,
     overcards,
   };
-}
-
-// ---------------------------------------------------------------------------
-// P2: 24 hand-strength buckets (6 made × 4 draw)
-// ---------------------------------------------------------------------------
-
-/**
- * Made-hand bucket (the "how strong is it now" axis). Six coarse tiers, chosen
- * so the common postflop states are separable without a solver:
- * `air < weak-pair < mid-pair < top-pair < two-pair-plus < strong-made`.
- * `strong-made` is set/trips or better (any category >= 3).
- */
-export type MadeBucket =
-  | 'air'
-  | 'weak-pair'
-  | 'mid-pair'
-  | 'top-pair'
-  | 'two-pair-plus'
-  | 'strong-made';
-
-/**
- * Draw bucket (the "how much can it improve" axis). Four tiers. A flush draw
- * that also has any straight draw is the `combo-draw`; a plain flush draw or an
- * open-ended straight draw is a `strong-draw`; a lone gutshot is `gutshot`.
- */
-export type DrawBucket = 'none' | 'gutshot' | 'strong-draw' | 'combo-draw';
-
-export const MADE_BUCKETS: readonly MadeBucket[] = [
-  'air',
-  'weak-pair',
-  'mid-pair',
-  'top-pair',
-  'two-pair-plus',
-  'strong-made',
-];
-
-export const DRAW_BUCKETS: readonly DrawBucket[] = [
-  'none',
-  'gutshot',
-  'strong-draw',
-  'combo-draw',
-];
-
-/** The 24-bucket classification of one hand on one board. */
-export interface HandBucket {
-  made: MadeBucket;
-  draw: DrawBucket;
-  /** `madeIndex * 4 + drawIndex`, in [0, 23]. */
-  index: number;
-  /** Stable label, e.g. `top-pair/strong-draw`. */
-  id: string;
-}
-
-function madeBucketOf(ev: HandEval, hole: readonly CardId[], board: readonly CardId[]): MadeBucket {
-  if (ev.category >= 3) return 'strong-made'; // set/trips, straight, flush, boat, quads, SF
-  if (ev.category === 2) return 'two-pair-plus';
-  if (ev.category !== 1) return 'air';
-  const boardRanks = [...new Set(board.map(rankOf))].sort((a, b) => b - a);
-  const maxBoard = boardRanks[0] ?? -1;
-  const secondBoard = boardRanks[1] ?? -1;
-  const pocket = hole.length === 2 && rankOf(hole[0]!) === rankOf(hole[1]!);
-  if (pocket) {
-    const pairRank = rankOf(hole[0]!);
-    if (pairRank > maxBoard) return 'top-pair'; // overpair
-    if (pairRank >= secondBoard) return 'mid-pair';
-    return 'weak-pair'; // underpair
-  }
-  const pairedWithBoard = hole.find((card) => boardRanks.includes(rankOf(card)));
-  if (pairedWithBoard === undefined) return 'weak-pair'; // playing the board's pair
-  const pairRank = rankOf(pairedWithBoard);
-  if (pairRank >= maxBoard) return 'top-pair';
-  if (pairRank === secondBoard) return 'mid-pair';
-  return 'weak-pair';
-}
-
-function drawBucketOf(ev: HandEval): DrawBucket {
-  const flush = ev.flushDraw;
-  const straight = ev.straightDraw;
-  if (flush && straight >= 1) return 'combo-draw';
-  if (flush || straight >= 2) return 'strong-draw';
-  if (straight === 1) return 'gutshot';
-  return 'none';
-}
-
-/**
- * Classify a postflop hand into one of 24 (made × draw) buckets. Pure and total:
- * every hand on a 3..5 card board maps to exactly one bucket (mutually
- * exclusive and jointly exhaustive). The classifier is a documented heuristic
- * abstraction, not a solved range - it is used to enrich range/nut-advantage
- * reads, never to compare hands (the shared evaluator does that).
- */
-export function handBucket(hole: readonly CardId[], board: readonly CardId[]): HandBucket {
-  if (hole.length < 2 || board.length < 3) {
-    return { made: 'air', draw: 'none', index: 0, id: 'air/none' };
-  }
-  const ev = evaluateHand(hole, board);
-  const made = madeBucketOf(ev, hole, board);
-  const draw = drawBucketOf(ev);
-  const madeIndex = MADE_BUCKETS.indexOf(made);
-  const drawIndex = DRAW_BUCKETS.indexOf(draw);
-  return {
-    made,
-    draw,
-    index: madeIndex * DRAW_BUCKETS.length + drawIndex,
-    id: `${made}/${draw}`,
-  };
-}
-
-/** Heuristic strength in [0, 1] of a bucket, for range-advantage weighting. */
-export function bucketStrength(bucket: HandBucket): number {
-  const made = ['air', 'weak-pair', 'mid-pair', 'top-pair', 'two-pair-plus', 'strong-made'].indexOf(
-    bucket.made,
-  );
-  const draw = ['none', 'gutshot', 'strong-draw', 'combo-draw'].indexOf(bucket.draw);
-  const base = [0.05, 0.25, 0.4, 0.62, 0.8, 0.92][made] ?? 0.05;
-  const bonus = [0, 0.05, 0.12, 0.18][draw] ?? 0;
-  return clamp01(base + bonus);
-}
-
-/**
- * Bucket-based range advantage in [-1, 1]: hero's own bucket strength minus the
- * weight-averaged bucket strength of the supplied villain range, doubled so a
- * bucket-tier gap is a meaningful signal. Purely a ranking aid built from the
- * 24-bucket abstraction; it does not compare hands and never replaces the
- * shared evaluator.
- *
- * **Experimental API, not wired into any decision** (and reachable only when the
- * `buckets` switch is enabled, which is off by default). It exists so a future
- * eval can measure the bucket abstraction; it must not be advertised as an
- * active part of the policy.
- */
-export function bucketAdvantage(
-  hole: readonly CardId[],
-  board: readonly CardId[],
-  range: readonly VillainCombo[],
-): number {
-  let weighted = 0;
-  let total = 0;
-  for (const combo of range) {
-    const weight = Number.isFinite(combo.weight) ? Math.max(0, combo.weight) : 0;
-    if (weight === 0) continue;
-    weighted += weight * bucketStrength(handBucket(combo.cards, board));
-    total += weight;
-  }
-  if (total <= 0) return 0;
-  const heroStrength = bucketStrength(handBucket(hole, board));
-  return clamp((heroStrength - weighted / total) * 2, -1, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -746,59 +560,6 @@ export function chooseBetFraction(texture: BoardTexture, ctx: SizingContext): nu
   return texture.aceHigh ? 0.33 : 0.5;
 }
 
-// ---------------------------------------------------------------------------
-// P2: bet-size grid + nearest-neighbour translation of opponent sizes
-// ---------------------------------------------------------------------------
-
-/**
- * The discrete postflop sizing grid our decisions and reads share. `0.33/0.5/
- * 0.75/1/1.25/1.5` pot plus the `'all-in'` sentinel mirrors the Slumbot /
- * Gilpin-Sandholm style action abstraction (a small, fixed set of sizes). It is
- * intentionally NOT extended to more fractions: the point is a stable coordinate
- * system for reading an opponent's weird size, not finer resolution for its own
- * sake.
- */
-export const POSTFLOP_SIZE_GRID = [0.33, 0.5, 0.75, 1.0, 1.25, 1.5] as const;
-
-export type PostflopSize = (typeof POSTFLOP_SIZE_GRID)[number] | 'all-in';
-
-/**
- * Translate an observed bet fraction to the nearest grid point ("nearest
- * neighbour" action translation): a 0.42-pot bet reads as 0.5, a 0.62-pot bet
- * reads as 0.75, an oversized 3-pot bet reads as the top grid point, and a
- * flagged all-in always reads as `'all-in'` regardless of its chip fraction.
- *
- * Nearest is measured on the fraction itself (absolute distance), matching the
- * `Target*PotFracs` / `Opp*PotFracs` translation in Slumbot `nlt5`. On an exact
- * midpoint between two grid points (`0.415`, `0.625`, `0.875`, ...) the strict
- * `<` comparison keeps the **earlier, smaller** point, so the translation biases
- * ties toward the lower size by design; callers that need round-half-up must
- * jitter the input. A non-finite / non-positive fraction has no meaningful size
- * and reads as the neutral half-pot (`0.5`).
- */
-export function snapBetFraction(fraction: number, allIn = false): PostflopSize {
-  if (allIn) return 'all-in';
-  if (!Number.isFinite(fraction) || fraction <= 0) return 0.5;
-  let best: (typeof POSTFLOP_SIZE_GRID)[number] = POSTFLOP_SIZE_GRID[0];
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const point of POSTFLOP_SIZE_GRID) {
-    const distance = Math.abs(point - fraction);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = point;
-    }
-  }
-  return best;
-}
-
-/**
- * Numeric pot-fraction a grid size represents; `'all-in'` reports the top grid
- * point (`1.5`) as a stand-in, since its real fraction is stack-dependent.
- */
-export function gridFraction(size: PostflopSize): number {
-  return size === 'all-in' ? POSTFLOP_SIZE_GRID[POSTFLOP_SIZE_GRID.length - 1]! : size;
-}
-
 /** Heuristic range/nut-advantage score in [-1, 1] (positive = hero favours). */
 export function rangeAdvantage(input: {
   heroWasAggressor: boolean;
@@ -1103,22 +864,12 @@ export interface VillainModelInput {
  *    bluffs, so any bet is `value-heavy`.
  * With no usable read ("normal" opponent) the size/texture baseline stands.
  */
-export function chooseVillainModel(
-  input: VillainModelInput,
-  sizeGrid: boolean = DEFAULT_P2.sizeGrid,
-): VillainRangeModel {
+export function chooseVillainModel(input: VillainModelInput): VillainRangeModel {
   let score = 0;
-  if (input.allIn) {
-    score += 2;
-  } else {
-    // P2: read the size on the discrete grid, so a weird size (0.42, 0.62, 3.0)
-    // is translated to its nearest abstract size instead of being read as an
-    // exact continuous value. With the grid off the raw thresholds are used.
-    const size = sizeGrid ? gridFraction(snapBetFraction(input.betFraction)) : input.betFraction;
-    if (size >= 1) score += 1.5;
-    else if (size <= 0.4) score -= 1;
-    else if (size <= 0.6) score -= 0.3;
-  }
+  if (input.allIn) score += 2;
+  else if (input.betFraction >= 1) score += 1.5;
+  else if (input.betFraction <= 0.4) score -= 1;
+  else if (input.betFraction <= 0.6) score -= 0.3;
   if (input.wet) score -= 0.5;
   if (input.heroWasAggressor) score -= 0.5;
 
@@ -1274,7 +1025,6 @@ export function buildVillainRange(
   hole: readonly CardId[],
   board: readonly CardId[],
   model: VillainRangeModel,
-  opts: Readonly<Pick<P2Options, 'buckets'>> = DEFAULT_P2,
 ): VillainCombo[] {
   const heroSet = new Set(hole);
   const info = boardFlushInfo(board);
@@ -1294,75 +1044,13 @@ export function buildVillainRange(
         ? villainModelWeight(1, model) * exposedFlushFactor
         : weight * flushFactor;
     }
-    // P2 buckets (off by default): tilt by the 24-bucket strength, so the
-    // range/nut-advantage read has one more independent signal than the ad-hoc
-    // P0/P1 tier. A documented heuristic, not a solved range.
-    if (opts.buckets) {
-      weight *= 0.5 + bucketStrength(handBucket([combo.a, combo.b], board));
-    }
     out.push({ cards: [combo.a, combo.b], weight });
   }
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// P2: feature toggles
-// ---------------------------------------------------------------------------
-
-/**
- * The four P2 behaviour switches. Each is independently injectable so a caller
- * (or a test) can A/B or enable one without touching the others.
- *
- * **Every switch is OFF by default (all four `false`).** P2 changes bot
- * decisions on every postflop street but has no A/B evidence that it is an
- * improvement, so it ships as a revertible increment: the implementation and
- * its tests are in place and can be switched on per call. Enabling the switches
- * is a separate, eval-gated decision.
- *
- * **Not byte-for-byte identical to the pre-P2 baseline**: this file also
- * carries an always-on `evaluateHand` fix (exclude straight draws with no
- * hero-only rank contribution; clear the draw flag at `category >= 4`), which
- * applies to hero and villain-combo evaluation regardless of the switches.
- * See `docs/plans/postflop-p2-report.md` §3 for the exact scope.
- */
-export interface P2Options {
-  /** Beta posterior-mean opponent estimates instead of a `sampleHands < 10` cutoff. */
-  shrinkage: boolean;
-  /** Snap an observed bet size to the discrete `POSTFLOP_SIZE_GRID`. */
-  sizeGrid: boolean;
-  /** Shift the villain model along the preflop action line / table size. */
-  rangePropagation: boolean;
-  /** Tilt villain combo weights by their 24-bucket strength. */
-  buckets: boolean;
-}
-
-/**
- * Frozen all-off default. `Object.freeze` + `Readonly<P2Options>` make "默认全关"
- * an immutable guarantee: a runtime write (`DEFAULT_P2.sizeGrid = true`) neither
- * compiles nor takes effect, so the default parameters that read this constant
- * cannot be silently flipped. Callers that want a switch on must pass their own
- * explicit `p2` option.
- */
-export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
-  shrinkage: false,
-  sizeGrid: false,
-  rangePropagation: false,
-  buckets: false,
-});
-
-/**
- * Observed average VPIP / PFR / postflop aggression of the active opponents.
- *
- * P2: with `shrinkage` on this is the average **Beta posterior mean** of each
- * opponent's rate (small samples sit near `OPPONENT_PRIORS`, large samples
- * approach the raw frequency) instead of discarding every opponent with fewer
- * than 10 hands. With it off the original `sampleHands < 10` cutoff and raw
- * ratios are used.
- */
-export function opponentModelStats(
-  view: DecisionView,
-  shrinkage: boolean = DEFAULT_P2.shrinkage,
-): {
+/** Observed average VPIP / PFR / postflop aggression of the active opponents. */
+export function opponentModelStats(view: DecisionView): {
   vpip?: number;
   pfr?: number;
   aggression?: number;
@@ -1375,139 +1063,51 @@ export function opponentModelStats(
   for (const o of view.opponents) {
     if (o.folded) continue;
     const stats = bySeat.get(o.seat);
-    if (!stats) continue;
-    if (shrinkage) {
-      const est = estimateOpponent(stats);
-      vpip += est.vpip;
-      pfr += est.pfr;
-      aggression += est.aggression;
-      n++;
-    } else {
-      if (stats.sampleHands < 10) continue;
-      vpip += stats.vpipHands / stats.sampleHands;
-      pfr += stats.pfrHands / stats.sampleHands;
-      aggression +=
-        stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
-      n++;
-    }
+    if (!stats || stats.sampleHands < 10) continue;
+    vpip += stats.vpipHands / stats.sampleHands;
+    pfr += stats.pfrHands / stats.sampleHands;
+    aggression +=
+      stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
+    n++;
   }
   if (n === 0) return {};
   return { vpip: vpip / n, pfr: pfr / n, aggression: aggression / n };
 }
 
-// ---------------------------------------------------------------------------
-// P2: range propagation along the action line
-// ---------------------------------------------------------------------------
-
-/** Evidence used to propagate a range tighter or wider than the size read. */
-export interface RangePropagationContext {
-  /** Preflop bet/raise actions observed in the current hand's history. */
-  preflopRaises: number;
-  /** Hero made the last preflop aggressive action (the bettor's range is capped). */
-  heroWasAggressor: boolean;
-  /** Non-folded opponents still in the hand. */
-  activeOpponents: number;
-}
-
-/** Count of preflop bet/raise actions in the public history. */
-export function preflopRaiseCount(view: DecisionView): number {
-  // `historyComplete === false` (disconnect gap / mid-hand join) means the
-  // action history is partial, so a missing raise cannot be read as "this pot
-  // was not raised". Return 0 - i.e. no propagation evidence - instead of
-  // propagating from a stale, under-counted line.
-  if (!view.historyComplete) return 0;
-  let raises = 0;
-  for (const a of view.actionHistory) {
-    if (a.street === 'preflop' && (a.action.type === 'bet' || a.action.type === 'raise')) raises++;
-  }
-  return raises;
-}
-
-const MODEL_ORDER: readonly VillainRangeModel[] = ['bluff-heavy', 'balanced', 'value-heavy'];
-
 /**
- * Propagate the size-based villain model along the preflop action line instead
- * of re-deriving it from scratch each street. Relative to the base model:
- *
- *  - a **3-bet or 4-bet pot** (`preflopRaises >= 2`) tightens one tier: a bettor
- *    who three-bet and is now betting has a stronger range than one who just
- *    called;
- *  - a **raised multiway** pot (an open/3-bet into 3+ players) tightens one
- *    tier, and a **very multiway** pot (4+ active) tightens another: betting
- *    into more opponents is more value-weighted;
- *  - **hero made the last preflop raise** widens one tier: the opponent called
- *    (or is betting into) a range they did not cap, so their range is capped.
- *
- * The shifts are additive and clamped to the three tiers. With an empty
- * preflop history and a heads-up pot this is the identity, so the pre-P2
- * (size/texture/opponent-type) read is preserved exactly. `facingVillainModel`
- * additionally refuses to call this at all when `view.historyComplete` is false,
- * because a missing raise must never be propagated as a missing raise.
- */
-export function propagateVillainModel(
-  base: VillainRangeModel,
-  ctx: RangePropagationContext,
-): VillainRangeModel {
-  let shift = 0;
-  if (ctx.preflopRaises >= 2) shift += 1;
-  else if (ctx.preflopRaises >= 1 && ctx.activeOpponents >= 3) shift += 1;
-  if (ctx.activeOpponents >= 4) shift += 1;
-  if (ctx.heroWasAggressor) shift -= 1;
-  const index = clamp(MODEL_ORDER.indexOf(base) + shift, 0, MODEL_ORDER.length - 1);
-  return MODEL_ORDER[Math.round(index)]!;
-}
-
-/**
- * The coarse range model the P0/P2 decision assigns to the current bettor,
- * derived only from the public `DecisionView`. Exported so tests can reproduce
- * the decision's own equity estimate exactly.
+ * The coarse range model the P0 decision assigns to the current bettor, derived
+ * only from the public `DecisionView`. Exported so tests can reproduce the
+ * decision's own equity estimate exactly.
  */
 export function facingVillainModel(
   view: DecisionView,
   potBefore: number,
   call: number,
-  opts: Readonly<P2Options> = DEFAULT_P2,
 ): VillainRangeModel {
   const board = view.hand?.board ?? [];
   const texture = classifyTexture(board);
   const activeOpponents = view.opponents.filter((o) => !o.folded);
-  const stats = opponentModelStats(view, opts.shrinkage);
-  const base = chooseVillainModel(
-    {
-      betFraction: potBefore > 0 ? call / potBefore : 1,
-      allIn: activeOpponents.some((o) => o.allIn),
-      heroWasAggressor: heroWasAggressor(view),
-      wet: texture.wet,
-      opponentVpip: stats.vpip,
-      opponentPfr: stats.pfr,
-      opponentAggression: stats.aggression,
-    },
-    opts.sizeGrid,
-  );
-  if (!opts.rangePropagation) return base;
-  // A partial history cannot be trusted for an action-line shift: with
-  // `historyComplete === false` we keep the size/texture/opponent-type base read
-  // rather than propagating from a line that may be missing raises. (The base
-  // read only uses the current snapshot / observed stats, never the count of
-  // missed actions.)
-  if (!view.historyComplete) return base;
-  return propagateVillainModel(base, {
-    preflopRaises: preflopRaiseCount(view),
+  const stats = opponentModelStats(view);
+  return chooseVillainModel({
+    betFraction: potBefore > 0 ? call / potBefore : 1,
+    allIn: activeOpponents.some((o) => o.allIn),
     heroWasAggressor: heroWasAggressor(view),
-    activeOpponents: activeOpponents.length,
+    wet: texture.wet,
+    opponentVpip: stats.vpip,
+    opponentPfr: stats.pfr,
+    opponentAggression: stats.aggression,
   });
 }
 
-/** Weighted range the P0/P2 decision samples against for this view. */
+/** Weighted range the P0 decision samples against for this view. */
 export function facingVillainRange(
   view: DecisionView,
   hole: readonly CardId[],
   potBefore: number,
   call: number,
-  opts: Readonly<P2Options> = DEFAULT_P2,
 ): VillainRange {
   const board = view.hand?.board ?? [];
-  return { combos: buildVillainRange(hole, board, facingVillainModel(view, potBefore, call, opts), opts) };
+  return { combos: buildVillainRange(hole, board, facingVillainModel(view, potBefore, call)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1556,8 +1156,6 @@ export interface PostflopOptions {
   params: RuleParams;
   /** Base seed; the per-decision seed is `deriveRulesSeed(seed, view)`. */
   seed?: number;
-  /** P2 behaviour switches; omitted fields keep `DEFAULT_P2`. */
-  p2?: Partial<P2Options>;
 }
 
 /** A legitimate, always-legal fallback action. */
@@ -1567,16 +1165,14 @@ function onlyLegal(la: DecisionLegalActions, reason: string): PolicyDecision {
   return { action: { type: 'fold' }, reason };
 }
 
-export class PostflopPolicy {
+export class BaselinePostflopPolicy {
   readonly name = 'rules-v1-postflop';
   private readonly params: RuleParams;
   private readonly seed: number;
-  private readonly p2: P2Options;
 
   constructor(options: PostflopOptions) {
     this.params = options.params;
     this.seed = options.seed ?? 0x9e3779b9;
-    this.p2 = { ...DEFAULT_P2, ...options.p2 };
   }
 
   decide(view: DecisionView): PolicyDecision {
@@ -1648,27 +1244,14 @@ export class PostflopPolicy {
     const bySeat = new Map(view.sessionMemory.opponents.map((o) => [o.seat, o]));
     let vpip = 0;
     let pfr = 0;
-    let confidence = 0;
     let n = 0;
     for (const o of view.opponents) {
       if (o.folded) continue;
       const stats = bySeat.get(o.seat);
-      if (!stats) continue;
-      if (this.p2.shrinkage) {
-        // P2: posterior-mean read; `confidence` (n/(n+k)) scales how far the
-        // exploit may move from neutral, so a 5-hand sample barely budges while
-        // a 50-hand sample gets most of the raw effect.
-        const est = estimateOpponent(stats);
-        vpip += est.vpip;
-        pfr += est.pfr;
-        confidence += est.confidence;
-        n++;
-      } else {
-        if (stats.sampleHands < 10) continue;
-        vpip += stats.vpipHands / stats.sampleHands;
-        pfr += stats.pfrHands / stats.sampleHands;
-        n++;
-      }
+      if (!stats || stats.sampleHands < 10) continue;
+      vpip += stats.vpipHands / stats.sampleHands;
+      pfr += stats.pfrHands / stats.sampleHands;
+      n++;
     }
     if (n === 0) return 1;
     const avgVpip = vpip / n;
@@ -1676,7 +1259,6 @@ export class PostflopPolicy {
     let m = 1;
     if (avgVpip > 0.45 && avgPfr < 0.18) m *= 0.6; // station: bluff less
     else if (avgVpip < 0.22) m *= 1.25; // nit: bluff more
-    if (this.p2.shrinkage) m = 1 + (m - 1) * (confidence / n);
     return clamp(m, 0.4, 1.4);
   }
 
@@ -1784,7 +1366,7 @@ export class PostflopPolicy {
           opponents: active,
           samples,
           seed: deriveRulesSeed(this.seed, view),
-          villainRange: facingVillainRange(view, hole, potBefore, call, this.p2),
+          villainRange: facingVillainRange(view, hole, potBefore, call),
         });
         equity = Number.isFinite(estimate.equity) ? clamp01(estimate.equity) : 0;
       }
