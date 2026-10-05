@@ -1867,6 +1867,11 @@ describe('full hand integration', () => {
       () => h.roomState?.players.find((p) => p.userId === h.userId)?.seat === null,
       5000,
     );
+    // Explicitly: the offer is NOT cleaned up on leave, it is still pending for
+    // bob. This distinguishes the acceptance-time seat gate from an eager
+    // "leave closes outgoing offers" implementation - the latter would have
+    // dropped the offer here and the accept below would be `that offer is gone`.
+    expect(bob.peekOffers.map((o) => o.offerId)).toContain(offerId);
 
     // bob (the target) accepts within the 5s TTL: the seat re-check fails it
     bob.errors = [];
@@ -1882,6 +1887,60 @@ describe('full hand integration', () => {
     // no transfer, no stack change
     expect(peekLedger()).toBe(0);
     expect(stacks()).toEqual(before);
+  }, 25000);
+
+  it('refuses a peek when the buyer membership row is gone, moving no money', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    const peekLedger = () =>
+      (
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
+          .get(room.id) as { n: number }
+      ).n;
+    const stackOf = (uid: number) =>
+      (
+        ctx.db
+          .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+          .get(room.id, uid) as { stack: number }
+      ).stack;
+    const bobStackBefore = stackOf(bob.userId);
+
+    // host (the requester) offers to see bob's still-private cards
+    h.send({ t: 'peek_offer', handId: h.handId, targetSeat: bob.seat! });
+    await bob.waitFor(() => bob.peekOffers.length > 0);
+    const offerId = bob.peekOffers[0]!.offerId;
+
+    // The requester's membership row disappears entirely (an account merge or
+    // an eviction, not merely `seat = NULL`), so there is no buyer to authorize.
+    ctx.db
+      .prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?')
+      .run(room.id, h.userId);
+    expect(
+      ctx.db
+        .prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?')
+        .get(room.id, h.userId),
+    ).toBeUndefined();
+
+    // bob accepts within the 5s TTL: the missing buyer row fails the offer
+    bob.errors = [];
+    bob.acceptPeek(offerId);
+    await h.waitFor(() => h.peekResults.length > 0);
+    expect(h.peekResults.at(-1)!.status).toBe('failed');
+    expect(h.peekResults.at(-1)!.cards).toBeUndefined();
+    await bob.waitFor(() => bob.peekClosures.length > 0);
+    expect(bob.peekClosures.at(-1)!.status).toBe('failed');
+    await bob.waitFor(() => bob.errors.length > 0);
+    expect(bob.errors[0]).toMatch(/no longer seated/i);
+
+    // no transfer, and the remaining player's stack is untouched
+    expect(peekLedger()).toBe(0);
+    expect(stackOf(bob.userId)).toBe(bobStackBefore);
   }, 25000);
 
   it('replays the showdown to a client that reconnects during the hold', async () => {
