@@ -18,7 +18,154 @@
  *   - the equity baseline uses the shipped seeded `estimateEquity` (mulberry32),
  *     never `Math.random`, so a given view always decides the same way.
  */
-import { estimateEquity, mulberry32 } from '@4am/agent-core';
+import {
+  estimateEquity,
+  mulberry32,
+  RulePolicy,
+  PostflopPolicy,
+  RULE_PRESETS,
+  DEFAULT_P2,
+} from '@4am/agent-core';
+
+/**
+ * ---------------------------------------------------------------------------
+ * Arm factory (`rules-v1` / `p2:*` / `adaptive-preflop`)
+ * ---------------------------------------------------------------------------
+ *
+ * The baseline harness policies above are deliberately tiny. The *shipped*
+ * `rules-v1` engine (`RulePolicy` + `PostflopPolicy`) is where the P2 switches
+ * live, so an A/B of "P2 on vs off" must build real `RulePolicy` instances with
+ * an explicit `p2` option. This factory does exactly that, by name, so the same
+ * `runEvalMatch` path that seats a baseline can seat any arm.
+ *
+ * Name grammar (`+`-joined segments, order-independent):
+ *   - `rules-v1` / `baseline` / `default`  -> shipped default (all P2 off)
+ *   - `p2:shrinkage`                       -> one switch on
+ *   - `p2:shrinkage+sizeGrid`              -> several switches on
+ *   - `p2:all`                             -> all four switches on
+ *   - `adaptive-preflop`                   -> `params.adaptivePreflop = true`
+ *   - `p2:all+adaptive-preflop`            -> combined arm
+ * An unknown segment (e.g. `p2:banana`, bare `sizeGrid`) resolves to `null`,
+ * and `runEvalMatch` turns that into a hard error rather than silently seating
+ * the wrong policy.
+ */
+export const P2_FLAGS = ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets'];
+
+/** All-off P2 snapshot, safe to hand to `PostflopPolicy` (frozen source). */
+export function defaultP2() {
+  return {
+    shrinkage: DEFAULT_P2.shrinkage,
+    sizeGrid: DEFAULT_P2.sizeGrid,
+    rangePropagation: DEFAULT_P2.rangePropagation,
+    buckets: DEFAULT_P2.buckets,
+  };
+}
+
+/**
+ * Parse an arm name into `{ name, p2, adaptivePreflop }`, or `null` when the
+ * name is not an arm. Pure; never throws.
+ */
+export function parseArmName(raw) {
+  const name = String(raw ?? '').trim();
+  if (!name) return null;
+  const tokens = name
+    .split('+')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  const p2 = defaultP2();
+  let adaptivePreflop = false;
+  let sawP2 = false;
+  let sawBase = false;
+
+  // A bare flag (`sizeGrid`) is only accepted when the arm also carries at least
+  // one explicit `p2:` segment. That keeps the order truly irrelevant - both
+  // `p2:shrinkage+sizeGrid` and `sizeGrid+p2:shrinkage` parse the same - while
+  // still rejecting a lone `sizeGrid`, which is almost certainly a typo for a
+  // baseline style rather than an arm.
+  const hasP2Segment = tokens.some((t) => t.startsWith('p2:'));
+
+  for (const token of tokens) {
+    if (token === 'rules-v1' || token === 'baseline' || token === 'default') {
+      sawBase = true;
+      continue;
+    }
+    if (token === 'adaptive-preflop') {
+      adaptivePreflop = true;
+      continue;
+    }
+    let body = token;
+    if (body.startsWith('p2:')) {
+      sawP2 = true;
+      body = body.slice(3).trim();
+      if (!body) return null;
+    } else if (!hasP2Segment) {
+      // A bare flag with no `p2:` segment anywhere in the name is not an arm.
+      return null;
+    }
+    if (body === 'all') {
+      for (const flag of P2_FLAGS) p2[flag] = true;
+      continue;
+    }
+    if (!P2_FLAGS.includes(body)) return null;
+    p2[body] = true;
+  }
+
+  // At least one recognised arm segment is required.
+  if (!sawP2 && !sawBase && !adaptivePreflop) return null;
+  return { name, p2, adaptivePreflop };
+}
+
+/** True when `name` names an arm the factory can build. */
+export function isArmStrategy(name) {
+  return parseArmName(name) !== null;
+}
+
+/** Parsed config for a valid arm (report keying: name + resolved p2 snapshot). */
+export function armConfig(name) {
+  const parsed = parseArmName(name);
+  if (!parsed) return null;
+  return {
+    name: parsed.name,
+    p2: { ...parsed.p2 },
+    adaptivePreflop: parsed.adaptivePreflop,
+  };
+}
+
+/** Build the shipped `RulePolicy` for a parsed arm, injecting the postflop P2 config. */
+export function makeArmPolicy(name, opts = {}) {
+  const parsed = parseArmName(name);
+  if (!parsed) return null;
+  const seed = opts.seed ?? 0x9e3779b9;
+  const params = {
+    ...RULE_PRESETS['tight-aggressive'],
+    adaptivePreflop: parsed.adaptivePreflop,
+  };
+  // `RulePolicy` accepts a `postflop` policy, so the full preflop+postflop
+  // engine is injectable with an explicit P2 config (not just a bare
+  // PostflopPolicy). The baseline (`rules-v1`, all off, adaptive off) is
+  // byte-for-byte the shipped `new RulePolicy({ kind: 'tight-aggressive' })`.
+  const postflop = new PostflopPolicy({ params, seed, p2: parsed.p2 });
+  return new RulePolicy({ kind: 'tight-aggressive', params, seed, postflop });
+}
+
+/**
+ * Wrap any policy so every returned action is checked against the legal-action
+ * snapshot before it leaves (the same `ensureLegal` guarantee the baselines
+ * carry). Shipped `RulePolicy` never emits an illegal action, so this is a
+ * safety net + accounting seam: a substitution is counted into `stats` instead
+ * of surfacing as a server `action_rejected`.
+ */
+export function guardPolicy(policy, stats) {
+  return {
+    name: policy.name,
+    decide(view) {
+      const decision = policy.decide(view);
+      return ensureLegal(decision, view.legalActions, stats);
+    },
+  };
+}
 
 /** Fresh per-run counter sink for fallback / illegal-decision accounting. */
 export function createPolicyStats() {
@@ -157,7 +304,7 @@ class EquityThresholdPolicy {
   }
 }
 
-/** Names the evaluation rig understands out of the box. */
+/** Names the evaluation rig understands out of the box (baselines). */
 export function isBaselineStrategy(name) {
   return (
     name === 'always-fold' ||
@@ -169,7 +316,9 @@ export function isBaselineStrategy(name) {
 
 /**
  * Build a `Policy` by name. `equity-threshold` accepts `equity-threshold:0.55`
- * (or `equity-threshold(0.55)`) to change the threshold.
+ * (or `equity-threshold(0.55)`) to change the threshold. Arm names (see the arm
+ * factory above) build a shipped `RulePolicy` with the resolved P2/adaptive
+ * config. Unknown names return `null` (callers turn that into a hard error).
  */
 export function makeStrategy(name, opts = {}) {
   const raw = String(name);
@@ -185,12 +334,29 @@ export function makeStrategy(name, opts = {}) {
       opts.stats ?? null,
     );
   }
-  return null;
+  return makeArmPolicy(raw, opts);
 }
 
-/** Policy for any seat: a baseline when named, otherwise the shipped resolver. */
+/** True for every strategy name the rig can seat: baselines + arms. */
 export function isSupportedStrategy(name) {
-  return isBaselineStrategy(String(name));
+  const raw = String(name);
+  return isBaselineStrategy(raw) || isArmStrategy(raw);
+}
+
+/** Human-readable list of supported baseline names, for error messages. */
+export const SUPPORTED_STRATEGY_HINT =
+  'baselines: always-fold, always-call, equity-threshold[:t]; arms: rules-v1, ' +
+  'p2:<shrinkage|sizeGrid|rangePropagation|buckets|all>[+...], adaptive-preflop';
+
+/**
+ * Resolve a strategy name to a legality-guarded `Policy`, throwing on an
+ * unknown name. The eval rig's single entry point for "seat this by name".
+ */
+export function resolveEvalStrategy(name, stats) {
+  const policy = makeStrategy(name, { stats });
+  if (!policy)
+    throw new Error(`unknown eval strategy "${name}" (${SUPPORTED_STRATEGY_HINT})`);
+  return guardPolicy(policy, stats);
 }
 
 /**

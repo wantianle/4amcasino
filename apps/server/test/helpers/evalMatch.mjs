@@ -28,7 +28,7 @@ import {
   createPolicyStats,
   fallbackDecision,
   isLegalDecision,
-  makeStrategy,
+  resolveEvalStrategy,
 } from './evalStrategies.mjs';
 import { installDeterministicShuffle, uninstallDeterministicShuffle } from './deterministicShuffle.mjs';
 
@@ -104,13 +104,22 @@ function extractCardFingerprint(tRow, participantSeats) {
   };
 }
 
-/** Resolve a policy name through the harness registry, falling back to shipped styles. */
+/**
+ * Resolve a policy name through the harness registry. `resolveEvalStrategy`
+ * covers baselines AND arms (`rules-v1` / `p2:*` / `adaptive-preflop`) and
+ * throws on an unknown name.
+ */
 function resolveStrategy(name, stats) {
-  const baseline = makeStrategy(name, { stats });
-  if (baseline) return baseline;
-  // Shipped styles (e.g. `tight-aggressive`) are not reimplemented here; the
-  // eval rig is for the baselines. A missing policy is a hard error.
-  throw new Error(`unknown eval strategy "${name}" (baselines: always-fold, always-call, equity-threshold[:t])`);
+  return resolveEvalStrategy(name, stats);
+}
+
+const ACTION_TYPES = ['fold', 'call', 'check', 'bet', 'raise'];
+
+/** Fresh zeroed action-count record for one seat. */
+function emptyActionCounts() {
+  const counts = { total: 0 };
+  for (const t of ACTION_TYPES) counts[t] = 0;
+  return counts;
 }
 
 /**
@@ -124,6 +133,10 @@ function resolveStrategy(name, stats) {
  * @param {Record<number,string>} opts.seatPolicies  seat -> policy name (seats >= 1)
  * @param {string} [opts.anchor]      seat-0 policy name
  * @param {number} [opts.sb] @param {number} [opts.bb] @param {number} [opts.buyIn]
+ * @param {boolean} [opts.memory]     inject cross-hand `sessionMemory` into the
+ *   bot decision views (default `false` = legacy empty-memory behaviour). Arm
+ *   mode turns this on so opponent-model switches (`shrinkage`) actually see
+ *   opponent history instead of a permanently empty snapshot.
  */
 export async function runEvalMatch({
   seed,
@@ -139,6 +152,7 @@ export async function runEvalMatch({
   readyMs = 300,
   handMs = 30_000,
   maxHandActions = 600,
+  memory = false,
 } = {}) {
   const deterministic = seed !== undefined && seed !== null;
   const envBefore = snapshotEnv(MANAGED_ENV);
@@ -154,9 +168,49 @@ export async function runEvalMatch({
     throw err;
   }
 
-  const policyStats = createPolicyStats();
+  // Per-seat fallback/illegal sinks, so a policy bug is attributable to the arm
+  // that produced it (the run-level totals are their sum). Seat 0 is the human
+  // anchor; every bot seat is a policy under test.
+  const statsBySeat = new Map();
+  const statsForSeat = (seat) => {
+    if (!statsBySeat.has(seat)) statsBySeat.set(seat, createPolicyStats());
+    return statsBySeat.get(seat);
+  };
+  // How often each seat's policy actually saw a non-empty opponent snapshot.
+  // With `memory: false` this stays 0 for every seat; with it on it proves the
+  // `shrinkage` path got real opponent statistics rather than `{}`.
+  const memoryBySeat = new Map();
+  const memoryForSeat = (seat) => {
+    if (!memoryBySeat.has(seat))
+      memoryBySeat.set(seat, {
+        decisions: 0,
+        nonEmptyOpponents: 0,
+        withOpponentStats: 0,
+        maxHandsObserved: 0,
+      });
+    return memoryBySeat.get(seat);
+  };
+  const observeMemory = (seat, policy) => ({
+    name: policy.name,
+    decide(view) {
+      const rec = memoryForSeat(seat);
+      rec.decisions++;
+      const opps = view?.sessionMemory?.opponents ?? [];
+      if (opps.length > 0) rec.nonEmptyOpponents++;
+      // `snapshot` lists every current opponent even before any sample, so this
+      // is the stronger signal: at least one opponent has settled-hand history.
+      if (opps.some((o) => (o.sampleHands ?? 0) > 0)) rec.withOpponentStats++;
+      // Highest settled-hand count this seat ever saw. A barrier-correct run
+      // lifts this to `hands - 1`; an inter-hand race that drops a record keeps
+      // it lower, which is what makes "no missed memory record" testable.
+      const observed = view?.sessionMemory?.handsObserved ?? 0;
+      if (observed > rec.maxHandsObserved) rec.maxHandsObserved = observed;
+      return policy.decide(view);
+    },
+  });
   const botSeats = Object.keys(seatPolicies).map(Number).sort((a, b) => a - b);
-  const policyForSeat = (seat) => resolveStrategy(seatPolicies[seat], policyStats);
+  const policyForSeat = (seat) =>
+    observeMemory(seat, resolveStrategy(seatPolicies[seat], statsForSeat(seat)));
   const dbPath = join(tmpdir(), `4am-eval-${randomBytes(5).toString('hex')}.db`);
   const ctx = createApp(dbPath);
   const hub = attachHub(ctx.app, ctx.db, {
@@ -178,16 +232,24 @@ export async function runEvalMatch({
       graceMs: 8_000,
       pollMs: 15,
       settleMs: 100,
-      memory: false,
     },
     log: () => {},
     runnerFactory: (db, claim, opts) =>
-      new BotRunner(db, claim, { ...opts, policy: policyForSeat(claim.bot.seat) }),
+      new BotRunner(db, claim, {
+        ...opts,
+        // Arm mode passes `memory: true`; the legacy default stays `false`, so
+        // the pre-existing round-robin numbers are unchanged.
+        memory,
+        policy: policyForSeat(claim.bot.seat),
+        // Only the memory-on path wraps clients: it lets the harness confirm
+        // the runner recorded each settled hand before the next deal.
+        ...(memory ? { clientFactory: barrierClientFactory } : {}),
+      }),
   });
   ctx.botControl.hooks = supervisor;
 
   const human = new HeadlessClient(baseUrl, `host_${randomBytes(3).toString('hex')}`, 'eval');
-  const humanPolicy = resolveStrategy(anchor, policyStats);
+  const humanPolicy = observeMemory(0, resolveStrategy(anchor, statsForSeat(0)));
 
   const out = {
     seed,
@@ -203,10 +265,110 @@ export async function runEvalMatch({
     perHand: [],
     cardFingerprints: [],
     cardsFingerprintComplete: true,
-    policyFallbacks: 0,
-    policyIllegalDecisions: 0,
+    /** Legality-guard substitutions summed over seats (see `seatPolicyStats`). */
+    policyLegalityFallbacks: 0,
+    policyLegalityIllegalDecisions: 0,
+    /** seat -> { fold, call, check, bet, raise, total } accepted actions. */
+    seatActions: {},
+    /**
+     * seat -> { legalityFallbacks, legalityIllegalDecisions }. These count only
+     * the OUTER legality guard (`ensureLegal`): a decision that was absent or
+     * illegal and had to be substituted. A `RulePolicy` internal `safeFallback`
+     * that already returns a legal action is NOT visible here. Use `seatMemory`
+     * to see whether the injected memory reached the policy.
+     */
+    seatPolicyStats: {},
+    /** seat -> { decisions, nonEmptyOpponents } memory-visibility probe. */
+    seatMemory: {},
+    memory,
     seatPolicies: { ...seatPolicies },
     anchor,
+  };
+
+  // --- memory settlement barrier (memory-on only) ---------------------------
+  // The runner polls `client.result` and only then records the settled hand into
+  // its session memory. The next server `hand_start` clears the previous result
+  // (client.ts), so if the harness deals the next hand before every bot has
+  // recorded, a hand is silently dropped from memory. We wrap each bot client's
+  // `result` accessor: the runner reads it immediately before its synchronous
+  // `recordHandEnd`, so a microtask queued from the accessor always runs AFTER
+  // the record completed. The loop awaits every bot having observed the settled
+  // handId before dealing the next. Built only when `memory` is on; the legacy
+  // path never wraps a client and never waits.
+  const barrierClients = new Set();
+  const observedByHand = new Map();
+  const barrierWaiters = new Map();
+  const maybeReleaseBarrier = (handId) => {
+    const waiters = barrierWaiters.get(handId);
+    if (!waiters) return;
+    const seen = observedByHand.get(handId);
+    if (!seen || seen.size < barrierClients.size) return;
+    for (const w of waiters) {
+      clearTimeout(w.timer);
+      w.resolve();
+    }
+    barrierWaiters.delete(handId);
+  };
+  const noteSettlementObserved = (client, handId) => {
+    queueMicrotask(() => {
+      let seen = observedByHand.get(handId);
+      if (!seen) {
+        seen = new Set();
+        observedByHand.set(handId, seen);
+      }
+      seen.add(client);
+      maybeReleaseBarrier(handId);
+    });
+  };
+  const awaitSettlementRecorded = (handId, timeoutMs) =>
+    new Promise((resolve, reject) => {
+      let waiters = barrierWaiters.get(handId);
+      if (!waiters) {
+        waiters = new Set();
+        barrierWaiters.set(handId, waiters);
+      }
+      const waiter = {
+        resolve,
+        timer: setTimeout(() => {
+          waiters.delete(waiter);
+          reject(
+            new Error(
+              `memory barrier: hand ${handId} not recorded by every bot ` +
+                `(${observedByHand.get(handId)?.size ?? 0}/${barrierClients.size})`,
+            ),
+          );
+        }, timeoutMs),
+      };
+      waiters.add(waiter);
+      maybeReleaseBarrier(handId);
+    });
+  const barrierClientFactory = (clientBaseUrl, username, password) => {
+    const client = new HeadlessClient(clientBaseUrl, username, password);
+    barrierClients.add(client);
+    let current = client.result;
+    Object.defineProperty(client, 'result', {
+      configurable: true,
+      get() {
+        // Only the runner's `recordHandEnd()` read proves the hand is about to
+        // be recorded. Other readers (`myTurn`, `waitForTurn`) also touch
+        // `result`, and counting reads cannot tell them apart - but the stack
+        // can: the record read is synchronous with `observeHand`, so a
+        // microtask queued here always runs after the record completed. If this
+        // ever fails to match, the barrier times out loudly instead of racing.
+        if (
+          current &&
+          current.handId &&
+          (new Error().stack ?? '').includes('recordHandEnd')
+        ) {
+          noteSettlementObserved(client, current.handId);
+        }
+        return current;
+      },
+      set(next) {
+        current = next;
+      },
+    });
+    return client;
   };
 
   const botStatus = (id) =>
@@ -288,10 +450,11 @@ export async function runEvalMatch({
         if (!legal) {
           // The human anchor is a baseline policy too: an illegal decision that
           // reached here is a policy bug, not something to hide behind the
-          // harness fallback. Policies that use `ensureLegal` count themselves,
-          // so only a raw illegal/absent decision is tallied here.
-          policyStats.fallbacks++;
-          if (decision && decision.action) policyStats.illegalDecisions++;
+          // harness fallback. `guardPolicy` already counts any decision it had
+          // to repair into seat 0's sink; this catches the residual case.
+          const anchorStats = statsForSeat(0);
+          anchorStats.fallbacks++;
+          if (decision && decision.action) anchorStats.illegalDecisions++;
         }
         const action = legal ? decision.action : fallbackDecision(view.legalActions).action;
         try {
@@ -347,9 +510,18 @@ export async function runEvalMatch({
           if (e.type === 'action_rejected') handRejected++;
       }
       out.rejected += handRejected;
-      out.botActions += (human.actionHistory ?? []).filter((a) =>
-        bots.some((b) => b.seat === a.seat),
-      ).length;
+      // Per-seat action distribution from the accepted action stream. Only bot
+      // seats are counted (the seat-0 anchor is never itself compared).
+      for (const a of human.actionHistory ?? []) {
+        if (!bots.some((b) => b.seat === a.seat)) continue;
+        const seat = a.seat;
+        if (!out.seatActions[seat]) out.seatActions[seat] = emptyActionCounts();
+        const rec = out.seatActions[seat];
+        const type = a.action?.type;
+        if (ACTION_TYPES.includes(type)) rec[type]++;
+        rec.total++;
+        out.botActions++;
+      }
 
       // Real card-level fingerprint (see extractCardFingerprint): every dealt
       // seat must have its two hole cards and the settlement board present, or
@@ -369,6 +541,10 @@ export async function runEvalMatch({
         rejected: handRejected,
         durationMs: Date.now() - handStart,
       });
+      // Memory-on: do not deal the next hand until every bot has recorded this
+      // one. The accessor hook fires just before the runner's synchronous
+      // record, and the microtask it queues runs after that record completes.
+      if (memory) await awaitSettlementRecorded(handId, handMs + 5_000);
     }
 
     // Ledger conservation + no bot error.
@@ -384,8 +560,34 @@ export async function runEvalMatch({
     out.botErrors = ctx.db
       .prepare("SELECT COUNT(*) AS n FROM bot_accounts WHERE room_id=? AND status='error'")
       .get(room.id).n;
-    out.policyFallbacks = policyStats.fallbacks;
-    out.policyIllegalDecisions = policyStats.illegalDecisions;
+    // Per-seat stats + run-level totals (the sum). Every seat we actually seated
+    // a policy for is reported, including the anchor at seat 0.
+    let legalityFallbacks = 0;
+    let legalityIllegalDecisions = 0;
+    for (const [seat, s] of statsBySeat) {
+      out.seatPolicyStats[seat] = {
+        legalityFallbacks: s.fallbacks,
+        legalityIllegalDecisions: s.illegalDecisions,
+      };
+      legalityFallbacks += s.fallbacks;
+      legalityIllegalDecisions += s.illegalDecisions;
+    }
+    out.policyLegalityFallbacks = legalityFallbacks;
+    out.policyLegalityIllegalDecisions = legalityIllegalDecisions;
+    // Memory-visibility probe copied from the per-decision observer.
+    for (const [seat, m] of memoryBySeat) out.seatMemory[seat] = m;
+    // A seat that never acted still gets a zeroed record, so consumers do not
+    // have to guess between "no actions" and "seat absent".
+    for (const seat of [0, ...botSeats]) {
+      if (!out.seatActions[seat]) out.seatActions[seat] = emptyActionCounts();
+      if (!out.seatMemory[seat])
+        out.seatMemory[seat] = {
+          decisions: 0,
+          nonEmptyOpponents: 0,
+          withOpponentStats: 0,
+          maxHandsObserved: 0,
+        };
+    }
     return out;
   } finally {
     await supervisor.stopAll().catch(() => {});
