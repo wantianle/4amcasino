@@ -426,6 +426,42 @@ export type ServerMsg =
       amount: number;
       cards?: CardId[];
     }
+  | {
+      /**
+       * The TARGET's terminal receipt for an offer it was asked to answer. It
+       * mirrors `peek_result`'s status enum but is deliberately narrow: it
+       * carries no `cards` (the reveal is the buyer's to see) and no `amount`
+       * (the target already has that from `peek_offer`), so it cannot expose
+       * anything the target did not already know. Sent on every terminal
+       * outcome - accepted / declined / expired / failed - so the target's
+       * pending banner can close in sync with the requester's result instead of
+       * relying on a client-side timeout. A bot that auto-accepts may ignore it.
+       */
+      t: 'peek_offer_closed';
+      offerId: string;
+      handId: string;
+      targetSeat: number;
+      status: 'accepted' | 'declined' | 'expired' | 'failed';
+    }
+  | {
+      /**
+       * Reconnect-safe reconciliation of THIS user's still-open INCOMING peek
+       * offers, sent on every `join` (initial connect and reconnect). The
+       * target's terminal `peek_offer_closed` is a single unicast: if the
+       * target's socket is gone when the offer resolves (TTL, next hand, room
+       * reclaim/shutdown), the frame is dropped and never replayed. This
+       * snapshot is the authority the client reconciles against - keep the
+       * pending banners whose `offerId` is listed, drop every other one. An
+       * empty list (e.g. after a process restart, where offers are deliberately
+       * not persisted) clears them all. Offer ids only: no `cards`/`amount`/
+       * `fromUserId`/failure reason, so it can never carry more than the
+       * original `peek_offer` the target already saw. It says nothing about the
+       * user's own OUTGOING offers, which the client must not touch on this
+       * frame.
+       */
+      t: 'peek_offers_snapshot';
+      incomingOfferIds: string[];
+    }
   | { t: 'hand_abort'; handId: string; reason: string; blamedSeat: number | null }
   | { t: 'need_keys'; handId: string }
   | {

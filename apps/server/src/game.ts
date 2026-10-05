@@ -305,6 +305,18 @@ interface ShowSnapshot {
   endedByFold: boolean;
 }
 
+/** One outstanding paid-peek offer. `targetUserId` is captured so the target
+ *  can be told when the offer resolves even after seats/lastHand change. */
+interface PeekOffer {
+  handId: string;
+  fromUserId: number;
+  targetSeat: number;
+  targetUserId: number;
+  amount: number;
+  /** Server-side 5s expiry; cleared when the offer is answered or swept. */
+  timer: NodeJS.Timeout;
+}
+
 type Share = { deckIndex: number; out: string; proof: { A1: string; A2: string; z: string } };
 
 /**
@@ -772,17 +784,7 @@ export class GameRoom {
   private shown = new Map<number, CardId[]>();
   private shownHandId: string | null = null;
   private lastHandShow: ShowSnapshot | null = null;
-  private peekOffers = new Map<
-    string,
-    {
-      handId: string;
-      fromUserId: number;
-      targetSeat: number;
-      amount: number;
-      /** Server-side 5s expiry; cleared when the offer is answered or swept. */
-      timer: NodeJS.Timeout;
-    }
-  >();
+  private peekOffers = new Map<string, PeekOffer>();
   private sevenDeucePaid = new Set<string>();
   private autoDeal: NodeJS.Timeout | null = null;
   private autoDealAt: number | null = null;
@@ -852,6 +854,19 @@ export class GameRoom {
         this.send(userId, { t: 'cards_shown', handId: this.shownHandId, seat, cards });
       }
     }
+    // Reconnect-safe peek reconciliation. A target's terminal
+    // `peek_offer_closed` is a one-shot unicast: if the target's socket is gone
+    // when the offer resolves (TTL / next hand / shutdown), it is dropped and
+    // never replayed, so a banner could stick forever. Every (re)connect
+    // re-asserts the authoritative set of still-open INCOMING offers; the client
+    // keeps those ids and drops any other pending banner. Ids only - no
+    // cards/amount/fromUserId/failure reason, so a replay can never leak more
+    // than the original `peek_offer`.
+    const incomingOfferIds: string[] = [];
+    for (const [offerId, offer] of this.peekOffers) {
+      if (offer.targetUserId === userId) incomingOfferIds.push(offerId);
+    }
+    this.send(userId, { t: 'peek_offers_snapshot', incomingOfferIds });
   }
 
   leave(userId: number, ws: WebSocket): void {
@@ -926,7 +941,11 @@ export class GameRoom {
     this.draining = true;
     if (this.hostHandover) clearTimeout(this.hostHandover);
     this.hostHandover = null;
-    this.clearPeekOffers();
+    // Safe to tell a still-connected party the offer is over (the process is
+    // draining, or the hub reclaims an idle room). A socket that is already
+    // gone drops the frame, and its reconnect gets an empty
+    // `peek_offers_snapshot`, so nothing is stranded either way.
+    this.clearPeekOffers('expired');
     if (this.autoDeal) clearTimeout(this.autoDeal);
     this.autoDeal = null;
     this.autoDealAt = null;
@@ -1885,6 +1904,7 @@ export class GameRoom {
       handId: msg.handId,
       fromUserId: userId,
       targetSeat: msg.targetSeat,
+      targetUserId: target.userId,
       amount,
       timer,
     });
@@ -1899,38 +1919,54 @@ export class GameRoom {
     });
   }
 
-  /** Terminally end every outstanding offer, optionally telling each requester
-   *  why. Used at hand start (an offer cannot outlive its hand) and shutdown. */
-  private clearPeekOffers(reason?: 'expired' | 'declined'): void {
-    for (const [offerId, offer] of this.peekOffers) {
-      clearTimeout(offer.timer);
-      if (reason)
-        this.send(offer.fromUserId, {
-          t: 'peek_result',
-          offerId,
-          handId: offer.handId,
-          targetSeat: offer.targetSeat,
-          status: reason,
-          amount: offer.amount,
-        });
-    }
-    this.peekOffers.clear();
-  }
-
-  /** A 5s offer lapsed: drop it and tell the requester explicitly. */
-  private expirePeekOffer(offerId: string): void {
-    const offer = this.peekOffers.get(offerId);
-    if (!offer) return;
-    this.peekOffers.delete(offerId);
-    clearTimeout(offer.timer);
+  /**
+   * Terminally close an offer: the requester gets the full `peek_result` (with
+   * the reveal on acceptance); the target gets a narrow `peek_offer_closed` so
+   * its pending banner can dismiss in sync without a client-side timeout. The
+   * target frame carries no `cards`/`amount`, so it never reveals more than the
+   * `peek_offer` the target already saw.
+   */
+  private closePeekOffer(
+    offerId: string,
+    offer: PeekOffer,
+    status: 'accepted' | 'declined' | 'expired' | 'failed',
+    cards?: CardId[],
+  ): void {
     this.send(offer.fromUserId, {
       t: 'peek_result',
       offerId,
       handId: offer.handId,
       targetSeat: offer.targetSeat,
-      status: 'expired',
+      status,
       amount: offer.amount,
+      ...(cards ? { cards } : {}),
     });
+    this.send(offer.targetUserId, {
+      t: 'peek_offer_closed',
+      offerId,
+      handId: offer.handId,
+      targetSeat: offer.targetSeat,
+      status,
+    });
+  }
+
+  /** Terminally end every outstanding offer, optionally telling each requester
+   *  why. Used at hand start (an offer cannot outlive its hand) and shutdown. */
+  private clearPeekOffers(reason?: 'expired' | 'declined'): void {
+    for (const [offerId, offer] of this.peekOffers) {
+      clearTimeout(offer.timer);
+      if (reason) this.closePeekOffer(offerId, offer, reason);
+    }
+    this.peekOffers.clear();
+  }
+
+  /** A 5s offer lapsed: drop it and tell both sides explicitly. */
+  private expirePeekOffer(offerId: string): void {
+    const offer = this.peekOffers.get(offerId);
+    if (!offer) return;
+    this.peekOffers.delete(offerId);
+    clearTimeout(offer.timer);
+    this.closePeekOffer(offerId, offer, 'expired');
   }
 
   private onPeekAnswer(
@@ -1950,15 +1986,7 @@ export class GameRoom {
     const finish = (status: 'accepted' | 'declined' | 'failed', cards?: CardId[]): void => {
       this.peekOffers.delete(msg.offerId);
       clearTimeout(offer.timer);
-      this.send(offer.fromUserId, {
-        t: 'peek_result',
-        offerId: msg.offerId,
-        handId: offer.handId,
-        targetSeat: offer.targetSeat,
-        status,
-        amount: offer.amount,
-        ...(cards ? { cards } : {}),
-      });
+      this.closePeekOffer(msg.offerId, offer, status, cards);
     };
     if (msg.t === 'peek_decline') {
       finish('declined');
@@ -2117,6 +2145,14 @@ class Hand {
     squid: SquidSettlement | null;
     /** Automatic showdown 7-2 bounty, resolved against the post-pot stacks. */
     bounty: { seat: number; amount: number; payout: { seat: number; delta: number }[] } | null;
+    /** The rake recipient resolved ONCE at settle time (platform account if
+     *  configured, else the in-room banker). The transcript payload, the
+     *  durable write and `hand_end` all read this same value, so a historical
+     *  replay can never disagree with the ledger about who was paid. */
+    rakeRecipientId: number | null;
+    /** The rake recipient's seat when it is a hand participant, else empty.
+     *  Mirrors `hand_end.commissionDeltas` (seat-filtered) exactly. */
+    commissionDeltas: { seat: number; delta: number }[];
   } | null = null;
 
   constructor(
@@ -3860,6 +3896,19 @@ class Hand {
       seat: s.seat,
       stack: s.stack + (squid?.netBySeat.get(s.seat) ?? 0),
     }));
+    // Resolve the rake recipient (and its seat when it is in the hand) ONCE, so
+    // the transcript payload, the durable write and `hand_end` all name the
+    // same account. The configured platform account wins; else the in-room
+    // banker. A recipient with no seat has no commission leg on the wire.
+    const settleRoom = getRoom(this.db, this.roomId);
+    const rakeRecipientId =
+      rake > 0 && settleRoom ? (platformUserId(this.db) ?? settleRoom.banker_id) : null;
+    const commissionSeat =
+      rakeRecipientId !== null
+        ? this.seats.find((s) => s.userId === rakeRecipientId)?.seat
+        : undefined;
+    const commissionDeltas =
+      commissionSeat !== undefined ? [{ seat: commissionSeat, delta: rake }] : [];
     this.settlement = {
       awards,
       pokerDeltas,
@@ -3868,6 +3917,8 @@ class Hand {
       rake,
       squid,
       bounty: null,
+      rakeRecipientId,
+      commissionDeltas,
     };
     // Resolve the automatic showdown 7-2 bounty now, against the post-pot
     // stacks, so it is part of the hand's deltas and `ending_stack` from the
@@ -3929,6 +3980,11 @@ class Hand {
         ? { boards: Array.from({ length: runs }, (_, i) => this.boardForRun(i + 1)) }
         : {}),
       ...(rake > 0 ? { commission: rake } : {}),
+      // The commission leg as a SEAT projection, exactly as `hand_end` emits
+      // it (empty when the recipient - platform or fallback banker - is out of
+      // hand). Persisted so a historical replay can recover the recipient seat
+      // without reverse-engineering it from the final stacks.
+      commissionDeltas,
       awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
       deltas: combined,
       // Poker split so stats never have to reverse-engineer squid out of the
@@ -4302,7 +4358,6 @@ class Hand {
     if (!this.settlement) throw new Error('settlement not computed');
     this.clearTimer();
     const { rake, squid, bounty } = this.settlement;
-    const room = getRoom(this.db, this.roomId);
     const now = Date.now();
     const pokerDeltas = this.settlement.pokerDeltas;
     const bountyBySeat = new Map((bounty?.payout ?? []).map((d) => [d.seat, d.delta]));
@@ -4391,7 +4446,9 @@ class Hand {
       timeBankEpoch: bank ? bank.epoch : null,
       triggerIds: [this.features.squid.triggerId, this.features.bomb.triggerId],
       bombRan: !!this.features.bomb.settings,
-      rakeRecipientId: rake > 0 && room ? (platformUserId(this.db) ?? room.banker_id) : null,
+      // Resolved once in `settle()`; the transcript payload names the same
+      // account, so the historical replay and the ledger always agree.
+      rakeRecipientId: this.settlement.rakeRecipientId,
       sevenDeuce: sevenDeuceWrite,
       now,
     });

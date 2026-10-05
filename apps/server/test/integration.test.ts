@@ -107,6 +107,18 @@ class TestClient {
   cardsShown: { seat: number; cards: CardId[] }[] = [];
   peekOffers: { offerId: string; fromUserId: number; amount: number }[] = [];
   peekResults: { targetSeat: number; status: string; cards?: CardId[] }[] = [];
+  /** Target-side terminal receipts (`peek_offer_closed`), with the raw frame so
+   *  tests can assert it carries no buyer-only payload. */
+  peekClosures: {
+    offerId: string;
+    handId: string;
+    targetSeat: number;
+    status: string;
+    raw: Record<string, unknown>;
+  }[] = [];
+  /** Reconnect-safe incoming-offer snapshots. The client reconciles its
+   *  pending banners against the latest one: keep listed ids, drop the rest. */
+  peekSnapshots: { incomingOfferIds: string[]; raw: Record<string, unknown> }[] = [];
   sawShowdown = false;
   /** Wall-clock when the showdown/ hand_end frame arrived, for timing tests. */
   showdownAt: number | null = null;
@@ -520,6 +532,27 @@ class TestClient {
       }
       case 'peek_result': {
         this.peekResults.push({ targetSeat: msg.targetSeat, status: msg.status, cards: msg.cards });
+        break;
+      }
+      case 'peek_offer_closed': {
+        this.peekClosures.push({
+          offerId: msg.offerId,
+          handId: msg.handId,
+          targetSeat: msg.targetSeat,
+          status: msg.status,
+          raw: msg as unknown as Record<string, unknown>,
+        });
+        break;
+      }
+      case 'peek_offers_snapshot': {
+        this.peekSnapshots.push({
+          incomingOfferIds: msg.incomingOfferIds,
+          raw: msg as unknown as Record<string, unknown>,
+        });
+        // Mirror the real client: the snapshot is authoritative for which
+        // incoming offers are still open; drop every other pending banner.
+        const live = new Set(msg.incomingOfferIds);
+        this.peekOffers = this.peekOffers.filter((o) => live.has(o.offerId));
         break;
       }
       case 'betting_state': {
@@ -1191,6 +1224,17 @@ describe('full hand integration', () => {
     expect(h.peekResults).toHaveLength(0);
     expect(h.cardsShown).toHaveLength(0);
 
+    // ...but the TARGET still gets a terminal receipt so its banner can close,
+    // and that receipt is narrow: no reveal, no price.
+    await h.waitFor(() => h.peekClosures.length > 0);
+    const closure = h.peekClosures.at(-1)!;
+    expect(closure.status).toBe('accepted');
+    expect(closure.handId).toBe(bob.handId);
+    expect(closure.raw.cards).toBeUndefined();
+    expect(closure.raw.amount).toBeUndefined();
+    // the buyer gets `peek_result`, never the target-only closure
+    expect(bob.peekClosures).toHaveLength(0);
+
     // chips moved: bob paid host exactly 20 on top of the blind results
     const state = await host.api(`/api/rooms/${room.id}`);
     const stack = (name: string) => state.players.find((p: any) => p.username === name).stack;
@@ -1253,6 +1297,10 @@ describe('full hand integration', () => {
     // the target never answers (disconnected/ignoring): the offer must lapse
     await bob.waitFor(() => bob.peekResults.length > 0, 9000);
     expect(bob.peekResults.at(-1)!.status).toBe('expired');
+    // the ignoring target is told too, so it can withdraw the pending offer
+    await h.waitFor(() => h.peekClosures.length > 0);
+    expect(h.peekClosures.at(-1)!.status).toBe('expired');
+    expect(h.peekClosures.at(-1)!.raw.cards).toBeUndefined();
     // answering the lapsed id is rejected, not silently accepted
     h.errors = [];
     h.acceptPeek(h.peekOffers[0]!.offerId);
@@ -1279,6 +1327,11 @@ describe('full hand integration', () => {
     expect(bob.peekResults.at(-1)!.status).toBe('failed');
     // not public: the reveal never reached the buyer
     expect(bob.peekResults.at(-1)!.cards).toBeUndefined();
+    // the target that answered is told the accept failed, not left hanging
+    await h.waitFor(() => h.peekClosures.length > 0);
+    expect(h.peekClosures.at(-1)!.status).toBe('failed');
+    expect(h.peekClosures.at(-1)!.raw.cards).toBeUndefined();
+    expect(h.peekClosures.at(-1)!.raw.amount).toBeUndefined();
   }, 20000);
 
   it('allows a peek with exactly 1bb and rejects one chip short', async () => {
@@ -1357,6 +1410,8 @@ describe('full hand integration', () => {
     h.declinePeek(h.peekOffers.at(-1)!.offerId);
     await bob.waitFor(() => bob.peekResults.length > 0);
     expect(bob.peekResults.at(-1)!.status).toBe('declined');
+    await h.waitFor(() => h.peekClosures.length > 0);
+    expect(h.peekClosures.at(-1)!.status).toBe('declined');
     // a second answer is rejected and never yields a second receipt
     h.errors = [];
     h.declinePeek(h.peekOffers.at(-1)!.offerId);
@@ -1370,6 +1425,8 @@ describe('full hand integration', () => {
     await bob.waitFor(() => bob.peekResults.length > 1);
     expect(bob.peekResults.at(-1)!.status).toBe('failed');
     expect(bob.peekResults).toHaveLength(2);
+    await h.waitFor(() => h.peekClosures.length > 1);
+    expect(h.peekClosures.at(-1)!.status).toBe('failed');
 
     // bad proof: explicit failure, no money
     bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
@@ -1378,6 +1435,8 @@ describe('full hand integration', () => {
     await bob.waitFor(() => bob.peekResults.length > 2);
     expect(bob.peekResults.at(-1)!.status).toBe('failed');
     expect(bob.peekResults.at(-1)!.cards).toBeUndefined();
+    await h.waitFor(() => h.peekClosures.length > 2);
+    expect(h.peekClosures.at(-1)!.status).toBe('failed');
 
     expect(peekLedger()).toBe(0);
     expect(stacks()).toEqual(before);
@@ -1399,8 +1458,138 @@ describe('full hand integration', () => {
     await bob.waitFor(() => bob.peekResults.length > 3, 5000);
     expect(bob.peekResults.at(-1)!.status).toBe('expired');
     expect(bob.peekResults).toHaveLength(4);
+    // The target saw exactly one terminal receipt per offer it was asked to
+    // answer: declined, then two failures, then the superseded offer expired.
+    expect(h.peekClosures.map((c) => c.status)).toEqual([
+      'declined',
+      'failed',
+      'failed',
+      'expired',
+    ]);
+    // none of them carried the buyer-only reveal/price payload
+    for (const c of h.peekClosures) {
+      expect(c.raw.cards).toBeUndefined();
+      expect(c.raw.amount).toBeUndefined();
+    }
     expect(peekLedger()).toBe(0);
   }, 30000);
+
+  it('a target that reconnects after its offer expired is cleared by the snapshot', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    const offerId = h.peekOffers[0]!.offerId;
+
+    // The target loses the socket BEFORE the offer resolves, so the terminal
+    // `peek_offer_closed` has nowhere to go and is dropped (the v1 bug).
+    h.disconnect();
+    await bob.waitFor(() => bob.peekResults.length > 0, 9000);
+    expect(bob.peekResults.at(-1)!.status).toBe('expired');
+    expect(h.peekClosures.find((c) => c.offerId === offerId)).toBeUndefined();
+
+    // Reconnect: the server re-asserts the (now empty) open-offer set, and the
+    // client drops the stale banner. This is the reconnect-safe clearing.
+    const before = h.peekSnapshots.length;
+    await h.connect(room.id);
+    await h.waitFor(() => h.peekSnapshots.length > before);
+    const snap = h.peekSnapshots.at(-1)!;
+    expect(snap.incomingOfferIds).toEqual([]);
+    expect(h.peekOffers.find((o) => o.offerId === offerId)).toBeUndefined();
+    // narrow: no buyer-only or identifying payload on the resync frame
+    expect(snap.raw.cards).toBeUndefined();
+    expect(snap.raw.amount).toBeUndefined();
+    expect(snap.raw.fromUserId).toBeUndefined();
+    expect(snap.raw.fromName).toBeUndefined();
+  }, 20000);
+
+  it('a still-open offer is reasserted over a replacement socket and stays answerable', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    const offerId = h.peekOffers[0]!.offerId;
+
+    // A fresh socket replaces the old one while the offer is still within TTL.
+    const before = h.peekSnapshots.length;
+    await h.connect(room.id);
+    await h.waitFor(() => h.peekSnapshots.length > before);
+    const snap = h.peekSnapshots.at(-1)!;
+    expect(snap.incomingOfferIds).toEqual([offerId]);
+    // the pending banner survived reconciliation...
+    expect(h.peekOffers.map((o) => o.offerId)).toContain(offerId);
+    // ...and the offer can still be answered over the NEW socket
+    h.acceptPeek(offerId);
+    await bob.waitFor(() => bob.peekResults.length > 0);
+    expect(bob.peekResults.at(-1)!.status).toBe('accepted');
+    expect(bob.peekResults.at(-1)!.cards!.slice().sort()).toEqual(h.myCards.slice().sort());
+    // the terminal closure also reaches the replacement socket
+    await h.waitFor(() => h.peekClosures.length > 0);
+    expect(h.peekClosures.at(-1)!.status).toBe('accepted');
+  }, 20000);
+
+  it('a room shutdown tells a still-connected target its offer is over', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+
+    await hub.rooms.get(room.id)!.shutdown();
+    await h.waitFor(() => h.peekClosures.length > 0);
+    const closure = h.peekClosures.at(-1)!;
+    expect(closure.status).toBe('expired');
+    expect(closure.raw.cards).toBeUndefined();
+    expect(closure.raw.amount).toBeUndefined();
+    // the requester is told too, so it never waits forever
+    await bob.waitFor(() => bob.peekResults.length > 0);
+    expect(bob.peekResults.at(-1)!.status).toBe('expired');
+  }, 20000);
+
+  it('an idle-reclaimed room clears a pending target banner on reconnect', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const [h, bob] = players as [TestClient, TestClient];
+    host.send({ t: 'start_hand' });
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null)));
+    for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
+
+    bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
+    await h.waitFor(() => h.peekOffers.length > 0);
+    const offerId = h.peekOffers[0]!.offerId;
+
+    // Everyone drops: the hub reclaims the idle GameRoom, which runs the same
+    // shutdown path the process preClose uses. There is no socket to notify.
+    h.disconnect();
+    bob.disconnect();
+    await h.waitFor(() => hub.rooms.get(room.id) === undefined, 5000);
+
+    // A new socket rebuilds the room with no offers; the empty snapshot clears
+    // the banner (this is the cross-instance / restart boundary).
+    const before = h.peekSnapshots.length;
+    await h.connect(room.id);
+    await h.waitFor(() => h.peekSnapshots.length > before);
+    const snap = h.peekSnapshots.at(-1)!;
+    expect(snap.incomingOfferIds).toEqual([]);
+    expect(h.peekOffers.find((o) => o.offerId === offerId)).toBeUndefined();
+    expect(snap.raw.cards).toBeUndefined();
+    expect(snap.raw.amount).toBeUndefined();
+    expect(snap.raw.fromUserId).toBeUndefined();
+  }, 20000);
 
   it('still refuses a heads-up peek after a player leaves their seat from a 3-way hand', async () => {
     const ring = await setupRoom(
@@ -3369,6 +3558,14 @@ describe('settlement lifecycle v5', () => {
     // Direct wire assertion, not an inference from a ledger query.
     const commissionLeg = end.commissionDeltas ?? [];
     expect(commissionLeg).toEqual([{ seat: bankerSeat, delta: rake }]);
+    // The PERSISTED transcript carries the same seat leg, so a historical
+    // replay recovers the recipient seat without re-deriving it from stacks.
+    const transcript = (await host.api(`/api/rooms/${room.id}/hands/${end.handId}`)) as {
+      entries: { type: string; payload: Record<string, unknown> }[];
+    };
+    const settleEntry = transcript.entries.find((e) => e.type === 'settlement')!;
+    expect(settleEntry.payload.commissionDeltas).toEqual(commissionLeg);
+    expect(settleEntry.payload.commission).toBe(rake);
     const wireCommissionBySeat = new Map(commissionLeg.map((c) => [c.seat, c.delta]));
     for (const p of proj) {
       expect(p.ending_stack - p.starting_stack).toBe(
@@ -3397,6 +3594,14 @@ describe('settlement lifecycle v5', () => {
     const rake = end.commission ?? 0;
     expect(rake).toBeGreaterThan(0);
     expect(end.commissionDeltas ?? []).toHaveLength(0); // platform has no seat
+    // The transcript agrees: with an out-of-hand recipient the seat leg is
+    // empty, exactly like the live frame (the credit is the external ledger row).
+    const transcript = (await host.api(`/api/rooms/${room.id}/hands/${end.handId}`)) as {
+      entries: { type: string; payload: Record<string, unknown> }[];
+    };
+    const settleEntry = transcript.entries.find((e) => e.type === 'settlement')!;
+    expect(settleEntry.payload.commissionDeltas).toEqual([]);
+    expect(settleEntry.payload.commission).toBe(rake);
 
     const proj = ctx.db
       .prepare(

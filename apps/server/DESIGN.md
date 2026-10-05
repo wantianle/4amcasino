@@ -151,6 +151,25 @@ just ended. The rules are server-authoritative and enforced in
 - **Bots are players.** A bot's agent grant may send `peek_accept`/`peek_decline`
   (`agentAccess.ts` `PLAY_MESSAGES`). `HeadlessClient` auto-accepts any offer for
   its recent hand, signing against the offer's own `handId`.
+- **Both sides get a terminal signal.** `peek_result` (carrying the reveal on
+  acceptance) goes to the requester. The target gets a narrow
+  `peek_offer_closed` (`offerId`, `handId`, `targetSeat`, `status`) on every
+  terminal outcome — accepted / declined / expired / failed — so its pending
+  banner closes in sync with the requester's result instead of on a client-side
+  timeout. The target frame deliberately omits `cards` and `amount`: the target
+  already has the price from `peek_offer` and the reveal is the buyer's to see,
+  so it can never leak buyer-only information. A bot may ignore the frame.
+- **Reconnect-safe clearing.** `peek_offer_closed` is a one-shot unicast: if the
+  target's socket is gone when the offer resolves (TTL, next hand, or a
+  room/process shutdown), the frame is dropped and not replayed, which would
+  strand a banner. On every `join` the server therefore sends the target a
+  `peek_offers_snapshot` listing the **still-open incoming** offer ids; the
+  client keeps those and drops every other pending banner (an empty list clears
+  them all). It is ids only - no `cards`/`amount`/`fromUserId`/failure reason -
+  and it says nothing about the user's own outgoing offers. Offers are never
+  persisted, so after a process restart the snapshot is simply empty, which is
+  the correct signal (a 5s offer cannot survive a restart). No closure journal
+  and no DB writes are needed: the snapshot is the single authority.
 
 ### Front-end contract (web lane)
 
@@ -163,12 +182,16 @@ The web lane owns the client presentation. The server contract it must render:
    `peek_offer`, *server-side*, and the server sends the terminal
    `peek_result`. Do **not** run an independent client-side timeout as the source
    of truth; treat a local timer only as cosmetic. A target who disconnects or
-   ignores the frame can never leave the requester waiting.
+   ignores the frame can never leave the requester waiting. The same terminal
+   outcome is pushed to the **target** as `peek_offer_closed`, so the target
+   closes its banner on the server signal (all four statuses), not on a timer.
 3. **Four terminal states.** `peek_result.status` is one of:
    - `'accepted'` — reveal the target's two cards (buyer only) for ~3s;
    - `'declined'` — the target refused; close the request UI;
    - `'expired'` — the 5s window (or the next hand) ended it; close the request UI
-     and, on the **target** side, withdraw the pending offer too;
+     and, on the **target** side, withdraw the pending offer too (its
+     `peek_offer_closed` carries `'expired'`); a reconnect reconciles against
+     `peek_offers_snapshot` and drops it even if the closure was missed;
    - `'failed'` — bad signature/shares, the buyer can no longer pay, or a new
      hand already started. This is terminal and must never be rendered as a
      decline.
@@ -397,6 +420,18 @@ credit lives on that external account's `commission` ledger row). Aggregate:
 sum(deltas) === -commission                       ALWAYS
 sum(deltas) + sum(commissionDeltas) === 0         ONLY when the recipient is in hand
 ```
+
+The rake recipient is resolved **once** at settle time (the configured platform
+account if present, else the in-room banker) and that single value drives the
+transcript's `settlement.commissionDeltas`, the durable commission ledger row and
+`hand_end.commissionDeltas`. The persisted transcript therefore carries the same
+seat-filtered `commissionDeltas` (empty for an out-of-hand recipient), so a
+historical replay recovers the recipient seat without reverse-engineering it
+from the final stacks, and can never disagree with the ledger. This is an
+additive transcript field: it changes a new hand's `head` (the head hashes the
+entries) but not the head algorithm, the parser version, or the reconciliation
+contract — `reconcileTranscript` still reads only the settlement `commission`
+field.
 
 **Note (accepted, non-blocking):** the reconciliation's "real room account"
 check for a commission recipient only proves the account exists in the room. It

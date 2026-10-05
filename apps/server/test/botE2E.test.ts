@@ -26,6 +26,7 @@ let ctx: ReturnType<typeof createApp>;
 let baseUrl: string;
 let supervisor: BotSupervisor;
 let human: HeadlessClient;
+let hub: ReturnType<typeof attachHub>;
 /** Routed decisions of every bot runner, captured via `onActionEvent`. */
 let routedActions: RunnerActionEvent[] = [];
 
@@ -99,7 +100,7 @@ function driveHuman(maxMs: number): Promise<void> {
 beforeEach(async () => {
   process.env.BOT_IDENTITY_KEY = KEY;
   ctx = createApp(':memory:');
-  attachHub(ctx.app, ctx.db, {
+  hub = attachHub(ctx.app, ctx.db, {
     cryptoTimeoutMs: 2500,
     actionTimeoutMs: 3000,
     autoDealMs: 60_000,
@@ -388,12 +389,40 @@ describe('bot vs human end to end', () => {
     const humanBefore = stackOf(0);
     const botBefore = stackOf(botSeat);
 
+    // Tap the bot's server-side socket to observe the target-side terminal
+    // receipt (`peek_offer_closed`) it is sent on its real WS. The bot client
+    // ignores it (it auto-accepts and has nothing to dismiss), so only a frame
+    // tap can prove the server emitted it on the bot path.
+    const botFrames: string[] = [];
+    const gameRoom = hub.rooms.get(room.id) as unknown as {
+      sockets: Map<number, { send: (data: string) => void }>;
+    };
+    const botSocket = gameRoom.sockets.get(bot.bot.userId)!;
+    const origSend = botSocket.send.bind(botSocket);
+    botSocket.send = (data: string): void => {
+      botFrames.push(data);
+      origSend(data);
+    };
+
     // The human asks to see the bot's mucked cards, passing a bogus 100: the
     // server must charge the fixed 1bb anyway.
     human.send({ t: 'peek_offer', handId: human.handId, targetSeat: botSeat, amount: 100 });
     // The bot answers on its own; the human receives the private reveal.
     await waitFor(() => human.events.some((e) => e.includes('peek accepted')), 10_000);
     expect(human.events.some((e) => e.includes(`peek accepted: seat ${botSeat + 1}`))).toBe(true);
+
+    // The bot target is told the offer resolved, with no buyer-only payload.
+    await waitFor(
+      () => botFrames.some((f) => f.includes('peek_offer_closed')),
+      10_000,
+    );
+    const closed = JSON.parse(
+      botFrames.find((f) => f.includes('peek_offer_closed'))!,
+    ) as { t: string; status: string; cards?: unknown; amount?: unknown };
+    expect(closed.t).toBe('peek_offer_closed');
+    expect(closed.status).toBe('accepted');
+    expect(closed.cards).toBeUndefined();
+    expect(closed.amount).toBeUndefined();
 
     const bb = (ctx.db.prepare('SELECT bb FROM rooms WHERE id = ?').get(room.id) as { bb: number })
       .bb;
