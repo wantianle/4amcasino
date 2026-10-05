@@ -1,6 +1,7 @@
-import { type FormEvent, type ReactNode, memo, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, memo, useCallback, useEffect, useState } from 'react';
 import { commissionRateLabel } from '@4am/shared';
-import { api } from '../../shared/api.ts';
+import { api, type AdminAuditEntry } from '../../shared/api.ts';
+import { fmtDate } from '../../shared/lib/datetime.ts';
 import { deriveAuthKey, deriveIdentity } from '../../shared/crypto.ts';
 import { fmt } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
@@ -396,9 +397,19 @@ export interface AdminTarget {
   username: string;
   displayName: string;
   isPlatform?: boolean;
+  /** sqlite 0/1 over JSON; absent when the target came from a bare ID lookup. */
+  disabled?: number;
+  /** Set once a merge retired this account; it can no longer be enabled/reset. */
+  mergedInto?: number | null;
 }
 
-export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarget }) {
+export function UserAdminSection({
+  initialTarget,
+  onChanged,
+}: {
+  initialTarget?: AdminTarget;
+  onChanged?: () => void;
+}) {
   const [idInput, setIdInput] = useState(initialTarget ? String(initialTarget.userId) : '');
   const [target, setTarget] = useState<AdminTarget | null>(initialTarget ?? null);
   const [lookupErr, setLookupErr] = useState<string | null>(null);
@@ -407,6 +418,10 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
   const [disableConfirm, setDisableConfirm] = useState(false);
   const [disableBusy, setDisableBusy] = useState(false);
   const [disableMsg, setDisableMsg] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+
+  const [initialConfirm, setInitialConfirm] = useState(false);
+  const [initialBusy, setInitialBusy] = useState(false);
+  const [initialMsg, setInitialMsg] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
 
   const [newPassword, setNewPassword] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
@@ -425,12 +440,20 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
     }
     setLookupBusy(true);
     try {
-      const p = await api.userProfile(id);
+      // Platform-only lookup: the player profile endpoint does not expose
+      // `disabled`/`mergedInto`, which the controls below need.
+      const { user } = await api.adminLookupUser(id);
+      if (!user) {
+        setLookupErr(t('could not find that user'));
+        return;
+      }
       setTarget({
-        userId: p.userId,
-        username: p.username,
-        displayName: p.displayName,
-        isPlatform: p.isPlatform,
+        userId: user.userId,
+        username: user.username,
+        displayName: user.displayName,
+        isPlatform: user.isPlatform,
+        disabled: user.disabled,
+        mergedInto: user.mergedInto,
       });
     } catch (e2) {
       setLookupErr(e2 instanceof Error ? e2.message : t('could not find that user'));
@@ -445,11 +468,13 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
     setDisableMsg(null);
     try {
       await api.adminDisableUser(target.userId);
+      setTarget({ ...target, disabled: 1 });
       setDisableMsg({
         kind: 'ok',
         text: t('@{user} is disabled and signed out everywhere.', { user: target.username }),
       });
       setDisableConfirm(false);
+      onChanged?.();
     } catch (e) {
       setDisableMsg({
         kind: 'bad',
@@ -457,6 +482,53 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
       });
     } finally {
       setDisableBusy(false);
+    }
+  }
+
+  async function enable() {
+    if (!target) return;
+    setDisableBusy(true);
+    setDisableMsg(null);
+    try {
+      await api.adminEnableUser(target.userId);
+      setTarget({ ...target, disabled: 0 });
+      setDisableMsg({
+        kind: 'ok',
+        text: t('@{user} is enabled and can log in again.', { user: target.username }),
+      });
+      onChanged?.();
+    } catch (e) {
+      setDisableMsg({
+        kind: 'bad',
+        text: e instanceof Error ? e.message : t('could not enable that account'),
+      });
+    } finally {
+      setDisableBusy(false);
+    }
+  }
+
+  async function resetInitial() {
+    if (!target) return;
+    setInitialBusy(true);
+    setInitialMsg(null);
+    try {
+      await api.adminResetUserInitialPassword(target.userId);
+      setInitialConfirm(false);
+      setInitialMsg({
+        kind: 'ok',
+        text: t(
+          'Password reset to 123456 for @{user}. They were signed out everywhere and re-keyed. Tell them the password directly.',
+          { user: target.username },
+        ),
+      });
+      onChanged?.();
+    } catch (e) {
+      setInitialMsg({
+        kind: 'bad',
+        text: e instanceof Error ? e.message : t('could not reset that password'),
+      });
+    } finally {
+      setInitialBusy(false);
     }
   }
 
@@ -522,6 +594,7 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
           <div className="flex items-center gap-2 font-medium text-slate-900 dark:text-slate-100">
             {target.displayName}
             <span className="font-normal text-slate-400">@{target.username}</span>
+            {target.mergedInto != null && <Badge tone="amber">{t('Merged')}</Badge>}
             {target.isPlatform && <Badge tone="indigo">{t('House account')}</Badge>}
           </div>
 
@@ -529,23 +602,39 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
             <p className="mt-2 text-xs text-slate-400">
               {t("The house account can't be disabled or reset from here.")}
             </p>
+          ) : target.mergedInto != null ? (
+            <p className="mt-2 text-xs text-slate-400">
+              {t('This account was merged into another one. It cannot be enabled or reset.')}
+            </p>
           ) : (
             <>
               <div className="mt-3 border-t border-slate-200/70 pt-3 dark:border-slate-700/70">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {t('Disable account')}
+                  {target.disabled ? t('Enable account') : t('Disable account')}
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  {t('Signs them out everywhere and blocks further logins. Nothing is deleted.')}
+                  {target.disabled
+                    ? t('Lets the account log in again. Nothing was deleted while it was disabled.')
+                    : t('Signs them out everywhere and blocks further logins. Nothing is deleted.')}
                 </p>
                 <div className="mt-2">
-                  <Button
-                    variant="danger"
-                    onClick={() => setDisableConfirm(true)}
-                    disabled={disableBusy}
-                  >
-                    {t('Disable @{user}', { user: target.username })}
-                  </Button>
+                  {target.disabled ? (
+                    <Button variant="success" onClick={() => void enable()} disabled={disableBusy}>
+                      {disableBusy ? (
+                        <Spinner label={t('Working…')} />
+                      ) : (
+                        t('Enable @{user}', { user: target.username })
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      onClick={() => setDisableConfirm(true)}
+                      disabled={disableBusy}
+                    >
+                      {t('Disable @{user}', { user: target.username })}
+                    </Button>
+                  )}
                 </div>
                 {disableMsg && <Note kind={disableMsg.kind}>{disableMsg.text}</Note>}
               </div>
@@ -579,6 +668,32 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
                 </div>
                 {pwMsg && <Note kind={pwMsg.kind}>{pwMsg.text}</Note>}
               </form>
+
+              <div className="mt-3 border-t border-slate-200/70 pt-3 dark:border-slate-700/70">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {t('Reset to initial password')}
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {t(
+                    'Sets @{user} back to the password 123456, re-keys their signing identity, and signs them out everywhere. They must not be seated at a table.',
+                    { user: target.username },
+                  )}
+                </p>
+                <div className="mt-2">
+                  <Button
+                    variant="danger"
+                    onClick={() => setInitialConfirm(true)}
+                    disabled={initialBusy}
+                  >
+                    {initialBusy ? (
+                      <Spinner label={t('Resetting…')} />
+                    ) : (
+                      t('Reset to 123456')
+                    )}
+                  </Button>
+                </div>
+                {initialMsg && <Note kind={initialMsg.kind}>{initialMsg.text}</Note>}
+              </div>
             </>
           )}
         </div>
@@ -600,6 +715,27 @@ export function UserAdminSection({ initialTarget }: { initialTarget?: AdminTarge
           </Button>
           <Button variant="danger" onClick={() => void disable()} disabled={disableBusy}>
             {disableBusy ? <Spinner label={t('Working…')} /> : t('Disable account')}
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={initialConfirm}
+        onClose={() => setInitialConfirm(false)}
+        title={t('Reset @{user} to the initial password?', { user: target?.username ?? '' })}
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {t(
+            'This sets @{user}\'s password back to 123456 and re-keys their signing identity. Every device they are signed in on is cleared immediately. Tell them the new password directly.',
+            { user: target?.username ?? '' },
+          )}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setInitialConfirm(false)} disabled={initialBusy}>
+            {t('Cancel')}
+          </Button>
+          <Button variant="danger" onClick={() => void resetInitial()} disabled={initialBusy}>
+            {initialBusy ? <Spinner label={t('Resetting…')} /> : t('Reset to 123456')}
           </Button>
         </div>
       </Dialog>
@@ -786,3 +922,190 @@ export const RoomsSection = memo(function RoomsSection() {
   );
 });
 RoomsSection.displayName = 'RoomsSection';
+
+const AUDIT_PAGE_SIZE = 50;
+
+/** One-line human summary of an audit row's JSON detail. */
+function detailSummary(detail: unknown): string {
+  if (detail === null || detail === undefined) return '—';
+  if (typeof detail === 'string') return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+/** Read-only admin audit trail: time, operator, action, target and a detail
+ *  summary, filterable by exact action / target id and paged newest-first. */
+export function AuditSection() {
+  const [entries, setEntries] = useState<AdminAuditEntry[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [action, setAction] = useState('');
+  const [targetId, setTargetId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(
+    async (nextOffset: number, filter: { action: string; targetId: string }) => {
+      setBusy(true);
+      setErr(null);
+      try {
+        const page = await api.adminAudit({
+          limit: AUDIT_PAGE_SIZE,
+          offset: nextOffset,
+          action: filter.action.trim() || undefined,
+          targetId: filter.targetId.trim() || undefined,
+        });
+        setEntries(page.entries);
+        setTotal(page.total);
+        setOffset(page.offset);
+        setHasMore(page.hasMore);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : t('Could not load the audit log.'));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void load(0, { action: '', targetId: '' });
+  }, [load]);
+
+  function applyFilters(e: FormEvent) {
+    e.preventDefault();
+    void load(0, { action, targetId });
+  }
+
+  function clearFilters() {
+    setAction('');
+    setTargetId('');
+    void load(0, { action: '', targetId: '' });
+  }
+
+  return (
+    <Panel>
+      <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
+        {t('Audit log')}
+      </h2>
+      <p className="mt-1 text-sm text-slate-500">
+        {t('Every administrative action, newest first.')}
+      </p>
+
+      <form onSubmit={applyFilters} className="admin-search">
+        <Input
+          aria-label={t('Filter by action')}
+          placeholder={t('Action, e.g. user.disable')}
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          disabled={busy}
+        />
+        <Input
+          aria-label={t('Filter by target ID')}
+          placeholder={t('Target ID')}
+          value={targetId}
+          onChange={(e) => setTargetId(e.target.value)}
+          disabled={busy}
+        />
+        <Button type="submit" variant="secondary" disabled={busy}>
+          {t('Apply filters')}
+        </Button>
+        <Button type="button" variant="ghost" onClick={clearFilters} disabled={busy}>
+          {t('Clear')}
+        </Button>
+      </form>
+
+      {entries === null ? (
+        <div className="mt-4">
+          {err ? (
+            <Button variant="secondary" onClick={() => void load(0, { action, targetId })}>
+              {t('Retry')}
+            </Button>
+          ) : (
+            <Spinner label={t('Loading audit log…')} />
+          )}
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="admin-empty">{t('No audit entries match.')}</p>
+      ) : (
+        <>
+          <div className="admin-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t('Time')}</th>
+                  <th>{t('Operator')}</th>
+                  <th>{t('Action')}</th>
+                  <th>{t('Target')}</th>
+                  <th>{t('Detail')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((entry) => {
+                  const target =
+                    entry.targetType || entry.targetId
+                      ? `${entry.targetType ?? ''}${entry.targetType && entry.targetId ? ' ' : ''}${
+                          entry.targetId ?? ''
+                        }`
+                      : '—';
+                  return (
+                    <tr key={entry.id}>
+                      <td title={new Date(entry.ts).toISOString()}>{fmtDate(entry.ts)}</td>
+                      <td>
+                        {entry.operatorName ?? '—'}
+                        {entry.operatorName && (
+                          <small>
+                            ID {entry.operatorUserId}
+                          </small>
+                        )}
+                      </td>
+                      <td>
+                        <code>{entry.action}</code>
+                      </td>
+                      <td>
+                        <code>{target}</code>
+                      </td>
+                      <td>
+                        <span className="admin-audit-detail">{detailSummary(entry.detail)}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="admin-pagination">
+            <span>
+              {t('{from}–{to} of {total} entries', {
+                from: offset + 1,
+                to: offset + entries.length,
+                total,
+              })}
+            </span>
+            <div>
+              <Button
+                variant="secondary"
+                disabled={busy || offset === 0}
+                onClick={() => void load(Math.max(0, offset - AUDIT_PAGE_SIZE), { action, targetId })}
+              >
+                {t('Previous')}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={busy || !hasMore}
+                onClick={() => void load(offset + AUDIT_PAGE_SIZE, { action, targetId })}
+              >
+                {t('Next')}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+      {err && entries !== null && <Note kind="bad">{err}</Note>}
+    </Panel>
+  );
+}

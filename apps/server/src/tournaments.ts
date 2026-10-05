@@ -10,7 +10,7 @@ import {
   type ArenaRound,
   type PlayerAction,
 } from '@4am/shared';
-import type { DB } from './db.js';
+import { writeAdminAudit, type DB } from './db.js';
 import { requireUser, userForToken } from './auth.js';
 import { AgentError, scopeUser, bearerToken } from './agentAccess.js';
 import { publishAgentEvent } from './agentEvents.js';
@@ -269,7 +269,9 @@ function startTournament(db: DB, t: Tournament, now = Date.now()) {
     "UPDATE tournaments SET status='running',terms_locked=1,schedule_note='',updated_at=? WHERE id=?",
   ).run(now, t.id);
   finishRound(db, t, freshRound(db, t, 1), now);
-  emit(db, t.id, 'tournament.start', { status: get(db, t.id).status });
+  // The `tournament.start` event is emitted by the caller after the enclosing
+  // transaction commits, so an audit failure cannot roll the DB back while the
+  // event has already gone out.
 }
 function owner(db: DB, t: Tournament, userId: number) {
   if (t.owner_id !== userId && !isPlatform(db, userId))
@@ -361,6 +363,7 @@ export function tickTournaments(db: DB, now = Date.now()): void {
   for (const t of scheduled) {
     try {
       db.transaction(() => startTournament(db, get(db, t.id), now)).immediate();
+      emit(db, t.id, 'tournament.start', { status: get(db, t.id).status });
     } catch (e) {
       db.prepare('UPDATE tournaments SET schedule_note=?,updated_at=? WHERE id=?').run(
         e instanceof AgentError ? e.message : 'Scheduled start needs organizer review.',
@@ -639,14 +642,23 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
       .object({ action: z.enum(['start', 'pause', 'resume', 'cancel']) })
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid tournament control.' });
-    return db
+    const event = db
       .transaction(() => {
         const t = get(db, id);
         owner(db, t, req.userId);
+        // A platform account can control another organizer's tournament (see
+        // owner()); only that platform override is recorded on the admin audit
+        // trail. A normal organizer's own control stays unaudited.
+        const platform = isPlatform(db, req.userId);
         const action = parsed.data.action;
         if (action === 'start') {
           startTournament(db, t);
-          return { ok: true };
+          if (platform)
+            writeAdminAudit(db, req.userId, 'tournament.control', 'tournament', id, {
+              action,
+              status: 'running',
+            });
+          return { type: 'tournament.start', data: { status: get(db, id).status } };
         }
         const status = {
           start: 'running',
@@ -685,10 +697,18 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
           Date.now(),
           id,
         );
-        emit(db, id, `tournament.${action}`, { status });
-        return { ok: true };
+        if (platform)
+          writeAdminAudit(db, req.userId, 'tournament.control', 'tournament', id, {
+            action,
+            status,
+          });
+        return { type: `tournament.${action}`, data: { status } };
       })
       .immediate();
+    // Emit only after the state change and its audit row committed, so an audit
+    // failure can never leave a phantom event.
+    emit(db, id, event.type, event.data);
+    return { ok: true };
   });
   app.post('/api/tournaments/:id/actions', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -785,7 +805,7 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
   });
   app.put('/api/tournaments/:id/terms', { preHandler: requireUser(db) }, async (req) => {
     const { id } = req.params as { id: string };
-    return db
+    const result = db
       .transaction(() => {
         const t = get(db, id);
         owner(db, t, req.userId);
@@ -809,6 +829,7 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
         );
         const approved = isPlatform(db, req.userId),
           revision = t.revision + 1;
+        const approvalStatus = approved ? 'approved' : 'pending';
         db.prepare(
           'UPDATE tournaments SET name=?,description=?,capacity=?,hand_limit=?,starting_stack=?,sb=?,bb=?,action_seconds=?,prize_description=?,rules=?,policy_json=?,revision=?,status=?,approval_status=?,review_note=?,schedule_note=?,updated_at=? WHERE id=?',
         ).run(
@@ -825,7 +846,7 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
           JSON.stringify(policy),
           revision,
           approved ? 'registration' : 'pending',
-          approved ? 'approved' : 'pending',
+          approvalStatus,
           '',
           '',
           Date.now(),
@@ -841,13 +862,19 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
           req.userId,
           Date.now(),
         );
-        emit(db, id, 'tournament.terms_updated', {
-          revision,
-          approvalStatus: approved ? 'approved' : 'pending',
-        });
-        return { ok: true, revision };
+        // Only a platform account that publishes directly is a platform admin
+        // action; an organizer's own terms edit is not audited here.
+        if (approved)
+          writeAdminAudit(db, req.userId, 'tournament.terms', 'tournament', id, {
+            revision,
+            approvalStatus,
+          });
+        return { revision, approvalStatus };
       })
       .immediate();
+    // Emit after the transaction (state + audit) committed.
+    emit(db, id, 'tournament.terms_updated', result);
+    return { ok: true, revision: result.revision };
   });
   app.put('/api/tournaments/:id/media', { preHandler: requirePlatform(db) }, async (req) => {
     const { id } = req.params as { id: string };
@@ -876,6 +903,11 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
       db.prepare(
         'INSERT INTO tournament_reviews(tournament_id,revision,action,note,actor_id,ts) VALUES(?,?,?,?,?,?)',
       ).run(id, t.revision, 'broadcast_links', JSON.stringify(b.data), req.userId, Date.now());
+      writeAdminAudit(db, req.userId, 'tournament.media', 'tournament', id, {
+        revision: t.revision,
+        streamUrl: b.data.streamUrl,
+        meetUrl: b.data.meetUrl,
+      });
     }).immediate();
     return { ok: true };
   });
@@ -892,7 +924,7 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
         })
         .safeParse(req.body);
       if (!b.success) throw new AgentError(400, 'Provide the current revision and a review note.');
-      return db
+      const result = db
         .transaction(() => {
           const t = get(db, id);
           if (
@@ -923,10 +955,21 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
             req.userId,
             Date.now(),
           );
-          emit(db, id, 'tournament.reviewed', { approved: b.data.approve, revision: t.revision });
-          return { ok: true };
+          writeAdminAudit(
+            db,
+            req.userId,
+            b.data.approve ? 'tournament.review.approve' : 'tournament.review.reject',
+            'tournament',
+            id,
+            { revision: t.revision, approved: b.data.approve },
+          );
+          return { approved: b.data.approve, revision: t.revision };
         })
         .immediate();
+      // Emit after the transaction (state + audit) committed, so an audit
+      // failure cannot leave a phantom `tournament.reviewed` event.
+      emit(db, id, 'tournament.reviewed', result);
+      return { ok: true };
     },
   );
   app.get('/api/admin/tournaments', { preHandler: requirePlatform(db) }, async () => {
@@ -981,15 +1024,24 @@ export function registerTournaments(app: FastifyInstance, db: DB): void {
         .safeParse(req.body);
       if (!b.success)
         throw new AgentError(400, 'Choose a player, signed chip amount and receipt note.');
-      recordTournamentSettlement(
-        db,
-        id,
-        b.data.userId,
-        b.data.amount,
-        b.data.requestId,
-        b.data.note,
-        req.userId,
-      );
+      // recordTournamentSettlement opens its own (nested savepoint) transaction;
+      // wrapping it with the audit insert makes an audited action a single unit.
+      db.transaction(() => {
+        recordTournamentSettlement(
+          db,
+          id,
+          b.data.userId,
+          b.data.amount,
+          b.data.requestId,
+          b.data.note,
+          req.userId,
+        );
+        writeAdminAudit(db, req.userId, 'tournament.settlement', 'tournament', id, {
+          userId: b.data.userId,
+          amount: b.data.amount,
+          requestId: b.data.requestId,
+        });
+      })();
       return { ok: true };
     },
   );

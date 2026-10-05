@@ -3,7 +3,7 @@ import { isIP } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { SponsorCampaign, SponsorPlacement } from '@4am/shared';
-import type { DB } from './db.js';
+import { writeAdminAudit, type DB } from './db.js';
 import { AgentError } from './agentAccess.js';
 import { requirePlatform } from './platform.js';
 
@@ -323,6 +323,7 @@ export function registerSponsors(
          active, booked_amount, note, created_at, updated_at, created_by, updated_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(id, ...campaignValues(input), now, now, req.userId, req.userId);
+        writeAdminAudit(db, req.userId, 'sponsor.create', 'sponsor', id, { name: input.name });
         return getCampaign(db, id);
       })
       .immediate();
@@ -344,6 +345,10 @@ export function registerSponsors(
         destination_url = ?, placement = ?, starts_at = ?, ends_at = ?, active = ?, booked_amount = ?, note = ?,
         revision = revision + 1, updated_at = ?, updated_by = ? WHERE id = ?`,
         ).run(...campaignValues(input), Date.now(), req.userId, id);
+        writeAdminAudit(db, req.userId, 'sponsor.update', 'sponsor', id, {
+          name: input.name,
+          revision: current.revision + 1,
+        });
         return getCampaign(db, id);
       })
       .immediate();
@@ -362,6 +367,7 @@ export function registerSponsors(
             'Campaigns with receipts cannot be deleted. Disable the placement instead.',
           );
         db.prepare('DELETE FROM sponsor_campaigns WHERE id = ?').run(id);
+        writeAdminAudit(db, req.userId, 'sponsor.delete', 'sponsor', id, { name: current.name });
         return { ok: true };
       })
       .immediate();
@@ -432,6 +438,11 @@ export function registerSponsors(
         db.prepare(
           'UPDATE sponsor_campaigns SET revision = revision + 1, updated_at = ?, updated_by = ? WHERE id = ?',
         ).run(now, req.userId, id);
+        writeAdminAudit(db, req.userId, 'sponsor.receipt', 'sponsor', id, {
+          receiptId,
+          amount: input.amount,
+          prizeContribution: input.prizeContribution,
+        });
         const receipt = db
           .prepare(`SELECT ${receiptColumns} FROM sponsor_receipts WHERE id = ?`)
           .get(receiptId) as SponsorReceipt;

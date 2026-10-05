@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { DB } from './db.js';
+import { writeAdminAudit, type DB } from './db.js';
 import { isPlatform, platformUserId, requirePlatform } from './platform.js';
 import { requireUser } from './auth.js';
 import { archiveRoom, archiveRoomTx, roomEvents } from './rooms.js';
@@ -9,6 +9,7 @@ import { rekey } from './account.js';
 import { activeHands } from './liveHands.js';
 import { platformDues } from './house.js';
 import { registerPlatformControl } from './adminControl.js';
+import { derivePlatformCredentials } from './platform-crypto.js';
 
 const authKey = z
   .string()
@@ -126,6 +127,14 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
           changed = info.changes > 0;
         }
       }
+      writeAdminAudit(
+        db,
+        req.userId,
+        approve ? 'lifecycle.approve' : 'lifecycle.reject',
+        'lifecycle',
+        String(requestId),
+        { requestId, decisionType: lifecycleRequest.action, changed },
+      );
     });
     decide();
 
@@ -249,9 +258,16 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
 
     const approve = parsed.data.approve;
     if (!approve) {
-      db.prepare(
-        `UPDATE account_merge_requests SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ?`,
-      ).run(Date.now(), req.userId, requestId);
+      db.transaction(() => {
+        db.prepare(
+          `UPDATE account_merge_requests SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ?`,
+        ).run(Date.now(), req.userId, requestId);
+        writeAdminAudit(db, req.userId, 'merge.reject', 'merge', String(requestId), {
+          requestId,
+          fromUser: mergeRequest.fromUser,
+          intoUser: mergeRequest.intoUser,
+        });
+      })();
       return { ok: true, status: 'rejected' };
     }
 
@@ -262,16 +278,25 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(400).send({ error: 'cannot merge the platform account' });
     }
 
+    // mergeAccounts runs inside this outer transaction (a nested savepoint), so
+    // the decision row and the audit entry commit or roll back with the merge
+    // itself - a failed audit insert cannot leave a merged account behind.
     try {
-      mergeAccounts(db, mergeRequest.fromUser, mergeRequest.intoUser);
+      db.transaction(() => {
+        mergeAccounts(db, mergeRequest.fromUser, mergeRequest.intoUser);
+        db.prepare(
+          `UPDATE account_merge_requests SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?`,
+        ).run(Date.now(), req.userId, requestId);
+        writeAdminAudit(db, req.userId, 'merge.approve', 'merge', String(requestId), {
+          requestId,
+          fromUser: mergeRequest.fromUser,
+          intoUser: mergeRequest.intoUser,
+        });
+      })();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'merge failed';
       return reply.code(409).send({ error: message });
     }
-
-    db.prepare(
-      `UPDATE account_merge_requests SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?`,
-    ).run(Date.now(), req.userId, requestId);
     return { ok: true, status: 'approved' };
   });
 
@@ -309,19 +334,27 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     }
 
     try {
-      mergeAccounts(db, from.id, into.id);
+      db.transaction(() => {
+        mergeAccounts(db, from.id, into.id);
+        const platformId = platformUserId(db)!;
+        const now = Date.now();
+        const info = db
+          .prepare(
+            `INSERT INTO account_merge_requests
+               (from_user, into_user, requested_by, note, status, created_at, decided_at, decided_by)
+             VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)`,
+          )
+          .run(from.id, into.id, platformId, note ?? null, now, now, platformId);
+        writeAdminAudit(db, req.userId, 'merge.create', 'merge', `${from.id}->${into.id}`, {
+          requestId: Number(info.lastInsertRowid),
+          fromUser: from.id,
+          intoUser: into.id,
+        });
+      })();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'merge failed';
       return reply.code(409).send({ error: message });
     }
-
-    const platformId = platformUserId(db)!;
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO account_merge_requests
-         (from_user, into_user, requested_by, note, status, created_at, decided_at, decided_by)
-       VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)`,
-    ).run(from.id, into.id, platformId, note ?? null, now, now, platformId);
 
     return { ok: true };
   });
@@ -377,7 +410,17 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     if (archived) {
       // Unified with `/close`: idempotent, conditional, clears seats on the
       // 0->1 transition and preserves the original archived_at on a repeat.
-      const result = archiveRoom(db, id);
+      // The audit row commits with the archive (nested savepoint inside the
+      // outer transaction).
+      const result = db.transaction(() => {
+        const r = archiveRoom(db, id);
+        writeAdminAudit(db, req.userId, 'room.archive', 'room', id, {
+          archived: true,
+          changed: r.changed,
+          alreadyClosed: r.alreadyClosed,
+        });
+        return r;
+      })();
       if (result.changed) roomEvents.emit('changed', id);
       return {
         ok: true,
@@ -386,9 +429,16 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
         archivedAt: result.archivedAt,
       };
     }
-    const info = db
-      .prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ? AND archived = 1')
-      .run(id);
+    const info = db.transaction(() => {
+      const i = db
+        .prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ? AND archived = 1')
+        .run(id);
+      writeAdminAudit(db, req.userId, 'room.unarchive', 'room', id, {
+        archived: false,
+        changed: i.changes > 0,
+      });
+      return i;
+    })();
     if (info.changes > 0) roomEvents.emit('changed', id);
     return { ok: true, archived: false, changed: info.changes > 0 };
   });
@@ -408,9 +458,13 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     // Idempotent like archive/close: the conditional guards the 0->1
     // transition, so a repeat delete neither overwrites deleted_at nor emits a
     // redundant room change. `changed` mirrors the unarchive response shape.
-    const info = db
-      .prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0')
-      .run(Date.now(), id);
+    const info = db.transaction(() => {
+      const i = db
+        .prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0')
+        .run(Date.now(), id);
+      writeAdminAudit(db, req.userId, 'room.delete', 'room', id, { changed: i.changes > 0 });
+      return i;
+    })();
     if (info.changes > 0) roomEvents.emit('changed', id);
     return { ok: true, changed: info.changes > 0 };
   });
@@ -431,9 +485,60 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
     if (!target) return reply.code(404).send({ error: 'no such user' });
 
-    db.prepare('UPDATE users SET disabled = 1 WHERE id = ?').run(targetId);
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
-    return { ok: true };
+    // Conditional update so `changed` is trustworthy (a repeat disable of an
+    // already-disabled account is a no-op) and so the change + session purge +
+    // audit row land in one transaction.
+    const changed = db.transaction(() => {
+      const info = db
+        .prepare('UPDATE users SET disabled = 1 WHERE id = ? AND disabled = 0')
+        .run(targetId);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
+      writeAdminAudit(db, req.userId, 'user.disable', 'user', String(targetId), {
+        changed: info.changes > 0,
+      });
+      return info.changes > 0;
+    })();
+    return { ok: true, changed };
+  });
+
+  /** Re-enable an account parked by /disable. Idempotent: the conditional
+   *  UPDATE only flips a row that is actually disabled, so re-enabling (or
+   *  enabling a never-disabled account) is a no-op that reports changed:false.
+   *  Sessions are not resurrected - the user logs in again normally. The
+   *  platform account is allowed here: enabling it is harmless (unlike
+   *  disabling, which would lock the console). */
+  app.post('/api/admin/users/:id/enable', platformOnly, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const targetId = Number(id);
+    if (!Number.isInteger(targetId)) return reply.code(400).send({ error: 'invalid input' });
+
+    const target = db
+      .prepare('SELECT id, merged_into AS mergedInto FROM users WHERE id = ?')
+      .get(targetId) as { id: number; mergedInto: number | null } | undefined;
+    if (!target) return reply.code(404).send({ error: 'no such user' });
+    // A merge retires the `from` account by disabling it AND stamping
+    // merged_into. Re-enabling must not resurrect it - that would break the
+    // "merging is irreversible" guarantee - so merged accounts get an explicit
+    // 409 instead of a silent changed:false.
+    if (target.mergedInto !== null) {
+      return reply
+        .code(409)
+        .send({ error: 'that account was merged into another one and cannot be re-enabled' });
+    }
+
+    const changed = db.transaction(() => {
+      const info = db
+        .prepare('UPDATE users SET disabled = 0 WHERE id = ? AND disabled = 1 AND merged_into IS NULL')
+        .run(targetId);
+      // Clear any session that exists (a stale token minted before the disable,
+      // or a concurrent one) so the account cannot come back half-signed-in.
+      if (info.changes > 0) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
+      writeAdminAudit(db, req.userId, 'user.enable', 'user', String(targetId), {
+        changed: info.changes > 0,
+      });
+      return info.changes > 0;
+    })();
+    return { ok: true, changed };
   });
 
   /** Reset another user's credentials - the "I lost my recovery code too"
@@ -450,7 +555,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     const parsed = z.object({ newAuthKey: authKey, newPublicKey: pubKey }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
 
-    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
+    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId) as
+      | { id: number }
+      | undefined;
     if (!target) return reply.code(404).send({ error: 'no such user' });
 
     if (seatedSomewhere(db, targetId)) {
@@ -459,7 +566,150 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
         .send({ error: 'that user is seated at a table - they must stand up before a reset' });
     }
 
-    rekey(db, targetId, parsed.data.newAuthKey, parsed.data.newPublicKey, null);
+    const reset = db.transaction(() => {
+      // The merged_into check lives here, inside the write transaction, rather
+      // than in a separate read a concurrent merge could invalidate: the
+      // conditional no-op UPDATE only touches an unmerged row, so a merged
+      // target changes 0 rows and the whole reset (rekey + audit) is abandoned
+      // instead of resurrecting a retired identity.
+      const claimed = db
+        .prepare('UPDATE users SET merged_into = NULL WHERE id = ? AND merged_into IS NULL')
+        .run(targetId);
+      if (claimed.changes !== 1) return false;
+      rekey(db, targetId, parsed.data.newAuthKey, parsed.data.newPublicKey, null);
+      writeAdminAudit(db, req.userId, 'user.password-reset', 'user', String(targetId), {
+        mode: 'custom',
+      });
+      return true;
+    })();
+    if (!reset)
+      return reply
+        .code(409)
+        .send({ error: 'that account was merged into another one and cannot be reset' });
     return { ok: true };
+  });
+
+  /** One-tap "reset to the initial password 123456". Derives the canonical
+   *  credentials server-side from the target's username using the exact same
+   *  scrypt domains the browser uses (`4am/auth/<username>` and
+   *  `4am/id/<username>`) - reused through platform-crypto.ts rather than
+   *  re-implemented - then reuses rekey() for the atomic credential+identity
+   *  swap and full session purge. Seated targets are refused for the same
+   *  mid-deal pubkey reason as /password. Idempotent: repeating it just re-keys
+   *  to the same initial credentials again. No forced password change. */
+  app.post('/api/admin/users/:id/reset-initial', platformOnly, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const targetId = Number(id);
+    if (!Number.isInteger(targetId)) return reply.code(400).send({ error: 'invalid input' });
+
+    const target = db
+      .prepare('SELECT id, username FROM users WHERE id = ?')
+      .get(targetId) as { id: number; username: string } | undefined;
+    if (!target) return reply.code(404).send({ error: 'no such user' });
+
+    if (seatedSomewhere(db, targetId)) {
+      return reply
+        .code(409)
+        .send({ error: 'that user is seated at a table - they must stand up before a reset' });
+    }
+
+    // Derive outside the transaction: scrypt is deliberately slow and would
+    // hold the write lock for its whole run.
+    const { authKey: initialAuthKey, publicKey: initialPublicKey } = derivePlatformCredentials(
+      target.username,
+      '123456',
+    );
+    const reset = db.transaction(() => {
+      // See /password: the merged_into check lives inside the write transaction
+      // so a concurrent merge cannot be undone by a rekey that raced past an
+      // outside read.
+      const claimed = db
+        .prepare('UPDATE users SET merged_into = NULL WHERE id = ? AND merged_into IS NULL')
+        .run(targetId);
+      if (claimed.changes !== 1) return false;
+      rekey(db, targetId, initialAuthKey, initialPublicKey, null);
+      writeAdminAudit(db, req.userId, 'user.password-reset', 'user', String(targetId), {
+        mode: 'initial',
+      });
+      return true;
+    })();
+    if (!reset)
+      return reply
+        .code(409)
+        .send({ error: 'that account was merged into another one and cannot be reset' });
+    return { ok: true };
+  });
+
+  /** Read-only window onto the admin audit trail, newest first. Optional
+   *  `action` (exact) and `targetId` (exact) narrow it; `limit`/`offset` page
+   *  it. Operators are joined to a display name for readability. `detail` is
+   *  parsed back from JSON where present. */
+  app.get('/api/admin/audit', platformOnly, async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    const parsed = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+        offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+        action: z.string().min(1).max(100).optional(),
+        targetId: z.string().min(1).max(200).optional(),
+      })
+      .safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+
+    const { limit, offset, action, targetId } = parsed.data;
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (action) {
+      where.push('a.action = ?');
+      params.push(action);
+    }
+    if (targetId) {
+      where.push('a.target_id = ?');
+      params.push(targetId);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = db
+      .prepare(
+        `SELECT a.id AS id, a.operator_user_id AS operatorUserId,
+                COALESCE(u.display_name, u.username) AS operatorName,
+                a.action AS action, a.target_type AS targetType, a.target_id AS targetId,
+                a.detail AS detail, a.ts AS ts
+         FROM admin_audit a
+         LEFT JOIN users u ON u.id = a.operator_user_id
+         ${clause}
+         ORDER BY a.ts DESC, a.id DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset) as {
+      id: number;
+      operatorUserId: number;
+      operatorName: string | null;
+      action: string;
+      targetType: string | null;
+      targetId: string | null;
+      detail: string | null;
+      ts: number;
+    }[];
+    const { total } = db
+      .prepare(`SELECT COUNT(*) AS total FROM admin_audit a ${clause}`)
+      .get(...params) as { total: number };
+
+    return {
+      entries: rows.map(({ detail, ...row }) => {
+        let parsedDetail: unknown = null;
+        if (detail) {
+          try {
+            parsedDetail = JSON.parse(detail);
+          } catch {
+            parsedDetail = detail;
+          }
+        }
+        return { ...row, detail: parsedDetail };
+      }),
+      total,
+      offset,
+      hasMore: offset + rows.length < total,
+    };
   });
 }

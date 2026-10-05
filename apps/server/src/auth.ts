@@ -42,12 +42,20 @@ export function checkLogin(
   authKey: string,
 ): { userId: number; publicKey: string } | null {
   const row = db
-    .prepare('SELECT id, auth_hash, auth_salt, pubkey FROM users WHERE username = ?')
-    .get(username) as { id: number; auth_hash: string; auth_salt: string; pubkey: string } | undefined;
+    .prepare('SELECT id, auth_hash, auth_salt, pubkey, disabled FROM users WHERE username = ?')
+    .get(username) as
+    | { id: number; auth_hash: string; auth_salt: string; pubkey: string; disabled: number }
+    | undefined;
   if (!row) return null;
   const candidate = Buffer.from(hashAuthKey(authKey, row.auth_salt), 'hex');
   const actual = Buffer.from(row.auth_hash, 'hex');
   if (candidate.length !== actual.length || !timingSafeEqual(candidate, actual)) return null;
+  // A disabled account (an admin disable, or a merge-retired `from` account)
+  // must not receive a fresh session just because its old credentials still
+  // match: otherwise disabling a user would not take effect until their next
+  // authenticated request, and the "clear every session" part of a disable
+  // would be undone by one more login.
+  if (row.disabled) return null;
   return { userId: row.id, publicKey: row.pubkey };
 }
 

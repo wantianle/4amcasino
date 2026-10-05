@@ -11,6 +11,7 @@ import {
   RiLogoutBoxLine,
   RiShieldCheckLine,
   RiRefreshLine,
+  RiHistoryLine,
 } from '@remixicon/react';
 import { commissionRateLabel, type AdminOverview } from '@4am/shared';
 import { api } from '../../shared/api.ts';
@@ -24,6 +25,7 @@ import { PlatformDues } from '../../features/house/PlatformDues.tsx';
 import { CommissionControl } from './CommissionControl.tsx';
 import { TournamentAdmin } from './TournamentAdmin.tsx';
 import {
+  AuditSection,
   LifecycleSection,
   MergeSection,
   RoomsSection,
@@ -77,6 +79,12 @@ const sections = [
     name: 'Platform settings',
     icon: RiSettings3Line,
     description: 'Control the house cut without a deployment.',
+  },
+  {
+    id: 'audit',
+    name: 'Audit log',
+    icon: RiHistoryLine,
+    description: 'Every administrative action, newest first.',
   },
 ];
 
@@ -249,6 +257,7 @@ function Overview({ data, base }: { data: AdminOverview; base: string }) {
 
 interface UserRow extends AdminTarget {
   disabled: number;
+  mergedInto: number | null;
   createdAt: number;
   rooms: number;
 }
@@ -345,7 +354,13 @@ function UsersDirectory() {
                         <span
                           className={`admin-status ${u.disabled ? 'admin-status-disabled' : ''}`}
                         >
-                          {u.isPlatform ? t('Platform') : u.disabled ? t('Disabled') : t('Active')}
+                          {u.isPlatform
+                            ? t('Platform')
+                            : u.mergedInto != null
+                              ? t('Merged')
+                              : u.disabled
+                                ? t('Disabled')
+                                : t('Active')}
                         </span>
                       </td>
                       <td>{u.rooms}</td>
@@ -400,7 +415,11 @@ function UsersDirectory() {
               {t('Close account controls')}
             </Button>
           </div>
-          <UserAdminSection key={target.userId} initialTarget={target} />
+          <UserAdminSection
+            key={target.userId}
+            initialTarget={target}
+            onChanged={() => void load(appliedQuery, result?.offset ?? 0)}
+          />
         </section>
       )}
     </div>
@@ -596,6 +615,7 @@ export function AdminPage() {
           {sectionId === 'settings' && (
             <CommissionControl key={refresh} onChanged={() => void load()} />
           )}
+          {sectionId === 'audit' && <AuditSection key={refresh} />}
         </main>
       </div>
     </div>

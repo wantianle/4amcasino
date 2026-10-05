@@ -627,6 +627,18 @@
 .admin-status-disabled {
   color: var(--color-rose-600);
 }
+.admin-app code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+}
+.admin-audit-detail {
+  display: inline-block;
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+}
 .admin-users-stack,
 .admin-requests {
   display: grid;

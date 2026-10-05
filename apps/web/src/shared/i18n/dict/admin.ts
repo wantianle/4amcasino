@@ -181,6 +181,48 @@ const admin: Record<string, string> = {
   'could not reset that password': '没能重设这个密码。',
   'They\'re signed out everywhere and can\'t log back in until re-enabled. Nothing they own is deleted.':
     '他会在所有设备退出登录，重新启用前无法再登录。他名下的数据不会被删除。',
+  'Enable account': '启用账号',
+  'Lets the account log in again. Nothing was deleted while it was disabled.':
+    '允许该账号重新登录。停用期间没有删除任何数据。',
+  'Enable @{user}': '启用 @{user}',
+  '@{user} is enabled and can log in again.': '@{user} 已启用，可以重新登录。',
+  'could not enable that account': '没能启用这个账号。',
+  Merged: '已合并',
+  'This account was merged into another one. It cannot be enabled or reset.':
+    '该账号已并入其他账号，不能启用或重设密码。',
+  'that account was merged into another one and cannot be re-enabled':
+    '该账号已并入其他账号，不能重新启用。',
+  'that account was merged into another one and cannot be reset':
+    '该账号已并入其他账号，不能重设密码。',
+  'Reset to initial password': '重置为初始密码',
+  'Sets @{user} back to the password 123456, re-keys their signing identity, and signs them out everywhere. They must not be seated at a table.':
+    '把 @{user} 的密码重置为 123456，重新生成签名密钥，并在所有设备退出登录。操作时他不能坐在牌桌上。',
+  'Reset to 123456': '重置为 123456',
+  'Resetting…': '正在重置…',
+  'Reset @{user} to the initial password?': '把 @{user} 重置为初始密码？',
+  'This sets @{user}\'s password back to 123456 and re-keys their signing identity. Every device they are signed in on is cleared immediately. Tell them the new password directly.':
+    '这会把 @{user} 的密码改回 123456，并重新生成签名密钥。他所有已登录的设备会立即被清退。请把新密码直接转告本人。',
+  'Password reset to 123456 for @{user}. They were signed out everywhere and re-keyed. Tell them the password directly.':
+    '已把 @{user} 的密码重置为 123456，并在所有设备退出登录、更换密钥。请把密码直接转告本人。',
+
+  // ── AdminSections: audit log ───────────────────────────────────────────────
+  'Audit log': '审计日志',
+  'Every administrative action, newest first.': '每一项管理操作，最新在前。',
+  'Filter by action': '按操作筛选',
+  'Action, e.g. user.disable': '操作，例如 user.disable',
+  'Filter by target ID': '按目标 ID 筛选',
+  'Target ID': '目标 ID',
+  'Apply filters': '应用筛选',
+  Clear: '清除',
+  'Could not load the audit log.': '没能加载审计日志。',
+  'Loading audit log…': '正在加载审计日志…',
+  'No audit entries match.': '没有匹配的审计记录。',
+  Time: '时间',
+  Operator: '操作者',
+  Action: '操作',
+  Target: '目标',
+  Detail: '详情',
+  '{from}–{to} of {total} entries': '{from}–{to} / 共 {total} 条记录',
 
   // ── AdminSections: rooms ───────────────────────────────────────────────────
   'Archive or delete any table directly. Delete cannot be undone.': '可直接归档或删除任意牌桌。删除无法撤销。',

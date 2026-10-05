@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AdminOverview } from '@4am/shared';
-import type { DB } from './db.js';
+import { writeAdminAudit, type DB } from './db.js';
 import { platformUserId, requirePlatform } from './platform.js';
 import {
   adminCommissionSettings,
@@ -39,7 +39,19 @@ export function registerPlatformControl(app: FastifyInstance, db: DB): void {
           error:
             'Enter a rate from 0% to 100% with at most two decimal places, and choose where to apply it.',
         });
-    const result = changeCommission(db, parsed.data, req.userId);
+    // changeCommission opens its own transaction; wrapping both it and the audit
+    // insert in one outer transaction makes them a single unit (the inner one
+    // becomes a savepoint), so a failed audit write rolls the rate change back.
+    const result = db.transaction(() => {
+      const r = changeCommission(db, parsed.data, req.userId);
+      if (!r) return null;
+      writeAdminAudit(db, req.userId, 'settings.commission', 'settings', 'commission', {
+        commissionBps: parsed.data.commissionBps,
+        scope: parsed.data.scope,
+        affectedRooms: r.affectedRooms,
+      });
+      return r;
+    })();
     if (!result)
       return reply
         .code(409)
@@ -92,17 +104,36 @@ export function registerPlatformControl(app: FastifyInstance, db: DB): void {
       .object({
         q: z.string().max(100).default(''),
         offset: z.coerce.number().int().min(0).max(1000000).default(0),
+        id: z.coerce.number().int().positive().optional(),
       })
       .safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid user search.' });
-    const { q, offset } = parsed.data;
+    const { q, offset, id } = parsed.data;
+
+    // Exact single-user lookup for the admin console's ID box: unlike the
+    // player-facing profile endpoint this returns `disabled` and `mergedInto`,
+    // so the UI can render Disable / Enable / merged correctly without a
+    // second round trip.
+    if (id !== undefined) {
+      const user = db
+        .prepare(
+          `SELECT u.id AS userId, u.username, COALESCE(u.display_name, u.username) AS displayName,
+                  u.disabled, u.merged_into AS mergedInto, u.created_at AS createdAt,
+                  u.last_seen AS lastSeen, u.avatar_version AS avatarVersion,
+                  (SELECT COUNT(*) FROM room_players rp JOIN rooms r ON r.id = rp.room_id WHERE rp.user_id = u.id AND r.deleted = 0) AS rooms
+           FROM users u WHERE u.id = ?`,
+        )
+        .get(id) as { userId: number } | undefined;
+      return { user: user ? { ...user, isPlatform: user.userId === platformUserId(db) } : null };
+    }
+
     const params = { q: `%${q.trim().replace(/^@/, '')}%`, offset };
     const where =
       "u.username LIKE @q OR COALESCE(u.display_name, '') LIKE @q OR CAST(u.id AS TEXT) LIKE @q";
     const users = db
       .prepare(
         `SELECT u.id AS userId, u.username, COALESCE(u.display_name, u.username) AS displayName,
-      u.disabled, u.created_at AS createdAt, u.last_seen AS lastSeen, u.avatar_version AS avatarVersion,
+      u.disabled, u.merged_into AS mergedInto, u.created_at AS createdAt, u.last_seen AS lastSeen, u.avatar_version AS avatarVersion,
       (SELECT COUNT(*) FROM room_players rp JOIN rooms r ON r.id = rp.room_id WHERE rp.user_id = u.id AND r.deleted = 0) AS rooms
       FROM users u WHERE ${where} ORDER BY u.id DESC LIMIT 50 OFFSET @offset`,
       )

@@ -31,7 +31,71 @@ export function openDb(path: string): DB {
   // Normalized hand-stats projection tables (pure additions - never touches
   // transcripts/ledger/hand_settlements).
   migrateHandStats(db);
+  // Platform-admin audit trail (pure addition - one row per successful admin
+  // action; never touches any existing table).
+  migrateAdminAudit(db);
   return db;
+}
+
+/**
+ * The platform admin's own paper trail: one append-only row for every
+ * successful administrative action (user disable/enable/password reset, room
+ * archive/unarchive/delete, lifecycle decisions, account merges). Nothing here
+ * is ever updated or deleted. `detail` is a small JSON blob of the fields that
+ * matter for that action (e.g. `{"mode":"initial"}`); `target_type`/`target_id`
+ * say what it acted on so the log can be filtered by target. Operator is the
+ * platform user id rather than a free-text name.
+ */
+export function migrateAdminAudit(db: DB): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operator_user_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      detail TEXT,
+      ts INTEGER NOT NULL
+    );
+    -- Newest-first reads are the default listing; (ts DESC, id DESC) matches
+    -- the paging ORDER BY exactly. action and target_id are the two filters the
+    -- console exposes, each with an index of its own.
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_ts ON admin_audit(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_ts_id ON admin_audit(ts DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit(action);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_action_ts ON admin_audit(action, ts DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_target_id ON admin_audit(target_id);
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit(target_type, target_id);
+  `);
+}
+
+/**
+ * Appends one row to the admin audit trail. This is a plain synchronous INSERT
+ * on whatever connection the caller passes, so a call made from inside a
+ * `db.transaction(...)` body commits (or rolls back) with the business change
+ * it records - the intended usage. Kept in db.ts rather than admin.ts so the
+ * admin, settings, sponsor and tournament routes can all share it without an
+ * import cycle. `detail` is JSON-encoded only when provided.
+ */
+export function writeAdminAudit(
+  db: DB,
+  operatorUserId: number,
+  action: string,
+  targetType: string | null,
+  targetId: string | null,
+  detail?: unknown,
+): void {
+  db.prepare(
+    `INSERT INTO admin_audit (operator_user_id, action, target_type, target_id, detail, ts)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    operatorUserId,
+    action,
+    targetType,
+    targetId,
+    detail === undefined ? null : JSON.stringify(detail),
+    Date.now(),
+  );
 }
 
 /**

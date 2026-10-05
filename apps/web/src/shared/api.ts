@@ -18,6 +18,26 @@ import { statsQuery, type StatsQuery, type HandStats, type HiddenStats, type Roo
  *  `room_feature_triggers.kind` allowlist. */
 export type FeatureTriggerKind = 'squid' | 'bomb';
 
+/** One row of the platform admin audit trail (GET /api/admin/audit). `detail`
+ *  is whatever JSON the server recorded for that action, or null. */
+export interface AdminAuditEntry {
+  id: number;
+  operatorUserId: number;
+  operatorName: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  detail: unknown;
+  ts: number;
+}
+
+export interface AdminAuditPage {
+  entries: AdminAuditEntry[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 /** ── Table bots (apps/server/src/botRoutes.ts) ───────────────────────────────
  * The PUBLIC, sanitized view of a bot opponent: the server never ships the
  * encrypted seed or a runner grant on these routes. Mirrors
@@ -263,6 +283,20 @@ export const api = {
   adminOverview: () => req('/api/admin/overview') as Promise<AdminOverview>,
   adminUsers: (q = '', offset = 0) =>
     req(`/api/admin/users?q=${encodeURIComponent(q)}&offset=${offset}`),
+  /** Platform-only exact user lookup. Unlike `userProfile` it includes
+   *  `disabled` and `mergedInto`, so the admin ID box can render the right
+   *  Disable / Enable / merged state. */
+  adminLookupUser: (id: number) =>
+    req(`/api/admin/users?id=${id}`) as Promise<{
+      user: {
+        userId: number;
+        username: string;
+        displayName: string;
+        disabled: number;
+        mergedInto: number | null;
+        isPlatform: boolean;
+      } | null;
+    }>,
   createRoom: (
     name: string,
     sb: number,
@@ -426,8 +460,23 @@ export const api = {
   adminMerges: () => req('/api/admin/merges'),
   adminDecideMerge: (id: number, approve: boolean) => req(`/api/admin/merges/${id}`, { approve }),
   adminDisableUser: (id: number) => req(`/api/admin/users/${id}/disable`, {}),
+  adminEnableUser: (id: number) =>
+    req(`/api/admin/users/${id}/enable`, {}) as Promise<{ ok: boolean; changed: boolean }>,
   adminSetUserPassword: (id: number, newAuthKey: string, newPublicKey: string) =>
     req(`/api/admin/users/${id}/password`, { newAuthKey, newPublicKey }),
+  /** Server-side one-tap reset to the initial password 123456 (re-keys the
+   *  account and signs it out everywhere; the client derives nothing). */
+  adminResetUserInitialPassword: (id: number) =>
+    req(`/api/admin/users/${id}/reset-initial`, {}) as Promise<{ ok: boolean }>,
+  adminAudit: (opts: { limit?: number; offset?: number; action?: string; targetId?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+    if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+    if (opts.action) q.set('action', opts.action);
+    if (opts.targetId) q.set('targetId', opts.targetId);
+    const qs = q.toString();
+    return req(`/api/admin/audit${qs ? `?${qs}` : ''}`) as Promise<AdminAuditPage>;
+  },
   // admin-initiated: bypass the request queue entirely (merge/archive/delete
   // take effect immediately, unlike the self-serve/approval flows above)
   adminMergeNow: (fromUsername: string, intoUsername: string, note?: string) =>
