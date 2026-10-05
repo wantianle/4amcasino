@@ -6,6 +6,8 @@
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "test": "vitest run",
+    "test:fast": "vitest run --exclude '**/evalInfra.test.mjs' --exclude '**/node_modules/**' --exclude '**/dist/**' --exclude '.slim/**'",
+    "test:bench": "RUN_BENCH=1 vitest run packages/agent-core/test/postflopPolicy.test.ts",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "prettier --write ."

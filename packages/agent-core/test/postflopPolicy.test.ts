@@ -856,7 +856,10 @@ describe('postflop: RulePolicy integration & fail-closed', () => {
   });
 });
 
-describe('postflop: performance', () => {
+// Performance benchmarks assert on wall-clock time, so they fail spuriously under CI load or
+// when several lanes run vitest concurrently (measured p95 drifts 5.13ms <-> 24.89ms on the same
+// code). They are gated off by default and run explicitly via `npm run test:bench`.
+describe.runIf(process.env.RUN_BENCH === '1')('postflop: performance', () => {
   const board = [c('Ac'), c('7d'), c('2h')];
   const hole = [c('Ks'), c('Qd')];
 
