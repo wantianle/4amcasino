@@ -15,6 +15,7 @@ import {
 import { legalActions, type PlayerAction, type ServerMsg } from '@4am/shared';
 import { t, tr } from './i18n/index.ts';
 import { handReducer } from './handReducer.ts';
+import { handEffectsReducer } from './handEffectsReducer.ts';
 import { useStore } from './store.ts';
 import { wsClient } from './ws.ts';
 import { voice } from './voice.ts';
@@ -696,41 +697,18 @@ export function handle(msg: ServerMsg): void {
       return;
     }
 
-    case 'rit_offer': {
-      play('turn');
-      store.patchHand({
-        ritOffer: { deadlineTs: msg.deadlineTs, voters: msg.voters, voted: false },
-      });
-      return;
-    }
-
-    case 'rit_result': {
-      if (msg.runTwice) play('chip');
-      // run 1 is the shared board; run 2 starts as a copy of everything already
-      // open and grows as run-2 cards land
-      const shared = [...msg.sharedBoard];
-      store.patchHand({ ritOffer: null, boards: [shared, msg.runTwice ? [...shared] : []] });
-      return;
-    }
-
+    // Effect-describing frames: the reducer decides the pure patch and the
+    // sound descriptors; this switch only applies the patch and then runs the
+    // effects. `play` is called here, never inside the reducer. Patch-first is
+    // safe because none of these sounds reads the patched state (see
+    // handEffectsReducer for the exact criterion).
+    case 'rit_offer':
+    case 'rit_result':
     case 'multi_run_offer': {
-      // authoritative snapshot of the negotiation, including its stage. Sent
-      // again after a reconnect, so overwrite rather than merge: a stale stage
-      // would leave the wrong player's buttons armed.
-      play('turn');
-      store.patchHand({
-        multiRunOffer: {
-          t: 'multi_run_offer',
-          handId: msg.handId,
-          decisionId: msg.decisionId,
-          stage: msg.stage,
-          aheadSeat: msg.aheadSeat,
-          behindSeat: msg.behindSeat,
-          equities: msg.equities,
-          ...(msg.requestedRuns !== undefined ? { requestedRuns: msg.requestedRuns } : {}),
-          deadlineTs: msg.deadlineTs,
-        },
-      });
+      const result = handEffectsReducer(useStore.getState().hand, msg);
+      if (!result) return;
+      store.patchHand(result.patch);
+      for (const effect of result.effects) if (effect.kind === 'sound') play(effect.name);
       return;
     }
 
@@ -758,27 +736,12 @@ export function handle(msg: ServerMsg): void {
       return;
     }
 
-    case 'squid_result': {
-      play('chip');
-      store.patchHand({ squidResult: msg });
-      return;
-    }
-
+    case 'squid_result':
     case 'peek_offer': {
-      const h = useStore.getState().hand;
-      if (h.handId !== msg.handId || h.peekOffers.some((o) => o.offerId === msg.offerId)) return;
-      play('chip');
-      store.patchHand({
-        peekOffers: [
-          ...h.peekOffers,
-          {
-            offerId: msg.offerId,
-            fromUserId: msg.fromUserId,
-            fromName: msg.fromName,
-            amount: msg.amount,
-          },
-        ],
-      });
+      const result = handEffectsReducer(useStore.getState().hand, msg);
+      if (!result) return;
+      store.patchHand(result.patch);
+      for (const effect of result.effects) if (effect.kind === 'sound') play(effect.name);
       return;
     }
 
