@@ -29,7 +29,13 @@ export interface NetLine {
   otherAvatarVersion: number;
   /** Positive: they owe you. Negative: you owe them. */
   net: number;
-  rooms: { roomId: string; roomName: string; amount: number; direction: 'owe' | 'owed' }[];
+  rooms: {
+    roomId: string;
+    roomName: string;
+    amount: number;
+    direction: 'owe' | 'owed';
+    settlementId?: number;
+  }[];
 }
 
 /** Decodes a `data:` URL into bytes, refusing anything that is not a small image. */
@@ -74,19 +80,27 @@ export function registerSettleRoutes(
          ORDER BY r.created_at DESC`,
       )
       .all(userId) as { id: string; name: string }[];
-    const out: { roomId: string; roomName: string; other: number; amount: number; iOwe: boolean }[] =
+    const out: { roomId: string; roomName: string; other: number; amount: number; iOwe: boolean; settlementId?: number }[] =
       [];
     for (const room of rooms) {
       for (const d of roomDebts(room.id)) {
         if (d.from !== userId && d.to !== userId) continue;
         const outstanding = d.amount - settledSum(room.id, d.from, d.to);
         if (outstanding <= 0) continue;
+        const other = d.from === userId ? d.to : d.from;
+        const [low, high] = pairOf(userId, other);
+        const open = db
+          .prepare(
+            'SELECT id FROM settlements WHERE room_id = ? AND low_user = ? AND high_user = ? AND settled_ts IS NULL',
+          )
+          .get(room.id, low, high) as { id: number } | undefined;
         out.push({
           roomId: room.id,
           roomName: room.name,
           other: d.from === userId ? d.to : d.from,
           amount: outstanding,
           iOwe: d.from === userId,
+          ...(open ? { settlementId: open.id } : {}),
         });
       }
     }
@@ -121,6 +135,7 @@ export function registerSettleRoutes(
         roomName: d.roomName,
         amount: d.amount,
         direction: d.iOwe ? 'owe' : 'owed',
+        ...(d.settlementId ? { settlementId: d.settlementId } : {}),
       });
     }
     const people = [...byPerson.values()].sort((a, b) => a.net - b.net);
@@ -165,11 +180,29 @@ export function registerSettleRoutes(
 
     const totalOwed = people.reduce((s, p) => s + (p.net > 0 ? p.net : 0), 0);
     const totalOwe = people.reduce((s, p) => s + (p.net < 0 ? -p.net : 0), 0);
+    const settled = db
+      .prepare(
+        `SELECT s.id as settlementId, s.amount, s.debtor, s.settled_ts as settledTs,
+                CASE WHEN s.low_user = ? THEN s.high_user ELSE s.low_user END as otherUserId,
+                COALESCE(u.display_name, u.username) as otherName
+         FROM settlements s JOIN users u ON u.id = CASE WHEN s.low_user = ? THEN s.high_user ELSE s.low_user END
+         WHERE s.settled_ts IS NOT NULL AND (s.low_user = ? OR s.high_user = ?)
+         ORDER BY s.settled_ts DESC LIMIT 20`,
+      )
+      .all(req.userId, req.userId, req.userId, req.userId) as {
+      settlementId: number;
+      amount: number;
+      debtor: number;
+      settledTs: number;
+      otherUserId: number;
+      otherName: string;
+    }[];
 
     return {
       people,
       redirects,
       totals: { owedToMe: totalOwed, iOwe: totalOwe, net: totalOwed - totalOwe },
+      settled,
       house: houseDues(db, req.userId),
       ...(isPlatform(db, req.userId) ? { platformHouse: platformDues(db) } : {}),
     };
@@ -213,14 +246,17 @@ export function registerSettleRoutes(
     if (!row) return reply.code(404).send({ error: 'no such settlement' });
     if (req.userId !== row.low && req.userId !== row.high)
       return reply.code(403).send({ error: 'not your settlement' });
+    // Only the two parties to this settlement. A stray or historical third-party
+    // mark must never surface here, or the client would offer its note - and its
+    // userId - to a side that has no business seeing either.
     const marks = db
       .prepare(
         `SELECT m.user_id as userId, COALESCE(u.display_name, u.username) as name, m.note,
                 m.proof IS NOT NULL as hasProof, m.ts
          FROM settlement_marks m JOIN users u ON u.id = m.user_id
-         WHERE m.settlement_id = ? ORDER BY m.ts`,
+         WHERE m.settlement_id = ? AND m.user_id IN (?, ?) ORDER BY m.ts`,
       )
-      .all(id) as { userId: number; name: string; note: string | null; hasProof: number; ts: number }[];
+      .all(id, row.low, row.high) as { userId: number; name: string; note: string | null; hasProof: number; ts: number }[];
     return { marks: marks.map((m) => ({ ...m, hasProof: !!m.hasProof })) };
   });
 
@@ -232,9 +268,16 @@ export function registerSettleRoutes(
     if (!row) return reply.code(404).send({ error: 'no such settlement' });
     if (req.userId !== row.low && req.userId !== row.high)
       return reply.code(403).send({ error: 'not your settlement' });
+    // The requester being a party is not enough: the target of the URL must be a
+    // party too. Otherwise one side could read any third-party mark that happens
+    // to exist on this settlement. A proof is private data; do not rely on the
+    // database never containing a mark outside the pair.
+    const target = Number(userId);
+    if (target !== row.low && target !== row.high)
+      return reply.code(404).send({ error: 'no photo' });
     const mark = db
       .prepare('SELECT proof, proof_mime as mime FROM settlement_marks WHERE settlement_id = ? AND user_id = ?')
-      .get(Number(id), Number(userId)) as { proof: Buffer | null; mime: string | null } | undefined;
+      .get(Number(id), target) as { proof: Buffer | null; mime: string | null } | undefined;
     if (!mark?.proof) return reply.code(404).send({ error: 'no photo' });
     return reply
       .header('content-type', mark.mime ?? 'image/jpeg')

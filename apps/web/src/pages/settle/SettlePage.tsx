@@ -6,6 +6,9 @@ import { useCommissionSettings } from '../../shared/useCommissionSettings.ts';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
+import type { SettlementMark } from '../../shared/api.ts';
+import { ApiError } from '../../shared/api.ts';
+import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Button, Dialog, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
@@ -22,7 +25,13 @@ interface NetLine {
   otherName: string;
   otherAvatarVersion: number;
   net: number;
-  rooms: { roomId: string; roomName: string; amount: number; direction: 'owe' | 'owed' }[];
+  rooms: {
+    roomId: string;
+    roomName: string;
+    amount: number;
+    direction: 'owe' | 'owed';
+    settlementId?: number;
+  }[];
 }
 
 interface Redirect {
@@ -39,6 +48,14 @@ interface SettleView {
   totals: { owedToMe: number; iOwe: number; net: number };
   house: HouseDues;
   platformHouse?: PlatformDuesReport;
+  settled: {
+    settlementId: number;
+    amount: number;
+    debtor: number;
+    settledTs: number;
+    otherUserId: number;
+    otherName: string;
+  }[];
 }
 
 /** Downscale a photo of a transfer to something worth storing. */
@@ -68,6 +85,157 @@ function Money({ value, className }: { value: number; className?: string }) {
       {value > 0 ? '+' : ''}
       {fmt(value)}
     </span>
+  );
+}
+
+/** Fetch one side's transfer proof and turn it into a viewable URL.
+ *
+ *  Kept out of the component so the success path (Blob -> object URL) and the
+ *  403/404 copy can be tested without a DOM. The fetch is injectable for that. */
+export async function openSettlementProof(
+  settlementId: number,
+  userId: number,
+  fetchProof: (settlementId: number, userId: number) => Promise<Blob> = api.settlementProof,
+): Promise<{ url: string } | { error: string }> {
+  try {
+    const blob = await fetchProof(settlementId, userId);
+    return { url: URL.createObjectURL(blob) };
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return { error: t('No transfer proof uploaded.') };
+    if (e instanceof ApiError && e.status === 403)
+      return { error: t('This settlement is no longer available to you.') };
+    return { error: t('The transfer proof could not be opened.') };
+  }
+}
+
+export function TransferProofDialog({ url, onClose }: { url: string; onClose: () => void }) {
+  return (
+    <Dialog open size="lg" title={t('Transfer proof')} onClose={onClose}>
+      <img src={url} alt={t('Transfer proof')} className="mx-auto max-h-[70vh] max-w-full object-contain" />
+    </Dialog>
+  );
+}
+
+export function SettlementMarksContent({
+  myUserId,
+  otherUserId,
+  otherName,
+  marks,
+  onOpenProof,
+}: {
+  myUserId: number | null;
+  /** The known counterpart of THIS settlement. Match it exactly: a third-party
+   *  mark must never be shown as "the other side" or offered for opening. */
+  otherUserId: number;
+  otherName: string;
+  marks: SettlementMark[];
+  onOpenProof?: (userId: number) => void;
+}) {
+  const otherMark = marks.find((m) => m.userId === otherUserId);
+  const myMark = marks.find((m) => m.userId === myUserId);
+  const card = (label: string, mark: SettlementMark | undefined, missing: string) => (
+    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900/60">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      {mark ? (
+        <>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm">{mark.note || t('No remark was added.')}</p>
+          {mark.hasProof && onOpenProof ? (
+            <button
+              type="button"
+              className="mt-2 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-300"
+              onClick={() => onOpenProof(mark.userId)}
+            >
+              {t('Open transfer proof')}
+            </button>
+          ) : mark.hasProof ? null : <p className="mt-2 text-xs text-slate-400">{t('No transfer proof uploaded.')}</p>}
+        </>
+      ) : <p className="mt-1 text-sm text-slate-500">{missing}</p>}
+    </div>
+  );
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {card(t('Your note'), myMark, t('You have not filled this in yet.'))}
+      {card(`${t('Their note')} · ${otherName}`, otherMark, t('{name} has not filled this in yet.', { name: otherName }))}
+    </div>
+  );
+}
+
+function SettlementMarks({ line }: { line: NetLine }) {
+  return <div className="space-y-3">{line.rooms.map((room, index) => (
+    <SettlementRoomMarks key={room.settlementId ?? `${room.roomId}-${index}`} settlementId={room.settlementId} otherUserId={line.otherUserId} otherName={line.otherName} roomName={room.roomName} />
+  ))}</div>;
+}
+
+function SettlementRoomMarks({ settlementId, otherUserId, otherName, roomName }: { settlementId?: number; otherUserId: number; otherName: string; roomName: string }) {
+  const myUserId = useStore((s) => s.auth.userId);
+  const [marks, setMarks] = useState<SettlementMark[]>([]);
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!settlementId);
+  const [proofBusy, setProofBusy] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    setMarks([]);
+    setLoading(!!settlementId);
+    if (!settlementId) {
+      setMarks([]);
+      return;
+    }
+    api.settlementMarks(settlementId)
+      .then((response) => {
+        if (!alive) return;
+        setMarks(response.marks);
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          setError(t('This settlement is no longer available to you.'));
+        } else setError(t('Could not load settlement notes.'));
+      }).finally(() => { if (alive) setLoading(false); });
+    return () => {
+      alive = false;
+    };
+  }, [settlementId]);
+
+  useEffect(() => () => {
+    if (proofUrl) URL.revokeObjectURL(proofUrl);
+  }, [proofUrl]);
+
+  async function openProof(userId: number) {
+    if (!settlementId || proofBusy) return;
+    setProofBusy(true);
+    setProofError(null);
+    try {
+      const result = await openSettlementProof(settlementId, userId);
+      if ('url' in result) setProofUrl(result.url);
+      else setProofError(result.error);
+    } finally {
+      setProofBusy(false);
+    }
+  }
+  return (
+    <div className="mt-4 border-t border-slate-200/70 pt-3 dark:border-slate-700/70">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Settlement notes and proofs')}</div>
+      {roomName && <p className="mb-2 text-xs text-slate-500">{roomName}</p>}
+      {!settlementId && <p className="mb-2 text-sm text-slate-500">{t('Settlement has not been started yet.')}</p>}
+      {error ? <p role="alert" className="text-sm text-rose-600">{error}</p> : loading ? <Spinner label={t('Loading settlement notes…')} /> : settlementId ? (
+        <SettlementMarksContent
+          myUserId={myUserId}
+          otherUserId={otherUserId}
+          otherName={otherName}
+          marks={marks}
+          onOpenProof={(userId) => {
+            void openProof(userId);
+          }}
+        />
+      ) : null}
+      {proofBusy && <Spinner label={t('Opening transfer proof…')} />}
+      {proofError && <p role="alert" className="mt-2 text-sm text-rose-600">{proofError}</p>}
+      {proofUrl && <TransferProofDialog url={proofUrl} onClose={() => setProofUrl(null)} />}
+    </div>
   );
 }
 
@@ -308,9 +476,35 @@ export function SettlePage() {
                   ))}
                 </ul>
               )}
+              <SettlementMarks line={p} />
             </Panel>
           ))}
         </div>
+      )}
+      {view.settled.length > 0 && (
+        <>
+          <h2 className="mb-3 mt-8 font-display font-semibold">{t('Recently settled')}</h2>
+          <div className="space-y-2">
+            {view.settled.map((item) => (
+              <Panel key={item.settlementId} className="p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-medium">{item.otherName}</span>
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400">{t('Both sides confirmed')}</span>
+                  <span className="ml-auto text-sm tabular-nums">{fmt(item.amount)}</span>
+                </div>
+                <SettlementMarks
+                  line={{
+                    otherUserId: item.otherUserId,
+                    otherName: item.otherName,
+                    otherAvatarVersion: 0,
+                    net: item.debtor === useStore.getState().auth.userId ? -item.amount : item.amount,
+                    rooms: [{ roomId: '', roomName: '', amount: item.amount, direction: 'owed', settlementId: item.settlementId }],
+                  }}
+                />
+              </Panel>
+            ))}
+          </div>
+        </>
       )}
 
       {open && <SettleDialog line={open} onClose={() => setOpen(null)} onDone={load} />}

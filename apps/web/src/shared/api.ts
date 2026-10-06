@@ -185,6 +185,18 @@ export class ApiError extends Error {
   }
 }
 
+export interface SettlementMark {
+  userId: number;
+  name: string;
+  note: string | null;
+  hasProof: boolean;
+  ts: number;
+}
+
+export interface SettlementMarks {
+  marks: SettlementMark[];
+}
+
 async function req(path: string, body?: unknown, method?: string): Promise<any> {
   const token = useStore.getState().auth.token;
   const res = await send(path, method ?? (body === undefined ? 'GET' : 'POST'), body);
@@ -518,7 +530,16 @@ export const api = {
   // two debts with one payment (requested by notpritam)
   settleView: () => req('/api/me/settle'),
   pendingTasks: () => req('/api/me/pending'),
-  settlementMarks: (settlementId: number) => req(`/api/settlements/${settlementId}/marks`),
+  settlementMarks: (settlementId: number) =>
+    req(`/api/settlements/${settlementId}/marks`) as Promise<SettlementMarks>,
+  settlementProof: async (settlementId: number, userId: number): Promise<Blob> => {
+    const res = await send(`/api/settlements/${settlementId}/proof/${userId}`, 'GET');
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new ApiError(json.error ?? `request failed (${res.status})`, res.status);
+    }
+    return res.blob();
+  },
   houseDues: () => req('/api/me/house'),
   payHouse: (amount: number, note?: string, proof?: string) =>
     req('/api/house/pay', { amount, ...(note ? { note } : {}), ...(proof ? { proof } : {}) }),
