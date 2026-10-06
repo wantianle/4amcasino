@@ -20,7 +20,8 @@
     "check:tracked": "node scripts/check-tracked.mjs",
     "check:links": "node scripts/check-links.mjs",
     "check:clean-tree": "node scripts/check-clean-tree.mjs",
-    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree",
+    "check:build": "node scripts/check-build.mjs",
+    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build",
     "format": "prettier --write ."
   },
   "devDependencies": {

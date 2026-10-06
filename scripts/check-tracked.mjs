@@ -9,11 +9,16 @@
 //   2. 已被 git 跟踪、但工作区里已被删除的文件
 //      （可能是误删，也可能是 `git rm` 前漏了操作）。
 //
+// 仓库根按「脚本自身位置」定位（而非 process.cwd()），因此
+// `node <worktree>/scripts/check-tracked.mjs` 与 `cd <worktree> && node scripts/check-tracked.mjs`
+// 检查的是同一棵 worktree，结果一致。
+//
 // 幂等、只读、可重复运行。有问题时以非零码退出。
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { findRepoRoot } from './lib/repo-root.mjs';
 
 const SOURCE_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 
@@ -26,8 +31,7 @@ function gitLines(args) {
   return (r.stdout ?? '').split('\n').filter(Boolean);
 }
 
-const repoRoot = gitLines(['rev-parse', '--show-toplevel'])[0];
-if (!repoRoot) throw new Error('无法确定 git 仓库根目录');
+const repoRoot = findRepoRoot(import.meta.url);
 process.chdir(repoRoot);
 
 const tracked = new Set(gitLines(['ls-files']));

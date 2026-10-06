@@ -11,19 +11,17 @@
 // `@4am/*` 依赖的真实路径，只要 realpath 落在本 worktree 之外即报错，
 // 并打印逐条修复命令。
 //
+// 仓库根按「脚本自身位置」定位（而非 process.cwd()），因此
+// `node <worktree>/scripts/check-links.mjs` 与 `cd <worktree> && node scripts/check-links.mjs`
+// 检查的是同一棵 worktree，结果一致。
+//
 // 幂等、只读、可重复运行。发现问题时以非零码退出。
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { findRepoRoot } from './lib/repo-root.mjs';
 
-function git(args) {
-  const r = spawnSync('git', args, { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`git ${args.join(' ')} 失败`);
-  return (r.stdout ?? '').trim();
-}
-
-const repoRoot = fs.realpathSync(git(['rev-parse', '--show-toplevel']));
+const repoRoot = findRepoRoot(import.meta.url);
 
 /** 收集 workspace 包目录（apps/* 与 packages/* 中带 package.json 的目录） */
 const workspaceDirs = [];

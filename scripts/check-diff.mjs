@@ -3,13 +3,20 @@
 //
 //   node scripts/check-diff.mjs
 //
+// 仓库根按「脚本自身位置」定位（而非 process.cwd()），因此
+// `node <worktree>/scripts/check-diff.mjs` 与 `cd <worktree> && node scripts/check-diff.mjs`
+// 检查的是同一棵 worktree，结果一致。
+//
 // 幂等、只读、可重复运行。任何一处有问题即以非零码退出。
 
 import { spawnSync } from 'node:child_process';
+import { findRepoRoot } from './lib/repo-root.mjs';
+
+const repoRoot = findRepoRoot(import.meta.url);
 
 /** @param {string[]} args */
 function git(args) {
-  return spawnSync('git', args, { encoding: 'utf8' });
+  return spawnSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8' });
 }
 
 /** @type {Array<[string, string[]]>} */
