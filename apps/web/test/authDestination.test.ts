@@ -1,7 +1,6 @@
 import { expect, it } from 'vitest';
 import { authDestination } from '../src/shared/authDestination.ts';
-it('retains tournament invitations across sign-in without enabling external redirects', () => {
-  expect(authDestination('?next=%2Ftournaments%2Fabc_123')).toBe('/tournaments/abc_123');
+it('retains the agent-access destination across sign-in without enabling external redirects', () => {
   expect(authDestination('?next=%2Fagents')).toBe('/agents');
   for (const next of [
     'https://evil.example',
@@ -9,6 +8,7 @@ it('retains tournament invitations across sign-in without enabling external redi
     '/\\evil.example',
     '/tournaments/../admin',
     '/tournaments/a?next=evil',
+    '/agents/../admin',
     '/api/me',
   ]) {
     expect(authDestination(`?next=${encodeURIComponent(next)}`)).toBeNull();

@@ -1,4 +1,4 @@
-/** Browser evidence for the three pending-wiring entry points. */
+/** Browser evidence for the two pending-wiring entry points (player stats, account devices). */
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
@@ -22,19 +22,6 @@ stats.stats.af = { hits: 24, opportunities: 12, pct: 2, unit: 'ratio' };
 for (const p of ['ip', 'oop']) stats.byIpOop[p].stats = stats.stats;
 for (const p of ['preflop', 'flop', 'turn', 'river']) stats.byStreet[p] = { sample: 42, af: metric(24, 12), afq: metric(30, 42) };
 
-const tournament = {
-  id: 'evidence-tourney', name: 'Evidence League', description: 'Audit evidence fixture', status: 'completed', format: 'fixed', ownerId: 7,
-  approvalStatus: 'approved', entries: [{ userId: 7, agentName: 'Alex', kind: 'human', eliminatedHand: null, sitOutRemaining: 0 }], capacity: 8,
-  entryFee: 0, completedHands: 3, handLimit: 3, revision: 1, termsLocked: true, policy: { publicWatch: false, maxSitOutPerRequest: 1, sitOutBudget: 1 },
-  round: null, reviewNote: null, finance: { pool: 0, prizes: 0, house: 0, sponsorContributions: 0 }, payoutBps: [10000], sb: 10, bb: 20, startingStack: 2000,
-};
-const audit = { version: 1, seed: 'revealed-seed-for-evidence', playerIds: [7, 8], actions: [
-  { cursor: 1, userId: 7, handNumber: 1, actionSeq: 1, action: { type: 'call', amount: 20 }, timedOut: 0 },
-  { cursor: 2, userId: 8, handNumber: 1, actionSeq: 2, action: { type: 'raise', amount: 60 }, timedOut: 0 },
-], nextCursor: 0 };
-tournament.entries[0] = { ...tournament.entries[0], bbPer100: 20.2, net: 340, hands: 42, stack: 2000 };
-Object.assign(tournament.policy, { payoutBps: [10000], startsAt: null, format: 'league', entryFee: 0, joiningReward: 0, guaranteedPool: 0, houseBps: 0, prizeBps: 0 });
-
 const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 const errors = [];
 try {
@@ -47,7 +34,6 @@ try {
   page.on('pageerror', (e) => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
   let statsMode = 'full';
   let sessionsMode = 'list';
-  let auditLocked = false;
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -60,10 +46,7 @@ try {
     if (path === '/api/me/sessions') return route.fulfill(json({ sessions: sessionsMode === 'list' ? [{ id: 'current-device', createdAt: 1700000000000, current: true }, { id: 'laptop-session', createdAt: 1700000100000, current: false }] : [] }));
     if (path === '/api/me/sessions/revoke-others') { sessionsMode = 'empty'; return route.fulfill(json({ revoked: 1 })); }
     if (path === '/api/users/7/stats') return route.fulfill(json(statsMode === 'full' ? stats : statsMode === 'empty' ? { ...stats, sample: 0 } : { hidden: true, userId: 7 }));
-    if (path === '/api/tournaments/evidence-tourney/audit') return route.fulfill(auditLocked ? json({ error: 'complete audit available after league completes' }, 409) : json(audit));
-    if (path === '/api/tournaments/evidence-tourney') return route.fulfill(json(tournament));
     if (path === '/api/me') return route.fulfill(json({ userId: 7, username: 'alex', displayName: 'Alex', rooms: [], requests: [], friends: [], isPlatform: false }));
-    if (path === '/api/tournaments') return route.fulfill(json({ tournaments: [tournament] }));
     return route.fulfill(json({ ok: true }));
   });
 
@@ -82,20 +65,6 @@ try {
   assert((await page.locator('body').textContent()).includes('There is not enough public hand data yet.'), 'no-sample state');
   console.log('PLAYER empty: PASS — no-sample text rendered');
   await page.screenshot({ path: `${out}/player-empty-stats.png`, fullPage: true });
-
-  await page.goto(`${base}/tournaments/evidence-tourney`);
-  await page.getByRole('button', { name: 'View full audit' }).click();
-  await page.getByText(/"type":"call"/).waitFor();
-  const auditText = await page.locator('body').textContent();
-  assert(auditText.includes('revealed-seed-for-evidence') && auditText.includes('raise') && auditText.includes('Recorded'), 'audit actions render');
-  console.log('TOURNAMENT audit: PASS — revealed seed, call/raise actions, Recorded status');
-  await page.screenshot({ path: `${out}/tournament-full-audit.png`, fullPage: true });
-  auditLocked = true; tournament.status = 'running'; await page.reload();
-  await page.getByRole('button', { name: 'View full audit' }).click();
-  await page.getByText('The complete audit opens after the league completes.').waitFor();
-  assert((await page.locator('body').textContent()).includes('The complete audit opens after the league completes.'), '409 friendly message');
-  console.log('TOURNAMENT 409: PASS — The complete audit opens after the league completes.');
-  await page.screenshot({ path: `${out}/tournament-audit-409.png`, fullPage: true });
 
   await page.goto(`${base}/settings#account`);
   await page.getByText('Signed-in devices').waitFor();

@@ -1,15 +1,7 @@
 import { useStore } from './store.ts';
 import { tr } from './i18n/index.ts';
 import type { AdminOverview, CommissionScope, CommissionSettings } from '@4am/shared';
-import type {
-  TournamentState,
-  TournamentSummary,
-  PlayerAction,
-  TournamentEarning,
-  SponsorCampaign,
-  SponsorPlacement,
-  RoomGameplaySettings,
-} from '@4am/shared';
+import type { RoomGameplaySettings } from '@4am/shared';
 import { isAdminSite } from './adminSite.ts';
 import { statsQuery, type StatsQuery, type HandStats, type HiddenStats, type RoomHud } from '../features/stats/types.ts';
 
@@ -225,80 +217,9 @@ export const api = {
   myStats: (query: StatsQuery = {}) => req(`/api/me/stats?${statsQuery(query)}`) as Promise<HandStats>,
   userStats: (id: number, query: StatsQuery = {}) => req(`/api/users/${id}/stats?${statsQuery(query)}`) as Promise<HandStats | HiddenStats>,
   roomHud: (id: string) => req(`/api/rooms/${encodeURIComponent(id)}/hud`) as Promise<RoomHud>,
-  tournaments: () => req('/api/tournaments') as Promise<{ tournaments: TournamentSummary[] }>,
-  tournament: (id: string) =>
-    req(`/api/tournaments/${encodeURIComponent(id)}`) as Promise<TournamentState>,
-  tournamentAudit: (id: string, after = 0) =>
-    req(`/api/tournaments/${encodeURIComponent(id)}/audit?after=${after}`) as Promise<{
-      version: number; seed: string | null; playerIds: number[];
-      actions: { cursor: number; userId: number; handNumber: number; actionSeq: number; action: unknown; timedOut: number }[];
-      nextCursor: number;
-    }>,
-  createTournament: (body: Record<string, unknown>) =>
-    req('/api/tournaments', body) as Promise<{ id: string }>,
-  enrollTournament: (
-    id: string,
-    agentName: string,
-    kind: 'human' | 'agent',
-    acceptedRevision?: number,
-  ) => req(`/api/tournaments/${id}/enroll`, { agentName, kind, acceptedRevision }),
-  tournamentTerms: (id: string, body: Record<string, unknown>) =>
-    req(`/api/tournaments/${id}/terms`, body, 'PUT'),
-  tournamentMedia: (id: string, body: Record<string, unknown>) =>
-    req(`/api/tournaments/${id}/media`, body, 'PUT'),
-  reviewTournament: (id: string, revision: number, approve: boolean, note: string) =>
-    req(`/api/admin/tournaments/${id}/review`, { revision, approve, note }),
-  adminTournaments: () =>
-    req('/api/admin/tournaments') as Promise<{
-      tournaments: TournamentSummary[];
-      earnings: TournamentEarning[];
-      totals: { house: number; pool: number; prizes: number; recordedPaid: number };
-    }>,
-  tournamentEarnings: () =>
-    req('/api/me/tournament-earnings') as Promise<{ earnings: TournamentEarning[] }>,
-  recordTournamentSettlement: (
-    id: string,
-    body: { userId: number; amount: number; requestId: string; note: string },
-  ) => req(`/api/admin/tournaments/${id}/settlements`, body),
-  adminSponsors: () =>
-    req('/api/admin/sponsors') as Promise<{
-      campaigns: SponsorCampaign[];
-      totals: { booked: number; received: number; prizeContributions: number };
-    }>,
-  saveSponsor: (body: Record<string, unknown>, id?: string) =>
-    req(
-      `/api/admin/sponsors${id ? `/${id}` : ''}`,
-      body,
-      id ? 'PUT' : 'POST',
-    ) as Promise<SponsorCampaign>,
-  sponsorReceipt: (id: string, body: Record<string, unknown>) =>
-    req(`/api/admin/sponsors/${id}/receipts`, body),
-  sponsorPlacements: (placement: SponsorPlacement['placement'], tournamentId?: string) =>
-    req(
-      `/api/sponsors?${new URLSearchParams({ placement, ...(tournamentId ? { tournamentId } : {}) })}`,
-    ) as Promise<{ placements: SponsorPlacement[] }>,
-  withdrawTournament: (id: string) => req(`/api/tournaments/${id}/withdraw`, {}),
-  sitOutTournament: (id: string, hands: number) =>
-    req(`/api/tournaments/${id}/sit-out`, { hands }) as Promise<{
-      ok: boolean;
-      throughHand: number;
-    }>,
-  controlTournament: (id: string, action: string) =>
-    req(`/api/tournaments/${id}/control`, { action }),
-  tournamentAction: (
-    id: string,
-    handNumber: number,
-    actionSeq: number,
-    requestId: string,
-    action: PlayerAction,
-  ) => req(`/api/tournaments/${id}/actions`, { handNumber, actionSeq, requestId, action }),
-  tournamentAward: (id: string, userId: number, note: string) =>
-    req(`/api/tournaments/${id}/awards`, { userId, note }, 'PUT'),
-  tournamentResults: (id: string, after = 0) =>
-    req(`/api/tournaments/${id}/results?after=${after}`),
   agentScopes: () =>
     req('/api/me/agent-scopes') as Promise<{
-      scopes: { id: string; name: string; kind: 'room' | 'tournament' }[];
+      scopes: { id: string; name: string; kind: 'room' }[];
     }>,
   agentGrants: () =>
     req('/api/me/agent-grants') as Promise<{
@@ -314,7 +235,7 @@ export const api = {
     }>,
   createAgentGrant: (body: {
     label: string;
-    scopeKind: 'room' | 'tournament';
+    scopeKind: 'room';
     scopeId: string;
     canPlay: boolean;
     days: number;

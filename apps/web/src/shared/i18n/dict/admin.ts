@@ -1,8 +1,8 @@
-// Admin dictionary (pages/admin: AdminPage, AdminSections, CommissionControl,
-// TournamentAdmin). Keys are the exact English source strings (B+ scheme,
+// Admin dictionary (pages/admin: AdminPage, AdminSections, CommissionControl).
+// Keys are the exact English source strings (B+ scheme,
 // docs/zh-i18n.md §6.2). Glossary: the house → 平台, house cut / commission →
-// 台费, host → 房主, tournament formats locked per §2.2 (淘汰制 / 击倒赛 /
-// 固定手数循环赛). Usernames, room names, ids, URLs, hashes and user-written
+// 台费, host → 房主.
+// Usernames, room names, ids, URLs, hashes and user-written
 // notes pass through as vars, untranslated. Server error prose is already
 // handled by tr() at the api boundary; only local fallbacks are keys here.
 // Reused, NOT redefined (owner modules win globally): 'Cancel' (ledger),
@@ -10,17 +10,13 @@
 // 'Re-keying…'/'use at least 6 characters'* (account — *account owns the
 // value), 'Saving…'/'Sign out'/'New password' (settings/login — login owns
 // the value), 'Note (optional)' (bank), 'Merge accounts' (settings),
-// 'Tournament'/'Tournaments' (nav), 'Outstanding'/'Payments recorded'/
-// 'Recording…' (settle/house), 'Refreshing…' (house), 'Organizer starts
-// when ready' (tournaments).
+// 'Outstanding'/'Payments recorded'/
+// 'Recording…' (settle/house), 'Refreshing…' (house).
 // NOTE: bare 'Record' is '录制' in dict/settings.ts (keyboard shortcuts) and
 // wins globally. The Rate/Earnings column meaning "记录" uses the trailing-
 // space key 'Record ' — rendered identically in both locales, never collides.
 const admin: Record<string, string> = {
   // ── AdminPage shell: sidebar, topbar, gates ────────────────────────────────
-  'Tournaments & earnings': '赛事与收益',
-  'Approve tournaments, manage sponsors, and review tournament earnings and recorded settlements.':
-    '审批办赛申请、管理赞助商，查看赛事收益与已记录的结算。',
   Overview: '总览',
   'The platform at a glance, with the work that needs your attention.': '一眼看清平台，以及需要你处理的事。',
   'Revenue & dues': '收入与欠款',
@@ -275,168 +271,6 @@ const admin: Record<string, string> = {
   '{n} existing rooms updated': '已更新 {n} 个现有房间',
   'Load settings to view the change history.': '加载设置后可查看变更历史。',
 
-  // ── TournamentAdmin: shell + approvals tab ─────────────────────────────────
-  Approvals: '待审',
-  Earnings: '收益',
-  Sponsors: '赞助商',
-  'Tournament administration sections': '赛事管理分区',
-  'Approve proposals, inspect chip accounting and record manual settlements. All amounts are competition chips.':
-    '审批办赛申请、核对点数账目、登记人工结算。金额均为比赛筹码。',
-  'Use Refresh to retry.': '点「刷新」重试。',
-  'Loading tournament operations…': '正在加载赛事运营数据…',
-  'Proposals to review': '待审提案',
-  'Approval publishes this revision and opens enrollment. The first enrollment permanently locks the terms.':
-    '批准即发布此版本并开放报名。第一位报名者会永久锁定条款。',
-  'No proposals awaiting review.': '没有待审提案。',
-  'Member proposals appear here before they become public.': '会员的提案在公开之前会出现在这里。',
-  'Organizer #{n} · revision {r}': '主办方 #{n} · 第 {r} 版',
-  'Open tournament': '打开赛事页',
-  'Previous review:': '上次审核意见：',
-  'Add a review note explaining what needs to change.': '请填写审核备注，说明要改哪里。',
-  '{name} published.': '{name} 已发布。',
-  '{name} returned with a review note.': '{name} 已被打回，并附了审核备注。',
-  'Review note': '审核备注',
-  'Required when requesting changes': '要求修改时必填',
-  'Saving review…': '正在保存审核…',
-  'Approve revision {n}': '批准第 {n} 版',
-  'Request changes': '要求修改',
-
-  // ── TournamentAdmin: tournaments tab ───────────────────────────────────────
-  'All tournaments': '全部赛事',
-  'Open an event to edit unlocked terms or control play.': '点进赛事即可编辑未锁定的条款或控制对局。',
-  'Search tournaments': '搜索赛事',
-  'Name, organizer ID or status': '名称、主办方 ID 或状态',
-  Format: '赛制',
-  Review: '审核',
-  Entrants: '报名',
-  Entry: '报名费',
-  Schedule: '赛程',
-  Terms: '条款',
-  'Organizer #{n}': '主办方 #{n}',
-  Freezeout: '淘汰制',
-  Knockout: '击倒赛',
-  'Fixed-hand league': '固定手数循环赛',
-  pending: '未开始',
-  registration: '报名中',
-  running: '进行中',
-  paused: '已暂停',
-  completed: '已结束',
-  cancelled: '已取消',
-  Free: '免费',
-  '{n} chips': '{n} 筹码',
-  'Revision {n}': '第 {n} 版',
-  Locked: '已锁定',
-  Editable: '可编辑',
-  'No tournaments match this search.': '没有匹配的赛事。',
-  'No tournaments have been created.': '还没有创建任何赛事。',
-
-  // ── TournamentAdmin: earnings tab ──────────────────────────────────────────
-  'Tournament earnings': '赛事收益',
-  'House accrued': '平台累计抽成',
-  'Available pools': '可用奖池',
-  'Prizes allocated': '已分配奖金',
-  'Recorded paid': '已记录付款',
-  'Positive outstanding is due to the entrant. Negative is due from the entrant. Play net is separate from settlement.':
-    '正数应付给参赛者，负数应向参赛者收取。实战盈亏与结算分开。',
-  'Search earnings': '搜索收益',
-  'Player, user ID or tournament': '玩家、用户 ID 或赛事',
-  'All amounts in competition chips': '金额均为比赛筹码',
-  'Entrant / tournament': '参赛者 / 赛事',
-  Reward: '参赛奖',
-  Prize: '奖金',
-  'Play net': '实战盈亏',
-  'Settlement net': '结算净额',
-  'Record ': '记录',
-  'No earnings match this search.': '没有匹配的收益记录。',
-  'Earnings appear when entrants enroll.': '参赛者报名后，收益会出现在这里。',
-  'Record settlement': '登记结算',
-  'Record settlement · {name}': '登记结算 · {name}',
-  'User #{n}': '用户 #{n}',
-  '{name}. Record positive chips paid to this entrant, or negative chips received from them.':
-    '{name}。正数记为付给参赛者的筹码，负数记为从其处收取的筹码。',
-  'Enter a non-zero whole number of chips.': '请输入非零整数筹码。',
-  'Tournament settlement recorded. No automated payment was sent.': '已登记赛事结算。没有发出任何自动付款。',
-  'The result is unconfirmed. Retry the same record below; its request ID is retained.':
-    '结果未确认。请在下方重试同一条记录，请求 ID 已保留。',
-  'Signed amount · chips': '带符号金额 · 筹码',
-  'Settlement note': '结算备注',
-  'Reference for this manual settlement': '这次人工结算的凭证号',
-  'A previous record is awaiting confirmation. Retry with its retained request ID.':
-    '上一条记录待确认。用保留的请求 ID 重试。',
-  'Retry same settlement record': '重试同一条结算记录',
-  'Record manual settlement': '登记人工结算',
-
-  // ── TournamentAdmin: sponsors tab ──────────────────────────────────────────
-  'Sponsors & placements': '赞助商与投放',
-  'Publish plain-text sponsor creative and track booked chips separately from recorded receipts.':
-    '发布纯文本赞助素材，分开登记预订筹码与实收记录。',
-  'Create campaign': '新建投放',
-  Booked: '预订',
-  'Received · recorded': '实收 · 已记',
-  'Prize contributions': '奖金注入',
-  Campaign: '投放',
-  Placement: '位置',
-  Window: '投放期',
-  Received: '实收',
-  'To prizes': '转入奖金',
-  directory: '目录',
-  tournament: '赛事页',
-  watch: '观战页',
-  Inactive: '已停用',
-  '{s} · revision {n}': '{s} · 第 {n} 版',
-  'to {date}': '至 {date}',
-  Edit: '编辑',
-  'Record receipt': '登记实收',
-  'Record receipt · {name}': '登记实收 · {name}',
-  Activate: '启用',
-  Deactivate: '停用',
-  '{name} activated.': '{name} 已启用。',
-  '{name} deactivated.': '{name} 已停用。',
-  'No sponsor campaigns yet. Create a campaign with a destination, placement and publication window.':
-    '还没有赞助投放。先创建投放，设置跳转地址、位置和发布窗口。',
-  'Sponsor campaign saved.': '赞助投放已保存。',
-  'An immutable platform record of received competition chips. A contribution transfers part of this receipt to the selected tournament pool.':
-    '这是一条不可篡改的平台实收记录（比赛筹码）。注入奖金会把这笔实收的一部分转入所选赛事奖池。',
-  'Receipt amount must be positive whole chips. Prize contribution must be between zero and the receipt amount.':
-    '实收金额必须是正整数筹码。奖金注入须在 0 与实收金额之间。',
-  'Choose a tournament for this prize contribution.': '请为这笔奖金注入选择赛事。',
-  'Sponsor receipt and prize contribution recorded.': '已登记赞助实收与奖金注入。',
-  'The result is unconfirmed. Retry this receipt with the same retained request ID.':
-    '结果未确认。请用保留的请求 ID 重试这笔实收。',
-  'Received amount · chips': '实收金额 · 筹码',
-  'Prize contribution · chips': '奖金注入 · 筹码',
-  'Tournament receiving contribution': '接收注入的赛事',
-  'No tournament contribution': '不注入赛事',
-  'Receipt reference or note': '实收凭证或备注',
-  'The pending receipt is preserved until its result is confirmed. Retrying reuses the same request ID.':
-    '未确认的实收记录会保留，重试时使用同一个请求 ID。',
-  'Retry same receipt record': '重试同一条实收记录',
-  'Record received chips': '登记实收筹码',
-
-  // ── TournamentAdmin: sponsor form ──────────────────────────────────────────
-  'Edit {name}': '编辑 {name}',
-  'New sponsor campaign': '新建赞助投放',
-  'Public creative': '公开素材',
-  'Private accounting': '内部账务',
-  'Sponsor name': '赞助商名称',
-  Headline: '标题',
-  Description: '描述',
-  'Destination URL · HTTPS': '跳转地址 · HTTPS',
-  'Tournament scope': '赛事范围',
-  'Publish from · local time': '发布开始 · 本地时间',
-  'Publish until · local time': '发布结束 · 本地时间',
-  'Active during the publication window': '发布窗口内启用',
-  'Booked amount · chips': '预订金额 · 筹码',
-  'Internal note': '内部备注',
-  'Tournament directory': '赛事目录',
-  'Tournament page': '赛事页',
-  'Public watch page': '公开观战页',
-  'Booked amounts and internal notes stay in administration. Received amounts and prize contributions are added through immutable receipt records.':
-    '预订金额和内部备注只在管理端可见。实收金额与奖金注入通过不可篡改的实收记录添加。',
-  'Use an HTTPS destination without embedded credentials.': '请使用不含账号信息的 HTTPS 跳转地址。',
-  'The end of the publication window must be after its start.': '发布结束时间必须晚于开始时间。',
-  'Save campaign': '保存投放',
-  'Cancel editing': '取消编辑',
 };
 
 export default admin;

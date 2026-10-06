@@ -16,7 +16,6 @@ import {
   RiMenuLine,
   RiArrowRightSLine,
   RiRobot2Line,
-  RiFlag2Line,
   RiHistoryLine,
 } from '@remixicon/react';
 import { api } from '../../shared/api.ts';
@@ -116,7 +115,6 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   const primary: Destination[] = [
     { to: '/lobby', label: 'Lobby', icon: RiHome5Line },
     { to: '/leaderboard', label: 'Leaderboard', icon: RiTrophyLine },
-    { to: '/tournaments', label: 'Tournaments', icon: RiFlag2Line },
     { to: '/agents', label: 'Agent access', icon: RiRobot2Line },
     {
       to: '/settle',
@@ -140,11 +138,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   const all = [...primary, ...tableLinks, ...secondary];
   const pageName =
     all.find((item) => item.to === loc.pathname)?.label ??
-    (loc.pathname.startsWith('/tournaments/')
-      ? 'Tournament'
-      : loc.pathname.startsWith('/history/')
-        ? 'History'
-        : 'Table');
+    (loc.pathname.startsWith('/history/') ? 'History' : 'Table');
   const waiting = (pending?.invites ?? 0) + (pending?.friendRequests ?? 0);
   // Match either the English source or its translation, so both languages
   // find the same destination in the ⌘K dialog.
@@ -174,10 +168,9 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   }
   const row = (item: Destination, rail = false) => {
     // Section links stay active on their sub-pages (e.g. /history/:roomId keeps
-    // History highlighted), matching how /tournaments/:id behaves.
+    // History highlighted).
     const active =
       loc.pathname === item.to ||
-      (item.to === '/tournaments' && loc.pathname.startsWith('/tournaments/')) ||
       (item.to === '/history' && loc.pathname.startsWith('/history/'));
     const Icon = item.icon;
     const label = t(item.label);

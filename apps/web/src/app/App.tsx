@@ -65,14 +65,6 @@ const AdminPage = lazy(() =>
 const AppShell = lazy(() =>
   import('../widgets/nav/AppShell.tsx').then((module) => ({ default: module.AppShell })),
 );
-const TournamentsPage = lazy(() =>
-  import('../pages/tournaments/TournamentsPage.tsx').then((m) => ({ default: m.TournamentsPage })),
-);
-const TournamentWatchPage = lazy(() =>
-  import('../pages/tournaments/TournamentWatchPage.tsx').then((m) => ({
-    default: m.TournamentWatchPage,
-  })),
-);
 const AgentsPage = lazy(() =>
   import('../pages/agents/AgentsPage.tsx').then((m) => ({ default: m.AgentsPage })),
 );
@@ -97,11 +89,6 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
   return children;
 }
-function TournamentShell({ children }: { children: ReactNode }) {
-  const token = useStore((s) => s.auth.token);
-  return token ? <AppShell>{children}</AppShell> : children;
-}
-
 /** The mirror of RequireAuth: someone already signed in has no business looking
  *  at a login form. If a share link sent them here, hand them to /j/CODE so they
  *  land at the table instead of the lobby - that route already knows how to join
@@ -273,23 +260,6 @@ export function App() {
                   </RequireAuth>
                 }
               />
-              <Route
-                path="/tournaments"
-                element={
-                  <TournamentShell>
-                    <TournamentsPage />
-                  </TournamentShell>
-                }
-              />
-              <Route
-                path="/tournaments/:id"
-                element={
-                  <TournamentShell>
-                    <TournamentsPage />
-                  </TournamentShell>
-                }
-              />
-              <Route path="/tournaments/:id/watch" element={<TournamentWatchPage />} />
               <Route
                 path="/agents"
                 element={

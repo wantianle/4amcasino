@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { t, tr } from '../../shared/i18n/index.ts';
 import { fmtDate, fmtTime } from '../../shared/lib/datetime.ts';
-import '../tournaments/arena.css';
-type Scope = { id: string; name: string; kind: 'room' | 'tournament' };
+import './arena.css';
+type Scope = { id: string; name: string; kind: 'room' };
 type Grant = Awaited<ReturnType<typeof api.agentGrants>>['grants'][number];
 type Created = { id: string; token: string; expiresAt: number; scope: Scope; canPlay: boolean };
 
@@ -34,13 +33,16 @@ export function AgentsPage() {
   const scope = scopes?.find((s) => `${s.kind}:${s.id}` === selected);
   const load = async () => {
     const [s, g] = await Promise.all([api.agentScopes(), api.agentGrants()]);
-    setScopes(s.scopes);
+    // Agent access is room-only now; drop any non-room scopes the server may
+    // still return (legacy data) so they can never be granted.
+    const roomScopes = s.scopes.filter((x) => (x as { kind: string }).kind === 'room');
+    setScopes(roomScopes);
     setGrants(g.grants);
     setSelected((previous) =>
-      s.scopes.some((s) => `${s.kind}:${s.id}` === previous)
+      roomScopes.some((s) => `${s.kind}:${s.id}` === previous)
         ? previous
-        : s.scopes[0]
-          ? `${s.scopes[0].kind}:${s.scopes[0].id}`
+        : roomScopes[0]
+          ? `${roomScopes[0].kind}:${roomScopes[0].id}`
           : '',
     );
   };
@@ -67,7 +69,7 @@ export function AgentsPage() {
             env: {
               FOURAM_URL: location.origin,
               FOURAM_TOKEN: redacted ? '<private token included in download>' : created.token,
-              ...(created.scope.kind === 'room' && created.canPlay
+              ...(created.canPlay
                 ? {
                     FOURAM_SIGNING_KEY: redacted
                       ? '<your local signing key included in download>'
@@ -89,13 +91,10 @@ export function AgentsPage() {
           <h1>{t('Agent access')}</h1>
           <p className="arena-muted">
             {t(
-              'Connect your own agent to a single table or tournament. You choose what it can do and when access ends.',
+              'Connect your own agent to a single table. You choose what it can do and when access ends.',
             )}
           </p>
         </div>
-        <Link className="arena-link" to="/tournaments">
-          {t('Browse tournaments')}
-        </Link>
       </header>
       {error && (
         <div className="arena-error" role="alert">
@@ -123,13 +122,8 @@ export function AgentsPage() {
               <div className="arena-empty">
                 <h3>{t('Choose a table first.')}</h3>
                 <p className="arena-muted">
-                  {t(
-                    'Join a poker room or enroll in a tournament before granting an agent access.',
-                  )}
+                  {t('Join a poker room before granting an agent access.')}
                 </p>
-                <Link className="arena-link inline-block mt-4" to="/tournaments">
-                  {t('Find a tournament')}
-                </Link>
               </div>
             ) : (
               <form
@@ -181,7 +175,7 @@ export function AgentsPage() {
                   </select>
                 </label>
                 <label className="arena-field wide">
-                  {t('Room or tournament')}
+                  {t('Room')}
                   <select
                     className="arena-input"
                     value={selected}
@@ -192,7 +186,7 @@ export function AgentsPage() {
                   >
                     {scopes.map((s) => (
                       <option key={`${s.kind}:${s.id}`} value={`${s.kind}:${s.id}`}>
-                        {s.name} · {t(s.kind === 'room' ? 'Room' : 'Tournament')}
+                        {s.name}
                       </option>
                     ))}
                   </select>
@@ -207,14 +201,14 @@ export function AgentsPage() {
                     <strong>{t('Allow this agent to play as me')}</strong>
                     {canPlay
                       ? t(
-                          'It can make poker decisions for your seat. Banking, account settings and tournament administration are excluded.',
+                          'It can make poker decisions for your seat. Banking and account settings are excluded.',
                         )
                       : t(
                           'Read-only: table details and public events. The agent cannot play.',
                         )}
                   </span>
                 </label>
-                {scope?.kind === 'room' && canPlay && (
+                {canPlay && (
                   <label className="arena-check" style={{ gridColumn: '1/-1' }}>
                     <input
                       type="checkbox"
@@ -231,14 +225,14 @@ export function AgentsPage() {
                     </span>
                   </label>
                 )}
-                {scope?.kind === 'room' && canPlay && !auth.identity && (
+                {canPlay && !auth.identity && (
                   <p className="arena-error">{t('Sign in again to load your poker signing key.')}</p>
                 )}
                 <Button
                   disabled={
                     busy ||
                     !scope ||
-                    (scope.kind === 'room' && canPlay && (!shareKey || !auth.identity))
+                    (canPlay && (!shareKey || !auth.identity))
                   }
                 >
                   {busy ? t('Creating…') : t('Create access token')}
@@ -348,17 +342,14 @@ export function AgentsPage() {
             <h2>{t('Listen, then decide')}</h2>
             <ol className="arena-help-list arena-muted">
               <li>
-                {t('Use {a} or {b} to read your seat.', {
-                  a: 'tournament_state',
-                  b: 'casino_state',
-                })}
+                {t('Use {tool} to read your seat.', { tool: 'casino_state' })}
               </li>
               <li>{t('Use {tool} to wait for changes.', { tool: 'subscribe_events' })}</li>
               <li>{t('Read fresh state, then send a legal action.')}</li>
             </ol>
             <p className="arena-muted mt-4">
               {t(
-                'Tournament actions include a hand number, action sequence and request ID, so retries cannot play a later turn.',
+                'Actions include a hand number, action sequence and request ID, so retries cannot play a later turn.',
               )}
             </p>
           </section>
@@ -366,7 +357,7 @@ export function AgentsPage() {
             <h2>{t('Webhook delivery')}</h2>
             <p className="arena-muted">
               {t(
-                'Run the local webhook relay from the repository to forward your subscribed room or tournament events to your agent. It signs deliveries and saves a cursor for retries.',
+                'Run the local webhook relay from the repository to forward your subscribed room events to your agent. It signs deliveries and saves a cursor for retries.',
               )}
             </p>
             <pre className="arena-code mt-3">npm run webhook --workspace @4am/mcp</pre>
@@ -381,14 +372,14 @@ export function AgentsPage() {
             <h2>{t('Benchmark locally')}</h2>
             <p className="arena-muted">
               {t(
-                'Test a policy before entering. The included baselines use the same Hold\u2019em rules as the arena.',
+                'Test a policy before entering. The included baselines use the same Hold\u2019em rules as live tables.',
               )}
             </p>
             <pre className="arena-code mt-3">
               npm run benchmark --workspace @4am/mcp -- --hands 10000 --out results.json
             </pre>
             <p className="arena-muted mt-3">
-              {t('Local simulations do not count toward live tournament prizes.')}
+              {t('Local simulations do not affect live tables.')}
             </p>
           </section>
         </aside>

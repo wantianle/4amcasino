@@ -195,171 +195,20 @@ const server: Record<string, string> = {
     '先吊销一个现有的代理令牌（最多同时 20 个有效令牌）。',
   'Room not found.': '找不到房间。',
   'Join this room first.': '先进这个房间。',
-  'Join this room or enroll in this tournament first.': '先进这个房间，或先报名这个赛事。',
-  'Join this room or tournament to subscribe.': '先进这个房间或赛事才能订阅。',
   'Invalid event subscription.': '事件订阅无效。',
   'Subscription access ended.': '订阅已到期。',
   'At most three simultaneous subscriptions per account.': '每个账号最多同时订阅 3 个。',
   'Invalid audit cursor.': '审计游标无效。',
   'Invalid result cursor.': '结果游标无效。',
-  'The complete audit opens after the league completes.': '完整审计记录要等联赛结束才开放。',
-
-  // ── HTTP: tournaments ───────────────────────────────────────────────────
-  'Enter a participant name and choose human or agent.': '填一个参赛者名字，选真人还是代理。',
-  'That participant name is already taken.': '这个参赛者名字已被占用。',
-  'At least two entrants are required.': '至少需要两名参赛者。',
-  'This tournament is full.': '这个赛事满员了。',
-  'Entrant not found.': '找不到这名参赛者。',
-  'Tournament not found.': '找不到这个赛事。',
-  'Use a player account to enter tournaments.': '请用玩家账号报名赛事。',
-  'Enrollment opens after platform approval.': '平台批准后才开放报名。',
-  'Read and accept the current tournament rules before enrolling.':
-    '报名前先读一遍当前赛事条款并接受。',
-  'Enrollment is locked after a tournament starts.': '赛事开始后，报名就锁定了。',
-  'Enrollment is locked after start.': '开赛后报名已锁定。',
-  'Entry fees are locked after start.': '开赛后报名费已锁定。',
-  'An active enrollment already has a different entry fee.': '已有的有效报名用了不同的报名费。',
-  'You are already out of this tournament.': '你已经退出这个赛事了。',
-  'Only an entrant can sit out.': '只有参赛者能申请休息。',
-  'Choose how many hands to sit out.': '选好要休息几手。',
-  'A single sit-out cannot exceed {n} hands.': '单次休息不能超过 {n} 手。',
-  'Only {n} sit-out hands remain.': '只剩 {n} 手休息额度。',
-  'Your sit-out budget is spent. You must play on.': '你的休息额度用完了，得继续打。',
-  'A single sit-out cannot exceed the whole sit-out budget.':
-    '单次休息不能超过休息总额度。',
-  'Tournament is not running.': '赛事不在进行中。',
-  'Only an approved, open tournament can start.': '只有已批准、开放中的赛事才能开始。',
-  'An action requires handNumber, actionSeq, requestId and a valid decision.':
-    '操作需要 handNumber、actionSeq、requestId 和有效的决策。',
-  'The table has changed. Read state before acting again.': '牌局状态变了，先刷新再操作。',
-  'This request ID was used for a different action.': '这个请求 ID 用在别的操作上了。',
-  'Invalid action.': '这个操作无效。',
-  'Invalid hand number.': '手牌编号无效。',
-  'Only completed hands can be replayed.': '只有打完的手牌才能回放。',
-  'Watching is limited to tournament participants.': '观战仅限赛事参赛者。',
-  'Invalid tournament control.': '赛事指令无效。',
-  'Only the organizer can control this tournament.': '只有主办方能控制这个赛事。',
-  'That control is not available now. Pause before cancelling a running league.':
-    '这个指令现在不可用，联赛要先暂停才能取消。',
-  'Finish or cancel an existing tournament first (five active tournaments maximum).':
-    '先打完或取消现有赛事（最多同时进行 5 个）。',
-  'Check the tournament settings (2–9 entrants, 10–10,000 hands).':
-    '检查一下赛事设置（2–9 名参赛者，10–10,000 手牌）。',
-  'Check the tournament settings.': '检查一下赛事设置。',
-  'Big blind must cover the small blind; stack must cover at least two big blinds.':
-    '大盲要能覆盖小盲，筹码至少要能覆盖两个大盲。',
-  'Starting stack must cover two big blinds.': '起始筹码要能覆盖两个大盲。',
-  'The tournament changed. Reload before saving.': '赛事有变动，刷新后再保存。',
-  'Terms are locked after the first enrollment. Create a new tournament for different rules.':
-    '条款在第一个报名后就锁定了。想改规则请新建赛事。',
-  'Use a YouTube/Twitch stream and a Google Meet HTTPS link.':
-    '直播用 YouTube/Twitch 链接，会议用 Google Meet 的 HTTPS 链接。',
-  'Provide the current revision and a review note.': '提供当前修订号并填写审核备注。',
-  'This proposal has changed, was cancelled, or was already reviewed. Reload it.':
-    '这个提案已变动、已取消或已审过，刷新再看。',
-  'Choose an entrant and provide an award note.': '选一名参赛者，并写一条奖励备注。',
-  'Record awards after the tournament completes.': '奖励要在赛事结束后再记。',
-
-  // ── HTTP: tournament policy & economy validation ────────────────────────
-  'Invalid tournament policy.': '赛事规则无效。',
-  'Tournament cuts may only go to the house and prize pool.': '赛事抽成只能给平台和奖池。',
-  'Check tournament fees, payout percentages, schedule and broadcast links.':
-    '检查赛事费用、派奖比例、日程和直播链接。',
-  'Prize percentages must total 100%.': '奖金比例合计必须是 100%。',
-  'The organizer guarantee must cover the joining reward for every seat.':
-    '主办方保底必须覆盖每个座位的加入奖励。',
-  'A freezeout entry fee must cover two big blinds.': '淘汰制的报名费要能覆盖两个大盲。',
-  'A freezeout entry fee is the starting stack and cannot exceed {n} chips.':
-    '淘汰制的报名费就是起始筹码，不能超过 {n} 筹码。',
-  'Payout basis points must total 10000.': '派奖基点合计必须是 10000。',
-  'Payout percentages must fund an occupied place.': '派奖比例必须对应有人占据的名次。',
-  'Invalid prize rank.': '奖次无效。',
-  'Prize rankings repeat a player.': '奖励排名里有玩家重复。',
-  'Prize rankings must include every entrant exactly once.':
-    '奖励排名必须恰好包含每名参赛者一次。',
-  'Tied ranks must reflect their occupied payout places.': '并列名次要对应它们占据的派奖位置。',
-  'Prizes were finalized with different rankings or payouts.':
-    '奖金已按不同的排名或派奖定稿。',
-  'A funded pool requires entrants before prizes can complete.':
-    '已注资的奖池要先有参赛者，才能完成派奖。',
-  'A started tournament must pay prizes instead of reversing its entries.':
-    '已开赛的赛事只能派奖，不能退报名。',
-  'Tournament accounting is closed after completion or cancellation.':
-    '赛事结束或取消后，账目已封账。',
-  'The unstarted pool contains unreconciled play.': '未开赛的奖池里有未对平的交易。',
-  'Invalid funding source.': '注资来源无效。',
-  'Joining rewards were started with different terms.': '加入奖励已按不同条款开启。',
-  'Hand number must be positive.': '手牌编号必须为正数。',
-  'Hand result contains an unknown entrant.': '手牌结果里有不认识的参赛者。',
-  'A request reference of at most 200 characters is required.':
-    '需要不超过 200 字符的请求凭据。',
-  'This reference was used for a different accounting transfer.':
-    '这个凭据编号用在别的转账上了。',
-  'A journal transfer repeats an account.': '账本转账里同一个账户出现了两次。',
-  'Tournament transfers must balance to zero.': '赛事转账必须收支相抵为零。',
-  'Journal balance exceeds the supported chip limit.': '账本余额超出了支持的筹码上限。',
-  'The prize pool cannot fund this transfer.': '奖池余额不够这笔转账。',
-  'Settlement amount must be nonzero.': '结算金额不能为零。',
-  'Settlement note must be at most 2000 characters.': '结算备注不能超过 2000 字符。',
-  'Record settlements only after the tournament has ended.': '结算记录要在赛事结束后再记。',
-  'This request ID was used for a different settlement record.':
-    '这个请求 ID 用在别的结算记录上了。',
-
-  // ── HTTP: sponsors ──────────────────────────────────────────────────────
-  'Invalid sponsor input.': '赞助信息无效。',
-  'Sponsor campaign not found.': '找不到这个赞助活动。',
-  'The sponsor campaign changed. Reload before saving.': '赞助活动有变动，刷新后再保存。',
-  'The sponsor campaign changed. Reload before deleting.': '赞助活动有变动，刷新后再删除。',
-  'Campaigns with receipts cannot be deleted. Disable the placement instead.':
-    '已有收款的赞助活动不能删除，改为停用投放。',
-  'Booked chips cannot be less than recorded receipts.': '登记筹码不能少于已记录的收款。',
-  'Recorded receipts cannot exceed booked chips. Update the booking first.':
-    '已记录收款不能超过登记筹码，先改登记数。',
-  'This request ID was used for a different sponsor receipt.':
-    '这个请求 ID 用在别的赞助收款上了。',
-  'Select a tournament for the prize contribution.': '给奖金注资选一个赛事。',
-  'Prize contributions require an approved tournament in registration or play.':
-    '注资奖金需要处于报名或比赛阶段的已批准赛事。',
-  'Choose a player, signed chip amount and receipt note.':
-    '选择玩家，填写带符号的筹码数和收款备注。',
 
   // ── HTTP: chip-amount validation (label + generic) ──────────────────────
   '{label} must be whole chips within the supported limit.':
     '{label} 必须是支持范围内的整数筹码。',
-  'Journal balance must be whole chips within the supported limit.':
-    '账本余额必须是支持范围内的整数筹码。',
-  'Journal transfer must be whole chips within the supported limit.':
-    '账本转账必须是支持范围内的整数筹码。',
-  'Entry fee must be whole chips within the supported limit.':
-    '报名费必须是支持范围内的整数筹码。',
-  'Funding amount must be whole chips within the supported limit.':
-    '注资金额必须是支持范围内的整数筹码。',
-  'Joining reward must be whole chips within the supported limit.':
-    '加入奖励必须是支持范围内的整数筹码。',
-  'Total joining rewards must be whole chips within the supported limit.':
-    '加入奖励总额必须是支持范围内的整数筹码。',
-  'Hand number must be whole chips within the supported limit.':
-    '手牌编号必须是支持范围内的整数筹码。',
-  'Hand result must be whole chips within the supported limit.':
-    '手牌结果必须是支持范围内的整数筹码。',
-  'House fee must be whole chips within the supported limit.':
-    '平台抽成必须是支持范围内的整数筹码。',
-  'Prize contribution must be whole chips within the supported limit.':
-    '奖金注资必须是支持范围内的整数筹码。',
-  'Recorded payments must be whole chips within the supported limit.':
-    '已记录付款必须是支持范围内的整数筹码。',
-  'Settlement balance must be whole chips within the supported limit.':
-    '结算余额必须是支持范围内的整数筹码。',
-  'Outstanding balance must be whole chips within the supported limit.':
-    '待结余额必须是支持范围内的整数筹码。',
-  'Settlement amount must be whole chips within the supported limit.':
-    '结算金额必须是支持范围内的整数筹码。',
 
-  // ── HTTP: tournament engine errors forwarded from @4am/shared arena ─────
+  // ── HTTP: game engine errors forwarded from @4am/shared ─────────────────
   'hand completed': '这手牌已经结束了。',
   'invalid action': '这个操作无效。',
   'invalid amount': '金额无效。',
-  'invalid arena configuration': '赛事牌局配置无效。',
   'invalid deck': '牌堆无效。',
   'no opponent can call': '没有对手能跟注。',
 
