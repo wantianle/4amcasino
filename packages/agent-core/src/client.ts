@@ -189,7 +189,7 @@ export class HeadlessClient {
     };
     this.userId = info.userId;
     this.username = info.username;
-    if (info.scopeKind !== 'room') throw new Error('Use tournament tools with a tournament token.');
+    if (info.scopeKind !== 'room') throw new Error('This token is not scoped to a room.');
     if (!info.canPlay)
       throw new Error('This token is read-only. Use room_details and subscribe_events instead.');
     if (!signingSeed || !/^[a-f0-9]{64}$/.test(signingSeed))

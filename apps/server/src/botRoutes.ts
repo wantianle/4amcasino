@@ -16,6 +16,7 @@ import { LIMITS } from './limits.js';
 import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIdentity.js';
 import { pickFunBotName } from './botNames.js';
+import { resolveAgentGrant } from './agentAccess.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -79,6 +80,14 @@ export interface BotRow {
 }
 
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+
+/**
+ * The bot runner authenticates with its one-time runner grant rather than a
+ * session cookie, so identity resolution must read the credential exactly as
+ * the runner's HTTP client sends it: `Authorization: Bearer <token>`.
+ */
+const bearerToken = (req: FastifyRequest) =>
+  (req.headers.authorization ?? '').replace(/^Bearer /, '');
 
 /**
  * Difficulty tiers accepted by the API. Only `low` and `medium` are writable;
@@ -552,6 +561,29 @@ export interface BotControl {
 
 export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotControl): void {
   const authed = { preHandler: requireUser(db) };
+
+  /**
+   * Bot-runner identity handshake. `@4am/agent-core`'s `loginWithGrant` calls
+   * this with its freshly issued runner grant to learn who it is and which room
+   * it may play before it opens the socket. This is the only agent-grant surface
+   * kept for the internal runner; the external agent grant-management API is
+   * intentionally gone, so it lives with the bot surface that is its sole
+   * consumer. Path and response shape are frozen: the runner depends on them.
+   */
+  app.get('/api/agent/identity', async (req, reply) => {
+    const grant = resolveAgentGrant(db, bearerToken(req));
+    if (!grant) return reply.code(401).send({ error: 'Agent token is expired or revoked.' });
+    const user = db
+      .prepare('SELECT id AS userId, username, pubkey AS publicKey FROM users WHERE id = ?')
+      .get(grant.user_id) as object;
+    return {
+      ...user,
+      scopeKind: grant.scope_kind,
+      scopeId: grant.scope_id,
+      canPlay: !!grant.can_play,
+      expiresAt: grant.expires_at,
+    };
+  });
 
   app.post('/api/rooms/:id/bots', authed, async (req, reply) => {
     const ctx = await hostRoom(db, req, reply);
