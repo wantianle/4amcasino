@@ -14,8 +14,10 @@ to rediscover it.
   REAL, and from then on every debit rounded away to nothing while every credit
   landed — an unlimited chip faucet reachable by anyone at a table with
   auto-approve on. Both are now capped at `LIMITS.maxChipAmount`.
-- Voiding a hand reversed the settlements but not the 1% commission, so each void
-  minted the rake out of nothing. The reversal now covers `commission` too.
+- Voiding a hand reversed the settlements but not the commission, so each void
+  minted the rake out of nothing. The reversal now covers `commission` too, at
+  whatever rate that hand was charged — 0.5% by current default, or the
+  historical 1% rate still stored by older rooms.
 - `revert` and `void-hand` ran during a live hand. Chips at risk are held in
   memory, not deducted from the stack, so both passed their own solvency checks
   and then settled players into negative balances. Both now refuse while a hand
@@ -165,12 +167,16 @@ everyone is refunded" into "the hand finishes without the player who left".
 Listed in the order I would fix them.
 
 1. **Aborting a hand is free, and any player can force one.** Chips committed
-   during betting live only in the in-memory betting state; `abort()` writes
-   nothing, so every chip is refunded. A player who has seen the showdown shares
-   come in can send one malformed unmask proof and void a hand they were losing,
-   at no cost, every time. Fixing it properly means either committing betting
-   state at each street close, or forfeiting the blamed seat's commitment to the
-   remaining players. **This is the most exploitable thing left in the app.**
+   during betting live only in the in-memory betting state. A pre-settlement
+   `abort()` writes no settlement ledger rows for that hand, so its betting is
+   refunded — but it does persist a durable `hand_lifecycle` row as `aborted`, so
+   the abort leaves an audit trail, and a settlement that already committed is
+   never rewritten into an abort or refund. A player who has seen the showdown
+   shares come in can send one malformed unmask proof and void a hand they were
+   losing, at no cost, every time. Fixing it properly means either committing
+   betting state at each street close, or forfeiting the blamed seat's commitment
+   to the remaining players. **This is the most exploitable thing left in the
+   app.**
 2. **There is no verifiable shuffle proof.** A shuffler may substitute arbitrary
    points; the only check is "52 distinct parseable points". A malicious shuffler
    can poison the slot destined for a chosen victim, who is then dealt an

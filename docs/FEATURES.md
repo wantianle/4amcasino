@@ -6,7 +6,6 @@ core (see `/api/rooms/:id/hands` for the pattern).
 
 | Feature | Requested by |
 | --- | --- |
-| Freezeout tournaments: entry fee is your stack, one entry with no re-entry, zero chips ends your run, play to a single survivor who keeps every chip, commission-funded bonus pool paid 50/30/20, and a capped sit-out budget that still posts blinds so nobody can wait out the field | **notpritam** |
 | Per-hand personal results: your net for every hand, where you folded, showdown outcome, paid-to-fold total | **siwans** |
 | Live ahead-of-turn actions: options track the table, Call arms at a price and disarms if raised | **notpritam** |
 | Round table: seats positioned live around an isometric oval, your seat pinned at the bottom | **notpritam** |
@@ -31,7 +30,7 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | Room auto-deal switch on the table; prefers the online, seated host, automatically chooses a funded online fallback, preserves readiness, and pauses when too few players are ready | **notpritam** |
 | Misclick guard: Fold / Check-Call / Raise hold fixed positions in every state and go dead for a beat whenever the options change | **notpritam** |
 | Custom poker shortcuts: account-saved Fold, Check, Call, Bet/Raise, half-pot, pot, and all-in bindings; record, select, clear, disable, or restore in Settings or at the table. Shared keyboard handling across desktop and phone; typed amount plus Enter confirms sizing shortcuts | **notpritam** |
-| Run it twice: when everyone is all-in before the river the players vote (unanimous; each of the two stages - the behind player's run-count choice, then the ahead player's agreement - gets its own 7.5s, so a valid-but-slow negotiation can take up to 15s total); the remaining streets deal twice from the untouched deck and every pot splits between the boards | **notpritam** |
+| Multi-run: when exactly two players are all-in before the river, the player behind chooses 1-3 runs and the player ahead agrees; the server resolves a refusal, timeout, expired offer, or ineligible/illegal decision to a single run. Each of the two stages - the behind player's run-count choice, then the ahead player's agreement - gets its own 7.5s, so a valid-but-slow negotiation can take up to 15s total. The remaining streets deal once per run from the untouched deck and every pot splits between the boards | **notpritam** |
 | Showdown shows every player who reaches showdown: the result banner lists each showdown player with THEIR two cards, the hand they made, and their net - not just the winning five. Folded players appear only if they voluntarily show their cards | **notpritam** |
 | Thunder reveal: lightning flash + thunder crack on every showdown | **notpritam** |
 | The table cards in the result banner, next to the winning five | **notpritam** |

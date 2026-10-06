@@ -11,13 +11,20 @@ client hands its per-hand key to the server, and the server can then compute you
 shares itself (`applyRecoveredShare`, with a DLEQ proof so the recovery is as
 verifiable as a share you sent yourself).
 
-That covers exactly one case. It does nothing for the case that actually happens:
+That covers exactly one case. It does nothing for a player who is still live in
+the hand and loses their connection — nobody holds their key, so the hand has no
+way to finish:
 
 > **A player who is still live in the hand loses their connection.**
-> Nobody holds their key. The hand is unrecoverable. It aborts. Always.
+> Nobody holds their key. If they stay offline past the reconnect grace, the hand
+> is unrecoverable and aborts.
 
-No amount of timeout tuning changes that — longer deadlines only delay the same
-abort. This is structural, and it is the reason so many hands die.
+A pre-betting disconnect is not immediate: the hand gets a short reconnect grace
+(4s in production) during key commitment, the shuffle, and the deal, and a player
+who reconnects inside it keeps their hand — only a persistent absence past the
+grace aborts. But once that grace is spent, no amount of timeout tuning changes
+the outcome; longer deadlines only delay the same abort. This is structural, and
+it is the reason so many hands die.
 
 ## The insight that makes it fixable
 
@@ -40,7 +47,11 @@ cryptography — just the fold.
 Recovery is therefore only required when **two or more players are still live and
 the board is incomplete.**
 
-## The fix: deal-time escrow, sharded to the other players
+## Proposed fix: deal-time escrow, sharded to the other players
+
+This is a design proposal, not an implemented recovery path. Nothing below ships
+today: there is no Shamir/Feldman sharing in the server, no deal-time escrow, and
+no threshold recovery. It is kept here as the design for the general case.
 
 Not to the server. To the other players, so no single party — including us — can
 read anything.
@@ -87,7 +98,7 @@ permanent signed evidence in the transcript. For a table of strangers, `n-1`.
 Note the leak is bounded either way: a coalition can only reach the cards of a
 player who **already dropped and was folded**, never a live opponent's.
 
-## Order of work
+## Proposed order of work
 
 1. **Auto-fold on drop, and settle by fold when one player remains.** No crypto.
    Removes every heads-up drop and every drop that leaves a single contestant —
@@ -98,3 +109,8 @@ player who **already dropped and was folded**, never a live opponent's.
 
 Step 1 is small and worth doing immediately. Step 2 is the sure-shot guarantee:
 with it, a hand can only die if more than `n - t` players vanish at once.
+
+Both steps are still proposals: neither auto-fold recovery nor deal-time
+threshold recovery is implemented. The only recovery path that exists today is
+the fast path described at the top — **fold-key escrow** — which covers only a
+player who had already folded before dropping.
