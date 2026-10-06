@@ -7,6 +7,7 @@ import { migrateBots } from './bots.js';
 import { migrateAdminAudit } from './adminAudit.js';
 import { migrateSettlementPrepared } from './settlementPrepared.js';
 import { migrateRoomsIndex } from './roomsIndex.js';
+import { migrateConsecutiveActionTimeouts } from './consecutiveActionTimeouts.js';
 
 /** One named, ordered schema migration. */
 export type Migration = { name: string; run: (db: DB) => void };
@@ -36,6 +37,8 @@ export const STEPS: Migration[] = [
   { name: 'admin-audit', run: migrateAdminAudit },
   { name: 'settlement-prepared', run: migrateSettlementPrepared },
   { name: 'rooms-index', run: migrateRoomsIndex },
+  // needs: base (creates room_players).
+  { name: 'consecutive-action-timeouts', run: migrateConsecutiveActionTimeouts },
 ];
 
 /** Run every schema migration in its registered order. */

@@ -7,6 +7,7 @@
  * depends on `Hand`.
  */
 import { createHash } from 'node:crypto';
+import { MAX_TIME_BANK_MS } from '@4am/shared';
 import { materializeHandProjection } from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { settleRake } from './rake.js';
@@ -225,9 +226,17 @@ export function applyHandSettlement(
           timeBankSkipped.push(tb.userId);
           continue;
         }
+        // Defense in depth: the live path already caps the balance when it
+        // builds this write, but a frozen/legacy/tampered input could carry an
+        // out-of-range `ms`. Clamp here so the persisted row can NEVER exceed
+        // the 5 x 30s invariant, independent of which caller produced the write.
+        // `validateWriteShape` separately rejects such inputs on the recovery
+        // path (fail closed); this SQL-level clamp covers the direct in-process
+        // apply path that does not go through that validator.
+        const ms = Math.min(MAX_TIME_BANK_MS, Math.max(0, tb.ms));
         db.prepare(
           'UPDATE room_players SET time_bank_ms = ?, time_bank_hands = ?, time_bank_epoch = ? WHERE room_id = ? AND user_id = ? AND time_bank_epoch = ?',
-        ).run(tb.ms, tb.hands, w.timeBankEpoch, w.roomId, tb.userId, w.timeBankEpoch);
+        ).run(ms, tb.hands, w.timeBankEpoch, w.roomId, tb.userId, w.timeBankEpoch);
       }
     }
 
@@ -436,6 +445,13 @@ function validateWriteShape(w: HandSettlementWrite): string | null {
     const { userId, ms, hands } = tb as { userId?: unknown; ms?: unknown; hands?: unknown };
     if (!isSafeInt(userId) || !isSafeInt(ms) || !isSafeInt(hands))
       return 'prepared input has a malformed time-bank entry';
+    // A frozen bank balance outside [0, cap] is corruption, not a value to
+    // silently trim: this function is the fail-closed boundary for untrusted
+    // frozen inputs (it already range-checks `rake`), so reject it and let the
+    // hand quarantine for operator review instead of applying different numbers
+    // than a legitimate input would have produced.
+    if (ms < 0 || ms > MAX_TIME_BANK_MS)
+      return 'prepared input has an out-of-range time-bank balance';
   }
   if (w.timeBankEpoch !== null && !isSafeInt(w.timeBankEpoch))
     return 'prepared input timeBankEpoch is invalid';

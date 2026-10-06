@@ -253,14 +253,15 @@ export class GameRoom {
   private testHandSeq = 0;
   private lookup = cardLookup();
   /**
-   * Consecutive timeout auto-folds per user, across hands. A voluntary action
-   * clears the streak; two in a row stands the player up at the hand boundary.
-   * In-memory on purpose: this is an anti-stalling nudge, not money, so a
-   * process restart resetting it is acceptable (and it keeps the money core
-   * free of a new persisted counter). Keyed by user, not seat, so a seat change
-   * cannot inherit another player's streak.
+   * Consecutive action-timeout auto-folds per user, across hands, persisted on
+   * `room_players.consecutive_action_timeouts` so a process restart cannot
+   * reset the streak (a restart between two timeouts would otherwise let a
+   * player stall forever). A voluntary action clears the streak; two in a row
+   * stands the player up at the hand boundary. Keyed by user via the
+   * (room_id, user_id) primary key, not seat, so a seat change cannot inherit
+   * another player's streak. Read/written by `noteTimeout`,
+   * `noteVoluntaryAction` and `clearTimeoutStreak`.
    */
-  private consecutiveTimeouts = new Map<number, number>();
   /**
    * Users to stand up once the current hand ends. `leave_seat` refuses while a
    * hand owns the seat, so a forced removal triggered by the second timeout is
@@ -922,7 +923,7 @@ export class GameRoom {
    * deliberately not routed here.
    */
   noteVoluntaryAction(userId: number): void {
-    this.consecutiveTimeouts.delete(userId);
+    this.clearTimeoutStreak(userId);
   }
 
   /**
@@ -932,16 +933,44 @@ export class GameRoom {
    * timeout of a single hand is unreachable (the first removes the player from
    * the betting), so in practice the streak runs across hands; the counter
    * covers both readings. Returns true when this timeout triggered the leave.
+   *
+   * The streak is read from and written back to `room_players` on every call so
+   * it survives a process restart, which is the whole point: a restart between
+   * the two timeouts must NOT forgive the first one.
    */
   noteTimeout(userId: number): boolean {
-    const streak = (this.consecutiveTimeouts.get(userId) ?? 0) + 1;
+    const row = this.db
+      .prepare(
+        'SELECT consecutive_action_timeouts AS streak FROM room_players WHERE room_id = ? AND user_id = ?',
+      )
+      .get(this.roomId, userId) as { streak: number } | undefined;
+    const streak = (row?.streak ?? 0) + 1;
     if (streak < 2) {
-      this.consecutiveTimeouts.set(userId, streak);
+      this.db
+        .prepare(
+          'UPDATE room_players SET consecutive_action_timeouts = ? WHERE room_id = ? AND user_id = ?',
+        )
+        .run(streak, this.roomId, userId);
       return false;
     }
-    this.consecutiveTimeouts.delete(userId);
+    // Second in a row: reset the persisted streak and stand the player up at
+    // the hand boundary (the live hand owns the seat until `onDone`).
+    this.clearTimeoutStreak(userId);
     this.pendingForcedLeaves.add(userId);
     return true;
+  }
+
+  /**
+   * Clear a user's persisted consecutive-timeout streak. Called on every
+   * voluntary action, a fresh seat and a voluntary leave. The `!= 0` guard
+   * keeps the hot action path from writing a no-op row update.
+   */
+  private clearTimeoutStreak(userId: number): void {
+    this.db
+      .prepare(
+        'UPDATE room_players SET consecutive_action_timeouts = 0 WHERE room_id = ? AND user_id = ? AND consecutive_action_timeouts != 0',
+      )
+      .run(this.roomId, userId);
   }
 
   /**
@@ -1025,7 +1054,7 @@ export class GameRoom {
           )
           .run(msg.seat, this.roomId, userId);
         // a fresh seat starts with a clean streak
-        this.consecutiveTimeouts.delete(userId);
+        this.clearTimeoutStreak(userId);
         this.broadcastRoomState();
         return;
       }
@@ -1046,7 +1075,7 @@ export class GameRoom {
         this.db
           .prepare('UPDATE room_players SET seat = NULL WHERE room_id = ? AND user_id = ?')
           .run(this.roomId, userId);
-        this.consecutiveTimeouts.delete(userId);
+        this.clearTimeoutStreak(userId);
         this.broadcastRoomState();
         return;
       }
