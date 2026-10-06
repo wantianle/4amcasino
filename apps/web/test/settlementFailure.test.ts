@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { genIdentity } from '@4am/mental-poker';
 import type { ServerMsg } from '@4am/shared';
+import { roomState, handStart } from './helpers/fixtures.ts';
 
 const socket = vi.hoisted(() => ({
   send: vi.fn(),
@@ -45,33 +46,6 @@ const HAND = 'settle-hand';
 const HOST = 1;
 const GUEST = 2;
 
-function roomState(hostId: number, handActive = true): Extract<ServerMsg, { t: 'room_state' }> {
-  return {
-    t: 'room_state',
-    room: {
-      id: 'r',
-      name: 'r',
-      joinCode: 'ABC',
-      hostId,
-      bankerId: hostId,
-      sb: 10,
-      bb: 20,
-      auditMode: 'private',
-      actionTimeoutMs: 45_000,
-      actionSecs: 45,
-      coBankerId: null,
-      minSettleHands: 0,
-      sevenDeuceBonus: 0,
-      voided: false,
-      autoApproveBuys: false,
-      tvReplays: false,
-      commissionBps: 0,
-    },
-    players: [],
-    handActive,
-  };
-}
-
 const failed = (attempt = 1, retrying = false): ServerMsg => ({
   t: 'settlement_failed',
   handId: HAND,
@@ -88,17 +62,7 @@ const handEnd = (handId: string): ServerMsg => ({
   deltas: [],
 });
 
-/** A `hand_start` for the host, as the server re-sends it on reconnect. */
-const handStart = (handId: string): ServerMsg => ({
-  t: 'hand_start',
-  handId,
-  seats: [{ seat: 0, userId: HOST, username: 'me', publicKey: '', stack: 1000 }],
-  buttonSeat: 0,
-  sb: 10,
-  bb: 20,
-  auditMode: 'private',
-});
-
+/** A `hand_recovery` answer, as the server sends it on reconnect. */
 const handRecovery = (
   handId: string,
   status: 'committed' | 'aborted' | 'unresolved',

@@ -19,9 +19,9 @@ import type { GameClock, GameOpts } from '../../src/game.js';
  *
  * Nothing here changes what a server does; each suite still boots an identical
  * app and drives it through `TestClient`/`setupRoom` from the other helpers.
- * (The existing `startServer` helper cannot be reused here because the restart
- * and shutdown suites need the live `hub` handle, which `startServer` does not
- * return, plus the mutable fault bag wired into the hub's injection hooks.)
+ * The boot lives here rather than in a shared `TestClient` helper because the
+ * restart and shutdown suites need the live `hub` handle plus the mutable fault
+ * bag wired into the hub's injection hooks.
  */
 
 /** App context returned by `createApp` (in-memory or file-backed). */

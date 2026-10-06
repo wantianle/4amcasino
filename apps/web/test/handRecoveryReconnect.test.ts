@@ -16,6 +16,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { genIdentity } from '@4am/mental-poker';
 import type { ClientMsg, ServerMsg } from '@4am/shared';
+import { roomState } from './helpers/fixtures.ts';
 
 vi.mock('../src/shared/voice.ts', () => ({ voice: { syncPeers: vi.fn(), handleRtc: vi.fn() } }));
 vi.mock('../src/shared/sounds.ts', () => ({ play: vi.fn() }));
@@ -85,33 +86,6 @@ bindGameClient();
 
 const HAND = 'recovery-reconnect-hand';
 
-function roomState(handActive: boolean): ServerMsg {
-  return {
-    t: 'room_state',
-    room: {
-      id: 'r',
-      name: 'r',
-      joinCode: 'ABC',
-      hostId: 1,
-      bankerId: 1,
-      sb: 10,
-      bb: 20,
-      auditMode: 'private',
-      actionTimeoutMs: 45_000,
-      actionSecs: 45,
-      coBankerId: null,
-      minSettleHands: 0,
-      sevenDeuceBonus: 0,
-      voided: false,
-      autoApproveBuys: false,
-      tvReplays: false,
-      commissionBps: 0,
-    },
-    players: [],
-    handActive,
-  };
-}
-
 beforeEach(() => {
   vi.useFakeTimers();
   FakeSocket.instances.length = 0;
@@ -136,7 +110,7 @@ function dropAndReconnect(): FakeSocket {
   wsClient.joinRoom('r');
   const first = FakeSocket.instances.at(-1)!;
   first.serverOpen();
-  first.serverSend(roomState(true));
+  first.serverSend(roomState(1, true));
   expect(useStore.getState().wsConnected).toBe(true);
 
   // the server restarts and the socket drops
@@ -161,7 +135,7 @@ describe('durable unresolved recovery on a real reconnect', () => {
 
     // GameRoom.join order: the durable answer FIRST, then room_state.
     second.serverSend({ t: 'hand_recovery', handId: HAND, status: 'unresolved' });
-    second.serverSend(roomState(false));
+    second.serverSend(roomState(1, false));
 
     const h = useStore.getState().hand;
     expect(h.handRecovery).toBe('unresolved');
@@ -200,7 +174,7 @@ describe('room switch is a session boundary', () => {
     wsClient.joinRoom('room-A');
     const a = FakeSocket.instances.at(-1)!;
     a.serverOpen();
-    a.serverSend(roomState(true));
+    a.serverSend(roomState(1, true));
     a.serverSend({ t: 'hand_recovery', handId: HAND, status: 'unresolved' });
     expect(useStore.getState().hand.handId).toBe(HAND);
     expect(useStore.getState().hand.handRecovery).toBe('unresolved');
@@ -229,7 +203,7 @@ describe('room switch is a session boundary', () => {
     expect(joinB).not.toHaveProperty('resumeHandId');
 
     // Room B's own (empty) room_state cannot resurrect room A's banner.
-    b.serverSend(roomState(false));
+    b.serverSend(roomState(1, false));
     expect(useStore.getState().hand.handRecovery).toBeNull();
     expect(renderToStaticMarkup(createElement(HandRecoveryBanner))).not.toContain(
       'hand-recovery-banner',

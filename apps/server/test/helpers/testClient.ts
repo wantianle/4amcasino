@@ -14,10 +14,7 @@ import {
   recoverCard,
   signContent,
 } from '@4am/mental-poker';
-import type { AddressInfo } from 'node:net';
 import type { BettingState, CardId, PlayerAction, ServerMsg } from '@4am/shared';
-import { createApp } from '../../src/app.js';
-import { attachHub } from '../../src/hub.js';
 import { activeHands } from '../../src/liveHands.js';
 
 /**
@@ -27,8 +24,8 @@ import { activeHands } from '../../src/liveHands.js';
  * frame the way a real client does, records the frames it receives, and offers
  * `waitFor`/`waitIdle` to synchronise a test against server state.
  *
- * Usage: boot a server (see `startServer`) and construct clients with its
- * `baseUrl`. The test remains responsible for closing them on teardown.
+ * Usage: boot a server (e.g. `bootIntegrationServer`) and construct clients
+ * with its `baseUrl`. The test remains responsible for closing them on teardown.
  */
 
 /** How the client answers a betting turn: fold, shove when possible, or call/check. */
@@ -669,21 +666,4 @@ export class TestClient {
   close(): void {
     this.ws?.close();
   }
-}
-
-/**
- * Boot an in-memory Fastify app with the game hub attached on an ephemeral
- * port. This is the core of `integration.test.ts`'s `beforeEach`
- * (lines 751-787) with the clock/fault-injection wiring lifted into the
- * caller-supplied `hubOpts`. Pair with `TestClient(baseUrl, ...)`; the caller
- * owns teardown (`ctx.app.close()`).
- */
-export async function startServer(
-  hubOpts: Parameters<typeof attachHub>[2] = {},
-): Promise<{ ctx: ReturnType<typeof createApp>; baseUrl: string }> {
-  const ctx = createApp(':memory:');
-  attachHub(ctx.app, ctx.db, hubOpts);
-  await ctx.app.listen({ port: 0 });
-  const addr = ctx.app.server.address() as AddressInfo;
-  return { ctx, baseUrl: `http://127.0.0.1:${addr.port}` };
 }

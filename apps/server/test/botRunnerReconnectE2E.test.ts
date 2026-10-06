@@ -5,6 +5,7 @@ import { createApp } from '../src/app.js';
 import { attachHub } from '../src/hub.js';
 import { BotRunner, type BotRunnerOptions, type RunnerActionEvent } from '../src/botRunner.js';
 import { claimStartingBot } from '../src/botRoutes.js';
+import { assertLedgerConservation } from './helpers/ledgerAssertions.js';
 
 /**
  * Fault injection on the BOT RUNNER'S OWN socket (not an observer): the runner
@@ -135,39 +136,6 @@ function assertTranscriptComplete(handId: string): void {
   expect(sorted[0]).toBe(0);
 }
 
-/** Ledger verifies and every stack equals the sum of that player's ledger deltas. */
-async function assertLedgerConservation(roomId: string): Promise<void> {
-  const ledger = (await human.api(`/api/rooms/${roomId}/ledger`)) as {
-    verified: { ok: boolean };
-  };
-  expect(ledger.verified.ok).toBe(true);
-
-  const roster = ctx.db
-    .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ?')
-    .all(roomId) as { user_id: number; stack: number }[];
-  for (const p of roster) {
-    const sum = (
-      ctx.db
-        .prepare('SELECT COALESCE(SUM(delta),0) AS s FROM ledger WHERE room_id = ? AND user_id = ?')
-        .get(roomId, p.user_id) as { s: number }
-    ).s;
-    expect(p.stack).toBe(sum);
-  }
-  const total = (
-    ctx.db
-      .prepare('SELECT COALESCE(SUM(delta),0) AS s FROM ledger WHERE room_id = ?')
-      .get(roomId) as { s: number }
-  ).s;
-  const purchased = (
-    ctx.db
-      .prepare(
-        "SELECT COALESCE(SUM(delta),0) AS s FROM ledger WHERE room_id = ? AND kind = 'purchase'",
-      )
-      .get(roomId) as { s: number }
-  ).s;
-  expect(total).toBe(purchased); // settlement is zero-sum against buy-ins
-}
-
 beforeEach(async () => {
   process.env.BOT_IDENTITY_KEY = KEY;
   ctx = createApp(':memory:');
@@ -213,7 +181,10 @@ describe('bot runner own-socket reconnect', () => {
     expect(human.result).not.toBeNull();
     expect(uniqueSentKeys()).toBe(true);
     assertTranscriptComplete(human.result!.handId);
-    await assertLedgerConservation(room.id);
+    const ledger = (await human.api(`/api/rooms/${room.id}/ledger`)) as {
+      verified: { ok: boolean };
+    };
+    assertLedgerConservation(ctx.db, room.id, ledger);
   }, 60_000);
 
   it('reconnects from a betting-phase drop and finishes without abort', async () => {
@@ -233,7 +204,10 @@ describe('bot runner own-socket reconnect', () => {
     expect(human.result).not.toBeNull();
     expect(uniqueSentKeys()).toBe(true);
     assertTranscriptComplete(human.result!.handId);
-    await assertLedgerConservation(room.id);
+    const ledger = (await human.api(`/api/rooms/${room.id}/ledger`)) as {
+      verified: { ok: boolean };
+    };
+    assertLedgerConservation(ctx.db, room.id, ledger);
   }, 60_000);
 
   it('voids a decision computed across a drop and never double-sends it', async () => {
@@ -267,7 +241,10 @@ describe('bot runner own-socket reconnect', () => {
     expect(human.result).not.toBeNull();
     expect(uniqueSentKeys()).toBe(true);
     assertTranscriptComplete(human.result!.handId);
-    await assertLedgerConservation(room.id);
+    const ledger = (await human.api(`/api/rooms/${room.id}/ledger`)) as {
+      verified: { ok: boolean };
+    };
+    assertLedgerConservation(ctx.db, room.id, ledger);
   }, 60_000);
 });
 

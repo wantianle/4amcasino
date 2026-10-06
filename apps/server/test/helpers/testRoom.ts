@@ -12,7 +12,7 @@ import { TestClient, type Strategy } from './testClient.js';
  * connect their sockets. Copied verbatim from `integration.test.ts:796-813`
  * with the test-module `baseUrl` and `clients` bag lifted into parameters.
  *
- * @param baseUrl  URL of the booted test server (see `startServer`).
+ * @param baseUrl  URL of the booted test server.
  * @param names    Player usernames, in seat order; index 0 is the host.
  * @param strategies  Per-player betting strategy (defaults to `passive`).
  * @param clients  Optional collector the created clients are pushed onto, so

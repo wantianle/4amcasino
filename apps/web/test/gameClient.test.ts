@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { genIdentity } from '@4am/mental-poker';
 import type { ServerMsg } from '@4am/shared';
+import { roomState, handStart } from './helpers/fixtures.ts';
 
 /**
  * Skeleton coverage for `gameClient.handle()` gaps not already exercised by the
@@ -55,41 +56,6 @@ function signIn(userId = 1): void {
     wsConnected: true,
   });
 }
-
-const roomState = (handActive = true): Extract<ServerMsg, { t: 'room_state' }> => ({
-  t: 'room_state',
-  room: {
-    id: 'r',
-    name: 'r',
-    joinCode: 'ABC',
-    hostId: 1,
-    bankerId: 1,
-    sb: 10,
-    bb: 20,
-    auditMode: 'private',
-    actionTimeoutMs: 45_000,
-    actionSecs: 45,
-    coBankerId: null,
-    minSettleHands: 0,
-    sevenDeuceBonus: 0,
-    voided: false,
-    autoApproveBuys: false,
-    tvReplays: false,
-    commissionBps: 0,
-  },
-  players: [],
-  handActive,
-});
-
-const handStart = (handId: string): ServerMsg => ({
-  t: 'hand_start',
-  handId,
-  seats: [{ seat: 0, userId: 1, username: 'me', publicKey: '', stack: 1000 }],
-  buttonSeat: 0,
-  sb: 10,
-  bb: 20,
-  auditMode: 'private',
-});
 
 type MultiRunOffer = Extract<ServerMsg, { t: 'multi_run_offer' }>;
 const offer = (
@@ -203,7 +169,7 @@ describe('gameClient room_state without a live hand', () => {
   it('does not synthesise a refund abort when this frame is not a resync', () => {
     useStore.getState().patchHand({ handId: 'live-hand' });
     socket.consumeResync.mockReturnValue(false);
-    handle(roomState(false));
+    handle(roomState(1, false));
     const h = useStore.getState().hand;
     expect(h.handId).toBe('live-hand');
     expect(h.abort).toBeNull();
