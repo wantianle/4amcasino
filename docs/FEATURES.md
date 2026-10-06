@@ -35,7 +35,7 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | Misclick guard: Fold / Check-Call / Raise hold fixed positions in every state and go dead for a beat whenever the options change | **notpritam** |
 | Custom poker shortcuts: account-saved Fold, Check, Call, Bet/Raise, half-pot, pot, and all-in bindings; record, select, clear, disable, or restore in Settings or at the table. Shared keyboard handling across desktop and phone; typed amount plus Enter confirms sizing shortcuts | **notpritam** |
 | Run it twice: when everyone is all-in before the river the players vote (unanimous; each of the two stages - the behind player's run-count choice, then the ahead player's agreement - gets its own 7.5s, so a valid-but-slow negotiation can take up to 15s total); the remaining streets deal twice from the untouched deck and every pot splits between the boards | **notpritam** |
-| Showdown shows every player's cards: the result banner lists each player with THEIR two cards, the hand they made, and their net - not just the winning five | **notpritam** |
+| Showdown shows every player who reaches showdown: the result banner lists each showdown player with THEIR two cards, the hand they made, and their net - not just the winning five. Folded players appear only if they voluntarily show their cards | **notpritam** |
 | Thunder reveal: lightning flash + thunder crack on every showdown | **notpritam** |
 | The table cards in the result banner, next to the winning five | **notpritam** |
 | Dealer button: a bold gold D disc on the felt marks the button and stays with the seat all hand (no SB/BB badges) | **notpritam** |
