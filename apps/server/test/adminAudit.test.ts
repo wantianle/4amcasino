@@ -594,28 +594,9 @@ describe('disable is a conditional update', () => {
   });
 });
 
-const campaignBody = (extra: Record<string, unknown> = {}) => {
-  const now = Date.now();
-  return {
-    tournamentId: null,
-    name: 'Audit Sponsor',
-    headline: 'Headline',
-    description: 'Description',
-    destinationUrl: 'https://example.com/sponsor',
-    placement: 'directory',
-    startsAt: now,
-    endsAt: now + 86_400_000,
-    active: true,
-    bookedAmount: 1000,
-    note: '',
-    ...extra,
-  };
-};
-
-describe('audit covers settings, sponsor and tournament admin writes', () => {
-  it('records commission, sponsor campaign/receipt, and tournament review/media', async () => {
+describe('audit covers settings admin writes', () => {
+  it('records a commission settings write', async () => {
     const platform = await platformUser('ac_platform');
-    const host = await register('ac_host');
 
     // settings.commission
     const settings = await ctx.app.inject({
@@ -632,113 +613,13 @@ describe('audit covers settings, sponsor and tournament admin writes', () => {
     });
     expect(commission.statusCode).toBe(200);
 
-    // sponsor create -> update -> delete
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/admin/sponsors',
-      headers: auth(platform.token),
-      payload: campaignBody(),
-    });
-    expect(created.statusCode).toBe(201);
-    const createdCampaign = created.json() as { id: string; revision: number };
-    const updated = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/admin/sponsors/${createdCampaign.id}`,
-      headers: auth(platform.token),
-      payload: campaignBody({ revision: createdCampaign.revision, name: 'Audit Sponsor 2' }),
-    });
-    expect(updated.statusCode).toBe(200);
-    const deleted = await ctx.app.inject({
-      method: 'DELETE',
-      url: `/api/admin/sponsors/${createdCampaign.id}`,
-      headers: auth(platform.token),
-      payload: { revision: (updated.json() as { revision: number }).revision },
-    });
-    expect(deleted.statusCode).toBe(200);
-
-    // sponsor receipt on a second campaign
-    const created2 = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/admin/sponsors',
-      headers: auth(platform.token),
-      payload: campaignBody({ name: 'Receipt Sponsor' }),
-    });
-    expect(created2.statusCode).toBe(201);
-    const receipt = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/admin/sponsors/${(created2.json() as { id: string }).id}/receipts`,
-      headers: auth(platform.token),
-      payload: {
-        requestId: 'receipt-1',
-        amount: 100,
-        prizeContribution: 0,
-        tournamentId: null,
-        note: 'audit receipt',
-      },
-    });
-    expect(receipt.statusCode).toBe(201);
-
-    // tournament review + media
-    const tournament = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/tournaments',
-      headers: auth(host.token),
-      payload: {
-        name: 'Audit Cup',
-        handLimit: 10,
-        capacity: 2,
-        startingStack: 2000,
-        sb: 10,
-        bb: 20,
-        actionSeconds: 60,
-        policy: { houseBps: 0, prizeBps: 0 },
-      },
-    });
-    expect(tournament.statusCode).toBe(200);
-    const tid = (tournament.json() as { id: string }).id;
-    const review = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/admin/tournaments/${tid}/review`,
-      headers: auth(platform.token),
-      payload: { approve: true, revision: 1, note: 'audited' },
-    });
-    expect(review.statusCode).toBe(200);
-    const media = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/tournaments/${tid}/media`,
-      headers: auth(platform.token),
-      payload: {
-        streamUrl: 'https://www.youtube.com/watch?v=abc12345678',
-        meetUrl: 'https://meet.google.com/abc-defg-hij',
-      },
-    });
-    expect(media.statusCode).toBe(200);
-
     const rows = auditRows();
-    expect(rows.map((r) => r.action)).toEqual([
-      'settings.commission',
-      'sponsor.create',
-      'sponsor.update',
-      'sponsor.delete',
-      'sponsor.create',
-      'sponsor.receipt',
-      'tournament.review.approve',
-      'tournament.media',
-    ]);
+    expect(rows.map((r) => r.action)).toEqual(['settings.commission']);
     const byAction = (action: string) => rows.filter((r) => r.action === action);
     expect(JSON.parse(byAction('settings.commission')[0]!.detail!)).toMatchObject({
       commissionBps: 137,
       scope: 'new_rooms',
       affectedRooms: 0,
-    });
-    expect(JSON.parse(byAction('sponsor.create')[0]!.detail!)).toEqual({ name: 'Audit Sponsor' });
-    expect(JSON.parse(byAction('sponsor.update')[0]!.detail!)).toMatchObject({ revision: 2 });
-    expect(JSON.parse(byAction('sponsor.receipt')[0]!.detail!)).toMatchObject({ amount: 100 });
-    expect(byAction('tournament.media')[0]!.targetType).toBe('tournament');
-    expect(byAction('tournament.media')[0]!.targetId).toBe(tid);
-    expect(JSON.parse(byAction('tournament.review.approve')[0]!.detail!)).toMatchObject({
-      approved: true,
-      revision: 1,
     });
   }, 30_000);
 });
@@ -790,127 +671,4 @@ describe('audit durability and read shape', () => {
       .get(alice.userId) as { n: number };
     expect(n).toBe(1);
   });
-});
-
-describe('platform tournament terms and control audit', () => {
-  async function createTournament(token: string, name: string) {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/tournaments',
-      headers: auth(token),
-      payload: {
-        name,
-        handLimit: 10,
-        capacity: 2,
-        startingStack: 2000,
-        sb: 10,
-        bb: 20,
-        actionSeconds: 60,
-        policy: { houseBps: 0, prizeBps: 0 },
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    return (res.json() as { id: string }).id;
-  }
-
-  it('audits a platform publish/control but not an organizer’s own action', async () => {
-    const host = await register('tc_host');
-    const platform = await platformUser('tc_platform');
-
-    const termsId = await createTournament(host.token, 'Terms Cup');
-    const platformTerms = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/tournaments/${termsId}/terms`,
-      headers: auth(platform.token),
-      payload: { revision: 1, name: 'Terms Cup v2' },
-    });
-    expect(platformTerms.statusCode).toBe(200);
-    expect(platformTerms.json()).toMatchObject({ ok: true, revision: 2 });
-
-    const controlId = await createTournament(host.token, 'Control Cup');
-    const platformControl = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/tournaments/${controlId}/control`,
-      headers: auth(platform.token),
-      payload: { action: 'cancel' },
-    });
-    expect(platformControl.statusCode).toBe(200);
-
-    // Organizer edits/cancels their own tournaments: not a platform admin
-    // action, so neither shows up on the platform audit trail.
-    const ownTermsId = await createTournament(host.token, 'Own Terms Cup');
-    const hostTerms = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/tournaments/${ownTermsId}/terms`,
-      headers: auth(host.token),
-      payload: { revision: 1, name: 'Own Terms Cup v2' },
-    });
-    expect(hostTerms.statusCode).toBe(200);
-    const ownControlId = await createTournament(host.token, 'Own Control Cup');
-    const hostControl = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/tournaments/${ownControlId}/control`,
-      headers: auth(host.token),
-      payload: { action: 'cancel' },
-    });
-    expect(hostControl.statusCode).toBe(200);
-
-    const rows = auditRows();
-    expect(rows.map((r) => r.action)).toEqual(['tournament.terms', 'tournament.control']);
-    const terms = rows.find((r) => r.action === 'tournament.terms')!;
-    expect(terms.targetType).toBe('tournament');
-    expect(terms.targetId).toBe(termsId);
-    expect(JSON.parse(terms.detail!)).toEqual({ revision: 2, approvalStatus: 'approved' });
-    const control = rows.find((r) => r.action === 'tournament.control')!;
-    expect(control.targetType).toBe('tournament');
-    expect(control.targetId).toBe(controlId);
-    expect(JSON.parse(control.detail!)).toEqual({ action: 'cancel', status: 'cancelled' });
-  }, 30_000);
-});
-
-describe('cross-module audit rollback', () => {
-  it('rolls a tournament review back and emits no event when the audit insert fails', async () => {
-    const host = await register('txr_host');
-    const platform = await platformUser('txr_platform');
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/api/tournaments',
-      headers: auth(host.token),
-      payload: {
-        name: 'Rollback Cup',
-        handLimit: 10,
-        capacity: 2,
-        startingStack: 2000,
-        sb: 10,
-        bb: 20,
-        actionSeconds: 60,
-        policy: { houseBps: 0, prizeBps: 0 },
-      },
-    });
-    const tid = (created.json() as { id: string }).id;
-
-    // Force the audit INSERT to fail. The review transaction must roll back
-    // with it, and the reviewed event (now published after commit) must not
-    // have escaped.
-    ctx.db.exec('DROP TABLE admin_audit');
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/admin/tournaments/${tid}/review`,
-      headers: auth(platform.token),
-      payload: { approve: true, revision: 1, note: 'rollback' },
-    });
-    expect(res.statusCode).toBe(500);
-
-    const t = ctx.db
-      .prepare('SELECT status, approval_status AS approvalStatus FROM tournaments WHERE id = ?')
-      .get(tid);
-    expect(t).toMatchObject({ status: 'pending', approvalStatus: 'pending' });
-
-    const { n } = ctx.db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM agent_events WHERE scope_kind = 'tournament' AND scope_id = ? AND type = 'tournament.reviewed'",
-      )
-      .get(tid) as { n: number };
-    expect(n).toBe(0);
-  }, 30_000);
 });

@@ -11,7 +11,7 @@ export function assertContinuousHistory(
     (batch.resyncRecommended || (batch.oldestCursor !== null && cursor < batch.oldestCursor))
   ) {
     throw new Error(
-      'Event history expired. Cursor retained: fetch current room/tournament state, resynchronize your receiver, and explicitly set its eventCursor in the checkpoint before restarting.',
+      'Event history expired. Cursor retained: fetch current room state, resynchronize your receiver, and explicitly set its eventCursor in the checkpoint before restarting.',
     );
   }
 }
@@ -34,7 +34,7 @@ async function main() {
     scopeId = process.env.FOURAM_SCOPE_ID;
   const target = process.env.FOURAM_WEBHOOK_URL,
     secret = process.env.FOURAM_WEBHOOK_SECRET;
-  if (!token || !scopeId || !['room', 'tournament'].includes(kind ?? '') || !target || !secret)
+  if (!token || !scopeId || kind !== 'room' || !target || !secret)
     throw new Error(
       'Set FOURAM_TOKEN, FOURAM_SCOPE_KIND, FOURAM_SCOPE_ID, FOURAM_WEBHOOK_URL and FOURAM_WEBHOOK_SECRET.',
     );

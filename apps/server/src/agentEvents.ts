@@ -88,7 +88,7 @@ export function registerAgentEvents(app: FastifyInstance, db: DB): void {
   app.get('/api/agent/events', async (req, reply) => {
     const parsed = z
       .object({
-        scopeKind: z.enum(['room', 'tournament']),
+        scopeKind: z.enum(['room']),
         scopeId: z.string().min(1).max(80),
         after: z.coerce.number().int().nonnegative().safe().default(0),
         wait: z.coerce.number().int().min(0).max(25).default(0),
@@ -97,25 +97,12 @@ export function registerAgentEvents(app: FastifyInstance, db: DB): void {
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid event subscription.' });
     const q = parsed.data;
     const userId = scopeUser(db, req, q.scopeKind, q.scopeId);
-    const allowed = () =>
-      scopeMember(db, userId, q.scopeKind, q.scopeId) ||
-      (q.scopeKind === 'tournament' &&
-        !!db
-          .prepare('SELECT 1 FROM tournaments WHERE id = ? AND owner_id = ?')
-          .get(q.scopeId, userId));
-    if (!allowed())
-      return reply.code(403).send({ error: 'Join this room or tournament to subscribe.' });
+    const allowed = () => scopeMember(db, userId, q.scopeKind, q.scopeId);
+    if (!allowed()) return reply.code(403).send({ error: 'Join this room to subscribe.' });
     if ((waiting.get(userId) ?? 0) >= 3)
       return reply
         .code(429)
         .send({ error: 'At most three simultaneous subscriptions per account.' });
-    const keepPresent = () => {
-      if (q.scopeKind === 'tournament')
-        db.prepare(
-          'UPDATE tournament_entries SET last_seen = ? WHERE tournament_id = ? AND user_id = ?',
-        ).run(Date.now(), q.scopeId, userId);
-    };
-    keepPresent();
     let result = readAgentEvents(db, q.scopeKind, q.scopeId, q.after);
     if (!result.events.length && q.wait) {
       waiting.set(userId, (waiting.get(userId) ?? 0) + 1);
@@ -138,7 +125,6 @@ export function registerAgentEvents(app: FastifyInstance, db: DB): void {
       if (!db.open) return reply.code(503).send({ error: 'Server restarting.' });
       scopeUser(db, req, q.scopeKind, q.scopeId); // revocation during a wait takes effect
       if (!allowed()) return reply.code(403).send({ error: 'Subscription access ended.' });
-      keepPresent();
       result = readAgentEvents(db, q.scopeKind, q.scopeId, q.after);
     }
     return reply.header('cache-control', 'no-store').send(result);

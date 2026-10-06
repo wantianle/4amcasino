@@ -26,8 +26,8 @@ it('retries signed webhook delivery and checkpoints only after receiver acknowle
                   {
                     version: 1,
                     id: 7,
-                    type: 'tournament.action',
-                    scopeKind: 'tournament',
+                    type: 'room.action',
+                    scopeKind: 'room',
                     scopeId: 'test',
                     data: { action: { type: 'fold' } },
                   },
@@ -58,7 +58,7 @@ it('retries signed webhook delivery and checkpoints only after receiver acknowle
       ...process.env,
       FOURAM_URL: origin,
       FOURAM_TOKEN: 'synthetic-fixture-token',
-      FOURAM_SCOPE_KIND: 'tournament',
+      FOURAM_SCOPE_KIND: 'room',
       FOURAM_SCOPE_ID: 'test',
       FOURAM_WEBHOOK_URL: origin + '/receiver',
       FOURAM_WEBHOOK_SECRET: key.toString('base64'),
@@ -77,7 +77,7 @@ it('retries signed webhook delivery and checkpoints only after receiver acknowle
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
-    expect(saved).toEqual({ scope: `${origin}/tournament/test`, cursor: 7 });
+    expect(saved).toEqual({ scope: `${origin}/room/test`, cursor: 7 });
     expect(received).toHaveLength(2);
     expect(received[0]!.body).toBe(received[1]!.body);
     for (const event of received) {

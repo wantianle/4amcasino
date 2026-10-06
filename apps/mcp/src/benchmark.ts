@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,7 +10,34 @@ import {
   type ArenaView,
   type PlayerAction,
 } from '@4am/shared';
-import { arenaDeck, seedCommitment } from '../../server/src/arenaRandom.js';
+/** SHA-256 commitment to the benchmark seed, so a run's inputs can be published
+ *  without revealing the seed itself. Inlined from the retired server-side arena
+ *  seeding module: this benchmark is a standalone, server-independent replay
+ *  tool and must not import from apps/server. */
+function seedCommitment(seed: string): string {
+  return createHash('sha256').update(seed).digest('hex');
+}
+/** Reproducible unbiased Fisher-Yates deck for one benchmark hand. */
+function arenaDeck(seed: string, handNumber: number): number[] {
+  const deck = Array.from({ length: 52 }, (_, i) => i);
+  let counter = 0;
+  const randomBelow = (max: number) => {
+    const limit = Math.floor(0x100000000 / max) * max;
+    let n: number;
+    do {
+      n = createHmac('sha256', seed)
+        .update(`4am/arena/v1/${handNumber}/${counter++}`)
+        .digest()
+        .readUInt32BE(0);
+    } while (n >= limit);
+    return n % max;
+  };
+  for (let i = 51; i > 0; i--) {
+    const j = randomBelow(i + 1);
+    [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+  }
+  return deck;
+}
 export interface BenchmarkAgent {
   name: string;
   decide: (state: ArenaView) => PlayerAction | Promise<PlayerAction>;

@@ -114,7 +114,7 @@ export function migrateAdminAudit(db: DB): void {
  * on whatever connection the caller passes, so a call made from inside a
  * `db.transaction(...)` body commits (or rolls back) with the business change
  * it records - the intended usage. Kept in db.ts rather than admin.ts so the
- * admin, settings, sponsor and tournament routes can all share it without an
+ * admin and settings routes can all share it without an
  * import cycle. `detail` is JSON-encoded only when provided.
  */
 export function writeAdminAudit(
@@ -410,7 +410,7 @@ function migrate(db: DB): void {
   // primary key. BEGIN IMMEDIATE takes the write lock up front - waiting up to
   // busy_timeout (10s, set in openDb) for the other process - so the second
   // starter reads the committed marker and skips. Same `.immediate()` style as
-  // the rest of the codebase (auth.ts, tournaments.ts, ...).
+  // the rest of the codebase (auth.ts, rooms.ts, ...).
   const AUTO_READY_MARKER = 'auto-ready-default-on-1';
   db.transaction(() => {
     const autoReadyFlag = db

@@ -7,7 +7,7 @@ import { rateLimit } from './limits.js';
 import { getRoom, presentablePlayers } from './rooms.js';
 import { activeHands } from './liveHands.js';
 
-export type ScopeKind = 'room' | 'tournament';
+export type ScopeKind = 'room';
 export interface AgentGrant {
   id: string;
   user_id: number;
@@ -36,11 +36,8 @@ function enabledUser(db: DB, userId: number): boolean {
   return !!db.prepare('SELECT 1 FROM users WHERE id = ? AND disabled = 0').get(userId);
 }
 export function scopeMember(db: DB, userId: number, kind: ScopeKind, id: string): boolean {
-  return kind === 'room'
-    ? !!db.prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?').get(id, userId)
-    : !!db
-        .prepare('SELECT 1 FROM tournament_entries WHERE tournament_id = ? AND user_id = ?')
-        .get(id, userId);
+  if (kind !== 'room') return false;
+  return !!db.prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?').get(id, userId);
 }
 export function resolveAgentGrant(db: DB, token: string): AgentGrant | null {
   if (!token.startsWith('4am_agent_') || token.length > 150) return null;
@@ -109,18 +106,11 @@ export function scopeUser(
 }
 export function registerAgentAccess(app: FastifyInstance, db: DB): void {
   app.get('/api/me/agent-scopes', { preHandler: requireUser(db) }, async (req) => ({
-    scopes: [
-      ...db
-        .prepare(
-          "SELECT r.id, r.name, 'room' AS kind FROM rooms r JOIN room_players p ON p.room_id = r.id WHERE p.user_id = ? AND r.archived = 0",
-        )
-        .all(req.userId),
-      ...db
-        .prepare(
-          "SELECT t.id, t.name, 'tournament' AS kind FROM tournaments t JOIN tournament_entries e ON e.tournament_id = t.id WHERE e.user_id = ? AND t.status NOT IN ('completed','cancelled')",
-        )
-        .all(req.userId),
-    ],
+    scopes: db
+      .prepare(
+        "SELECT r.id, r.name, 'room' AS kind FROM rooms r JOIN room_players p ON p.room_id = r.id WHERE p.user_id = ? AND r.archived = 0",
+      )
+      .all(req.userId),
   }));
   app.get('/api/agent/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -207,7 +197,7 @@ export function registerAgentAccess(app: FastifyInstance, db: DB): void {
       const parsed = z
         .object({
           label: z.string().trim().min(1).max(60),
-          scopeKind: z.enum(['room', 'tournament']),
+          scopeKind: z.enum(['room']),
           scopeId: z.string().min(1).max(80),
           canPlay: z.boolean().default(false),
           days: z.number().int().min(1).max(30).default(7),
@@ -216,9 +206,7 @@ export function registerAgentAccess(app: FastifyInstance, db: DB): void {
       if (!parsed.success) return reply.code(400).send({ error: 'Invalid agent access settings.' });
       const b = parsed.data;
       if (!scopeMember(db, req.userId, b.scopeKind, b.scopeId))
-        return reply
-          .code(403)
-          .send({ error: 'Join this room or enroll in this tournament first.' });
+        return reply.code(403).send({ error: 'Join this room first.' });
       const count = db
         .prepare(
           'SELECT COUNT(*) AS n FROM agent_grants WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?',

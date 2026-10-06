@@ -13,7 +13,7 @@ import { registerArenaTools } from './arenaTools.js';
  *
  * Configuration (environment):
  *   FOURAM_URL       server, default https://4amcasino.com
- *   FOURAM_TOKEN     preferred scoped room/tournament grant
+ *   FOURAM_TOKEN     preferred scoped room grant
  *   FOURAM_SIGNING_KEY local signing seed, needed only for room play grants
  *   FOURAM_USERNAME  account name (registered automatically if missing)
  *   FOURAM_PASSWORD  account password (derives the signing keys locally;
