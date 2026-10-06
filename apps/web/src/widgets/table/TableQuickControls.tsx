@@ -36,17 +36,12 @@ const TIME_BANK_REFILL_HANDS = 20;
 
 /** The Timer chip + its popover. Both the per-turn clock and the time bank are
  *  fixed product settings now, so this is purely informational: no timer
- *  select, no bank fields, nothing to save. */
+ *  select, no bank fields, nothing to save - and therefore no room props to
+ *  read the old `actionSecs` from. */
 function TimerControl({
   compact,
 }: {
-  roomId: string;
-  isHost: boolean;
-  actionSecs: number;
-  /** Mid-hand: a timer edit only lands from the next deal. */
-  timerDisabled: boolean;
   compact: boolean;
-  onChangeActionSecs: (seconds: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -125,13 +120,10 @@ export function TableQuickControls({
   isHost,
   autoDeal,
   autoDealPaused,
-  actionSecs,
-  timerDisabled,
   amSpectator,
   compact = false,
   onChangeAutoDeal,
   onOpenAutoDealDialog,
-  onChangeActionSecs,
   onOpenGameplay,
   onOpenBots,
   botCount = 0,
@@ -142,15 +134,11 @@ export function TableQuickControls({
   autoDeal: boolean;
   /** The engine paused auto-deal (too few ready players) though it is on. */
   autoDealPaused: boolean;
-  actionSecs: number;
-  /** Mid-hand: a timer edit only lands from the next deal. */
-  timerDisabled: boolean;
   amSpectator: boolean;
   /** A1: below the layout minimum, labels drop to icons-only. */
   compact?: boolean;
   onChangeAutoDeal: (value: boolean) => void;
   onOpenAutoDealDialog: () => void;
-  onChangeActionSecs: (seconds: number) => void;
   /** P2 Lane F: host-only 「玩法规则」 entry that opens the GameplaySettings
    *  dialog (squid / bomb pot / multi-run - the time bank moved into the timer
    *  panel above). When the page cannot offer it (phones fold it into the dock
@@ -190,16 +178,7 @@ export function TableQuickControls({
 
       {/* 计时 chip: a read-only readout of the fixed 30s turn clock and the
           fixed time bank (hosts can no longer change either). */}
-      {!amSpectator && (
-        <TimerControl
-          roomId={roomId}
-          isHost={isHost}
-          actionSecs={actionSecs}
-          timerDisabled={timerDisabled}
-          compact={compact}
-          onChangeActionSecs={onChangeActionSecs}
-        />
-      )}
+      {!amSpectator && <TimerControl compact={compact} />}
 
       {/* P2 玩法规则: the host edits squid / bomb pot / multi-run between
           hands - same rail as the switches you touch every hand. */}

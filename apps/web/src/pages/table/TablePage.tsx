@@ -56,7 +56,7 @@ import { botsPollMs, useRoomBots } from '../../features/bots/useRoomBots.ts';
 import { voice } from '../../shared/voice.ts';
 import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
-import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
+import { ACTION_TIMEOUT_MS } from '../../shared/lib/tableTimers.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
 import { tNode } from '../../shared/i18n/trans.tsx';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
@@ -1113,30 +1113,22 @@ export function TablePage() {
             {meSittingOut ? t('Deal me in next hand') : t('Sit out next deal')}
           </button>
         );
-      case 'timer':
+      case 'timer': {
+        // The turn clock is a FIXED product setting (30s; the host can no longer
+        // tune it and the server strips a stale actionSecs), so this row is a
+        // read-only readout - matching the desktop TimerControl popover - rather
+        // than a select that silently no-ops on change.
+        const timerMs = room.room.actionTimeoutMs ?? ACTION_TIMEOUT_MS;
         return (
-          <label className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+          <div className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
             <Timer size={18} />
             <span className="flex-1">{t('Turn timer')}</span>
-            <select
-              aria-label={t('Turn timer')}
-              value={room.room.actionSecs ?? ACTION_TIMEOUT_SECS}
-              disabled={handLive}
-              onChange={(event) =>
-                void api.roomSettings(roomId!, +event.target.value).catch(reportError)
-              }
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 dark:border-slate-700 dark:bg-slate-800"
-              title={handLive ? t('Applies from the next hand') : undefined}
-            >
-              {[15, 30, 45, 60, 90, 120].map((seconds) => (
-                <option key={seconds} value={seconds}>
-                  {t('{n}s', { n: seconds })}
-                </option>
-              ))}
-              <option value={0}>{t('No limit')}</option>
-            </select>
-          </label>
+            <span className="tabular-nums text-slate-500 dark:text-slate-400">
+              {timerMs > 0 ? t('{n}s', { n: Math.round(timerMs / 1000) }) : t('No limit')}
+            </span>
+          </div>
         );
+      }
       case 'bots':
         // phone entry for the host-only bot dialog (desktop rides the top bar)
         return (
@@ -1852,15 +1844,10 @@ export function TablePage() {
               isHost={!!isHost}
               autoDeal={room.room.autoDeal !== false}
               autoDealPaused={!!room.autoDealPaused}
-              actionSecs={room.room.actionSecs ?? ACTION_TIMEOUT_SECS}
-              timerDisabled={handLive}
               amSpectator={amSpectator}
               compact={compactBar}
               onChangeAutoDeal={(value) => void api.setAutoDeal(roomId!, value).catch(reportError)}
               onOpenAutoDealDialog={() => setAutoDealOpen(true)}
-              onChangeActionSecs={(seconds) =>
-                void api.roomSettings(roomId!, seconds).catch(reportError)
-              }
               onOpenGameplay={isHost && features ? openGameplay : undefined}
               onOpenBots={isHost ? () => setBotsOpen(true) : undefined}
               botCount={bots.length}

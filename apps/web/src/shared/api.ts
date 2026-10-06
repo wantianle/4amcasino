@@ -278,7 +278,6 @@ export const api = {
     sb: number,
     bb: number,
     auditMode?: string,
-    actionSecs?: number,
     minSettleHands?: number,
     commissionRevision?: number,
     features?: RoomFeaturesPatch,
@@ -288,7 +287,6 @@ export const api = {
       sb,
       bb,
       ...(auditMode ? { auditMode } : {}),
-      ...(actionSecs !== undefined ? { actionSecs } : {}),
       ...(minSettleHands ? { minSettleHands } : {}),
       ...(commissionRevision !== undefined ? { commissionRevision } : {}),
       ...(features ? { features } : {}),
@@ -441,8 +439,6 @@ export const api = {
   payHouse: (amount: number, note?: string, proof?: string) =>
     req('/api/house/pay', { amount, ...(note ? { note } : {}), ...(proof ? { proof } : {}) }),
   sharedRooms: (userId: number) => req(`/api/users/${userId}/shared-rooms`),
-  roomSettings: (roomId: string, actionSecs: number) =>
-    req(`/api/rooms/${roomId}/settings`, { actionSecs }, 'PUT'),
   // ask the platform account to fold a duplicate account into another one
   mergeRequest: (fromUsername: string, intoUsername: string, note?: string) =>
     req('/api/me/merge-request', { fromUsername, intoUsername, ...(note ? { note } : {}) }),

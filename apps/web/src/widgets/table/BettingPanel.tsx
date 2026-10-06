@@ -6,7 +6,7 @@ import { useStore } from '../../shared/store.ts';
 import { presetLabel, presetRaiseTo } from '../../features/table/betPresets.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { bbValue } from '../../shared/lib/bb.ts';
-import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
+import { ACTION_TIMEOUT_MS } from '../../shared/lib/tableTimers.ts';
 import { HourglassMedium, Bomb, Timer, Play } from '@phosphor-icons/react';
 import { Button } from '../../shared/ui/index.tsx';
 import { myToCall, togglePreAction } from '../../features/table/preActions.ts';
@@ -37,21 +37,22 @@ export function adjustRaiseByStep(value: number, delta: number, sb: number, min:
   return clampRaiseAmount(value + delta * sb, min, max, min);
 }
 
-/** The action-clock ring next to the amount: the window is `actionSecs` PLUS
- *  the acting seat's bank, the base clock drains first, and once
- *  `baseDeadline` passes the remaining arc turns amber - you are visibly
- *  spending banked thinking time. The bank balance itself rides as a small
- *  chip under the ring so it is readable even while the base clock runs. */
+/** The action-clock ring next to the amount: the window is the room's base
+ *  action clock (`actionMs`, MILLISECONDS) PLUS the acting seat's bank, the
+ *  base clock drains first, and once `baseDeadline` passes the remaining arc
+ *  turns amber - you are visibly spending banked thinking time. The bank
+ *  balance itself rides as a small chip under the ring so it is readable even
+ *  while the base clock runs. */
 function CountdownRing({
   deadline,
   baseDeadline,
   bankMs,
-  actionSecs,
+  actionMs,
 }: {
   deadline: number | null;
   baseDeadline: number | null;
   bankMs: number;
-  actionSecs: number;
+  actionMs: number;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -64,7 +65,7 @@ function CountdownRing({
   // full turn budget. The bank this turn is spending = however far the final
   // deadline reaches past the base clock (zero for rooms without a time bank).
   const CIRC = 2 * Math.PI * 15;
-  const baseMs = actionSecs * 1000;
+  const baseMs = actionMs;
   const bankWindow = baseDeadline !== null && deadline !== null ? Math.max(0, deadline - baseDeadline) : 0;
   const totalMs = baseMs + bankWindow;
   // L5 (spec row 7): the arc itself drains on requestAnimationFrame -
@@ -72,7 +73,7 @@ function CountdownRing({
   // interval above still drives the readout digits; the ring never waits on
   // React. Reduced motion keeps this drain (it is required information).
   useEffect(() => {
-    if (!deadline || actionSecs <= 0) return;
+    if (!deadline || actionMs <= 0) return;
     let raf = 0;
     const tick = () => {
       const f = Math.max(0, Math.min(1, (deadline - Date.now()) / totalMs));
@@ -81,8 +82,8 @@ function CountdownRing({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [deadline, baseDeadline, actionSecs, totalMs]);
-  if (!deadline || actionSecs <= 0) return null;
+  }, [deadline, baseDeadline, actionMs, totalMs]);
+  if (!deadline || actionMs <= 0) return null;
   const baseLeft = Math.max(0, Math.min((baseDeadline ?? deadline) - now, baseMs));
   const bankLeft = baseDeadline ? Math.max(0, deadline - Math.max(now, baseDeadline)) : 0;
   const remainMs = Math.max(0, deadline - now);
@@ -471,7 +472,7 @@ export function BettingPanel({
               deadline={hand.deadline}
               baseDeadline={hand.baseDeadline}
               bankMs={mySeat !== null ? (hand.timeBanks[mySeat] ?? 0) : 0}
-              actionSecs={room?.room.actionSecs ?? ACTION_TIMEOUT_SECS}
+              actionMs={room?.room.actionTimeoutMs ?? ACTION_TIMEOUT_MS}
             />
           </div>
           <p className="table-sub">

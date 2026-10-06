@@ -1,10 +1,13 @@
 /**
- * Web-side fallback for a room's action clock. Rooms normally carry their own
- * `actionSecs` / `actionTimeoutMs`; these are the defaults the UI falls back to
- * when the server value is absent. Single source so the seconds and millisecond
- * views of the same clock can never drift apart.
+ * Web-side fallback for a room's action clock. Rooms carry their own
+ * `actionTimeoutMs`; this is the default the UI falls back to when the server
+ * value is absent. The turn clock is a FIXED product setting (30s, host cannot
+ * tune it - see hub.ts `defaultGameOpts`), so this must match the engine
+ * default; `actionSecs` is a dead legacy field the server now reports as null.
+ * Single source so the seconds and millisecond views of the same clock can
+ * never drift apart.
  */
-export const ACTION_TIMEOUT_SECS = 45;
+export const ACTION_TIMEOUT_SECS = 30;
 
 /** The same default clock in milliseconds. */
 export const ACTION_TIMEOUT_MS = ACTION_TIMEOUT_SECS * 1000;

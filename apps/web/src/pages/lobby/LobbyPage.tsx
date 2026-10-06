@@ -43,7 +43,6 @@ export function LobbyPage() {
   const [name, setName] = useState('');
   const [sb, setSb] = useState(10);
   const [bb, setBb] = useState(20);
-  const [actionSecs, setActionSecs] = useState(45);
   const [minSettleHands, setMinSettleHands] = useState(0);
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
   // P2 gameplay rules (squid / time bank / bomb pot / multi-run), seeded from
@@ -106,7 +105,6 @@ export function LobbyPage() {
         sb,
         bb,
         strictAudit ? 'strict-audit' : undefined,
-        actionSecs,
         minSettleHands,
         commission.settings.revision,
         enabledFeatureCount(features) > 0 ? features : undefined,
@@ -302,21 +300,6 @@ export function LobbyPage() {
               <Input type="number" min={1} value={bb} onChange={(e) => setBb(+e.target.value)} />
             </label>
           </div>
-          <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">{t('Turn timer')}</span>
-            <select
-              value={actionSecs}
-              onChange={(e) => setActionSecs(+e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-            >
-              {[15, 30, 45, 60, 90, 120].map((s) => (
-                <option key={s} value={s}>
-                  {t('{s} seconds per decision', { s })}
-                </option>
-              ))}
-              <option value={0}>{t('No limit')}</option>
-            </select>
-          </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-500">{t('Who can find this table')}</span>
             <select
