@@ -170,6 +170,32 @@ function HoleCards({
  *  bets, the action bar, the betting panel). There is deliberately no second
  *  local copy: a single source is what keeps every display in agreement. */
 
+/** The seats the settled pot flies to.
+ *
+ *  `collectSeats` is the page's per-payout data (every board / side-pot winner
+ *  with amount > 0). A seat in it can still have LOST the hand overall — a
+ *  run-it-twice split pays a seat that drops the other run — so once `hand_end`
+ *  supplies the nets we keep only the true net winners (user report:
+ *  跑马一输一赢、筹码两边飞).
+ *
+ *  The two sets are NOT guaranteed to overlap, though. A hand won by fold
+ *  broadcasts no showdown at all (server `computeShowdown` returns
+ *  `showdown: null` when `winnerByFold !== null`), so the page's `collectSeats`
+ *  is empty while the sole winner is still net positive. The old raw
+ *  intersection then produced `[]` and the table went completely silent — no
+ *  chips, no win-lit state. So when the net winners are known and the payout
+ *  frame is empty (or disagrees), fall back to the net winners: fly to the
+ *  actual winners rather than show nothing.
+ *
+ *  An empty `netWinners` (a true tie, or the early showdown window before
+ *  `hand_end` lands) keeps the per-payout split so the pot can still fly. */
+export function collectorSeats(netWinners: number[], collectSeats?: number[]): number[] {
+  if (netWinners.length === 0) return collectSeats ?? [];
+  if (!collectSeats || collectSeats.length === 0) return netWinners;
+  const paid = netWinners.filter((seat) => collectSeats.includes(seat));
+  return paid.length > 0 ? paid : netWinners;
+}
+
 export function RoundTable({
   seats,
   mySeat,
@@ -290,22 +316,19 @@ export function RoundTable({
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
   const winners = seats.filter((s) => s.won);
-  // The pot flies ONCE, to the seat that actually won the hand. collectSeats
-  // is per-payout data (every board / side-pot winner with amount > 0), and a
-  // run-it-twice or side-pot split can pay a seat that still LOST overall —
-  // flying the pot to them too reads as "the loser collected" (user report:
-  // 跑马一输一赢、筹码两边飞). Intersect with the net winners; a true tie
-  // (nobody net positive) keeps the per-payout split.
+  // The pot flies ONCE, to the seat that actually won the hand. See
+  // collectorSeats for why the per-payout set is intersected and what happens
+  // when the two disagree.
   const netWinners = winners.map((s) => s.seat);
-  const collectors = collectSeats
-    ? netWinners.length
-      ? netWinners.filter((seat) => collectSeats.includes(seat))
-      : collectSeats
-    : netWinners;
+  const collectors = collectorSeats(netWinners, collectSeats);
   const fxLit = useWinnerFx(collectors.length > 0);
   // when the moment carries a showdown reveal, the chips wait for the flips
   // (one lead value feeds BOTH the flight and the stack-number gate, so the
-  // bump always meets the discs)
+  // bump always meets the discs). Keyed on collectSeats, i.e. "a showdown
+  // reveal actually happened", NOT on collectors: a fold win has no reveal to
+  // wait for, and after collectorSeats' fallback a non-empty collectSeats
+  // always yields a non-empty collectors on a won hand, so they agree exactly
+  // when it matters and disagree (lead 0) precisely on the no-showdown win.
   const collectLead = collectSeats && collectSeats.length > 0 ? COLLECT_REVEAL_LEAD_MS : 0;
   const potRef = useRef<HTMLDivElement | null>(null);
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});

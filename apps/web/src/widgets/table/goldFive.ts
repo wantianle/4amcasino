@@ -1,8 +1,15 @@
-import { HAND_CATEGORY_NAMES, bestFive, evaluate7, handCategory, type CardId } from '@4am/shared';
+import { bestFive, evaluate7, handCategory, type CardId } from '@4am/shared';
 
-/** Made-hand threshold: Two Pair and above (index into HAND_CATEGORY_NAMES —
- *  order-tolerant, the names are the contract, not the number). */
-const TWO_PAIR = HAND_CATEGORY_NAMES.indexOf('Two Pair');
+/** Made-hand threshold: Two Pair and above. `2` is a frozen contract of
+ *  `@4am/shared`'s packed score — the category lives in bits 20-31 and its
+ *  number is fixed (`evaluate.ts`; frozen by packages/shared
+ *  test/scoreLayout.test.ts and already spelled `case 2:` in
+ *  shared/i18n/pokerLabels.ts). It is deliberately NOT
+ *  `HAND_CATEGORY_NAMES.indexOf('Two Pair')`: a rename, localisation, or
+ *  spelling change would make `indexOf` return -1, and `handCategory(...) < -1`
+ *  is never true — the bar would fall to "every hand glows" instead of "none
+ *  glow". */
+const TWO_PAIR = 2;
 
 /** The cards that MAKE this seat's hand, once the board is final (5 cards)
  *  and the category reaches two pair or better. Returns the exact subset of
