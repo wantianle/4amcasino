@@ -60,6 +60,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [rooms, setRooms] = useState<RoomRow[]>([]);
+  const [tablesOpen, setTablesOpen] = useState(false);
   const [pending, setPending] = useState<PendingTasks | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
@@ -88,6 +89,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   useEffect(() => {
     setDrawerOpen(false);
     setSearchOpen(false);
+    setTablesOpen(false);
     setQuery('');
   }, [loc.pathname]);
   useEffect(() => {
@@ -147,6 +149,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   function toggleSidebar() {
     setCollapsed((previous) => {
       localStorage.setItem(SIDEBAR_KEY, previous ? 'full' : 'rail');
+      setTablesOpen(false);
       return !previous;
     });
   }
@@ -202,13 +205,39 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
       <nav aria-label={t('Main navigation')} className="zeus-nav-list">
         {primary.map((item) => row(item, rail))}
         {tableLinks.length > 0 && (
-          <div className="zeus-nav-section">
-            {!rail && <p className="zeus-nav-label">{t('Your tables')}</p>}
-            {tableLinks.map((item) => row(item, rail))}
-          </div>
+          rail ? (
+            <div className="zeus-nav-section zeus-table-drawer">
+              <button
+                type="button"
+                className={cn(
+                  'zeus-nav-item is-rail zeus-table-trigger',
+                  tableLinks.some((item) => item.to === loc.pathname) && 'is-active',
+                )}
+                aria-label={t('Your tables')}
+                aria-expanded={tablesOpen}
+                aria-controls="rail-table-links"
+                title={t('Your tables')}
+                onClick={() => setTablesOpen((open) => !open)}
+              >
+                <RiPokerClubsLine className="size-5 shrink-0" aria-hidden />
+                <span className="zeus-table-count" aria-hidden>{tableLinks.length}</span>
+              </button>
+              {tablesOpen && (
+                <div id="rail-table-links" className="zeus-table-panel">
+                  <p className="zeus-nav-label">{t('Your tables')}</p>
+                  {tableLinks.map((item) => row(item, false))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="zeus-nav-section">
+              <p className="zeus-nav-label">{t('Your tables')}</p>
+              {tableLinks.map((item) => row(item, rail))}
+            </div>
+          )
         )}
       </nav>
-      <div className="mt-auto space-y-1 pt-5">
+      <div className={cn('zeus-sidebar-bottom', 'mt-auto space-y-1 pt-5')}>
         {waiting > 0 && (
           <Link
             to="/lobby"
@@ -285,7 +314,7 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
       <a href="#app-content" className="zeus-skip-link">
         {t('Skip to content')}
       </a>
-      <aside className="zeus-sidebar" aria-label={t('Sidebar')}>
+      <aside className={cn('zeus-sidebar', collapsed && 'rail-mode')} aria-label={t('Sidebar')}>
         <Link
           to="/lobby"
           aria-label={
