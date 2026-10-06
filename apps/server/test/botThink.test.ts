@@ -1,11 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  HeadlessClient,
-  buildDecisionView,
-  type DecisionView,
-  type Policy,
-} from '@4am/agent-core';
+import { HeadlessClient, buildDecisionView, type Policy } from '@4am/agent-core';
 import { createApp } from '../src/app.js';
 import { attachHub } from '../src/hub.js';
 import { BotSupervisor } from '../src/botSupervisor.js';
@@ -22,15 +17,15 @@ import type { BotRow, ClaimedBot } from '../src/botRoutes.js';
 import { FakeClient } from './helpers/fakeBotClient.js';
 
 /**
- * Human-like think-time tests.
+ * Inter-action buffer tests.
  *
- * The display wait sits AFTER `policy.decide` and BEFORE `act()`, so the budget
- * only has to cover the guard + the send, never a hypothetical policy runtime.
- * The pure helpers are pinned directly (`computeThinkDelayMs`, `planThinkWaitMs`)
+ * The buffer sits AFTER `policy.decide` and BEFORE `act()`, so the budget only
+ * has to cover the guard + the send, never a hypothetical policy runtime. The
+ * pure helpers are pinned directly (`computeThinkDelayMs`, `planThinkWaitMs`)
  * and the runner tests inject a controllable `sleep` + deterministic `rng`:
  * policy-first ordering, a slow policy cancelling/shortening the wait, a policy
  * that crosses the deadline (same as no-delay), a mid-wait stop/reconnect/turn
- * change abandoning the decision without looping the delay, routing preserved,
+ * change abandoning the decision without looping the buffer, routing preserved,
  * and the removed name heuristic. A real 5s-room E2E pins no timeout_fold.
  */
 
@@ -39,11 +34,8 @@ const ORIGINAL_KEY = process.env.BOT_IDENTITY_KEY;
 
 const THINK: ThinkConfig = {
   enabled: true,
-  minMs: 800,
-  maxMs: 2600,
-  extraMaxMs: 0,
-  bigPotBB: 10,
-  easyFactor: 0.5,
+  minMs: 150,
+  maxMs: 450,
 };
 
 function claimedBot(botId = 'bot1', policyKind = 'scripted'): ClaimedBot {
@@ -77,31 +69,6 @@ function claimedBot(botId = 'bot1', policyKind = 'scripted'): ClaimedBot {
   };
 }
 
-/** A minimal `DecisionView` carrying only the fields the delay function reads. */
-function view(over: {
-  canCheck?: boolean;
-  callAmount?: number;
-  pot?: number;
-  bb?: number;
-  stack?: number;
-}): DecisionView {
-  const canCheck = over.canCheck ?? false;
-  return {
-    room: { bb: over.bb ?? 20, sb: 10, id: 'r', name: 'R', minSettleHands: 0, sevenDeuceBonus: 0 },
-    hand: { pot: over.pot ?? 30 },
-    me: { stack: over.stack ?? 1000 },
-    legalActions: {
-      canCheck,
-      canCall: !canCheck,
-      callAmount: over.callAmount ?? (canCheck ? 0 : 10),
-      canBet: canCheck,
-      canRaise: !canCheck,
-      minRaiseTo: 40,
-      maxRaiseTo: 1000,
-    },
-  } as unknown as DecisionView;
-}
-
 beforeEach(() => {
   process.env.BOT_IDENTITY_KEY = KEY;
 });
@@ -112,31 +79,25 @@ afterEach(() => {
 
 describe('computeThinkDelayMs', () => {
   it('returns 0 when disabled', () => {
-    expect(computeThinkDelayMs(view({}), { ...THINK, enabled: false }, () => 0.5)).toBe(0);
+    expect(computeThinkDelayMs({ ...THINK, enabled: false }, () => 0.5)).toBe(0);
   });
 
-  it('draws the base uniformly and stays within the configured range', () => {
-    expect(computeThinkDelayMs(view({}), THINK, () => 0)).toBe(800);
-    expect(computeThinkDelayMs(view({}), THINK, () => 0.5)).toBe(1700);
-    expect(computeThinkDelayMs(view({}), THINK, () => 1)).toBe(2600);
+  it('draws a single uniform buffer in the configured range', () => {
+    expect(computeThinkDelayMs(THINK, () => 0)).toBe(150);
+    expect(computeThinkDelayMs(THINK, () => 0.5)).toBe(300);
+    expect(computeThinkDelayMs(THINK, () => 1)).toBe(450);
   });
 
-  it('adds the big-decision bonus (facing a bet / all-in / big pot), capped at max+extra', () => {
-    const cfg: ThinkConfig = { ...THINK, extraMaxMs: 2000 };
-    expect(computeThinkDelayMs(view({}), cfg, () => 1)).toBe(2600 + 2000);
-    expect(computeThinkDelayMs(view({ canCheck: true, pot: 220 }), cfg, () => 0)).toBe(800);
-    expect(computeThinkDelayMs(view({ canCheck: true, pot: 220 }), cfg, () => 1)).toBe(2600 + 2000);
-  });
-
-  it('shortens a trivially easy spot (a free check, small pot)', () => {
-    expect(computeThinkDelayMs(view({ canCheck: true, pot: 30 }), THINK, () => 0)).toBe(400);
-    expect(computeThinkDelayMs(view({ canCheck: true, pot: 30 }), THINK, () => 1)).toBe(1300);
+  it('is not decision-dependent (no big-pot / easy-spot scaling)', () => {
+    // The range is the whole contract: every decision gets the same draw.
+    expect(computeThinkDelayMs(THINK, () => 0)).toBe(computeThinkDelayMs(THINK, () => 0));
+    expect(computeThinkDelayMs(THINK, () => 1)).toBe(450);
   });
 
   it('orders an inverted min/max defensively', () => {
-    const inverted: ThinkConfig = { ...THINK, minMs: 2600, maxMs: 800 };
-    expect(computeThinkDelayMs(view({}), inverted, () => 0)).toBe(800);
-    expect(computeThinkDelayMs(view({}), inverted, () => 1)).toBe(2600);
+    const inverted: ThinkConfig = { ...THINK, minMs: 450, maxMs: 150 };
+    expect(computeThinkDelayMs(inverted, () => 0)).toBe(150);
+    expect(computeThinkDelayMs(inverted, () => 1)).toBe(450);
   });
 });
 
@@ -282,7 +243,7 @@ function buildRunner(
 
 const delayFrames = (sleeps: number[]) => sleeps.filter((s) => s >= 50);
 
-describe('BotRunner display wait (policy -> wait -> send)', () => {
+describe('BotRunner buffer wait (policy -> wait -> send)', () => {
   it('runs the policy first, then waits before sending', async () => {
     const decide = vi.fn(() => ({
       action: { type: 'call' as const },
@@ -610,7 +571,10 @@ describe('BotRunner display wait (policy -> wait -> send)', () => {
         return Promise.resolve();
       },
       rng: () => 0,
-      think: { ...THINK },
+      // Injected long on purpose: the default buffer is far too short for a
+      // 400ms-per-slice overshoot to eat a 1500ms clock. This test still needs a
+      // wait long enough to exercise the budget/overshoot cancellation path.
+      think: { enabled: true, minMs: 1000, maxMs: 1000 },
       onActionEvent: (e) => events.push(e),
     });
     await runner.start();
@@ -619,7 +583,7 @@ describe('BotRunner display wait (policy -> wait -> send)', () => {
     client.turn = true;
     await waitFor(() => events.some((e) => e.kind === 'discarded' && e.reason === 'deadline'));
 
-    // The policy ran first; only the display wait crossed the clock.
+    // The policy ran first; only the buffer wait crossed the clock.
     expect(decide).toHaveBeenCalledTimes(1);
     expect(client.actCount).toBe(0);
 
@@ -647,7 +611,7 @@ describe('think delay against a real 5s room', () => {
         graceMs: 10_000,
         pollMs: 25,
         onActionEvent: (e) => routed.push(e),
-        think: { enabled: true, minMs: 800, maxMs: 800, extraMaxMs: 0, bigPotBB: 100 },
+        think: { enabled: true, minMs: 300, maxMs: 300 },
         rng: () => 0,
       },
       log: () => {},

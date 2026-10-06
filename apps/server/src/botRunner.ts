@@ -2,7 +2,6 @@ import {
   HeadlessClient,
   SessionTracker,
   buildDecisionView,
-  type DecisionView,
   type Policy,
 } from '@4am/agent-core';
 import type { Street } from '@4am/shared';
@@ -105,15 +104,16 @@ export interface BotRunnerOptions {
   log?: (line: string) => void;
   sleep?: (ms: number) => Promise<void>;
   /**
-   * Human-like pre-action delay. Overrides the env-derived defaults
-   * (`BOT_THINK_*`); pass `{ enabled: false }` to disable it outright.
+   * Light inter-action buffer inserted between the decision and the send.
+   * Overrides the env-derived defaults (`BOT_THINK_*`); pass `{ enabled: false }`
+   * to disable it outright.
    */
   think?: Partial<ThinkConfig>;
-  /** Injection seam for the think delay's randomness; defaults to `Math.random`. */
+  /** Injection seam for the buffer's randomness; defaults to `Math.random`. */
   rng?: () => number;
   /**
    * Explicit type marker for an *injected* policy: `true` means "this is an LLM
-   * policy, do not add the local display wait". Production derives this from the
+   * policy, do not add the local buffer". Production derives this from the
    * resolved kind; for an injected policy it falls back to the persisted claim
    * kind only - there is no name-based heuristic.
    */
@@ -131,24 +131,24 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 const DEADLINE_GUARD_MS = 200;
 
 /**
- * Extra slack (ms) kept on top of `DEADLINE_GUARD_MS` when planning a think
- * delay to fit the action clock. A timer can fire slightly late.
+ * Extra slack (ms) kept on top of `DEADLINE_GUARD_MS` when planning the buffer
+ * to fit the action clock. A timer can fire slightly late.
  */
 const THINK_DEADLINE_MARGIN_MS = 100;
 
 /**
- * The think wait is sliced so `stop()`/fatal and a mid-wait reconnect/turn
+ * The buffer wait is sliced so `stop()`/fatal and a mid-wait reconnect/turn
  * change are observed within this window instead of after the whole sleep.
  */
 const THINK_SLICE_MS = 100;
 
 /**
- * Budget contract for the *display* wait that now sits AFTER `policy.decide`
- * and BEFORE `act()`. Because the decision is already computed, the wait only
- * has to leave room for the guard plus the send itself; no assumption is made
- * about how long the policy took (a slow/async policy delays the whole turn on
- * its own, exactly as it would without this feature). The wait may consume at
- * most `remaining - (guard + margin)` and at most `remaining * remainingRatio`.
+ * Budget contract for the buffer that sits AFTER `policy.decide` and BEFORE
+ * `act()`. Because the decision is already computed, the wait only has to leave
+ * room for the guard plus the send itself; no assumption is made about how long
+ * the policy took (a slow/async policy delays the whole turn on its own, exactly
+ * as it would without this feature). The wait may consume at most
+ * `remaining - (guard + margin)` and at most `remaining * remainingRatio`.
  */
 export interface ThinkBudget {
   /** Server action-clock guard; never send inside this window. */
@@ -166,37 +166,30 @@ export const DEFAULT_THINK_BUDGET: ThinkBudget = {
 };
 
 /**
- * Human-like pre-action timing. Local policies (scripted/rules/style) answer in
- * milliseconds, which reads as robotic; this is a *decorative* display wait put
- * between the decision and the send. It is bounded by a budget contract
- * (`planThinkWaitMs`): when the clock cannot spare `guard + margin` it drops to
- * zero and the decision is sent immediately.
+ * A light inter-action buffer. Local policies (scripted/rules/style) answer in
+ * milliseconds and an instant send reads as stiff, so a short randomized wait is
+ * inserted between the decision and the send. This is deliberately NOT a model
+ * of thinking: there is no per-difficulty/per-style tiering, no big-pot bonus
+ * and no easy-spot scaling - just one uniform draw in `[minMs, maxMs]`. It is
+ * bounded by the budget contract (`planThinkWaitMs`): when the clock cannot
+ * spare `guard + margin` it drops and the decision is sent immediately.
  *
  * All fields are injectable via `BotRunnerOptions.think`; production defaults
  * come from `thinkConfigFromEnv()` (`BOT_THINK_*`).
  */
 export interface ThinkConfig {
-  /** Master switch; when false no delay is ever applied. */
+  /** Master switch; when false no buffer is ever applied. */
   enabled: boolean;
-  /** Lower bound of the uniform base delay (ms). */
+  /** Lower bound of the uniform buffer (ms). */
   minMs: number;
-  /** Upper bound of the uniform base delay (ms). */
+  /** Upper bound of the uniform buffer (ms). */
   maxMs: number;
-  /** Extra uniform 0..extraMaxMs added on a big decision (raise/all-in/big pot). */
-  extraMaxMs: number;
-  /** A pot this many big blinds or larger counts as "big". */
-  bigPotBB: number;
-  /** Multiplier applied to the base delay on a trivially easy spot (a free check). */
-  easyFactor: number;
 }
 
 export const DEFAULT_THINK_CONFIG: ThinkConfig = {
   enabled: true,
-  minMs: 800,
-  maxMs: 2600,
-  extraMaxMs: 2000,
-  bigPotBB: 10,
-  easyFactor: 0.5,
+  minMs: 150,
+  maxMs: 450,
 };
 
 function parseNonNegative(raw: string | undefined, fallback: number): number {
@@ -228,47 +221,20 @@ export function thinkConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ThinkC
 }
 
 /**
- * The planned think delay (ms) for one decision, as a pure function of the view,
- * the config and an injectable `rng`. Kept free of timers so the range, the
- * big-decision bonus and the easy-spot shortening are unit-testable directly.
- *
- * - base: uniform in `[minMs, maxMs]` (the two are ordered defensively);
- * - big decision (facing a bet, committing the stack, or a pot >= `bigPotBB`
- *   big blinds): add a second uniform `0..extraMaxMs`;
- * - easy decision (a free check, no bet to face): scale the base by `easyFactor`.
+ * The planned buffer (ms) for one decision: a single uniform draw in
+ * `[minMs, maxMs]` (the two are ordered defensively). Kept free of timers so it
+ * is unit-testable directly. There is no decision-dependent scaling.
  */
-export function computeThinkDelayMs(
-  view: DecisionView,
-  cfg: ThinkConfig,
-  rng: () => number = Math.random,
-): number {
+export function computeThinkDelayMs(cfg: ThinkConfig, rng: () => number = Math.random): number {
   if (!cfg.enabled) return 0;
   const lo = Math.min(cfg.minMs, cfg.maxMs);
   const hi = Math.max(cfg.minMs, cfg.maxMs);
-  const span = hi - lo;
-  let delay = lo + Math.round(rng() * span);
-
-  const la = view.legalActions;
-  const pot = view.hand?.pot ?? 0;
-  const bb = view.room?.bb ?? 0;
-  const bigPot = bb > 0 && pot >= bb * cfg.bigPotBB;
-  // "Facing a bet": there is a price to continue (a check is not available).
-  const facingBet = !!la && !la.canCheck && la.callAmount > 0;
-  // Calling commits the whole stack (an opponent shove). A merely *available*
-  // max raise is not treated as a big decision: every stack has a max raise.
-  const callIsAllIn = !!la && !!view.me && la.callAmount > 0 && la.callAmount >= view.me.stack;
-
-  if (facingBet || callIsAllIn || bigPot) {
-    delay += Math.round(rng() * cfg.extraMaxMs);
-  } else if (la?.canCheck) {
-    delay = Math.round(delay * cfg.easyFactor);
-  }
-  return Math.max(0, delay);
+  return lo + Math.round(rng() * (hi - lo));
 }
 
 /**
  * Plan the actual think wait (ms) for one decision under the budget contract.
- * Returns the wait to perform, or 0 when the decorative delay must be skipped
+ * Returns the wait to perform, or 0 when the buffer must be skipped
  * because the clock cannot afford it without endangering a decision that a
  * no-delay run would have sent.
  *
@@ -321,7 +287,7 @@ export class BotRunner {
   /** LLM policies carry their own multi-second latency, so they are never delayed. */
   private readonly policyIsLlm: boolean;
   /**
-   * A turn key whose display wait was already spent. If the decision for that
+   * A turn key whose buffer wait was already spent. If the decision for that
    * turn is abandoned mid-wait (reconnect/turn change) and the same turn is
    * re-evaluated, the retry skips the wait instead of looping it.
    */
@@ -399,9 +365,6 @@ export class BotRunner {
       enabled: opts.think?.enabled ?? envThink.enabled,
       minMs: opts.think?.minMs ?? envThink.minMs,
       maxMs: opts.think?.maxMs ?? envThink.maxMs,
-      extraMaxMs: opts.think?.extraMaxMs ?? envThink.extraMaxMs,
-      bigPotBB: opts.think?.bigPotBB ?? envThink.bigPotBB,
-      easyFactor: opts.think?.easyFactor ?? envThink.easyFactor,
     };
     this.rng = opts.rng ?? Math.random;
     this.onActionEvent = opts.onActionEvent ?? (() => {});
@@ -554,11 +517,11 @@ export class BotRunner {
         return;
       }
       // The decision epoch is captured before the (possibly async) policy call:
-      // a reconnect during the policy OR the later display wait must void this
+      // a reconnect during the policy OR the later buffer wait must void this
       // decision rather than let it act on stale state.
       const epoch = this.client.connectionEpoch;
       // Decide FIRST. The policy may be slow (Monte Carlo / LLM); doing the
-      // decision before the display wait keeps the two independent - the wait
+      // decision before the buffer wait keeps the two independent - the wait
       // only has to fit the send, not a hypothetical policy runtime. A policy
       // that outlives the clock is dropped by `checkSendable` exactly as it
       // would be with the feature disabled.
@@ -575,10 +538,10 @@ export class BotRunner {
         await this.emitDiscard(gate, handId, actionSeq, seat, decision.source);
         return;
       }
-      // Decorative human timing after the decision. The wait is sliced and
+      // Light inter-action buffer after the decision. The wait is sliced and
       // cancellable; a mid-wait stop/reconnect/turn change abandons it, and a
-      // retry of this same turn skips the wait (no delay loop).
-      const planned = computeThinkDelayMs(view, this.think, this.rng);
+      // retry of this same turn skips the wait (no buffer loop).
+      const planned = computeThinkDelayMs(this.think, this.rng);
       const waitOutcome = await this.thinkBeforeSend(planned, epoch, key);
       if (waitOutcome === 'abort') return;
       if (waitOutcome !== 'proceed') {
@@ -636,7 +599,7 @@ export class BotRunner {
   }
 
   /**
-   * Wait out a human-like *display* delay between `policy.decide` and the send,
+   * Wait out the light inter-action buffer between `policy.decide` and the send,
    * which may be cancelled. Returns:
    *  - `proceed`   - the wait finished (or was skipped); re-verify then send;
    *  - `abort`     - a stop/fatal landed: already folded, caller just returns;
