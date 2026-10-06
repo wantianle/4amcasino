@@ -12,9 +12,7 @@ import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
 import { platformUserId } from './platform.js';
 import {
-  gameNetLedgerDeltaSql,
-  gameNetLedgerKindSql,
-  ledgerHandIdSql,
+  perHandNetSelect,
   settlementNotVoidedSql,
   voidHandExistsSql,
 } from './handProjection.js';
@@ -861,13 +859,17 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     // Authoritative per-hand game net (poker + squid + 7-2 bounty), keyed by the
     // canonical hand id so the head-ref settlement legs and the hand-id-ref
     // bounty leg collapse together. Matches the in-game `hand_end.deltas`.
+    // Voided hands are deliberately NOT excluded here: the hand list still shows
+    // them (flagged via the `voided` column above) with their historical net.
     const nets = new Map(
       (
         db
           .prepare(
-            `SELECT ${ledgerHandIdSql('l')} AS handId, SUM(${gameNetLedgerDeltaSql('l')}) as net
-             FROM ledger l
-             WHERE l.room_id = ? AND l.user_id = ? AND ${gameNetLedgerKindSql('l')} GROUP BY handId`,
+            `${perHandNetSelect('l', {
+              refAlias: 'handId',
+              excludeVoided: false,
+              filter: 'l.room_id = ? AND l.user_id = ?',
+            })}`,
           )
           .all(id, req.userId) as { handId: string; net: number }[]
       ).map((r) => [r.handId, r.net]),

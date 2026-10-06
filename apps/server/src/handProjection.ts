@@ -206,6 +206,121 @@ export function ledgerHeadSql(ledgerAlias: string): string {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Shared per-hand game-net aggregate
+//
+// The four expressions above (`ledgerHandIdSql`, `gameNetLedgerDeltaSql`,
+// `gameNetLedgerKindSql`, `settlementNotVoidedSql`) are already the single
+// source for each INDIVIDUAL piece. What used to be hand-copied at every read
+// model was their ARRANGEMENT: project the canonical hand id, sum the game-net
+// delta, drop voided hands, and group by `(room, hand id[, user])`. Six-plus
+// copies of that arrangement is what let the read models drift apart.
+//
+// `perHandNetSelect` freezes the arrangement. Callers own everything that
+// genuinely differs between them - the `FROM`/`JOIN`, their extra `WHERE`
+// predicates, extra projected columns and `HAVING` - so a site whose semantics
+// are NOT the same aggregate (a hand COUNT, a commission-only leg, a raw
+// per-ledger timeline, a per-user balance total) never gets folded in by
+// accident. `excludeVoided` defaults to true: every game-net read model MUST
+// exclude voided hands (spec §7/P3). The two deliberate exceptions pass false
+// explicitly and say why at the call site.
+// ---------------------------------------------------------------------------
+
+export interface PerHandNetWhereOptions {
+  /**
+   * Caller-owned predicates ANDed in after the game-kind filter (the same
+   * filter `gameNetLedgerDeltaSql` sums over) and before the void exclusion.
+   * Used for the site's own scoping: user, room, `ref IS NOT NULL`, room
+   * lifecycle, platform-account exclusion.
+   */
+  filter?: string;
+  /**
+   * Apply {@link settlementNotVoidedSql}. Default true (mandatory for a
+   * game-net read model). Pass false only where the query's own join already
+   * drops voided hands, or where voided hands are shown deliberately.
+   */
+  excludeVoided?: boolean;
+}
+
+/**
+ * `WHERE` body for a per-hand game-net aggregate over `ledger` aliased `alias`:
+ * the game-kind filter, the caller's extra predicates, then the void exclusion.
+ * The kind filter is required so non-game legs (commission, peek, ...) cannot
+ * form a group; `gameNetLedgerDeltaSql` already zeroes them, but the group
+ * itself must not exist.
+ */
+export function perHandNetWhere(alias: string, opts: PerHandNetWhereOptions = {}): string {
+  return (
+    `${gameNetLedgerKindSql(alias)}` +
+    (opts.filter ? ` AND ${opts.filter}` : '') +
+    ((opts.excludeVoided ?? true) ? ` AND ${settlementNotVoidedSql(alias)}` : '')
+  );
+}
+
+export interface PerHandNetSelectOptions extends PerHandNetWhereOptions {
+  /** Projection alias for `alias.room_id`. Default `room_id`. */
+  roomAlias?: string;
+  /** Projection alias for {@link ledgerHandIdSql}. Default `ref`. */
+  refAlias?: string;
+  /** Projection alias for `SUM(`{@link gameNetLedgerDeltaSql}`)`. Default `net`. */
+  netAlias?: string;
+  /** Projection alias for `alias.user_id` when {@link perUser}. Default `user_id`. */
+  userAlias?: string;
+  /** Also project and group by `alias.user_id`. Default false. */
+  perUser?: boolean;
+  /** Also project `MAX(...) AS settled`, for settled-hand counting. Default false. */
+  settledMarker?: boolean;
+  /** Extra `JOIN ...` text inserted right after `FROM ledger <alias>`. */
+  joins?: string;
+  /** Extra projected column list appended after the net/settled columns. */
+  extraColumns?: string;
+  /** `HAVING` body (without the keyword). */
+  having?: string;
+}
+
+/**
+ * Complete per-hand game-net aggregate over `ledger <alias>`:
+ *
+ *   SELECT <room>, <canonical hand id>[, user][, net][, settled]
+ *   FROM ledger <alias> [joins]
+ *   WHERE <game kind>[ AND <filter>][ AND <void exclusion>]
+ *   GROUP BY <room>, <canonical hand id>[, user]
+ *   [HAVING <having>]
+ *
+ * Canonical key is `(room, canonical hand id[, user])`. The room stays in the
+ * GROUP BY because {@link ledgerHandIdSql} falls back to the raw `ref`, which is
+ * only room-unique - so `(room, hand id)` is the safe grouping key even though
+ * a resolved `hands.hand_id` is globally unique.
+ */
+export function perHandNetSelect(alias: string, opts: PerHandNetSelectOptions = {}): string {
+  const roomAlias = opts.roomAlias ?? 'room_id';
+  const refAlias = opts.refAlias ?? 'ref';
+  const netAlias = opts.netAlias ?? 'net';
+  const userAlias = opts.userAlias ?? 'user_id';
+  const columns = [
+    `${alias}.room_id AS ${roomAlias}`,
+    `${ledgerHandIdSql(alias)} AS ${refAlias}`,
+    ...(opts.perUser ? [`${alias}.user_id AS ${userAlias}`] : []),
+    `SUM(${gameNetLedgerDeltaSql(alias)}) AS ${netAlias}`,
+    ...(opts.settledMarker
+      ? [`MAX(CASE WHEN ${alias}.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled`]
+      : []),
+    ...(opts.extraColumns ? [opts.extraColumns] : []),
+  ].join(', ');
+  const groupBy = [
+    `${alias}.room_id`,
+    ledgerHandIdSql(alias),
+    ...(opts.perUser ? [`${alias}.user_id`] : []),
+  ].join(', ');
+  return (
+    `SELECT ${columns} FROM ledger ${alias}` +
+    (opts.joins ? ` ${opts.joins}` : '') +
+    ` WHERE ${perHandNetWhere(alias, { filter: opts.filter, excludeVoided: opts.excludeVoided })}` +
+    ` GROUP BY ${groupBy}` +
+    (opts.having ? ` HAVING ${opts.having}` : '')
+  );
+}
+
 export interface ProjectHandArgs {
   handId: string;
   roomId: string;

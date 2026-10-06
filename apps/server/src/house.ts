@@ -5,6 +5,7 @@ import {
   gameNetLedgerDeltaSql,
   gameNetLedgerKindSql,
   ledgerHandIdSql,
+  perHandNetSelect,
   settlementNotVoidedSql,
 } from './handProjection.js';
 
@@ -30,11 +31,16 @@ export function platformDues(db: DB, onlyUserId: number | null = null): Platform
             AND ${gameNetLedgerKindSql('m')} AND m.user_id = @userId))
       GROUP BY l.room_id, ${ledgerHandIdSql('l')} HAVING SUM(l.delta) > 0
     ), winners AS (
-      SELECT l.room_id, ${ledgerHandIdSql('l')} AS ref, l.user_id AS userId,
-             SUM(${gameNetLedgerDeltaSql('l')}) AS net
-      FROM ledger l
-      WHERE ${gameNetLedgerKindSql('l')} AND (@platformId IS NULL OR l.user_id != @platformId)
-      GROUP BY l.room_id, ${ledgerHandIdSql('l')}, l.user_id HAVING SUM(${gameNetLedgerDeltaSql('l')}) > 0
+      ${perHandNetSelect('l', {
+        perUser: true,
+        userAlias: 'userId',
+        // No void exclusion here on purpose: the outer query only ever reads
+        // winners through the void-excluded `commissions` CTE, so a voided
+        // hand's winners never surface. Behaviour preserved verbatim.
+        excludeVoided: false,
+        filter: '(@platformId IS NULL OR l.user_id != @platformId)',
+        having: `SUM(${gameNetLedgerDeltaSql('l')}) > 0`,
+      })}
     )
     SELECT c.*, w.userId, w.net FROM commissions c
     LEFT JOIN winners w ON w.room_id = c.roomId AND w.ref = c.ref
