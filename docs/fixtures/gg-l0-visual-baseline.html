@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GG table · L0 visual baseline</title>
+    <style>
+      :root { color-scheme: dark; --ink:#f4f0e8; --muted:#a6a39e; --line:#3b3b3b; --red:#b51e2c; --gold:#f2c14e; --blue:#5bc0eb; }
+      * { box-sizing:border-box; }
+      body { margin:0; background:#111; color:var(--ink); font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+      header { padding:32px clamp(20px,5vw,72px) 24px; border-bottom:1px solid var(--line); background:linear-gradient(120deg,#191919,#121212 55%,#281217); }
+      h1,h2,h3,p { margin:0; } h1 { font:700 clamp(28px,4vw,52px)/1.05 Georgia,serif; letter-spacing:-.03em; } h2 { font:700 22px Georgia,serif; margin-bottom:14px; } h3 { font-size:15px; color:var(--gold); }
+      .eyebrow { color:var(--gold); text-transform:uppercase; letter-spacing:.16em; font-size:11px; margin-bottom:10px; }
+      .lede { max-width:760px; color:#c8c4bd; margin-top:12px; }
+      main { max-width:1500px; margin:auto; padding:28px clamp(20px,5vw,72px) 64px; }
+      section { margin-top:34px; } .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; } .grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .card { border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#191919; box-shadow:0 12px 35px #0006; } .card-head { padding:14px 16px; display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); } .tag { color:var(--muted); font-size:12px; }
+      figure { margin:0; position:relative; background:#090909; } figure img { display:block; width:100%; height:430px; object-fit:contain; } .phone img { height:560px; } figcaption { padding:10px 14px; color:var(--muted); font-size:12px; border-top:1px solid var(--line); }
+      .measure { position:absolute; inset:10% 9%; border:1px dashed #f2c14e99; border-radius:50%; pointer-events:none; } .measure::after { content:'目标桌面横椭圆 1.65:1'; position:absolute; top:-25px; left:0; color:var(--gold); font-size:11px; }
+      .current { min-height:430px; display:grid; place-items:center; padding:22px; background:radial-gradient(ellipse at 50% 45%,#791623,#300b11 56%,#111 57%); }
+      .current.phone { min-height:560px; background:radial-gradient(ellipse at 50% 47%,#7c1725,#2c0910 52%,#111 53%); }
+      .current .note { max-width:300px; text-align:center; color:#ddd; border:1px dashed #ffffff55; padding:16px; border-radius:10px; background:#0008; }
+      .current code { color:var(--gold); display:block; margin-top:8px; word-break:break-all; }
+      table { width:100%; border-collapse:collapse; } th,td { padding:11px 12px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); } th { color:var(--gold); font-size:12px; text-transform:uppercase; letter-spacing:.08em; } td:first-child { width:18%; color:#fff; font-weight:650; }
+      .pill { display:inline-block; padding:3px 8px; border:1px solid #ffffff22; border-radius:99px; font-size:11px; margin:2px 4px 2px 0; } .pass { color:#a6e3a1; border-color:#6aa868; } .warn { color:#f3c875; border-color:#9c7c37; } .fail { color:#ff9a9a; border-color:#a34a4a; }
+      ul { margin:8px 0 0 20px; padding:0; color:#c8c4bd; } li+li { margin-top:6px; } .small { color:var(--muted); font-size:12px; }
+      @media (max-width:760px) { .grid,.grid.three { grid-template-columns:1fr; } header { padding-top:24px; } figure img { height:360px; } .phone img { height:520px; } }
+    </style>
+  </head>
+  <body>
+    <header><div class="eyebrow">GG reconstruction · L0 / visual baseline</div><h1>牌桌视觉基线夹具</h1><p class="lede">这页只记录参照、量化关系和现状截图入口，不改变 <code>apps/web/src/widgets/table/</code>。所有验收都以“谁盖谁、谁在桌内/桌外、相邻关系、目标比例”为判据。</p></header>
+    <main>
+      <section><h2>01 · 同 viewport 对照</h2><div class="grid">
+        <article class="card"><div class="card-head"><h3>桌面参照 · GG red felt</h3><span class="tag">1176 × 888 · 首选</span></div><figure><img src="../media/gg-reference/gg-desktop-2026-pokerfuse-table.png" alt="GG desktop red felt table"/><span class="measure"></span><figcaption>头像 / 胶囊在 felt 外缘；弃牌牌背从头像后方插入并重叠；底池为中央上方文字胶囊。</figcaption></figure></article>
+        <article class="card"><div class="card-head"><h3>当前渲染 · 桌面截图入口</h3><span class="tag">真实 Vite 页面</span></div><div class="current"><div class="note">在真实登录桌面打开后，将截图放在此 panel 对照。<code>currentUrl=/room/&lt;id&gt;</code><div class="small">夹具不伪造产品状态；没有登录/房间时不标记通过。</div></div></div><figcaption>启动方式见下方“用法”。</figcaption></article>
+        <article class="card phone"><div class="card-head"><h3>手机参照 · WSOP vertical table</h3><span class="tag">1242 × 2208 · 首选</span></div><figure><img src="../media/gg-reference/gg-mobile-2026-appstore-02.jpg" alt="GG mobile vertical table"/><span class="measure"></span><figcaption>桌体向下延伸的竖椭圆/钟形；公共区纵向居中；hero 手牌大幅占据底部中央。</figcaption></figure></article>
+        <article class="card phone"><div class="card-head"><h3>当前渲染 · 手机截图入口</h3><span class="tag">真实 Vite 页面</span></div><div class="current phone"><div class="note">用 Chrome DevTools 设为 390 × 844，在真实桌面截图。<code>viewport=390×844</code><div class="small">L0 不能替 L1 修改 PHONE_CANVAS；此处只固定证据流程。</div></div></div><figcaption>手机通过条件是竖桌体及底部 hero 位置，不是把桌面横椭圆缩小。</figcaption></article>
+      </div></section>
+
+      <section><h2>02 · 结构化目标清单</h2><div class="card"><table><thead><tr><th>对象</th><th>参照结论</th><th>量化 gate</th><th>证据状态</th></tr></thead><tbody>
+        <tr><td>桌体</td><td>桌面横椭圆；手机竖椭圆/钟形，向下延伸。</td><td>桌面外缘宽:高 = 1.65:1 ± 0.10；手机外缘高:宽 ≥ 1.35:1，且长轴为垂直。</td><td><span class="pill warn">待现状截图</span></td></tr>
+        <tr><td>座位单元</td><td>圆形头像在 felt 外缘；深色圆角姓名/筹码胶囊紧贴头像正下方、压桌沿略朝桌内。</td><td>头像直径 = 桌宽 9% ± 2%；胶囊中心 x 与头像中心差 ≤ 头像直径 10%；名字在上、筹码在下。</td><td><span class="pill fail">当前文档记录缺头像</span></td></tr>
+        <tr><td>牌背 / 头像</td><td>弃牌两张牌背插在头像后方，牌背顶部高出头像，且明显重叠。</td><td>牌背 z-index &lt; 头像；牌背与头像有正面积交叠；牌背顶部 y 小于头像顶部；不得用“0px²”验收。</td><td><span class="pill fail">当前结构差距</span></td></tr>
+        <tr><td>摊牌 / hero</td><td>摊牌牌浮在头像上方不挡脸；桌面 hero 在 felt 内下缘、头像/pod 上方；手机 hero 放大到底部中央。</td><td>摊牌牌层高于头像且头像脸部无遮挡；手机 hero 中心 x = 桌中心 ± 5%，牌组宽 ≥ 桌宽 30%。</td><td><span class="pill warn">待截图</span></td></tr>
+        <tr><td>底池</td><td>桌面中央上方文字胶囊；手机筹码堆+数字；ClubGG 文字胶囊仅作变体参考。</td><td>桌面 pot 中心 x = 50% ± 3%，y 位于桌中心上方；桌面不得依赖筹码图标；手机必须出现筹码堆图形和数字。</td><td><span class="pill warn">部分已知</span></td></tr>
+        <tr><td>公共牌</td><td>中央一排 5 张，大号；手机明显放大。</td><td>摊牌/turn/river 时恰好 5 张，单排、中心对齐；preflop 必须 0 张。</td><td><span class="pill warn">需运行时核对</span></td></tr>
+        <tr><td>下注筹码</td><td>每个下注者与中央之间的 felt 上是筹码堆+金额；不是座位名牌里的数字替代。</td><td>筹码堆位于下注者与桌中心的连线上、且在 felt 内；金额紧邻筹码堆；每个下注者最多一侧堆。</td><td><span class="pill warn">待截图</span></td></tr>
+        <tr><td>D 位置</td><td>黄色 D 圆盘在 felt 上，不在座位旁；桌面无 SB/BB 字母徽章。</td><td>D 的圆心位于 felt 内；与任一头像中心距离 ≥ 头像直径 1.5 倍；桌面 SB/BB 徽章数量 = 0。</td><td><span class="pill warn">待截图</span></td></tr>
+      </tbody></table></div></section>
+
+      <section><h2>03 · 状态覆盖矩阵</h2><div class="grid three"><div class="card"><div class="card-head"><h3>preflop</h3></div><ul><li>公共牌数量 0</li><li>底池仍在中央上方</li><li>弃牌牌背与头像后方重叠</li></ul></div><div class="card"><div class="card-head"><h3>弃牌 / 摊牌</h3></div><ul><li>弃牌：牌背盖在头像后方，允许并要求正面积重叠</li><li>摊牌：牌浮在头像上方，不盖脸</li></ul></div><div class="card"><div class="card-head"><h3>hero / 公共牌</h3></div><ul><li>hero 桌面与座位同构</li><li>手机 hero 大牌在底部中央</li><li>turn/river 5 张单排</li></ul></div><div class="card"><div class="card-head"><h3>pot 变体</h3></div><ul><li>桌面：文字胶囊 “Total Pot : …”</li><li>手机：筹码堆图形 + 数字</li><li>ClubGG：文字胶囊作为对照变体</li></ul></div><div class="card"><div class="card-head"><h3>下注 / D</h3></div><ul><li>下注堆在下注者与中央之间</li><li>D 在 felt 内，不粘座位</li></ul></div><div class="card"><div class="card-head"><h3>证据纪律</h3></div><ul><li>不得用旧截图</li><li>不得用矩形不重叠代替参照关系</li><li>头像不存在时不讨论牌背遮挡</li></ul></div></div></section>
+      <section><h2>04 · 当前页面截图记录</h2><div class="card" style="padding:16px"><p class="small">夹具本身可离线打开，但“当前渲染”必须来自真实 Vite + 已登录房间。使用浏览器截图保存到临时目录后，把文件名和 viewport 写回 L0 报告；禁止拿旧图片充数。</p><ol><li>在仓库根目录执行 <code>npm run dev -w @4am/web -- --host 127.0.0.1 --port 4173</code>。</li><li>访问 <code>http://127.0.0.1:4173/room/&lt;真实房间 id&gt;</code>，完成登录并等待桌面稳定。</li><li>桌面 viewport 建议 1176×888；手机使用 Chrome DevTools 390×844；分别截取桌面和手机。</li><li>将截图并排放到本页对应 panel（或用 <code>?desktop=...&amp;phone=...</code> 的本地替换版），同时记录提交 SHA。</li><li>验收后停止 Vite 进程并确认 4173 端口释放。</li></ol><p class="small" style="margin-top:12px">本轮在无可用登录凭据/真实房间的环境下没有伪造截图，因此现状证据项保持“待截图”，不宣称 L0 已验收。</p></div></section>
+    </main>
+  </body>
+</html>
