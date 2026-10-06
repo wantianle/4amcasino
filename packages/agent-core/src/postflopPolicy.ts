@@ -44,7 +44,14 @@ import type { RuleParams } from './ruleStyles.js';
  *     **overpair** with no card of that suit (`isExposedOverpair`, i.e.
  *     `isOverpair && heroFlushExposed`) is treated as a bluff-catcher and has
  *     its bet/raise frequency dialled
- *     down; every other made-hand category keeps its normal aggression.
+ *     down; every other made-hand category keeps its normal aggression. Both the
+ *     facing-bet value raise and the unopened value bet additionally apply
+ *     `madeHandSuppressedByBoard`, a board-aware correction: on a four-flush
+ *     board with no card of the suit, on a four-to-a-straight board with no
+ *     straight, or with a board-only flush / full house / quads / straight flush
+ *     (category >= 5 built by the board itself), the made hand is no longer
+ *     treated as an automatic value hand (only a real equity edge / the normal
+ *     check-bluff flow is).
  *  3. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
  *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
  *     range advantage.
@@ -615,6 +622,96 @@ export function isOverpair(
     if (boardRank > maxBoard) maxBoard = boardRank;
   }
   return pairRank > maxBoard;
+}
+
+/**
+ * True when the board supplies at least four of the five ranks of some straight
+ * (the wheel included), i.e. it is one rank away from completing a straight any
+ * opponent holding that rank already has. Board-only by design: hero's hole
+ * cards cannot remove the opponents' straights, and a hero who completes one is
+ * `category >= 4` and is filtered by the caller before this matters. Pure.
+ */
+function boardOffersStraight(board: readonly CardId[]): boolean {
+  const present = new Set(board.map(rankOf));
+  for (const window of STRAIGHT_WINDOWS) {
+    let count = 0;
+    for (const rank of window) if (present.has(rank)) count++;
+    if (count >= 4) return true;
+  }
+  return false;
+}
+
+/**
+ * True when hero's best five-card hand is exactly the board's own best five, so
+ * the "made hand" belongs to the board and is shared by every player rather than
+ * produced by hero's hole cards. Only possible on a complete (five-card) board:
+ * on the turn the best five of six cards must use at least one hole card.
+ *
+ * The test is the shared evaluator's exact score equality, so a hole card that
+ * merely ties the board's best five (without improving it) still counts as no
+ * contribution - which is the intended semantics: a hand hero cannot improve on
+ * is not hero's value. Pure.
+ */
+function boardOnlyMadeHand(board: readonly CardId[], ev: HandEval): boolean {
+  return board.length >= 5 && bestScore(board) === ev.score;
+}
+
+/**
+ * Board-aware made-hand suppression for the **value** leg (both the facing-bet
+ * value raise and the unopened value bet): true when the made hand's raw
+ * category is a product of the board rather than a hand that is actually ahead
+ * of the range that continues.
+ *
+ * `decideFacingBet` / `decideUnopened` historically read `category >= 3` (or a
+ * flush and better) as absolute strength, so a set / trips - and, worse, a
+ * board-only flush, boat, quads or straight flush - kept value raising even
+ * where every opponent continue beats it. This predicate marks those spots so
+ * the caller falls back to the real equity edge / normal flow instead of the
+ * category / percentile proxies:
+ *
+ *  - **Board-only flush or better** (`category >= 5` and `boardOnlyMadeHand`):
+ *    a flush / full house / quads / straight flush whose best five are the
+ *    board's own best five is shared by every player, not hero's value. A
+ *    straight flush on a five-flush board is covered here too (`category === 8`).
+ *    A boat / quads / flush that hero actually improves (e.g. `Js 7d` on
+ *    `Jc 7c 4c 2c Jd`) is *not* board-only and stays a value hand.
+ *  - **Four-flush board, hero holds no card of the suit** (`texture.maxSuit >= 4`
+ *    and `heroFlushExposed`) for a hand worse than a full house (`category < 6`):
+ *    every such made hand - a board-only flush (`category === 5`, only reachable
+ *    when the whole board is one suit), a straight, set/trips, two pair,
+ *    pair/overpair - loses to the flush any opponent holding the suit can make,
+ *    so it is not an automatic value raise. A full house or better that hero
+ *    contributes beats the flush and is deliberately excluded. Holding a suit
+ *    card (a blocker) lifts the suppression, so the decision returns to the
+ *    normal category / percentile / equity test rather than being uniformly
+ *    downgraded (consistent with the P1 `heroFlushExposed` overpair discount).
+ *  - **Four-to-a-straight board, hero does not already have the straight**
+ *    (`boardOffersStraight` and `category < 4`): a non-straight made hand loses
+ *    to the straight the board completes and is not an automatic value raise. A
+ *    hero holding a completing rank has `category >= 4` and is never suppressed.
+ *
+ * This is deliberately a board-strength correction scoped to the value leg. It
+ * says nothing about the call/fold (defend) equity, which is computed separately
+ * and left untouched. It is intentionally not `isExposedOverpair`, whose
+ * overpair-only semantics remain the P1 no-suit discount. Pure and side-effect
+ * free.
+ */
+export function madeHandSuppressedByBoard(
+  hole: readonly CardId[],
+  board: readonly CardId[],
+  ev: HandEval,
+  texture: BoardTexture,
+): boolean {
+  // Board-only flush / boat / quads / straight flush: shared, not hero's value.
+  if (ev.category >= 5 && boardOnlyMadeHand(board, ev)) return true;
+  // Four-flush board, no suit card, hand worse than a full house: any flush
+  // beats it. `category === 5` here is a board-only flush (the whole board is
+  // one suit and hero holds none of it); a hero-contributed flush has a suit
+  // card and so is not `heroFlushExposed`.
+  if (texture.maxSuit >= 4 && heroFlushExposed(hole, board) && ev.category < 6) return true;
+  // Four-to-a-straight board, hero does not already have the straight.
+  if (ev.category < 4 && boardOffersStraight(board)) return true;
+  return false;
 }
 
 /**
@@ -1667,7 +1764,12 @@ export class PostflopPolicy {
   ): PolicyDecision {
     const blocker = blockerScore(hole, board);
     const draw = ev.flushDraw || ev.straightDraw >= 1;
-    const value = ev.category >= 3 || percentile >= 0.8;
+    // Board-aware: a made hand whose raw category is nullified by the board
+    // (a four-flush / four-straight runout, or a board-only boat or better) is
+    // not an automatic value bet - only a live hand is. See
+    // `madeHandSuppressedByBoard`.
+    const boardSuppressed = madeHandSuppressedByBoard(hole, board, ev, texture);
+    const value = !boardSuppressed && (ev.category >= 3 || percentile >= 0.8);
     const bluffCandidate = !value && percentile < 0.6 && (draw || blocker >= 0.4);
     // P1: an **overpair** with no card of the board's flush suit is a
     // bluff-catcher against a flush-heavy continuing range, so it bets less
@@ -1791,12 +1893,16 @@ export class PostflopPolicy {
     // `equity` is already available; a clear equity edge also counts as value.
     // P1: only an **overpair** with no card of the flush suit is a bluff-catcher
     // on a suited board - it is held back from value raising (a much tighter
-    // equity gate and a lower raise frequency). Sets, two pair, straights and
-    // strong draws are unaffected.
+    // equity gate and a lower raise frequency).
+    // Board-aware: a made hand whose raw category is nullified by a completed
+    // board draw (`madeHandSuppressedByBoard`) is likewise held back - its
+    // category / percentile proxies do not count as value, only a real equity
+    // edge does. This stops a four-flush set (or a four-straight set / two pair)
+    // from auto-raising when every continuing hand beats it.
     const exposedOverpair = isExposedOverpair(hole, board, ev);
+    const boardSuppressed = madeHandSuppressedByBoard(hole, board, ev, texture);
     const strong =
-      ev.category >= 3 ||
-      percentile >= 0.85 ||
+      (!boardSuppressed && (ev.category >= 3 || percentile >= 0.85)) ||
       equity >= (exposedOverpair ? 0.86 : 0.8);
     if (strong && la.canRaise && rng() < (exposedOverpair ? 0.2 : 0.6)) {
       return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
