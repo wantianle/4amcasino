@@ -497,8 +497,18 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   // play-style profile mined from the public hand transcripts
   app.get('/api/users/:id/style', authed, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id))
-      return reply.code(404).send({ error: 'no such user' });
+    const user = db
+      .prepare('SELECT id, private_mode as privateMode FROM users WHERE id = ?')
+      .get(id) as { id: number; privateMode: number } | undefined;
+    if (!user) return reply.code(404).send({ error: 'no such user' });
+    // private_mode hides the mined play-style from everyone but the owner,
+    // exactly like /api/users/:id/profile (stats/rivals nulled) and
+    // /api/users/:id/stats (handStats, RedactedStats). Follow that same
+    // strategy - a `hidden: true` envelope with no statistics, NEVER a 403 -
+    // so a client cannot tell a private account from one with no public hands.
+    // The unredacted shape's statistics are omitted entirely rather than
+    // zeroed, so a caller cannot mistake "hidden" for "0% VPIP".
+    if (user.privateMode && req.userId !== id) return { hidden: true, hands: 0 };
     const rows = db
       .prepare(
         `SELECT t.entries FROM transcripts t JOIN rooms r ON r.id = t.room_id
@@ -781,10 +791,19 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/users/:id/best-hand', authed, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const user = db
-      .prepare('SELECT id, show_best_hand as showBestHand FROM users WHERE id = ?')
-      .get(id) as { id: number; showBestHand: number } | undefined;
+      .prepare(
+        'SELECT id, show_best_hand as showBestHand, private_mode as privateMode FROM users WHERE id = ?',
+      )
+      .get(id) as { id: number; showBestHand: number; privateMode: number } | undefined;
     if (!user) return reply.code(404).send({ error: 'no such player' });
-    if (!user.showBestHand && req.userId !== id) return { hidden: true, hand: null };
+    // Two independent owner switches hide the snapshot from others, and both
+    // are honoured here: the best-hand toggle and private_mode. The owner
+    // always sees their own (`req.userId !== id` exempts self), matching
+    // /api/users/:id/profile - private_mode means "hide from others", never
+    // "hide from me". Same `hidden: true` redaction as the stats/ profile
+    // routes rather than a 403.
+    if ((!user.showBestHand || !!user.privateMode) && req.userId !== id)
+      return { hidden: true, hand: null };
     // Biggest per-hand GAME net (poker + squid + automatic 7-2 bounty), not the
     // biggest single settlement leg: group every game leg by the canonical hand
     // id and sum with the authoritative helper.

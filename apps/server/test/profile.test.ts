@@ -15,6 +15,7 @@ import {
   BET_RATIO_SLOTS,
   DEFAULT_BET_RATIOS,
 } from '../src/profile.js';
+import { LIMITS } from '../src/limits.js';
 
 // Two real processes (not two connections in one process - better-sqlite3 is
 // synchronous and cannot interleave) opening the same file, used to prove the
@@ -1016,5 +1017,191 @@ describe('user profile page data', () => {
     ).json();
     expect(mine.hidden).toBeUndefined();
     expect(mine.stats).not.toBeNull();
+  });
+});
+
+describe('private mode: play style and best-hand redaction', () => {
+  /** A minimal settled transcript where `hero` raises preflop and wins the pot
+   *  uncontested (no reveals). Enough for both the style miner and best-hand. */
+  function seedTranscript(
+    roomId: string,
+    hero: { userId: number; seat: number },
+    villain: { userId: number; seat: number },
+    handId: string,
+  ): void {
+    const entries = [
+      {
+        seq: 0,
+        type: 'hand_start',
+        from: 'srv',
+        payload: { seats: [{ seat: hero.seat, userId: hero.userId }, { seat: villain.seat, userId: villain.userId }] },
+        sig: 'x',
+      },
+      { seq: 1, type: 'action', from: 'srv', payload: { seat: hero.seat, action: { type: 'raise', amount: 40 } }, sig: 'x' },
+      { seq: 2, type: 'action', from: 'srv', payload: { seat: villain.seat, action: { type: 'call' } }, sig: 'x' },
+      {
+        seq: 3,
+        type: 'settlement',
+        from: 'srv',
+        payload: { awards: [{ seat: hero.seat, amount: 100 }], reveals: [] },
+        sig: 'x',
+      },
+    ];
+    ctx.db
+      .prepare('INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)')
+      .run(handId, roomId, `${handId}-head`, JSON.stringify(entries), Date.now());
+  }
+
+  it('D2: hides a private user\u2019s style from others but never from the owner', async () => {
+    const hero = await user('pstylehero');
+    const viewer = await user('pstyleviewer');
+    const room = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/rooms',
+        headers: auth(hero.token),
+        payload: { name: 'ps', sb: 10, bb: 20 },
+      })
+    ).json();
+    seedTranscript(room.id, { userId: hero.userId, seat: 0 }, { userId: viewer.userId, seat: 1 }, 'psh1');
+
+    // Sanity: while public the numbers are real, so the assertions below are
+    // not trivially true against an all-zero response.
+    const publicStyle = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/style`,
+        headers: auth(viewer.token),
+      })
+    ).json();
+    expect(publicStyle.hands).toBe(1);
+    expect(publicStyle.vpipPct).toBe(100);
+
+    ctx.db.prepare('UPDATE users SET private_mode = 1 WHERE id = ?').run(hero.userId);
+
+    const otherStyle = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/style`,
+        headers: auth(viewer.token),
+      })
+    ).json();
+    // Exact redacted shape: hidden envelope and no statistics at all - the
+    // stats fields are absent, not zeroed, so "hidden" cannot read as "0%".
+    expect(otherStyle).toEqual({ hidden: true, hands: 0 });
+    expect(otherStyle.vpipPct).toBeUndefined();
+    expect(otherStyle.archetype).toBeUndefined();
+
+    // private_mode is "hide from others": the owner still sees their own.
+    const ownStyle = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/style`,
+        headers: auth(hero.token),
+      })
+    ).json();
+    expect(ownStyle.hidden).toBeUndefined();
+    expect(ownStyle.hands).toBe(1);
+    expect(ownStyle.vpipPct).toBe(100);
+    expect(ownStyle.winPct).toBe(100);
+  });
+
+  it('D3: hides a private user\u2019s best hand from others but never from the owner', async () => {
+    const hero = await user('pbesthero');
+    const viewer = await user('pbestviewer');
+    const room = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/rooms',
+        headers: auth(hero.token),
+        payload: { name: 'pb', sb: 10, bb: 20 },
+      })
+    ).json();
+    appendLedger(ctx.db, { roomId: room.id, userId: hero.userId, delta: 100, kind: 'hand-settlement', ref: 'pbh1' });
+    appendLedger(ctx.db, { roomId: room.id, userId: viewer.userId, delta: -100, kind: 'hand-settlement', ref: 'pbh1' });
+    seedTranscript(room.id, { userId: hero.userId, seat: 0 }, { userId: viewer.userId, seat: 1 }, 'pbh1');
+
+    // show_best_hand defaults to 1, so a non-private hero is public already.
+    const publicBest = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/best-hand`,
+        headers: auth(viewer.token),
+      })
+    ).json();
+    expect(publicBest.hidden).toBe(false);
+    expect(publicBest.hand).not.toBeNull();
+    expect(publicBest.hand.amount).toBe(100);
+
+    ctx.db.prepare('UPDATE users SET private_mode = 1 WHERE id = ?').run(hero.userId);
+
+    const otherBest = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/best-hand`,
+        headers: auth(viewer.token),
+      })
+    ).json();
+    expect(otherBest).toEqual({ hidden: true, hand: null });
+
+    // The owner is never locked out of their own snapshot by private_mode.
+    const ownBest = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/users/${hero.userId}/best-hand`,
+        headers: auth(hero.token),
+      })
+    ).json();
+    expect(ownBest.hidden).toBe(false);
+    expect(ownBest.hand.amount).toBe(100);
+  });
+});
+
+describe('room ownership cap', () => {
+  const createRoom = (token: string, i: number) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: auth(token),
+      payload: { name: `cap-${i}`, sb: 1, bb: 2 },
+    });
+
+  it('allows room #LIMITS.roomsPerUser and refuses the next, counting non-deleted rooms', async () => {
+    const owner = await user('capowner');
+    for (let i = 0; i < LIMITS.roomsPerUser; i++) {
+      const r = await createRoom(owner.token, i);
+      expect(r.statusCode, `create #${i + 1}`).toBe(200);
+    }
+    const over = await createRoom(owner.token, LIMITS.roomsPerUser);
+    expect(over.statusCode).toBe(429);
+    expect(over.json().error).toContain(String(LIMITS.roomsPerUser));
+
+    // Archived tables still count: closing one is not a way to buy capacity.
+    const anyRoom = ctx.db
+      .prepare('SELECT id FROM rooms WHERE host_id = ? LIMIT 1')
+      .get(owner.userId) as { id: string };
+    ctx.db.prepare('UPDATE rooms SET archived = 1 WHERE id = ?').run(anyRoom.id);
+    expect((await createRoom(owner.token, 9998)).statusCode).toBe(429);
+
+    // A soft-deleted table does not: it is gone from every owner-facing list
+    // and has no restore path, so it must free exactly one slot.
+    ctx.db.prepare('UPDATE rooms SET deleted = 1 WHERE id = ?').run(anyRoom.id);
+    expect((await createRoom(owner.token, 9999)).statusCode).toBe(200);
+    expect((await createRoom(owner.token, 10_000)).statusCode).toBe(429);
+  }, 30000);
+
+  it('counts owned tables, not tables the user merely belongs to', async () => {
+    const host = await user('caphost');
+    const guest = await user('capguest');
+    const room = (await createRoom(host.token, 0)).json();
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: auth(guest.token),
+      payload: { joinCode: room.joinCode },
+    });
+    // The guest owns nothing yet, so joining someone else's table costs them no
+    // capacity and their own first table still succeeds.
+    expect((await createRoom(guest.token, 1)).statusCode).toBe(200);
   });
 });

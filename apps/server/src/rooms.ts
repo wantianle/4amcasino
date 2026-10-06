@@ -293,6 +293,25 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(409).send({
         error: 'The house cut changed. Review the updated rate and create the room again.',
       });
+    // Hard cap on the tables one account may own. A room counts while it is NOT
+    // soft-deleted: archived (closed) tables still count because they remain
+    // owned, stay reachable under "Archived tables"/History and can be
+    // unarchived - ignoring them would let a user archive 60 tables and create
+    // 60 more forever, defeating the cap. Admin soft-deletes are excluded: a
+    // deleted table is gone from every owner-facing list (`/api/my-rooms`
+    // filters `deleted = 0`) and has no restore path, so it must not consume
+    // capacity permanently. An account already over the cap keeps every room it
+    // has and is simply refused further creates until it retires some; nothing
+    // is auto-deleted. `rooms.host_id` has no index (db.ts is owned elsewhere),
+    // so this is a full COUNT scan; room creation is rare and a single-instance
+    // SQLite table is small, so the cost is negligible on this path.
+    const owned = db
+      .prepare('SELECT COUNT(*) as n FROM rooms WHERE host_id = ? AND deleted = 0')
+      .get(req.userId) as { n: number };
+    if (owned.n >= LIMITS.roomsPerUser)
+      return reply
+        .code(429)
+        .send({ error: `you already own the maximum of ${LIMITS.roomsPerUser} tables` });
     const {
       name,
       sb,
