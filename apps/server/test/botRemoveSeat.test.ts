@@ -78,6 +78,14 @@ function buyRequestCount(userId: number): number {
   ).n;
 }
 
+function buyStatus(requestId: number): string {
+  return (
+    ctx.db.prepare('SELECT status FROM buy_requests WHERE id = ?').get(requestId) as {
+      status: string;
+    }
+  ).status;
+}
+
 function collectRoomChanges(): { rooms: string[]; stop: () => void } {
   const rooms: string[] = [];
   const handler = (roomId: string) => rooms.push(roomId);
@@ -274,6 +282,122 @@ describe('DELETE pending rejects bot funding (regression)', () => {
     expect(buyRequestCount(userId)).toBe(requestsBefore);
     expect(ledgerSum(userId)).toBe(ledgerBefore);
     expect(seatRow(userId)!.stack).toBe(stackBefore);
+
+    // Release the wind-down so the deletion completes and no runner lingers.
+    releaseStop();
+    await waitFor(() => getBot(ctx.db, room, botId) === undefined);
+    await supervisor.stopAll();
+  });
+});
+
+/**
+ * Regression for the OTHER funding entry into a deleting bot's seat: the
+ * banker-approval path. A pending buy raised while the bot was alive is still
+ * `pending` for the whole (potentially unbounded) wind-down of a DELETE, and
+ * `approveRoomBuy` used to credit the ledger + stack without looking at the bot
+ * at all. The supervisor's finalize then drops the seat row, orphaning a
+ * successful purchase with no seat behind it.
+ *
+ * The same room's human pending buy must still approve: the guard is keyed on
+ * the requested user's bot_accounts row, and a human has none.
+ */
+describe('banker approval refuses a deleting bot (regression)', () => {
+  it('refuses a bot buy approval during wind-down but still approves a human buy', async () => {
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((r) => {
+      releaseStop = r;
+    });
+    const supervisor = new BotSupervisor(ctx.db, {
+      baseUrl: 'http://127.0.0.1:1',
+      runnerFactory: () => ({
+        start: async () => {},
+        stop: () => stopGate,
+        done: stopGate,
+      }),
+    });
+    ctx.botControl.hooks = supervisor;
+
+    // Host is not the banker and the room does not auto-approve, so a later
+    // `/buy` leaves a pending request the banker decides.
+    const bankerId = createUser(ctx.db, 'seat_banker', 'e'.repeat(64), 'f'.repeat(64)).userId;
+    const bankerToken = createSession(ctx.db, bankerId);
+    ctx.db
+      .prepare('UPDATE rooms SET banker_id = ?, auto_approve_buys = 0 WHERE id = ?')
+      .run(bankerId, room);
+
+    // A running bot created WITHOUT an initial buy-in, so the pending request we
+    // exercise is the later funding one (not the create-time buy-in).
+    const created = (await createBot({ seat: 3 })).json();
+    const botUserId = created.bot.userId;
+    const botId = created.bot.id;
+    const start = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/bots/${botId}/start`,
+      headers: auth(hostToken),
+    });
+    expect(start.statusCode).toBe(200);
+    expect(getBot(ctx.db, room, botId)!.status).toBe('running');
+
+    const botBuy = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/bots/${botId}/buy`,
+      headers: auth(hostToken),
+      payload: { amount: 300 },
+    });
+    expect(botBuy.statusCode).toBe(200);
+    expect(botBuy.json().buyRequest.status).toBe('pending');
+    const botRequestId = botBuy.json().buyRequest.id;
+
+    // A human in the same room raises their own pending buy.
+    const humanId = createUser(ctx.db, 'seat_human', '1'.repeat(64), '2'.repeat(64)).userId;
+    const humanToken = createSession(ctx.db, humanId);
+    ctx.db.prepare('INSERT OR IGNORE INTO room_players (room_id, user_id) VALUES (?, ?)').run(room, humanId);
+    const humanBuy = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/buy`,
+      headers: auth(humanToken),
+      payload: { amount: 100 },
+    });
+    expect(humanBuy.statusCode).toBe(200);
+    expect(humanBuy.json().status).toBe('pending');
+    const humanRequestId = humanBuy.json().id;
+
+    // DELETE a running bot: parks it `stopping` with a durable intent; the gate
+    // holds the wind-down open so the pending window is deterministic.
+    const del = await removeBot(botId);
+    expect(del.statusCode).toBe(202);
+    expect(getBot(ctx.db, room, botId)!.delete_requested_at).not.toBeNull();
+
+    const ledgerBefore = ledgerSum(botUserId);
+    const stackBefore = seatRow(botUserId)!.stack;
+
+    // Blocker: this used to be 200, crediting the deleting bot's ledger + seat.
+    const approveBot = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/approve`,
+      headers: auth(bankerToken),
+      payload: { requestId: botRequestId, approve: true },
+    });
+    expect(approveBot.statusCode).toBe(409);
+    expect(approveBot.json().error).toMatch(/deletion|removed/i);
+
+    // No ledger entry, no stack change, and the request stays pending (not even
+    // marked rejected) - nothing to later orphan.
+    expect(buyStatus(botRequestId)).toBe('pending');
+    expect(ledgerSum(botUserId)).toBe(ledgerBefore);
+    expect(seatRow(botUserId)!.stack).toBe(stackBefore);
+
+    // The human is untouched by the bot guard: their approval still settles.
+    const approveHuman = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/approve`,
+      headers: auth(bankerToken),
+      payload: { requestId: humanRequestId, approve: true },
+    });
+    expect(approveHuman.statusCode).toBe(200);
+    expect(buyStatus(humanRequestId)).toBe('approved');
+    expect(seatRow(humanId)!.stack).toBe(100);
+    expect(ledgerSum(humanId)).toBe(100);
 
     // Release the wind-down so the deletion completes and no runner lingers.
     releaseStop();

@@ -17,6 +17,7 @@ import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js
 import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIdentity.js';
 import { pickFunBotName } from './botNames.js';
 import { resolveAgentGrant } from './botAccess.js';
+import { botGoneMessage, isBotGone } from './botLifecycle.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -274,21 +275,10 @@ function sendBuyError(
   return false;
 }
 
-/**
- * A bot that is gone or on its way out: either a legacy soft-deleted `removed`
- * row, or a hard delete already requested (`status='stopping'` +
- * `delete_requested_at`). Once a delete is requested the row can be removed
- * underneath us at any moment (the supervisor finalizes as soon as the runner
- * winds down), so every money/control route must refuse such a bot rather than
- * mutate state that is about to be deleted.
- *
- * Deliberately NOT consulted by `resolveAgentGrant`: a deleting runner keeps a
- * valid grant for the duration of its wind-down so it can fold and leave its
- * seat; only an already-`removed` legacy row invalidates the grant there.
- */
-function isBotGone(bot: BotRow): boolean {
-  return bot.status === 'removed' || bot.delete_requested_at !== null;
-}
+// `isBotGone` is defined in `botLifecycle.ts` so the money path in buyService
+// can share it without importing this route layer (which would be a cycle).
+// Every money/control route must refuse a gone/deleting bot rather than mutate
+// state that is about to be deleted.
 
 /**
  * Send the 409 for a gone/deleting bot, naming the actual reason. Used by every
@@ -299,9 +289,7 @@ function refuseBotGone(
   reply: { code: (n: number) => { send: (b: unknown) => unknown } },
   bot: BotRow,
 ): void {
-  reply
-    .code(409)
-    .send({ error: bot.status === 'removed' ? 'bot has been removed' : 'bot deletion is in progress' });
+  reply.code(409).send({ error: botGoneMessage(bot) });
 }
 
 /**

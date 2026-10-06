@@ -1,5 +1,6 @@
 import type { DB } from './db.js';
 import { appendLedger } from './ledger.js';
+import { botGoneMessage, isBotGone } from './botLifecycle.js';
 import { LIMITS } from './limits.js';
 import { canBank, getRoom, isMember, roomEvents } from './rooms.js';
 
@@ -123,6 +124,25 @@ export function approveRoomBuy(db: DB, input: ApproveRoomBuyInput): void {
     .get(requestId, roomId) as
     { id: number; user_id: number; amount: number; note: string | null } | undefined;
   if (!request) throw new BuyServiceError(404, 'no such pending request');
+
+  // A buy request can outlive the bot it funds: the host raises it while the bot
+  // is alive, then asks for a hard delete. With a live runner the delete parks
+  // the bot `stopping` + `delete_requested_at` until the wind-down finishes, and
+  // only then does `finalizeBotRemoved` cancel pending buys and drop the seat
+  // row. In that window a banker approval used to write the ledger and bump
+  // `room_players.stack`, leaving a funded purchase whose seat is then deleted.
+  // Refuse before ANY write (so buy_requests stays pending too).
+  //
+  // Keyed by the request's `user_id`, which maps to at most one bot_accounts row
+  // (`bot_accounts.user_id` is UNIQUE -> an automatic index, so this is an
+  // indexed point lookup, not a scan). A human buyer has no bot_accounts row, so
+  // the human path is untouched.
+  if (approve) {
+    const bot = db
+      .prepare('SELECT status, delete_requested_at FROM bot_accounts WHERE user_id = ? AND room_id = ?')
+      .get(request.user_id, roomId) as { status: string; delete_requested_at: number | null } | undefined;
+    if (bot && isBotGone(bot)) throw new BuyServiceError(409, botGoneMessage(bot));
+  }
 
   const apply = db.transaction(() => {
     db.prepare('UPDATE buy_requests SET status = ? WHERE id = ?').run(
