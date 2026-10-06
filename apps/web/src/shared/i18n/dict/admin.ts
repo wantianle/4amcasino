@@ -30,7 +30,7 @@ const admin: Record<string, string> = {
   Users: '用户',
   'Find an account by name or ID, then manage it directly.': '按昵称或 ID 找到账号，然后直接管理。',
   Requests: '申请',
-  'Review room lifecycle requests and account merges.': '审核房间变更申请和账号合并。',
+  'Review account merge requests.': '审核账号合并申请。',
   'Platform settings': '平台设置',
   'Control the house cut without a deployment.': '不发版也能调整台费。',
   'Skip to dashboard content': '跳到后台内容',
@@ -116,20 +116,13 @@ const admin: Record<string, string> = {
   'Close account controls': '收起账号操作',
   'Could not load users.': '没能加载用户。',
 
-  // ── AdminSections: lifecycle requests ──────────────────────────────────────
-  'Room requests': '房间申请',
-  'Hosts asking to archive, restore, or delete a table.': '房主发来的归档、恢复或删除牌桌的申请。',
+  // ── shared request-list strings (merge + rooms sections) ───────────────────
   'Could not load requests. Try again.': '没能加载申请，再试一次。',
   'could not decide that request': '没能处理这条申请。',
   'Retry requests': '重新加载申请',
   'Loading requests…': '正在加载申请…',
   'Nothing waiting on you.': '没有等你处理的事。',
-  '{name} asked to {action} this table': '{name} 申请{action}这张牌桌',
-  ', note: {note}': '，备注：{note}',
   'Loading rooms…': '正在加载房间…',
-  archive: '归档',
-  unarchive: '取消归档',
-  delete: '删除',
 
   // ── AdminSections: merge requests ──────────────────────────────────────────
   'Merge requests': '合并申请',

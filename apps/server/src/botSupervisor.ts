@@ -59,7 +59,7 @@ import { roomEvents } from './rooms.js';
  *
  * Room retirement contract: the supervisor subscribes to `roomEvents`
  * (`subscribeRoomEvents()`). Whenever a room is archived or deleted - through
- * any entry point (`/close`, admin direct archive/delete, lifecycle approval) -
+ * any entry point (`/close`, admin direct archive/delete) -
  * every runner AND every queued bot belonging to that room is wound down to
  * `stopped` (+ revoke). The room's runner slot is genuinely freed; clearing the
  * seat rows alone is not enough.

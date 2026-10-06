@@ -90,9 +90,7 @@ export function registerPlatformControl(app: FastifyInstance, db: DB): void {
       hands: count(`SELECT COUNT(*) AS n FROM transcripts t JOIN rooms r ON r.id = t.room_id
         WHERE r.deleted = 0 AND r.archived = 0 AND r.voided = 0
         AND ${voidHandExclusionSql({ roomExpr: 't.room_id', handIdExpr: 't.hand_id', headExpr: 't.head' })}`),
-      pendingRequests:
-        count("SELECT COUNT(*) AS n FROM room_lifecycle_requests WHERE status = 'pending'") +
-        count("SELECT COUNT(*) AS n FROM account_merge_requests WHERE status = 'pending'"),
+      pendingRequests: count("SELECT COUNT(*) AS n FROM account_merge_requests WHERE status = 'pending'"),
       commissionBps: commissionSettings(db).commissionBps,
       dues: platformDues(db).totals,
       revenue: days.map((date) => ({ date, commission: byDay.get(date) ?? 0 })),

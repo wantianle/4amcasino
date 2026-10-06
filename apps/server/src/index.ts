@@ -64,9 +64,9 @@ async function main(): Promise<void> {
     runner: { llm },
   });
   botControl.hooks = supervisor;
-  // A retired room (archived via /close, admin archive or lifecycle approval, or
-  // deleted) must not keep occupying its runner pool: release its runners as soon
-  // as the room change lands.
+  // A retired room (archived via /close or an admin archive, or deleted) must
+  // not keep occupying its runner pool: release its runners as soon as the
+  // room change lands.
   supervisor.subscribeRoomEvents();
   supervisor.recover();
 

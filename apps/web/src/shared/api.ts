@@ -327,7 +327,7 @@ export const api = {
   me: () => req('/api/me'),
   /** The sidebar/lobby "your tables" list. Archived (closed) rooms are hidden
    *  server-side by default; the lobby's explicit "Archived tables" section
-   *  asks for `all` so it can still show (and request restore for) them. */
+   *  asks for `all` so it can still show them. */
   myRooms: (opts: { archived?: boolean | 'all' } = {}) => {
     const q = new URLSearchParams();
     if (opts.archived !== undefined) q.set('archived', String(opts.archived));
@@ -425,16 +425,10 @@ export const api = {
   respondInvite: (inviteId: number, accept: boolean) =>
     req(`/api/invites/${inviteId}/respond`, { accept }),
   voidRoom: (roomId: string, voided: boolean) => req(`/api/rooms/${roomId}/void`, { voided }),
-  // retire a finished table: it leaves the room list and stops counting towards
-  // stats, but nothing is deleted and debts stay owed (requested by notpritam).
-  // Both archive and delete are now requests: they queue for platform approval
-  // instead of taking effect immediately.
-  archiveRoom: (roomId: string, archived: boolean) =>
-    req(`/api/rooms/${roomId}/archive`, { archived }) as Promise<{
-      pending: true;
-      requestId: number;
-    }>,
-  /** Immediate room close: archive the room and clear seats; distinct from archiveRoom's approval flow. */
+  // Close a finished table on the spot: it leaves the room list and stops
+  // counting towards stats, but nothing is deleted and debts stay owed
+  // (requested by notpritam). Host or platform only.
+  /** Immediate room close: archive the room and clear seats. */
   closeRoom: (roomId: string) =>
     req(`/api/rooms/${roomId}/close`, {}, 'POST') as Promise<{
       ok: true;
@@ -444,11 +438,6 @@ export const api = {
       alreadyClosed: boolean;
       /** Whether a hand was still running when the room was archived. */
       handActive: boolean;
-    }>,
-  deleteRoom: (roomId: string, note?: string) =>
-    req(`/api/rooms/${roomId}/delete`, note ? { note } : {}) as Promise<{
-      pending: true;
-      requestId: number;
     }>,
   publicRooms: () => req('/api/rooms/public'),
   joinPublic: (roomId: string) => req(`/api/rooms/${roomId}/join-public`, {}),
@@ -566,11 +555,8 @@ export const api = {
   // ask the platform account to fold a duplicate account into another one
   mergeRequest: (fromUsername: string, intoUsername: string, note?: string) =>
     req('/api/me/merge-request', { fromUsername, intoUsername, ...(note ? { note } : {}) }),
-  // platform-only console: room lifecycle requests, account merges, and user admin
+  // platform-only console: account merges and user/room admin
   adminHouse: () => req('/api/admin/house'),
-  adminLifecycle: () => req('/api/admin/lifecycle'),
-  adminDecideLifecycle: (id: number, approve: boolean) =>
-    req(`/api/admin/lifecycle/${id}`, { approve }),
   adminMerges: () => req('/api/admin/merges'),
   adminDecideMerge: (id: number, approve: boolean) => req(`/api/admin/merges/${id}`, { approve }),
   adminDisableUser: (id: number) => req(`/api/admin/users/${id}/disable`, {}),

@@ -28,8 +28,6 @@ const lobby: Record<string, string> = {
   'Archived tables ({n})': '已归档的牌桌（{n}）',
   'Retired, not deleted. The ledger and every hand stay readable, and anything still owed is still owed — they just stop counting towards your stats.':
     '只是退役，不是删除。账本和每一手牌照常可查，欠的账也照旧——只是不再计入你的统计。',
-  'Restore requested': '恢复申请已提交',
-  'Request restore': '申请恢复',
 
   // Public tables
   'Public tables': '公开牌桌',

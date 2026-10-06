@@ -80,7 +80,7 @@ export function openDb(path: string): DB {
 /**
  * The platform admin's own paper trail: one append-only row for every
  * successful administrative action (user disable/enable/password reset, room
- * archive/unarchive/delete, lifecycle decisions, account merges). Nothing here
+ * archive/unarchive/delete, account merges). Nothing here
  * is ever updated or deleted. `detail` is a small JSON blob of the fields that
  * matter for that action (e.g. `{"mode":"initial"}`); `target_type`/`target_id`
  * say what it acted on so the log can be filtered by target. Operator is the
@@ -350,12 +350,12 @@ function migrate(db: DB): void {
   // Archiving retires a finished table: it leaves the room list, stops dealing,
   // and its results stop counting towards stats. Nothing is deleted - the
   // ledger and every transcript stay readable, and money still owed between
-  // players stays owed. See the comment on /api/rooms/:id/archive.
+  // players stays owed. Applied by `/api/rooms/:id/close` and the platform's
+  // direct admin room controls.
   ensureColumn(db, 'rooms', 'archived', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'rooms', 'archived_at', 'INTEGER');
-  // Deletion, like archiving, is soft: rows are never dropped. Archive/unarchive
-  // and delete both go through room_lifecycle_requests below and only take
-  // effect once a platform admin approves them.
+  // Deletion, like archiving, is soft: rows are never dropped. Applied
+  // directly by the platform's admin room controls.
   ensureColumn(db, 'rooms', 'deleted', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'rooms', 'deleted_at', 'INTEGER');
   ensureColumn(db, 'rooms', 'meet_link', 'TEXT');
@@ -529,8 +529,11 @@ function migrate(db: DB): void {
     CREATE INDEX IF NOT EXISTS idx_house_payments_user ON house_payments(user_id);
   `);
   db.exec(`
-    -- Archive/unarchive/delete are requested by a host or banker but only take
-    -- effect once a platform admin approves them (see requirePlatform).
+    -- LEGACY: once held host/banker archive/unarchive/delete requests that a
+    -- platform admin approved. Self-serve retirement was removed in favour of
+    -- the one-click POST /api/rooms/:id/close plus the platform's direct admin
+    -- room controls. The table is kept (never dropped) for schema/history
+    -- compatibility, but nothing writes or reads it any more.
     CREATE TABLE IF NOT EXISTS room_lifecycle_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,

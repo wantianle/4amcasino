@@ -251,7 +251,7 @@ describe('admin audit trail', () => {
     expect(JSON.parse(rows[3]!.detail!)).toEqual({ mode: 'initial' });
   }, 30_000);
 
-  it('records room, lifecycle and merge actions', async () => {
+  it('records room and merge actions', async () => {
     const host = await register('au_host');
     const from = await register('au_from');
     const into = await register('au_into');
@@ -280,29 +280,6 @@ describe('admin audit trail', () => {
     await call(`/api/admin/rooms/${room.id}/archive`, { archived: false });
     await call(`/api/admin/rooms/${room.id}/delete`);
 
-    // lifecycle approve (archive) and reject (delete) on fresh rooms
-    const room2 = await createRoom('Audit Room 2');
-    const req2 = (
-      await ctx.app.inject({
-        method: 'POST',
-        url: `/api/rooms/${room2.id}/archive`,
-        headers: auth(host.token),
-        payload: { archived: true },
-      })
-    ).json() as { requestId: number };
-    await call(`/api/admin/lifecycle/${req2.requestId}`, { approve: true });
-
-    const room3 = await createRoom('Audit Room 3');
-    const req3 = (
-      await ctx.app.inject({
-        method: 'POST',
-        url: `/api/rooms/${room3.id}/delete`,
-        headers: auth(host.token),
-        payload: {},
-      })
-    ).json() as { requestId: number };
-    await call(`/api/admin/lifecycle/${req3.requestId}`, { approve: false });
-
     // file a merge request and reject it, then merge directly, skipping the queue
     const reqA = (
       await ctx.app.inject({
@@ -320,8 +297,6 @@ describe('admin audit trail', () => {
       'room.archive',
       'room.unarchive',
       'room.delete',
-      'lifecycle.approve',
-      'lifecycle.reject',
       'merge.reject',
       'merge.create',
     ]);
@@ -332,16 +307,8 @@ describe('admin audit trail', () => {
       changed: true,
     });
     expect(JSON.parse(byAction.get('room.delete')!.detail!)).toMatchObject({ changed: true });
-    expect(JSON.parse(byAction.get('lifecycle.approve')!.detail!)).toMatchObject({
-      decisionType: 'archive',
-      changed: true,
-    });
-    expect(JSON.parse(byAction.get('lifecycle.reject')!.detail!)).toMatchObject({
-      decisionType: 'delete',
-    });
     expect(byAction.get('room.delete')!.targetType).toBe('room');
     expect(byAction.get('room.delete')!.targetId).toBe(room.id);
-    expect(byAction.get('lifecycle.approve')!.targetId).toBe(String(req2.requestId));
     expect(byAction.get('merge.create')!.targetType).toBe('merge');
   });
 });

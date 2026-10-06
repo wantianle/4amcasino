@@ -26,7 +26,6 @@ import { CommissionControl } from './CommissionControl.tsx';
 import { TournamentAdmin } from './TournamentAdmin.tsx';
 import {
   AuditSection,
-  LifecycleSection,
   MergeSection,
   RoomsSection,
   UserAdminSection,
@@ -72,7 +71,7 @@ const sections = [
     id: 'requests',
     name: 'Requests',
     icon: RiInboxLine,
-    description: 'Review room lifecycle requests and account merges.',
+    description: 'Review account merge requests.',
   },
   {
     id: 'settings',
@@ -608,7 +607,6 @@ export function AdminPage() {
           {sectionId === 'users' && <UsersDirectory key={refresh} />}
           {sectionId === 'requests' && (
             <div className="admin-requests" key={refresh}>
-              <LifecycleSection />
               <MergeSection />
             </div>
           )}

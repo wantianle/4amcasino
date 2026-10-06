@@ -624,7 +624,7 @@ describe('BotSupervisor', () => {
     }
   });
 
-  it('releases the runner when archived through the lifecycle path (archiveRoomTx + event)', async () => {
+  it('releases the runner when archived (archiveRoomTx + event)', async () => {
     const db = openDb(':memory:');
     const { botId, roomId } = seedBot(db, 'starting');
     const runner = fakeRunner();
@@ -635,7 +635,7 @@ describe('BotSupervisor', () => {
     sup.subscribeRoomEvents();
     try {
       sup.startBot(botId);
-      // Mirrors admin lifecycle approval: archiveRoomTx inside the decision tx.
+      // Mirrors /close: archiveRoomTx then the room change event.
       db.transaction(() => archiveRoomTx(db, roomId))();
       roomEvents.emit('changed', roomId);
 
@@ -657,7 +657,7 @@ describe('BotSupervisor', () => {
     sup.subscribeRoomEvents();
     try {
       sup.startBot(botId);
-      // Mirrors admin direct/lifecycle delete: raw UPDATE then `changed`.
+      // Mirrors admin direct delete: raw UPDATE then `changed`.
       db.prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ?').run(Date.now(), roomId);
       roomEvents.emit('changed', roomId);
 

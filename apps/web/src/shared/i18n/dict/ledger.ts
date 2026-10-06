@@ -36,22 +36,15 @@ const ledger: Record<string, string> = {
   'Bought from the bank (to settle up)': '向银行买入（用于结账）',
   'No purchases yet.': '还没有买入记录。',
 
-  // ── Void / archive / delete (banker controls) ───────────────────────────
+  // ── Void (banker controls) ──────────────────────────────────────────────
   'The banker voided this table. Nothing here counts toward leaderboards, profiles, or who owes whom.':
     '账房作废了这张桌。这里的输赢不进排行榜、个人主页，也不算谁欠谁。',
   'Restore this table (results count again)': '恢复这张桌（输赢重新计入）',
   'Void this table (results stop counting)': '作废这张桌（输赢不再计入）',
-  'Archive requested, waiting on the platform': '已申请存档，等平台处理',
-  'Retires the table: it leaves your room list and stops counting towards stats. Nothing is deleted and debts stay owed. A platform admin approves this before it takes effect.':
-    '牌桌退下来：从你的房间列表里消失，统计也不再计入。什么都不删，欠的账依然挂着。生效前要平台管理员先审批。',
-  'Request archive': '申请存档',
-  'Delete requested, waiting on the platform': '已申请删除，等平台处理',
-  'Request delete': '申请删除',
 
   // ── Errors (client fallback prose + server prose via tr) ────────────────
   'Could not revert: {error}': '撤销失败：{error}',
   'could not revert': '撤销没成功。',
-  'could not request that': '申请没发出去。',
   'could not void the hand': '这手牌没能作废。',
 
   // ── Entry table ─────────────────────────────────────────────────────────
@@ -64,11 +57,6 @@ const ledger: Record<string, string> = {
   Revert: '撤销',
   'Void hand': '作废这手牌',
   'The ledger is empty. Buy points to start.': '账本还是空的，先买点数。',
-
-  // ── Delete dialog ───────────────────────────────────────────────────────
-  'Request delete?': '申请删除？',
-  'This asks the platform to permanently remove this table, its ledger, and its hand history. A platform admin reviews it before anything happens.':
-    '这是请平台永久删除这张桌，连同它的账本和出牌记录。生效前，平台管理员会先过目。',
   Cancel: '取消',
 };
 

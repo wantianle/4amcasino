@@ -30,8 +30,6 @@ const server: Record<string, string> = {
   'watchers only': '只有观战者能查看这个。',
   'host or banker only': '只有房主或账房能操作。',
   'banker only': '只有账房能操作。',
-  'only the host or the banker can archive a table': '只有房主或账房能存档牌桌。',
-  'only the host or the banker can delete a table': '只有房主或账房能删除牌桌。',
   'only the host or the main banker can change that': '只有房主或正账房能改这个。',
   'only the main banker can pick a backup': '只有正账房能指定副账房。',
   'the backup banker must be a room member': '副账房得先是房间成员。',

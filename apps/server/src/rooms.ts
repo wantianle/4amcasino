@@ -126,8 +126,8 @@ export interface ArchiveTransition {
 
 /**
  * The archive state change, to be called INSIDE an open transaction. One
- * implementation shared by `/api/rooms/:id/close`, the admin lifecycle
- * approval and the admin archive route so they cannot drift:
+ * implementation shared by `/api/rooms/:id/close` and the admin archive route
+ * so they cannot drift:
  *
  *  - idempotent and race-safe: a conditional `WHERE archived = 0` update plus
  *    its `changes` count means two overlapping archives transition once, and
@@ -136,8 +136,8 @@ export interface ArchiveTransition {
  *    exactly like `/close`. A hand already in flight keeps its own seat
  *    snapshot and still settles; nobody is dealt into the next one.
  *
- * CONTRACT - the three archive entry points differ ONLY in their pre-checks,
- * never in the resulting state (all three funnel through this function):
+ * CONTRACT - the two archive entry points differ ONLY in their pre-checks,
+ * never in the resulting state (both funnel through this function):
  *
  *  1. `POST /api/rooms/:id/close` (host/platform): NO `activeHands` check. A
  *     live hand is allowed to finish; close only guarantees nobody is dealt
@@ -145,14 +145,6 @@ export interface ArchiveTransition {
  *  2. `POST /api/admin/rooms/:id/archive` (platform, toggling archived=true):
  *     REFUSES while `activeHands` holds the room (400) - a stricter admin
  *     guard. Unarchive has no such guard.
- *  3. Lifecycle approval (`/api/rooms/:id/archive` request then
- *     `POST /api/admin/lifecycle/:id`): NO `activeHands` check, because the
- *     request was filed when the room was idle and a hand may legitimately
- *     have started while it sat in the approval queue. Approving archives and
- *     clears seats; any in-flight hand settles on its snapshot exactly as
- *     `/close` would. This is deliberate and safe - `startHand` re-reads
- *     `archived` inside its own claim transaction, so an approval that lands
- *     first still prevents the next deal.
  */
 export function archiveRoomTx(db: DB, roomId: string): ArchiveTransition {
   const current = getRoom(db, roomId);
