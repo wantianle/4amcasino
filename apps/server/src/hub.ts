@@ -17,13 +17,25 @@ import { agentMaySend, resolveAgentGrant } from './botAccess.js';
 
 // 10s per attempt with 3 retries: a stalled player gets a fixed ~40s to rejoin.
 // The auto-deal cadence must be short or "auto deal" feels manual, so the hub
-// always supplies it rather than relying on the engine's fallback.
-const DEFAULT_OPTS: GameOpts = {
-  cryptoTimeoutMs: 10_000,
-  actionTimeoutMs: 45_000,
-  autoDealMs: AUTO_DEAL_INTERVAL_MS,
-  readyCheckMs: AUTO_DEAL_READY_CHECK_MS,
-};
+// always supplies it rather than relying on the engine's fallback. Both timers
+// stay operator-tunable via env (a per-deployment cadence should not need a
+// rebuild): see AUTO_DEAL_INTERVAL_MS / AUTO_DEAL_READY_CHECK_MS for the
+// defaults and why they are what they are.
+function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts {
+  return {
+    cryptoTimeoutMs: 10_000,
+    actionTimeoutMs: 45_000,
+    autoDealMs: positiveInt(env.FOURAM_AUTO_DEAL_INTERVAL_MS, AUTO_DEAL_INTERVAL_MS),
+    readyCheckMs: positiveInt(env.FOURAM_AUTO_DEAL_READY_CHECK_MS, AUTO_DEAL_READY_CHECK_MS),
+  };
+}
+
+/** Non-numeric, non-positive or empty env values silently fall back to the
+ *  default, matching `botPolicy.ts`'s `positiveInt`. */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
 
 /** Same-origin only. The game socket carries a session credential, so a page on
  *  any other origin has no business opening one. */
@@ -63,7 +75,7 @@ export function attachHub(
   db: DB,
   opts: Partial<GameOpts> = {},
 ): { rooms: Map<string, GameRoom>; serverPublicKey: string } {
-  const gameOpts: GameOpts = { ...DEFAULT_OPTS, ...opts };
+  const gameOpts: GameOpts = { ...defaultGameOpts(), ...opts };
   const serverIdentity = genIdentity();
   // ws defaults maxPayload to 100MB; the biggest legitimate message is a 52-card
   // deck at a few KB, and one oversized frame is enough to OOM the instance

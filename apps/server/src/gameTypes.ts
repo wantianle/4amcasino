@@ -50,10 +50,12 @@ export interface GameOpts {
   actionTimeoutMs: number;
   /** Extra chances a stalled player gets before the hand aborts (default 3). */
   cryptoRetries?: number;
-  /** Delay before an enabled automatic ready check (default AUTO_DEAL_INTERVAL_MS). */
+  /** Delay before an enabled automatic ready check (default AUTO_DEAL_INTERVAL_MS;
+   *  env override `FOURAM_AUTO_DEAL_INTERVAL_MS`). */
   autoDealMs?: number;
   /** How long the pre-deal ready check waits before dealing without stragglers
-   *  (default AUTO_DEAL_READY_CHECK_MS; it ends immediately once everyone is in). */
+   *  (default AUTO_DEAL_READY_CHECK_MS; it ends immediately once everyone is in;
+   *  env override `FOURAM_AUTO_DEAL_READY_CHECK_MS`). */
   readyCheckMs?: number;
   /** How long the showdown reveal frame is held on screen before `hand_end` is
    *  broadcast. The durable settlement is already written by then (default
@@ -147,11 +149,17 @@ export interface Chain {
 }
 
 /** With auto-deal on, the next hand starts this soon after the previous one
- *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one).
- *  Must stay >= SETTLE_HOLD_MS so a showdown's post-settle pause is respected
- *  even when `autoDealMs` overrides the cadence. Kept short (1.5s): a long
- *  cadence makes auto-deal feel manual. */
-export const AUTO_DEAL_INTERVAL_MS = 1_500;
+ *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one) or
+ *  the `FOURAM_AUTO_DEAL_INTERVAL_MS` env var. Must stay >= SETTLE_HOLD_MS so a
+ *  showdown's post-settle pause is respected even when `autoDealMs` overrides
+ *  the cadence.
+ *
+ *  3.5s: a showdown hand's reveal is held on screen for SHOWDOWN_HOLD_MS (1.5s)
+ *  before `hand_end` and the next cadence begins, so the result-to-next-deal
+ *  beat a player actually perceives is 1.5 + 3.5 = 5s (the product's ask; the
+ *  old 1.5s here made a showdown feel like it dealt before the result was read).
+ *  A fold-out carries no reveal hold and waits this cadence alone. */
+export const AUTO_DEAL_INTERVAL_MS = 3_500;
 
 /**
  * How long the showdown reveal frame is held before `hand_end` is broadcast, so
