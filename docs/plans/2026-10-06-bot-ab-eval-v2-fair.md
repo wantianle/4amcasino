@@ -120,6 +120,10 @@ Batch drivers (harness-only, `/tmp`): `run_screen.sh`, `combine_all.sh`,
 `summary.mjs`, `filtercombine.mjs`. All 100 chunk jobs exited `rc=0`; all 20
 cells combined `rc=0`.
 
+> **退役说明（2026-10-06）：** 上文的一次性 A/B 工具（`evalAbRun.mjs` /
+> `evalAbCombine.mjs`）已于 2026-10-06 退役删除；实验结论已固化在本报告，
+> 以上复现命令仅作历史留档，不再可执行。
+
 **Harness change (additive, harness-only):** `evalAbRun.mjs` gained
 `--opponent=<style>` / `--sizing=grid|nonGrid` pass-through to the already-existing
 `runReplicatedComparison(..., { opponent })` path in `evalDesign.mjs`, and echoes
@@ -346,7 +350,8 @@ opponent in which it looked robust (`shrinkage`) is also negative elsewhere.
 
 - New report: `docs/plans/2026-10-06-bot-ab-eval-v2-fair.md` (this file).
 - Harness (uncommitted, in worktree): `apps/server/test/helpers/evalAbRun.mjs`
-  (added `--opponent`/`--sizing`).
+  (added `--opponent`/`--sizing`). **已于 2026-10-06 退役删除**（结论已固化在本
+  报告，不再可执行）。
 - Raw: `/tmp/bot-ab-v2/` — `combined_*.json`, `summary.json`,
   `union_*_alwayscall.json`, `v2only_call_*_95.json`, 100 chunk files + logs.
 - Round-1 (unchanged): `docs/plans/2026-10-06-bot-ab-eval-results.md`,

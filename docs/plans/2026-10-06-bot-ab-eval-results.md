@@ -18,6 +18,10 @@ verdict). It uses the already-landed rig (`evalDesign.mjs`, `evalCompare.mjs`,
   (pooled / iid / block / cluster + variance components + `requiredReplicas` +
   `verdictFor`).
 
+> **退役说明（2026-10-06）：** 上述两个一次性 A/B 工具（`evalAbRun.mjs` /
+> `evalAbCombine.mjs`）已于 2026-10-06 退役删除；实验结论已固化在本报告，
+> 下文命令仅作历史留档，不再可执行。
+
 ---
 
 ## 1. Reproduce
@@ -197,7 +201,9 @@ pilot (4 workers) took ~9.5 min wall.
 ## 8. Files
 
 - `apps/server/test/helpers/evalAbRun.mjs` — new, harness-only CLI driver.
+  **已于 2026-10-06 退役删除。**
 - `apps/server/test/helpers/evalAbCombine.mjs` — new, harness-only aggregator.
+  **已于 2026-10-06 退役删除。**
 - Raw results: `/tmp/bot-ab/` — `pilot_combined.json`, `formal_all_combined.json`,
   `formal_shrink_combined.json`, plus per-worker `*.json` and `*.replicas.jsonl`.
 - No product code (`apps/web/**`, `apps/server/src/**`, `packages/**`) was
