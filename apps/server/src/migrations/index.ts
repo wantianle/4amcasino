@@ -2,6 +2,7 @@ import * as dbModel from '../db.js';
 import type { DB } from '../db.js';
 import { migrateAgentPlatform } from '../agentSchema.js';
 import { migrateHandStats } from '../handProjection.js';
+import { migrate } from './base.js';
 import { migrateBots } from './bots.js';
 import { migrateAdminAudit } from './adminAudit.js';
 import { migrateSettlementPrepared } from './settlementPrepared.js';
@@ -17,13 +18,15 @@ export type Migration = { name: string; run: (db: DB) => void };
  * tables created by `hand-stats` - so keep the `needs:` notes truthful when
  * adding or reordering steps.
  *
- * The steps implemented in `db.ts` are reached through the `dbModel` namespace
- * and only dereferenced when the step runs, not while this array is built.
+ * The `base` step now lives in `./base.ts`, which has no runtime dependency on
+ * `db.ts`, so it is imported by name like every other standalone step. The one
+ * remaining step implemented in `db.ts` (`reconcile-lifecycle`) is reached
+ * through the `dbModel` namespace and only dereferenced when the step runs:
  * `db.ts` imports this runner, so at module-evaluation time its own exports are
- * not installed yet; a direct named import would resolve to `undefined`.
+ * not installed yet and a direct named import would resolve to `undefined`.
  */
 export const STEPS: Migration[] = [
-  { name: 'base', run: (db) => dbModel.migrate(db) },
+  { name: 'base', run: migrate },
   { name: 'agent-platform', run: migrateAgentPlatform },
   // needs: agent-platform (creates agent_grants).
   { name: 'bots', run: migrateBots },
