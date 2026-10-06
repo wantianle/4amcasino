@@ -14,8 +14,8 @@ import {
 } from '@4am/mental-poker';
 import { legalActions, type PlayerAction, type ServerMsg } from '@4am/shared';
 import { t, tr } from './i18n/index.ts';
-import { handReducer } from './handReducer.ts';
-import { handEffectsReducer } from './handEffectsReducer.ts';
+import { handReducer, type HandStateMsg } from './handReducer.ts';
+import { handEffectsReducer, type HandEffectsMsg } from './handEffectsReducer.ts';
 import {
   handLifecycleReducer,
   type LifecycleMsg,
@@ -597,401 +597,415 @@ function applyLifecycle(result: LifecycleResult): void {
   }
 }
 
-export function handle(msg: ServerMsg): void {
+/** Each frame tag maps to a handler that receives that frame's concrete
+ *  variant, so a handler body keeps the narrowed `msg` type it had inside the
+ *  old `switch` case. `T` may be a union, in which case `Extract` distributes
+ *  and the handler receives the union of those variants. */
+type FrameHandler<T extends ServerMsg['t']> = (msg: Extract<ServerMsg, { t: T }>) => void;
+
+/** Compile-time coverage obligation: every `ServerMsg['t']` variant MUST have
+ *  an entry. Adding a frame to the union without a handler fails typecheck -
+ *  the same exhaustive-`Record` pattern as `guards` in
+ *  packages/shared/src/serverMsgValidation.ts. */
+type HandlerTable = { [T in ServerMsg['t']]: FrameHandler<T> };
+
+// ---- shared handler bodies (the old `switch` fallthrough blocks) -----------
+
+/** Frames this client intentionally ignores (handshake / crypto bookkeeping).
+ *  The old `switch` let these fall through `default: return`; the table names
+ *  them explicitly so coverage is total and reviewable. */
+const ignoreFrame = (): void => {};
+
+/** Pure hand-state alignment: the reducer owns the state change, this handler
+ *  only writes it back to the store. No side effects live in these frames.
+ *  `Date.now` is passed as a thunk, not called here: only `auto_deal` consults
+ *  it (inside the reducer), so the other four frames read no clock - matching
+ *  the pre-extraction switch, which called `Date.now()` only on `auto_deal`. */
+const applyHandState = (msg: HandStateMsg): void => {
   const store = useStore.getState();
-  switch (msg.t) {
-    case 'room_state': {
-      runLifecycle(msg);
-      return;
-    }
-    case 'chat':
-      store.pushChat({
-        from: msg.from,
-        userId: msg.userId,
-        text: msg.text,
-        kind: msg.kind,
-        ts: msg.ts,
-      });
-      return;
-    case 'rtc':
-      void voice.handleRtc(msg.from, msg.data);
-      return;
-    case 'voice_state': {
-      const { voice: v } = useStore.getState();
-      store.patchVoice({ mutedByUser: { ...v.mutedByUser, [msg.userId]: msg.muted } });
-      return;
-    }
-    case 'error':
-      // server prose crosses into the toast store here: translate at the
-      // boundary, exact/template match only — unknown phrases pass through
-      store.pushError(tr(msg.message));
-      return;
+  const patch = handReducer(store.hand, msg, Date.now);
+  if (patch) store.patchHand(patch);
+};
 
-    case 'hand_start': {
-      runLifecycle(msg);
-      return;
-    }
+/** Effect-describing frames: the reducer decides the pure patch and the sound
+ *  descriptors; this handler only applies the patch and then runs the effects.
+ *  `play` is called here, never inside the reducer. Patch-first is safe because
+ *  none of these sounds reads the patched state (see handEffectsReducer for the
+ *  exact criterion). */
+const applyHandEffects = (msg: HandEffectsMsg): void => {
+  const store = useStore.getState();
+  const result = handEffectsReducer(store.hand, msg);
+  if (!result) return;
+  store.patchHand(result.patch);
+  for (const effect of result.effects) if (effect.kind === 'sound') play(effect.name);
+};
 
-    case 'shuffle_turn': {
-      const { hand } = useStore.getState();
-      if (msg.seat !== mySeatIn(hand.seats)) return;
-      const k = handKeyFor(msg.handId);
-      if (k === null) return;
-      const deck = maskAndShuffle(msg.deck.map(pointFromHex), k, randomPerm(52)).map(pointHex);
-      wsClient.send({
-        t: 'shuffle_deck',
-        handId: msg.handId,
-        deck,
-        sig: signed(msg.handId, 'shuffle_deck', { deck }),
-      });
-      return;
-    }
+// ---- single-frame handlers -------------------------------------------------
 
-    case 'need_share': {
-      // Unmasking is a capability, not a favour: if the server can get us to
-      // strip our own mask off a point it chose, it can feed us our own
-      // encrypted hole card and read back the plaintext.
-      //
-      // But a showdown legitimately needs exactly that. The card is masked by
-      // EVERY player's key including its owner's, so at showdown the owner must
-      // contribute their share too or nobody can see the hand. Refusing that
-      // stalled every showdown into an unmask timeout, blaming the player who
-      // was following the protocol correctly.
-      //
-      // So: refuse only the shapes that are never legitimate - being asked,
-      // during the deal or a board opening, to unmask a card that is ours.
-      const h0 = useStore.getState().hand;
-      const mine = mySeatIn(h0.seats);
-      const isMyCard = h0.myCardPoints.some((c) => c.deckIndex === msg.deckIndex);
-      if (msg.purpose !== 'showdown' && (isMyCard || (mine !== null && msg.forSeat === mine))) {
-        store.pushError(t('Refused an unmask request for a card dealt to me.'));
-        return;
-      }
-      const k = handKeyFor(msg.handId);
-      if (k === null) return;
-      const { out, proof } = proveUnmask(k, pointFromHex(msg.point));
-      const body = { deckIndex: msg.deckIndex, out: pointHex(out), proof };
-      wsClient.send({
-        t: 'unmask_share',
-        handId: msg.handId,
-        ...body,
-        sig: signed(msg.handId, 'unmask_share', body),
-      });
-      return;
-    }
+const handleChat: FrameHandler<'chat'> = (msg) => {
+  useStore.getState().pushChat({
+    from: msg.from,
+    userId: msg.userId,
+    text: msg.text,
+    kind: msg.kind,
+    ts: msg.ts,
+  });
+};
 
-    case 'your_card': {
-      const h = useStore.getState().hand;
-      if (h.handId !== msg.handId) return;
-      if (h.myCardPoints.some((c) => c.deckIndex === msg.deckIndex)) return; // re-delivered on reconnect
-      const k = handKeyFor(msg.handId);
-      if (k === null) return;
-      const plain = mulPoint(pointFromHex(msg.point), invScalar(k));
-      const card = recoverCard(plain, lookup);
-      if (card === null) {
-        store.pushError(t('Could not decode a dealt card. The hand will abort.'));
-        return;
-      }
-      if (h.myCards.length === 0) play('deal');
-      noteDealMotion(msg.handId, `hole:hero:${h.myCards.length}`);
-      // Opponent cards are intentionally face-down, so the client cannot
-      // identify their individual your_card frame. They join the same deal
-      // beat only after an actual your_card event, never at hand_start.
-      for (const seat of h.seats) {
-        if (seat.seat === mySeatIn(h.seats)) continue;
-        noteDealMotion(msg.handId, `hole:seat:${seat.seat}:${h.myCards.length}`);
-      }
-      store.patchHand({
-        myCards: [...h.myCards, card],
-        myCardPoints: [...h.myCardPoints, { deckIndex: msg.deckIndex, point: msg.point }],
-      });
-      return;
-    }
+const handleRtc: FrameHandler<'rtc'> = (msg) => {
+  void voice.handleRtc(msg.from, msg.data);
+};
 
-    case 'board_open': {
-      const { hand } = useStore.getState();
-      if (hand.handId !== msg.handId) return;
-      const runIndex = (msg.run ?? 1) - 1;
-      const boards = hand.boards.map((run) => run);
-      while (boards.length <= runIndex) boards.push([]);
-      const board = boards[runIndex]!;
-      const existing = board.includes(msg.card);
-      // Metadata is authoritative even when the card came from an earlier
-      // snapshot. Only a genuinely new card advances the visual epoch.
-      const nextBoards = mergeBoardOpenForMotion(msg.handId, boards, msg);
-      if (!existing) {
-        if (board.length === 0 || board.length >= 3) play('flip');
-        const epoch = advanceDealEpoch(msg.handId);
-        dealEpochByCard.set(`${msg.handId}:${boardMotionKey(msg.handId, runIndex, msg.card)}`, epoch);
-      }
-      if (JSON.stringify(nextBoards) !== JSON.stringify(hand.boards)) store.patchHand({ boards: nextBoards });
-      return;
-    }
+const handleVoiceState: FrameHandler<'voice_state'> = (msg) => {
+  const { voice: v } = useStore.getState();
+  useStore.getState().patchVoice({ mutedByUser: { ...v.mutedByUser, [msg.userId]: msg.muted } });
+};
 
-    case 'betting_state': {
-      const prev = useStore.getState().hand;
-      const streetChanged = prev.betting?.street !== msg.state.street;
-      const myUserId = useStore.getState().auth.userId;
-      const mySeat = prev.seats.find((s) => s.userId === myUserId)?.seat;
-      if (mySeat !== undefined && msg.state.toAct === mySeat && prev.betting?.toAct !== mySeat) {
-        play('turn');
-      }
-      const boards = prev.boards.map((run) => run);
-      const reconciled = mergeAuthoritativeBoardForMotion(prev.handId!, boards, msg.board);
-      // baseDeadline/timeBanks are optional while the server rolls out: keep the
-      // last known values rather than clearing them when a frame omits them.
-      const timeBanks: Record<number, number> = { ...prev.timeBanks };
-      if (msg.timeBanks !== undefined) {
-        for (const tb of msg.timeBanks) timeBanks[tb.seat] = tb.remainingMs;
-      }
-      store.patchHand({
-        betting: msg.state,
-        actionSeq: msg.actionSeq,
-        deadline: msg.deadline,
-        baseDeadline: msg.baseDeadline !== undefined ? msg.baseDeadline : prev.baseDeadline,
-        timeBanks,
-        boards: reconciled,
-        ...(streetChanged ? { lastActions: {}, preAction: null, preActionCallAt: null } : {}),
-      });
-      // the street closed with chips out front: they sweep into the pot
-      if (streetChanged && prev.betting?.seats.some((s) => s.committed > 0)) play('pot-collect');
-      let pre = streetChanged ? null : prev.preAction;
-      // the table moved: disarm any selection the new price invalidates, so a
-      // raise can never turn 'Check' or a price-armed 'Call' into a surprise
-      if (pre && mySeat !== undefined) {
-        const meNow = msg.state.seats.find((s) => s.seat === mySeat);
-        const toCall = meNow ? Math.max(0, msg.state.currentBet - meNow.committed) : 0;
-        const invalid =
-          (pre === 'check' && toCall > 0) ||
-          (pre === 'call' && toCall > (prev.preActionCallAt ?? 0));
-        if (invalid) {
-          pre = null;
-          useStore.getState().patchHand({ preAction: null, preActionCallAt: null });
-        }
-      }
-      // fire a pre-selected action the moment the turn arrives
-      if (pre && mySeat !== undefined && msg.state.toAct === mySeat) {
-        const la = legalActions(msg.state);
-        if (la && la.seat === mySeat) {
-          useStore.getState().patchHand({ preAction: null, preActionCallAt: null });
-          if (pre === 'check-fold') act(la.canCheck ? { type: 'check' } : { type: 'fold' });
-          else if (pre === 'call-any' || pre === 'call')
-            act(la.canCheck ? { type: 'check' } : { type: 'call' });
-          else if (pre === 'check' && la.canCheck) act({ type: 'check' });
-        }
-      }
-      return;
-    }
+const handleError: FrameHandler<'error'> = (msg) => {
+  // server prose crosses into the toast store here: translate at the
+  // boundary, exact/template match only — unknown phrases pass through
+  useStore.getState().pushError(tr(msg.message));
+};
 
-    case 'action_applied': {
-      runLifecycle(msg);
-      return;
-    }
+const handleShuffleTurn: FrameHandler<'shuffle_turn'> = (msg) => {
+  const { hand } = useStore.getState();
+  if (msg.seat !== mySeatIn(hand.seats)) return;
+  const k = handKeyFor(msg.handId);
+  if (k === null) return;
+  const deck = maskAndShuffle(msg.deck.map(pointFromHex), k, randomPerm(52)).map(pointHex);
+  wsClient.send({
+    t: 'shuffle_deck',
+    handId: msg.handId,
+    deck,
+    sig: signed(msg.handId, 'shuffle_deck', { deck }),
+  });
+};
 
-    case 'seven_deuce': {
-      const h = useStore.getState().hand;
-      const roomState = useStore.getState().room;
-      const seatInfo = h.seats.find((s) => s.seat === msg.seat);
-      const name =
-        roomState?.players.find((p) => p.userId === seatInfo?.userId)?.displayName ??
-        seatInfo?.username ??
-        `Seat ${msg.seat + 1}`;
-      play('win');
-      store.pushChat({
-        from: t('House rule'),
-        userId: 0,
-        text: t('7-2 offsuit! {name} collects {amount} in bounties.', { name, amount: msg.amount }),
-        kind: 'phrase',
-        ts: Date.now(),
-      });
-      return;
-    }
-
-    // Pure hand-state alignment: the reducer owns the state change, this switch
-    // only writes it back to the store. No side effects live in these frames.
-    // `Date.now` is passed as a thunk, not called here: only `auto_deal` consults
-    // it (inside the reducer), so the other four frames read no clock - matching
-    // the pre-extraction switch, which called `Date.now()` only on `auto_deal`.
-    case 'ready_end':
-    case 'feature_started':
-    case 'time_bank_update':
-    case 'peek_offers_snapshot':
-    case 'auto_deal': {
-      const patch = handReducer(useStore.getState().hand, msg, Date.now);
-      if (patch) store.patchHand(patch);
-      return;
-    }
-
-    case 'ready_check': {
-      const prev = useStore.getState().hand.readyCheck;
-      if (!prev) play('turn'); // ping once when the check opens, not on every update
-      store.patchHand({
-        autoDealAt: null,
-        readyCheck: { deadlineTs: msg.deadlineTs, eligible: msg.eligible, ready: msg.ready },
-      });
-      return;
-    }
-
-    // Effect-describing frames: the reducer decides the pure patch and the
-    // sound descriptors; this switch only applies the patch and then runs the
-    // effects. `play` is called here, never inside the reducer. Patch-first is
-    // safe because none of these sounds reads the patched state (see
-    // handEffectsReducer for the exact criterion).
-    case 'rit_offer':
-    case 'rit_result':
-    case 'multi_run_offer': {
-      const result = handEffectsReducer(useStore.getState().hand, msg);
-      if (!result) return;
-      store.patchHand(result.patch);
-      for (const effect of result.effects) if (effect.kind === 'sound') play(effect.name);
-      return;
-    }
-
-    case 'multi_run_result': {
-      if (msg.reason === 'agreed') play('chip');
-      store.patchHand({ multiRunOffer: null, multiRunResult: msg });
-      // A 2-3 run result can land just before or just after hand_end. If the
-      // recap for this hand already exists, refresh it so it carries every run
-      // (multi_run_result itself only names the shared board). Purely additive:
-      // a later hand_end overwrites with the showdown-authoritative boards.
-      const state = useStore.getState();
-      const last = state.lastHand;
-      if (last && last.handId === msg.handId) {
-        const h = state.hand;
-        const showdownMultiRun = h.showdown?.multiRun ?? null;
-        const showdownTwice = h.showdown?.runTwice ?? null;
-        const boards = showdownMultiRun?.boards ?? showdownTwice?.boards ?? last.boards ?? h.boards;
-        const awards = showdownMultiRun?.awards ?? showdownTwice?.awards ?? last.multiRun?.awards;
-        state.setLastHand({
-          ...last,
-          boards,
-          multiRun: boards.length > 1 ? { boards, ...(awards ? { awards } : {}) } : last.multiRun,
-        });
-      }
-      return;
-    }
-
-    case 'squid_result':
-    case 'peek_offer': {
-      const result = handEffectsReducer(useStore.getState().hand, msg);
-      if (!result) return;
-      store.patchHand(result.patch);
-      for (const effect of result.effects) if (effect.kind === 'sound') play(effect.name);
-      return;
-    }
-
-    case 'peek_offer_closed': {
-      const h = useStore.getState().hand;
-      if (h.handId !== msg.handId) return;
-      // This is the target-side receipt. It only closes an incoming banner;
-      // peek_offers_snapshot likewise describes incoming offers only and must
-      // never be used to reconcile the user's own outgoing request UI.
-      if (!h.peekOffers.some((o) => o.offerId === msg.offerId)) return;
-      if (msg.status === 'accepted') {
-        play('flip');
-        window.dispatchEvent(new CustomEvent('4am-peek-accepted'));
-      }
-      store.patchHand({ peekOffers: h.peekOffers.filter((o) => o.offerId !== msg.offerId) });
-      return;
-    }
-
-    case 'peek_result': {
-      const h = useStore.getState().hand;
-      if (h.handId !== msg.handId) return;
-      // peek_result is buyer-only. Keep the client defensive as well: a
-      // spectator has no current room seat and must never retain/render cards.
-      // Do not consult h.seats here: it is the previous hand's participants,
-      // while the server also allows a currently seated non-participant to buy.
-      const room = useStore.getState().room;
-      const currentUserId = useStore.getState().auth.userId;
-      if (
-        currentUserId === null ||
-        !room?.players.some((player) => player.userId === currentUserId && player.seat !== null)
-      ) return;
-      if (msg.status === 'accepted' && msg.cards) {
-        // The hand snapshot, never the current seat occupant, owns these cards.
-        const target = h.seats.find((seat) => seat.seat === msg.targetSeat);
-        if (!target) return;
-        play('flip');
-        store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: {
-          targetSeat: msg.targetSeat,
-          targetUserId: target.userId,
-          targetName: room?.players.find((player) => player.userId === target.userId)?.displayName ?? target.username,
-          cards: msg.cards,
-        } } });
-      } else {
-        const message = msg.status === 'expired'
-          ? t('Your peek offer expired.')
-          : msg.status === 'failed'
-            ? t('Your peek offer failed.')
-            : t('Your peek offer was declined.');
-        store.pushError(message);
-      }
-      return;
-    }
-
-    case 'cards_shown': {
-      const state = useStore.getState();
-      // a voluntary show can land after the next deal: keep the recap fresh
-      const last = state.lastHand;
-      if (last && last.handId === msg.handId) {
-        state.setLastHand({ ...last, shown: { ...last.shown, [msg.seat]: msg.cards } });
-      }
-      const h = state.hand;
-      if (h.handId !== msg.handId) return;
-      play('flip');
-      store.patchHand({ shown: { ...h.shown, [msg.seat]: msg.cards } });
-      return;
-    }
-
-    case 'showdown': {
-      const current = useStore.getState().hand;
-      if (current.handId !== msg.handId || current.showdown) return;
-      for (const reveal of msg.reveals) {
-        reveal.cards.forEach((_, i) => noteDealMotion(msg.handId, `reveal:${reveal.seat}:${i}`));
-      }
-      // the big reveal: thunder + a lightning flash across the table
-      // (requested by notpritam, docs/FEATURES.md)
-      play('thunder');
-      window.dispatchEvent(new CustomEvent('4am-thunder'));
-      endedHands.add(msg.handId);
-      store.patchHand({ showdown: msg, deadline: null, baseDeadline: null });
-      return;
-    }
-
-    case 'settlement_failed': {
-      runLifecycle(msg);
-      return;
-    }
-
-    case 'hand_end': {
-      runLifecycle(msg);
-      return;
-    }
-
-    case 'hand_abort': {
-      runLifecycle(msg);
-      return;
-    }
-
-    case 'hand_recovery': {
-      runLifecycle(msg);
-      return;
-    }
-
-    case 'transcript_entry': {
-      runLifecycle(msg);
-      return;
-    }
-
-    case 'need_keys': {
-      runLifecycle(msg);
-      return;
-    }
-
-    default:
-      return;
+const handleNeedShare: FrameHandler<'need_share'> = (msg) => {
+  // Unmasking is a capability, not a favour: if the server can get us to
+  // strip our own mask off a point it chose, it can feed us our own
+  // encrypted hole card and read back the plaintext.
+  //
+  // But a showdown legitimately needs exactly that. The card is masked by
+  // EVERY player's key including its owner's, so at showdown the owner must
+  // contribute their share too or nobody can see the hand. Refusing that
+  // stalled every showdown into an unmask timeout, blaming the player who
+  // was following the protocol correctly.
+  //
+  // So: refuse only the shapes that are never legitimate - being asked,
+  // during the deal or a board opening, to unmask a card that is ours.
+  const store = useStore.getState();
+  const h0 = store.hand;
+  const mine = mySeatIn(h0.seats);
+  const isMyCard = h0.myCardPoints.some((c) => c.deckIndex === msg.deckIndex);
+  if (msg.purpose !== 'showdown' && (isMyCard || (mine !== null && msg.forSeat === mine))) {
+    store.pushError(t('Refused an unmask request for a card dealt to me.'));
+    return;
   }
+  const k = handKeyFor(msg.handId);
+  if (k === null) return;
+  const { out, proof } = proveUnmask(k, pointFromHex(msg.point));
+  const body = { deckIndex: msg.deckIndex, out: pointHex(out), proof };
+  wsClient.send({
+    t: 'unmask_share',
+    handId: msg.handId,
+    ...body,
+    sig: signed(msg.handId, 'unmask_share', body),
+  });
+};
+
+const handleYourCard: FrameHandler<'your_card'> = (msg) => {
+  const store = useStore.getState();
+  const h = store.hand;
+  if (h.handId !== msg.handId) return;
+  if (h.myCardPoints.some((c) => c.deckIndex === msg.deckIndex)) return; // re-delivered on reconnect
+  const k = handKeyFor(msg.handId);
+  if (k === null) return;
+  const plain = mulPoint(pointFromHex(msg.point), invScalar(k));
+  const card = recoverCard(plain, lookup);
+  if (card === null) {
+    store.pushError(t('Could not decode a dealt card. The hand will abort.'));
+    return;
+  }
+  if (h.myCards.length === 0) play('deal');
+  noteDealMotion(msg.handId, `hole:hero:${h.myCards.length}`);
+  // Opponent cards are intentionally face-down, so the client cannot
+  // identify their individual your_card frame. They join the same deal
+  // beat only after an actual your_card event, never at hand_start.
+  for (const seat of h.seats) {
+    if (seat.seat === mySeatIn(h.seats)) continue;
+    noteDealMotion(msg.handId, `hole:seat:${seat.seat}:${h.myCards.length}`);
+  }
+  store.patchHand({
+    myCards: [...h.myCards, card],
+    myCardPoints: [...h.myCardPoints, { deckIndex: msg.deckIndex, point: msg.point }],
+  });
+};
+
+const handleBoardOpen: FrameHandler<'board_open'> = (msg) => {
+  const store = useStore.getState();
+  const { hand } = store;
+  if (hand.handId !== msg.handId) return;
+  const runIndex = (msg.run ?? 1) - 1;
+  const boards = hand.boards.map((run) => run);
+  while (boards.length <= runIndex) boards.push([]);
+  const board = boards[runIndex]!;
+  const existing = board.includes(msg.card);
+  // Metadata is authoritative even when the card came from an earlier
+  // snapshot. Only a genuinely new card advances the visual epoch.
+  const nextBoards = mergeBoardOpenForMotion(msg.handId, boards, msg);
+  if (!existing) {
+    if (board.length === 0 || board.length >= 3) play('flip');
+    const epoch = advanceDealEpoch(msg.handId);
+    dealEpochByCard.set(`${msg.handId}:${boardMotionKey(msg.handId, runIndex, msg.card)}`, epoch);
+  }
+  if (JSON.stringify(nextBoards) !== JSON.stringify(hand.boards)) store.patchHand({ boards: nextBoards });
+};
+
+const handleBettingState: FrameHandler<'betting_state'> = (msg) => {
+  const store = useStore.getState();
+  const prev = store.hand;
+  const streetChanged = prev.betting?.street !== msg.state.street;
+  const myUserId = useStore.getState().auth.userId;
+  const mySeat = prev.seats.find((s) => s.userId === myUserId)?.seat;
+  if (mySeat !== undefined && msg.state.toAct === mySeat && prev.betting?.toAct !== mySeat) {
+    play('turn');
+  }
+  const boards = prev.boards.map((run) => run);
+  const reconciled = mergeAuthoritativeBoardForMotion(prev.handId!, boards, msg.board);
+  // baseDeadline/timeBanks are optional while the server rolls out: keep the
+  // last known values rather than clearing them when a frame omits them.
+  const timeBanks: Record<number, number> = { ...prev.timeBanks };
+  if (msg.timeBanks !== undefined) {
+    for (const tb of msg.timeBanks) timeBanks[tb.seat] = tb.remainingMs;
+  }
+  store.patchHand({
+    betting: msg.state,
+    actionSeq: msg.actionSeq,
+    deadline: msg.deadline,
+    baseDeadline: msg.baseDeadline !== undefined ? msg.baseDeadline : prev.baseDeadline,
+    timeBanks,
+    boards: reconciled,
+    ...(streetChanged ? { lastActions: {}, preAction: null, preActionCallAt: null } : {}),
+  });
+  // the street closed with chips out front: they sweep into the pot
+  if (streetChanged && prev.betting?.seats.some((s) => s.committed > 0)) play('pot-collect');
+  let pre = streetChanged ? null : prev.preAction;
+  // the table moved: disarm any selection the new price invalidates, so a
+  // raise can never turn 'Check' or a price-armed 'Call' into a surprise
+  if (pre && mySeat !== undefined) {
+    const meNow = msg.state.seats.find((s) => s.seat === mySeat);
+    const toCall = meNow ? Math.max(0, msg.state.currentBet - meNow.committed) : 0;
+    const invalid =
+      (pre === 'check' && toCall > 0) ||
+      (pre === 'call' && toCall > (prev.preActionCallAt ?? 0));
+    if (invalid) {
+      pre = null;
+      useStore.getState().patchHand({ preAction: null, preActionCallAt: null });
+    }
+  }
+  // fire a pre-selected action the moment the turn arrives
+  if (pre && mySeat !== undefined && msg.state.toAct === mySeat) {
+    const la = legalActions(msg.state);
+    if (la && la.seat === mySeat) {
+      useStore.getState().patchHand({ preAction: null, preActionCallAt: null });
+      if (pre === 'check-fold') act(la.canCheck ? { type: 'check' } : { type: 'fold' });
+      else if (pre === 'call-any' || pre === 'call')
+        act(la.canCheck ? { type: 'check' } : { type: 'call' });
+      else if (pre === 'check' && la.canCheck) act({ type: 'check' });
+    }
+  }
+};
+
+const handleSevenDeuce: FrameHandler<'seven_deuce'> = (msg) => {
+  const store = useStore.getState();
+  const h = store.hand;
+  const roomState = store.room;
+  const seatInfo = h.seats.find((s) => s.seat === msg.seat);
+  const name =
+    roomState?.players.find((p) => p.userId === seatInfo?.userId)?.displayName ??
+    seatInfo?.username ??
+    `Seat ${msg.seat + 1}`;
+  play('win');
+  store.pushChat({
+    from: t('House rule'),
+    userId: 0,
+    text: t('7-2 offsuit! {name} collects {amount} in bounties.', { name, amount: msg.amount }),
+    kind: 'phrase',
+    ts: Date.now(),
+  });
+};
+
+const handleReadyCheck: FrameHandler<'ready_check'> = (msg) => {
+  const store = useStore.getState();
+  const prev = store.hand.readyCheck;
+  if (!prev) play('turn'); // ping once when the check opens, not on every update
+  store.patchHand({
+    autoDealAt: null,
+    readyCheck: { deadlineTs: msg.deadlineTs, eligible: msg.eligible, ready: msg.ready },
+  });
+};
+
+const handleMultiRunResult: FrameHandler<'multi_run_result'> = (msg) => {
+  const store = useStore.getState();
+  if (msg.reason === 'agreed') play('chip');
+  store.patchHand({ multiRunOffer: null, multiRunResult: msg });
+  // A 2-3 run result can land just before or just after hand_end. If the
+  // recap for this hand already exists, refresh it so it carries every run
+  // (multi_run_result itself only names the shared board). Purely additive:
+  // a later hand_end overwrites with the showdown-authoritative boards.
+  const state = useStore.getState();
+  const last = state.lastHand;
+  if (last && last.handId === msg.handId) {
+    const h = state.hand;
+    const showdownMultiRun = h.showdown?.multiRun ?? null;
+    const showdownTwice = h.showdown?.runTwice ?? null;
+    const boards = showdownMultiRun?.boards ?? showdownTwice?.boards ?? last.boards ?? h.boards;
+    const awards = showdownMultiRun?.awards ?? showdownTwice?.awards ?? last.multiRun?.awards;
+    state.setLastHand({
+      ...last,
+      boards,
+      multiRun: boards.length > 1 ? { boards, ...(awards ? { awards } : {}) } : last.multiRun,
+    });
+  }
+};
+
+const handlePeekOfferClosed: FrameHandler<'peek_offer_closed'> = (msg) => {
+  const store = useStore.getState();
+  const h = store.hand;
+  if (h.handId !== msg.handId) return;
+  // This is the target-side receipt. It only closes an incoming banner;
+  // peek_offers_snapshot likewise describes incoming offers only and must
+  // never be used to reconcile the user's own outgoing request UI.
+  if (!h.peekOffers.some((o) => o.offerId === msg.offerId)) return;
+  if (msg.status === 'accepted') {
+    play('flip');
+    window.dispatchEvent(new CustomEvent('4am-peek-accepted'));
+  }
+  store.patchHand({ peekOffers: h.peekOffers.filter((o) => o.offerId !== msg.offerId) });
+};
+
+const handlePeekResult: FrameHandler<'peek_result'> = (msg) => {
+  const store = useStore.getState();
+  const h = store.hand;
+  if (h.handId !== msg.handId) return;
+  // peek_result is buyer-only. Keep the client defensive as well: a
+  // spectator has no current room seat and must never retain/render cards.
+  // Do not consult h.seats here: it is the previous hand's participants,
+  // while the server also allows a currently seated non-participant to buy.
+  const room = useStore.getState().room;
+  const currentUserId = useStore.getState().auth.userId;
+  if (
+    currentUserId === null ||
+    !room?.players.some((player) => player.userId === currentUserId && player.seat !== null)
+  ) return;
+  if (msg.status === 'accepted' && msg.cards) {
+    // The hand snapshot, never the current seat occupant, owns these cards.
+    const target = h.seats.find((seat) => seat.seat === msg.targetSeat);
+    if (!target) return;
+    play('flip');
+    store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: {
+      targetSeat: msg.targetSeat,
+      targetUserId: target.userId,
+      targetName: room?.players.find((player) => player.userId === target.userId)?.displayName ?? target.username,
+      cards: msg.cards,
+    } } });
+  } else {
+    const message = msg.status === 'expired'
+      ? t('Your peek offer expired.')
+      : msg.status === 'failed'
+        ? t('Your peek offer failed.')
+        : t('Your peek offer was declined.');
+    store.pushError(message);
+  }
+};
+
+const handleCardsShown: FrameHandler<'cards_shown'> = (msg) => {
+  const state = useStore.getState();
+  // a voluntary show can land after the next deal: keep the recap fresh
+  const last = state.lastHand;
+  if (last && last.handId === msg.handId) {
+    state.setLastHand({ ...last, shown: { ...last.shown, [msg.seat]: msg.cards } });
+  }
+  const h = state.hand;
+  if (h.handId !== msg.handId) return;
+  play('flip');
+  useStore.getState().patchHand({ shown: { ...h.shown, [msg.seat]: msg.cards } });
+};
+
+const handleShowdown: FrameHandler<'showdown'> = (msg) => {
+  const store = useStore.getState();
+  const current = store.hand;
+  if (current.handId !== msg.handId || current.showdown) return;
+  for (const reveal of msg.reveals) {
+    reveal.cards.forEach((_, i) => noteDealMotion(msg.handId, `reveal:${reveal.seat}:${i}`));
+  }
+  // the big reveal: thunder + a lightning flash across the table
+  // (requested by notpritam, docs/FEATURES.md)
+  play('thunder');
+  window.dispatchEvent(new CustomEvent('4am-thunder'));
+  endedHands.add(msg.handId);
+  store.patchHand({ showdown: msg, deadline: null, baseDeadline: null });
+};
+
+// ---- the dispatch table ----------------------------------------------------
+
+const handlers: HandlerTable = {
+  hello: ignoreFrame,
+  room_state: runLifecycle,
+  error: handleError,
+  chat: handleChat,
+  rtc: handleRtc,
+  voice_state: handleVoiceState,
+  auto_deal: applyHandState,
+  ready_check: handleReadyCheck,
+  ready_end: applyHandState,
+  seven_deuce: handleSevenDeuce,
+  hand_start: runLifecycle,
+  key_commit_applied: ignoreFrame,
+  shuffle_turn: handleShuffleTurn,
+  deck_state: ignoreFrame,
+  need_share: handleNeedShare,
+  share_applied: ignoreFrame,
+  your_card: handleYourCard,
+  board_open: handleBoardOpen,
+  rit_offer: applyHandEffects,
+  rit_result: applyHandEffects,
+  betting_state: handleBettingState,
+  action_applied: runLifecycle,
+  showdown: handleShowdown,
+  feature_started: applyHandState,
+  time_bank_update: applyHandState,
+  multi_run_offer: applyHandEffects,
+  multi_run_result: handleMultiRunResult,
+  squid_result: applyHandEffects,
+  hand_end: runLifecycle,
+  settlement_failed: runLifecycle,
+  hand_recovery: runLifecycle,
+  cards_shown: handleCardsShown,
+  peek_offer: applyHandEffects,
+  peek_result: handlePeekResult,
+  peek_offer_closed: handlePeekOfferClosed,
+  peek_offers_snapshot: applyHandState,
+  hand_abort: runLifecycle,
+  need_keys: runLifecycle,
+  transcript_entry: runLifecycle,
+};
+
+// Null prototype, the same defence as `guards` in serverMsgValidation.ts: a
+// network-supplied `t` such as `toString`/`__proto__` must never resolve an
+// inherited member of the table.
+Object.setPrototypeOf(handlers, null);
+
+export function handle(msg: ServerMsg): void {
+  // Belt and braces over the null-prototype table. `parseServerMsg` at the
+  // wire boundary (wsTransport.ts) already drops unknown/prototype frame tags,
+  // so `handle` only ever sees a validated variant in production; the own-key
+  // check keeps a direct `handle()` call on an unknown tag a no-op instead of a
+  // crash. No log here: the transport owns rate-limited drop logging, and a
+  // second unbounded path would only make an outage louder.
+  if (!Object.hasOwn(handlers, msg.t)) return;
+  (handlers[msg.t] as (m: ServerMsg) => void)(msg);
 }
 
 let bound = false;
