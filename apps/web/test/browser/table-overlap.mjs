@@ -88,6 +88,8 @@ function makeRoom(count, mySeat) {
       totalBought: 2000,
       hasAvatar: false,
       avatarVersion: 0,
+      publicKey: '',
+      privateStats: false,
       pendingBuy: i === (mySeat + 1) % count ? 2000 : 0,
     })),
     handActive: true,

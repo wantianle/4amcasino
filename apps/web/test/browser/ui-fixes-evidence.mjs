@@ -63,6 +63,8 @@ function human(seat, userId, name, stack, extra = {}) {
     totalBought: 2000,
     hasAvatar: false,
     avatarVersion: 0,
+    publicKey: '',
+    privateStats: false,
     pendingBuy: 0,
     ...extra,
   };

@@ -58,6 +58,8 @@ function makeRoom(count, mySeat) {
       totalBought: 2000,
       hasAvatar: false,
       avatarVersion: 0,
+      publicKey: '',
+      privateStats: false,
       // L2 evidence: one seat carries a pending buy so the dashed pill shows
       // (seat after mine — never the hero, whose pod already runs TO ACT+bank)
       pendingBuy: i === (mySeat + 1) % count ? 2000 : 0,

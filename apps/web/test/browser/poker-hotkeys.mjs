@@ -47,6 +47,8 @@ const room = {
     totalBought: 2000,
     hasAvatar: false,
     avatarVersion: 0,
+    publicKey: '',
+    privateStats: false,
     pendingBuy: 0,
   })),
   handActive: false,
@@ -70,6 +72,7 @@ try {
       }),
     );
     localStorage.setItem('4am-sounds', 'off');
+    localStorage.setItem('4am.locale', JSON.stringify({ state: { locale: 'en' }, version: 0 }));
   });
   const page = await ctx.newPage();
   page.setDefaultTimeout(60000);
