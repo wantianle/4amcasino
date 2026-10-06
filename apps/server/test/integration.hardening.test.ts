@@ -1,11 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
+import { describe, expect, it } from 'vitest';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +27,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('P2 hardening', () => {
   async function enable(host: TestClient, roomId: string, features: unknown): Promise<void> {
@@ -132,30 +100,30 @@ describe('P2 hardening', () => {
     };
     const stackOf = (uid: number) =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
           .get(room.id, uid) as { stack: number }
       ).stack;
 
-    expect(applyHandSettlement(ctx.db, args).status).toBe('applied');
+    expect(applyHandSettlement(srv.ctx.db, args).status).toBe('applied');
     const a1 = stackOf(a);
     const b1 = stackOf(b);
     const ledgerRows = () =>
-      (ctx.db.prepare('SELECT COUNT(*) AS n FROM ledger WHERE room_id = ?').get(room.id) as {
+      (srv.ctx.db.prepare('SELECT COUNT(*) AS n FROM ledger WHERE room_id = ?').get(room.id) as {
         n: number;
       }).n;
     const before = ledgerRows();
 
-    expect(applyHandSettlement(ctx.db, args).status).toBe('duplicate');
+    expect(applyHandSettlement(srv.ctx.db, args).status).toBe('duplicate');
     expect(stackOf(a)).toBe(a1);
     expect(stackOf(b)).toBe(b1);
     expect(ledgerRows()).toBe(before); // duplicate appended nothing
     expect(
-      (ctx.db.prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?').get(
+      (srv.ctx.db.prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?').get(
         args.handId,
       ) as { n: number }).n,
     ).toBe(1);
-    expect(verifyLedger(ctx.db, room.id).ok).toBe(true);
+    expect(verifyLedger(srv.ctx.db, room.id).ok).toBe(true);
   });
 
   it('idempotency: a duplicate settlement never re-pays the 7-2 bounty', async () => {
@@ -193,47 +161,47 @@ describe('P2 hardening', () => {
       now: Date.now(),
     };
     const bountyRows = () =>
-      ctx.db
+      srv.ctx.db
         .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
         .get(room.id) as { n: number };
-    expect(applyHandSettlement(ctx.db, args).status).toBe('applied');
+    expect(applyHandSettlement(srv.ctx.db, args).status).toBe('applied');
     expect(bountyRows().n).toBe(2);
-    expect(applyHandSettlement(ctx.db, args).status).toBe('duplicate');
+    expect(applyHandSettlement(srv.ctx.db, args).status).toBe('duplicate');
     expect(bountyRows().n).toBe(2); // the bounty is never paid twice
   });
 
   it('recovery: releases a claimed trigger only when its settlement marker is absent', async () => {
     const { room } = await setupRoom(['rca', 'rcb']);
     const now = Date.now();
-    ctx.db
+    srv.ctx.db
       .prepare(
         `INSERT INTO room_feature_triggers
            (room_id, request_id, kind, source, status, requested_by, created_at, claimed_hand_id)
          VALUES (?, ?, 'squid', 'manual', 'claimed', NULL, ?, ?)`,
       )
       .run(room.id, 'rec-1', now, 'orphan-hand');
-    expect(recoverOrphanedFeatureTriggers(ctx.db)).toBe(1);
-    let row = ctx.db
+    expect(recoverOrphanedFeatureTriggers(srv.ctx.db)).toBe(1);
+    let row = srv.ctx.db
       .prepare("SELECT id, status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
       .get(room.id) as { id: number; status: string };
     expect(row.status).toBe('pending');
 
     // resolve the first so it does not block the partial pending unique index
-    ctx.db.prepare("UPDATE room_feature_triggers SET status = 'applied' WHERE id = ?").run(row.id);
-    ctx.db
+    srv.ctx.db.prepare("UPDATE room_feature_triggers SET status = 'applied' WHERE id = ?").run(row.id);
+    srv.ctx.db
       .prepare(
         `INSERT INTO room_feature_triggers
            (room_id, request_id, kind, source, status, requested_by, created_at, claimed_hand_id)
          VALUES (?, ?, 'squid', 'manual', 'claimed', NULL, ?, ?)`,
       )
       .run(room.id, 'rec-2', now, 'settled-hand');
-    ctx.db
+    srv.ctx.db
       .prepare(
         'INSERT INTO hand_settlements (hand_id, room_id, head, rake, applied_at) VALUES (?, ?, ?, 0, ?)',
       )
       .run('settled-hand', room.id, 'h', now);
-    expect(recoverOrphanedFeatureTriggers(ctx.db)).toBe(0);
-    row = ctx.db
+    expect(recoverOrphanedFeatureTriggers(srv.ctx.db)).toBe(0);
+    row = srv.ctx.db
       .prepare(
         "SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid' AND request_id = 'rec-2'",
       )
@@ -241,13 +209,13 @@ describe('P2 hardening', () => {
     expect(row.status).toBe('claimed');
 
     // an aborted hand leaves no marker, so the next startup releases it
-    ctx.db
+    srv.ctx.db
       .prepare(
         "UPDATE room_feature_triggers SET status = 'claimed', resolved_at = NULL WHERE request_id = 'rec-2'",
       )
       .run();
-    ctx.db.prepare("UPDATE hand_settlements SET hand_id = 'other' WHERE hand_id = 'settled-hand'").run();
-    expect(recoverOrphanedFeatureTriggers(ctx.db)).toBe(1);
+    srv.ctx.db.prepare("UPDATE hand_settlements SET hand_id = 'other' WHERE hand_id = 'settled-hand'").run();
+    expect(recoverOrphanedFeatureTriggers(srv.ctx.db)).toBe(1);
   });
 
   it('actions: rejected and duplicate actions never become transcript action entries', async () => {
@@ -380,7 +348,7 @@ describe('P2 hardening', () => {
     });
     const read = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
           .get(room.id, host.userId) as { time_bank_ms: number }
       ).time_bank_ms;
@@ -402,20 +370,20 @@ describe('P2 hardening', () => {
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.bettingStreets.includes('preflop'), 8000);
     // simulate a config change that resets the bank and bumps the epoch mid-hand
-    ctx.db.prepare('UPDATE rooms SET time_bank_epoch = time_bank_epoch + 1 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET time_bank_epoch = time_bank_epoch + 1 WHERE id = ?').run(room.id);
     const epoch = (
-      ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
         e: number;
       }
     ).e;
-    ctx.db
+    srv.ctx.db
       .prepare(
         'UPDATE room_players SET time_bank_ms = 7000, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ?',
       )
       .run(epoch, room.id);
     await awaitHandEnd(players, 20000);
 
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, host.userId) as { time_bank_ms: number };
     expect(row.time_bank_ms).toBe(7000); // stale snapshot not written over the reset
@@ -431,17 +399,17 @@ describe('P2 hardening', () => {
       timeBank: { enabled: true, initialSeconds: 5, refillEveryHands: 30, refillSeconds: 30 },
     });
     for (const p of players) p.thinkMs = 300; // slow the hand so the mid-hand change lands
-    fault.persistFailThrough = 1; // first durable attempt fails; the retry must reuse the seal
+    srv.fault.persistFailThrough = 1; // first durable attempt fails; the retry must reuse the seal
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.bettingStreets.includes('preflop'), 8000);
     // simulate a config change that resets the bank and bumps the epoch mid-hand
-    ctx.db.prepare('UPDATE rooms SET time_bank_epoch = time_bank_epoch + 1 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET time_bank_epoch = time_bank_epoch + 1 WHERE id = ?').run(room.id);
     const epoch = (
-      ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
         e: number;
       }
     ).e;
-    ctx.db
+    srv.ctx.db
       .prepare(
         'UPDATE room_players SET time_bank_ms = 7000, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ?',
       )
@@ -451,7 +419,7 @@ describe('P2 hardening', () => {
     await host.waitFor(() => host.handEnd !== null, 20000);
 
     // the stale snapshot is still not written over the reset
-    const bank = ctx.db
+    const bank = srv.ctx.db
       .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, host.userId) as { time_bank_ms: number };
     expect(bank.time_bank_ms).toBe(7000);
@@ -463,7 +431,7 @@ describe('P2 hardening', () => {
     // One sealed diagnostic; the retry must not append a second.
     expect(mismatches).toHaveLength(1);
     // The terminal head is the sealed head, and the marker agrees.
-    const marker = ctx.db
+    const marker = srv.ctx.db
       .prepare('SELECT head FROM hand_settlements WHERE hand_id = ?')
       .get(host.handEnd!.handId) as { head: string };
     expect(marker.head).toBe(host.handEnd!.head);
@@ -590,10 +558,10 @@ describe('P2 hardening', () => {
     );
     await enable(host, room.id, { multiRun: { enabled: true } });
     // unequal stacks so a side pot forms between the two all-in players
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = ? WHERE room_id = ? AND user_id = ?')
       .run(400, room.id, players[1]!.userId);
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = ? WHERE room_id = ? AND user_id = ?')
       .run(700, room.id, players[2]!.userId);
     for (const p of players) {
@@ -601,7 +569,7 @@ describe('P2 hardening', () => {
       p.runAgreeAnswer = true;
     }
     const before = (
-      ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
         s: number;
       }
     ).s;
@@ -631,14 +599,14 @@ describe('P2 hardening', () => {
     const firstId = players[0]!.handEnd!.handId;
     await players[0]!.waitIdle(room.id);
     // one ante-only stack (15 < 20) and one unequal stack
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = ? WHERE room_id = ? AND user_id = ?')
       .run(15, room.id, players[1]!.userId);
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = ? WHERE room_id = ? AND user_id = ?')
       .run(300, room.id, players[2]!.userId);
     const before = (
-      ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
         s: number;
       }
     ).s;

@@ -1,11 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
+import { describe, expect, it } from 'vitest';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +27,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('full hand integration: ring, multi-run and commission', () => {
   it('multi-run: the player behind chooses 2 runs and the ahead player agrees', async () => {
@@ -130,8 +98,8 @@ describe('full hand integration: ring, multi-run and commission', () => {
     const { players, room, host } = await setupRoom(['coma', 'comb'], ['allin-first', 'passive']);
     expect(room.commissionBps).toBe(50);
     expect(host.roomState?.room.commissionBps).toBe(50);
-    const { userId: platformId } = createUser(ctx.db, 'platform', 'a'.repeat(64), 'b'.repeat(64));
-    setPlatformUserId(ctx.db, platformId);
+    const { userId: platformId } = createUser(srv.ctx.db, 'platform', 'a'.repeat(64), 'b'.repeat(64));
+    setPlatformUserId(srv.ctx.db, platformId);
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     expect(players[0]!.handAbort).toBeNull();
@@ -148,7 +116,7 @@ describe('full hand integration: ring, multi-run and commission', () => {
     const state = await host.api(`/api/rooms/${room.id}`);
     expect(state.players.reduce((t: number, p: { stack: number }) => t + p.stack, 0)).toBe(1990);
     expect(
-      ctx.db.prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?').get(room.id),
+      srv.ctx.db.prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?').get(room.id),
     ).toEqual({ total: 2000 });
     const transcript = await host.api(`/api/rooms/${room.id}/hands/${players[0]!.handEnd!.handId}`);
     expect(
@@ -162,7 +130,7 @@ describe('full hand integration: ring, multi-run and commission', () => {
       ['oldcoma', 'oldcomb'],
       ['allin-first', 'passive'],
     );
-    ctx.db.prepare('UPDATE rooms SET commission_bps = 100 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET commission_bps = 100 WHERE id = ?').run(room.id);
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     expect(players[0]!.handAbort).toBeNull();
@@ -179,12 +147,12 @@ describe('full hand integration: ring, multi-run and commission', () => {
 
   it('keeps a running hand at its original rate and applies an admin change to the next deal', async () => {
     const { players, room, host } = await setupRoom(['ratea', 'rateb']);
-    const { userId } = createUser(ctx.db, 'ratehouse', 'a'.repeat(64), 'b'.repeat(64));
-    setPlatformUserId(ctx.db, userId);
-    const token = createSession(ctx.db, userId);
+    const { userId } = createUser(srv.ctx.db, 'ratehouse', 'a'.repeat(64), 'b'.repeat(64));
+    setPlatformUserId(srv.ctx.db, userId);
+    const token = createSession(srv.ctx.db, userId);
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.handId !== null);
-    const res = await ctx.app.inject({
+    const res = await srv.ctx.app.inject({
       method: 'PUT',
       url: '/api/admin/settings/commission',
       headers: { authorization: `Bearer ${token}` },
@@ -195,7 +163,7 @@ describe('full hand integration: ring, multi-run and commission', () => {
     expect(host.handAbort).toBeNull();
     expect(host.handEnd!.commissionBps).toBe(50);
     const firstId = host.handEnd!.handId;
-    expect(ctx.db.prepare('SELECT commission_bps FROM rooms WHERE id = ?').get(room.id)).toEqual({
+    expect(srv.ctx.db.prepare('SELECT commission_bps FROM rooms WHERE id = ?').get(room.id)).toEqual({
       commission_bps: 100,
     });
     host.send({ t: 'start_hand' });
@@ -221,7 +189,7 @@ describe('full hand integration: ring, multi-run and commission', () => {
     expect(ledger.entries.filter((e: { kind: string }) => e.kind === 'commission')).toEqual([]);
     expect(ledger.verified.ok).toBe(true);
     expect(
-      ctx.db.prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?').get(room.id),
+      srv.ctx.db.prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?').get(room.id),
     ).toEqual({ total: 2000 });
   }, 20000);
 

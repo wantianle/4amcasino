@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
+import { describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,47 +33,22 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('full hand integration: settlement hold, 7-2 bounty and recovery', () => {
   it('replays the showdown to a client that reconnects during the hold', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     const handId = host.handId!;
@@ -87,14 +61,14 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(host.lastShowdown!.handId).toBe(handId);
     expect(host.handEnd).toBeNull(); // still inside the hold
     // release the hold so the room tears down cleanly
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEnd!.handId).toBe(handId);
   }, 20000);
 
   it('pays the automatic 7-2 showdown bounty durably, before hand_end and across a hold shutdown', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
     // Deterministic deal: one seat applies a fixed permutation, the other the
     // identity, so the final deck is exactly `deck[Q]`. Seat 0 gets hole
     // indexes 0/2 -> cards 0 (2s) and 21 (7h): 7-2 offsuit. Board 4..8 is
@@ -106,7 +80,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     host.forcedShufflePerm = identity;
     players[1]!.forcedShufflePerm = Q;
 
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     const handId = host.handId!;
@@ -118,32 +92,32 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     // The bounty is part of the durable settlement: paid BEFORE hand_end and
     // while the reveal is still on screen.
     const bountyRows = () =>
-      ctx.db
+      srv.ctx.db
         .prepare("SELECT user_id, delta FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
         .all(room.id) as { user_id: number; delta: number }[];
     const rows = bountyRows();
     expect(rows).toHaveLength(2);
     expect(rows.reduce((s, r) => s + r.delta, 0)).toBe(0);
     expect(rows.find((r) => r.delta === 25)).toBeTruthy();
-    const hostRow = ctx.db
+    const hostRow = srv.ctx.db
       .prepare('SELECT user_id FROM room_players WHERE room_id = ? AND seat = 0')
       .get(room.id) as { user_id: number };
     expect(rows.find((r) => r.delta === 25)!.user_id).toBe(hostRow.user_id);
     expect(host.handEnd).toBeNull();
 
     // A crash/shutdown inside the hold can no longer lose the bounty.
-    void hub.rooms.get(room.id)?.shutdown();
-    clock.advance(5000);
+    void srv.hub.rooms.get(room.id)?.shutdown();
+    srv.clock.advance(5000);
     expect(host.handEnd).toBeNull();
     expect(bountyRows()).toHaveLength(2);
     expect(
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
           .get(handId) as { n: number }
       ).n,
     ).toBe(1);
-    const total = ctx.db
+    const total = srv.ctx.db
       .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
       .get(room.id) as { total: number };
     // 2000 chips in, 0 rake on this tiny pot, bounty is zero-sum: conserved.
@@ -152,7 +126,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('B1: the 7-2 bounty is reflected in every settlement output consistently', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
     const identity = Array.from({ length: 52 }, (_, i) => i);
     const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
     const seen = new Set(wanted);
@@ -160,15 +134,15 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     host.forcedShufflePerm = identity;
     players[1]!.forcedShufflePerm = Q;
 
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     const handId = host.handId!;
     expect(host.handEnd).toBeNull();
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 8000);
 
-    const stackRows = ctx.db
+    const stackRows = srv.ctx.db
       .prepare('SELECT user_id, stack, seat FROM room_players WHERE room_id = ?')
       .all(room.id) as { user_id: number; stack: number; seat: number }[];
     const byUser = new Map(stackRows.map((r) => [r.user_id, r.stack]));
@@ -182,7 +156,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     // room_players.stack === hand_settlements.final_stacks
     const finalStacks = JSON.parse(
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT final_stacks FROM hand_settlements WHERE hand_id = ?')
           .get(handId) as { final_stacks: string }
       ).final_stacks,
@@ -190,7 +164,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     for (const f of finalStacks) expect(f.stack).toBe(byUser.get(f.userId));
     // room_players.stack === projection.ending_stack, and
     // net_delta === ending_stack - starting_stack
-    const proj = ctx.db
+    const proj = srv.ctx.db
       .prepare(
         'SELECT user_id, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
       )
@@ -218,7 +192,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('B2: a settled showdown bounty is never paid again by a later voluntary show', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
     const identity = Array.from({ length: 52 }, (_, i) => i);
     const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
     const seen = new Set(wanted);
@@ -226,13 +200,13 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     host.forcedShufflePerm = identity;
     players[1]!.forcedShufflePerm = Q;
     const bountyRows = () =>
-      ctx.db
+      srv.ctx.db
         .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
         .get(room.id) as { n: number };
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 8000);
     expect(bountyRows().n).toBe(2);
     // the showdown winner voluntarily shows once more: no second bounty
@@ -243,7 +217,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('B2: a fold-winner bounty retries after a rolled-back transfer and pays once', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
     // seat 1 (bob) is dealt 7-2 offsuit; host folds, so bob wins by fold
     const identity = Array.from({ length: 52 }, (_, i) => i);
     const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
@@ -256,7 +230,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     const bob = players[1]!;
     expect(bob.myCards.slice().sort((a, b) => a - b)).toEqual([0, 21]);
     const bountyRows = () =>
-      ctx.db
+      srv.ctx.db
         .prepare(
           "SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind IN ('seven-deuce', 'seven-deuce-show')",
         )
@@ -264,7 +238,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(bountyRows().n).toBe(0);
 
     // the first voluntary show rolls the transfer back: it must stay unpaid
-    fault.sevenDeuceFailOnce = true;
+    srv.fault.sevenDeuceFailOnce = true;
     bob.showCards();
     await new Promise((r) => setTimeout(r, 200));
     expect(bountyRows().n).toBe(0);
@@ -276,7 +250,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('a fresh client reconnecting during the hold restores the board and private cards, not just the reveal', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     const handId = host.handId!;
@@ -307,20 +281,20 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(host.lastShowdown!.handId).toBe(handId);
 
     // release the hold so the room tears down cleanly
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEnd!.handId).toBe(handId);
   }, 20000);
 
   it('B3: a spectator connecting during the hold receives the public replay', async () => {
     const { room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     const handId = host.handId!;
     // a brand-new observer joins while the settlement is committed and held
-    const spec = new TestClient(baseUrl, 'watcher');
-    clients.push(spec);
+    const spec = new TestClient(srv.baseUrl, 'watcher');
+    srv.clients.push(spec);
     await spec.register();
     await spec.api('/api/rooms/join', { joinCode: room.joinCode });
     await spec.connect(room.id);
@@ -328,53 +302,53 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(spec.handId).toBeNull(); // no seat: no private hand_start
     expect(spec.myCards).toHaveLength(0);
     expect(spec.lastShowdown!.handId).toBe(handId);
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
   }, 20000);
 
   it('B4: exhausted settlement retries freeze the table and host retry settles once', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(25, room.id);
     const identity = Array.from({ length: 52 }, (_, i) => i);
     const wanted = [0, 4, 21, 8, 20, 22, 23, 31, 47];
     const seen = new Set(wanted);
     const Q = [...wanted, ...identity.filter((i) => !seen.has(i))];
     host.forcedShufflePerm = identity;
     players[1]!.forcedShufflePerm = Q;
-    fault.persistFailThrough = 1000; // every durable-write attempt fails
-    clock.freeze();
+    srv.fault.persistFailThrough = 1000; // every durable-write attempt fails
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.settlementFailures.length === 1, 5000);
     const handId = host.handId!;
     for (let i = 0; i < 4; i++) {
-      clock.advance(250);
+      srv.clock.advance(250);
       await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
     }
     expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
     // frozen: nothing committed, and no new hand may be dealt over it
     expect(
-      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
     ).toBeUndefined();
     host.errors = [];
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.errors.some((e) => /hand already running/i.test(e)), 3000);
 
     // host recovery: clear the fault and retry; pays exactly once
-    fault.persistFailThrough = 0;
+    srv.fault.persistFailThrough = 0;
     host.send({ t: 'retry_settlement' });
     await host.waitFor(() => host.sawShowdown, 5000);
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
           .get(handId) as { n: number }
       ).n,
     ).toBe(1);
     expect(
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE ref = ? AND kind = 'seven-deuce'")
           .get(handId) as { n: number }
       ).n,
@@ -383,24 +357,24 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('holds hand_end for exactly the reveal window and broadcasts it only once', async () => {
     const { host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null);
     // one tick short of the 400ms reveal hold: still held
-    clock.advance(399);
+    srv.clock.advance(399);
     expect(host.handEnd).toBeNull();
     // the exact due tick releases it
-    clock.advance(1);
+    srv.clock.advance(1);
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEndCount).toBe(1);
     // later timers/advances must never emit a second terminal frame
-    clock.advance(10000);
+    srv.clock.advance(10000);
     expect(host.handEndCount).toBe(1);
   }, 20000);
 
   it('a fold-out under a frozen clock ends without any clock advance', async () => {
     const { host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEndCount).toBe(1);
@@ -409,15 +383,15 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('isolates a failed durable settlement, blocks the next hand, and retries to success', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    fault.persistFailThrough = 1; // first attempt fails; the retry succeeds
-    clock.freeze();
+    srv.fault.persistFailThrough = 1; // first attempt fails; the retry succeeds
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.settlementFailures.length > 0, 8000);
     const handId = host.handId!;
     expect(host.settlementFailures[0]!.retrying).toBe(true);
     // NOT committed: no marker, no reveal, no terminal frame
     expect(
-      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
     ).toBeUndefined();
     expect(host.sawShowdown).toBe(false);
     expect(host.handEnd).toBeNull();
@@ -428,35 +402,35 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     await host.waitFor(() => host.errors.some((e) => /hand already running/i.test(e)), 3000);
 
     // the clock-driven retry commits the same deterministic result
-    clock.advance(300);
+    srv.clock.advance(300);
     await host.waitFor(() => host.sawShowdown, 5000);
     expect(
-      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
     ).toBeTruthy();
     expect(host.settlementFailures).toHaveLength(1);
-    const total = ctx.db
+    const total = srv.ctx.db
       .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
       .get(room.id) as { total: number };
     expect(total.total).toBe(2000);
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEndCount).toBe(1);
   }, 25000);
 
   it('a duplicate finalize broadcasts hand_end once, adopts the receipt, and tears down once', async () => {
     const { room, host } = await setupRoom(['dwa', 'dwb'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
-    clock.freeze(); // hold the terminal frame so we can drive the retry by hand
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.clock.freeze(); // hold the terminal frame so we can drive the retry by hand
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null, 15000);
     const handId = host.handId!;
-    const marker = ctx.db
+    const marker = srv.ctx.db
       .prepare('SELECT hand_id, head FROM hand_settlements WHERE hand_id = ?')
       .get(handId) as { hand_id: string; head: string };
     expect(marker.hand_id).toBe(handId);
     expect(host.handEnd).toBeNull(); // durable, but still inside the reveal hold
 
-    const gameRoom = hub.rooms.get(room.id)! as unknown as {
+    const gameRoom = srv.hub.rooms.get(room.id)! as unknown as {
       hand: { settlementApplied: boolean; publishSettlement(): void } | null;
       terminalFrames: { msg: { handId: string } }[];
     };
@@ -476,7 +450,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(host.handEnd!.head).toBe(marker.head);
 
     // The still-pending reveal-hold timer must never emit a second frame.
-    clock.advance(10000);
+    srv.clock.advance(10000);
     await new Promise((r) => setTimeout(r, 50));
     expect(host.handEndCount).toBe(1);
     // Retained exactly once for a future reconnect; never re-pushed to the
@@ -489,13 +463,13 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
 
   it('a reconnect re-asserts a frozen settlement failure so recovery stays reachable', async () => {
     const { room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    fault.persistFailThrough = 1000; // every durable-write attempt fails
-    clock.freeze();
+    srv.fault.persistFailThrough = 1000; // every durable-write attempt fails
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.settlementFailures.length === 1, 5000);
     const handId = host.handId!;
     for (let i = 0; i < 4; i++) {
-      clock.advance(250);
+      srv.clock.advance(250);
       await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
     }
     expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
@@ -512,17 +486,17 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(replay.retrying).toBe(false);
 
     // and the replayed state is enough to recover
-    fault.persistFailThrough = 0;
+    srv.fault.persistFailThrough = 0;
     host.send({ t: 'retry_settlement' });
     await host.waitFor(() => host.sawShowdown, 5000);
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null, 5000);
   }, 25000);
 
   it('replays the terminal hand_end to a participant who missed it', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
     // no auto-deal, so the retained terminal frame is not superseded
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const bob = players[1]!;
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null, 15000);
@@ -547,7 +521,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     );
     // manual dealing, so the retained terminal frame is not superseded by an
     // auto-deal before we can start the next hand ourselves
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const bob = players[1]!;
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.showdownAt !== null, 15000);
@@ -576,7 +550,7 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
   it('recovers a committed hand for a reconnecting client after a restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-recover-'));
     const dbPath = join(dir, 'game.db');
-    const saved = { ctx, baseUrl, hub, clients };
+    const saved = { ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub, clients: srv.clients };
     let restarted: ReturnType<typeof createApp> | null = null;
     try {
       const app = createApp(dbPath);
@@ -587,15 +561,15 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
         readyCheckMs: 1500,
         showdownHoldMs: 400,
         settleHoldMs: 0,
-        clock,
+        clock: srv.clock,
       });
       await app.app.listen({ port: 0 });
       const addr = app.app.server.address() as AddressInfo;
-      ctx = app;
-      hub = appHub;
-      baseUrl = `http://127.0.0.1:${addr.port}`;
+      srv.ctx = app;
+      srv.hub = appHub;
+      srv.baseUrl = `http://127.0.0.1:${addr.port}`;
       const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
-      clock.freeze();
+      srv.clock.freeze();
       host.send({ t: 'start_hand' });
       await host.waitFor(() => host.showdownAt !== null, 15000);
       const handId = host.handId!;
@@ -613,17 +587,17 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
         readyCheckMs: 1500,
         showdownHoldMs: 400,
         settleHoldMs: 0,
-        clock,
+        clock: srv.clock,
       });
       await restarted.app.listen({ port: 0 });
       const addr2 = restarted.app.server.address() as AddressInfo;
-      ctx = restarted;
-      hub = restartHub;
-      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      srv.ctx = restarted;
+      srv.hub = restartHub;
+      srv.baseUrl = `http://127.0.0.1:${addr2.port}`;
 
       // the client reconnect reports the hand it still holds; the server must
       // reconstruct the committed terminal from the persisted transcript/marker
-      host.baseUrl = baseUrl;
+      host.baseUrl = srv.baseUrl;
       host.handEnd = null;
       host.handEndCount = 0;
       await host.connect(room.id);
@@ -635,17 +609,17 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
       expect(host.handRecoveries.length).toBe(0);
     } finally {
       if (restarted) await restarted.app.close().catch(() => {});
-      ctx = saved.ctx;
-      baseUrl = saved.baseUrl;
-      hub = saved.hub;
-      clients = saved.clients;
+      srv.ctx = saved.ctx;
+      srv.baseUrl = saved.baseUrl;
+      srv.hub = saved.hub;
+      srv.clients = saved.clients;
     }
   }, 30000);
 
   it('falls back to a status-only committed recovery when durable stacks are incomplete', async () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-recover-partial-'));
     const dbPath = join(dir, 'game.db');
-    const saved = { ctx, baseUrl, hub, clients };
+    const saved = { ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub, clients: srv.clients };
     let restarted: ReturnType<typeof createApp> | null = null;
     try {
       const app = createApp(dbPath);
@@ -656,15 +630,15 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
         readyCheckMs: 1500,
         showdownHoldMs: 400,
         settleHoldMs: 0,
-        clock,
+        clock: srv.clock,
       });
       await app.app.listen({ port: 0 });
       const addr = app.app.server.address() as AddressInfo;
-      ctx = app;
-      hub = appHub;
-      baseUrl = `http://127.0.0.1:${addr.port}`;
+      srv.ctx = app;
+      srv.hub = appHub;
+      srv.baseUrl = `http://127.0.0.1:${addr.port}`;
       const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
-      clock.freeze();
+      srv.clock.freeze();
       host.send({ t: 'start_hand' });
       await host.waitFor(() => host.showdownAt !== null, 15000);
       const handId = host.handId!;
@@ -685,15 +659,15 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
         readyCheckMs: 1500,
         showdownHoldMs: 400,
         settleHoldMs: 0,
-        clock,
+        clock: srv.clock,
       });
       await restarted.app.listen({ port: 0 });
       const addr2 = restarted.app.server.address() as AddressInfo;
-      ctx = restarted;
-      hub = restartHub;
-      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      srv.ctx = restarted;
+      srv.hub = restartHub;
+      srv.baseUrl = `http://127.0.0.1:${addr2.port}`;
 
-      host.baseUrl = baseUrl;
+      host.baseUrl = srv.baseUrl;
       host.handEnd = null;
       host.handEndCount = 0;
       await host.connect(room.id);
@@ -705,16 +679,16 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
       expect(host.handEnd).toBeNull();
     } finally {
       if (restarted) await restarted.app.close().catch(() => {});
-      ctx = saved.ctx;
-      baseUrl = saved.baseUrl;
-      hub = saved.hub;
-      clients = saved.clients;
+      srv.ctx = saved.ctx;
+      srv.baseUrl = saved.baseUrl;
+      srv.hub = saved.hub;
+      srv.clients = saved.clients;
     }
   }, 30000);
 
   it('a lost settlement broadcast still lets the room finish without a refund', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    fault.broadcastThrowT = 'showdown';
+    srv.fault.broadcastThrowT = 'showdown';
     host.send({ t: 'start_hand' });
     // The reveal frame is lost, but the terminal frame still arrives...
     await awaitHandEnd(players, 15000);
@@ -723,9 +697,9 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     // ...and the hand was committed, not refunded/aborted.
     expect(host.handAbort).toBeNull();
     expect(
-      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
     ).toBeTruthy();
-    const total = ctx.db
+    const total = srv.ctx.db
       .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
       .get(room.id) as { total: number };
     expect(total.total).toBe(2000);
@@ -736,14 +710,14 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
       ['host', 'bob', 'carol'],
       ['passive', 'passive', 'fold-first'],
     );
-    ctx.db.prepare('UPDATE rooms SET tv_replays = 1, auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET tv_replays = 1, auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, , carol] = players as [TestClient, TestClient, TestClient];
-    clock.freeze();
+    srv.clock.freeze();
     h.respondKeys = false; // force the audit timeout to settle best-effort
     h.send({ t: 'start_hand' });
     await h.waitFor(() => h.sawShowdown, 8000);
     const handId = h.handId!;
-    const persisted = ctx.db
+    const persisted = srv.ctx.db
       .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
       .get(handId) as { head: string } | undefined;
     expect(persisted).toBeTruthy();
@@ -759,12 +733,12 @@ describe('full hand integration: settlement hold, 7-2 bounty and recovery', () =
     expect(h.transcriptHeads).toHaveLength(entryCount);
     expect(h.transcriptHeads.at(-1) ?? headBefore).toBe(headBefore);
     expect(
-      (ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId) as {
+      (srv.ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId) as {
         head: string;
       }).head,
     ).toBe(persisted!.head);
 
-    clock.advance(400);
+    srv.clock.advance(400);
     await h.waitFor(() => h.handEnd !== null, 5000);
     expect(h.handEndCount).toBe(1);
   }, 20000);

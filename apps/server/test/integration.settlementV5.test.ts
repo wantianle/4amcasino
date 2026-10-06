@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
+import { describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,49 +33,24 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('settlement lifecycle v5', () => {
   it('P0-1: when the banker is in the hand the rake is an explicit per-seat commissionDelta', async () => {
     const { players, room, host } = await setupRoom(['bankera', 'bankerb'], ['passive', 'passive']);
     // No platform account: rake falls back to the in-room banker (the host).
-    ctx.db.prepare("DELETE FROM meta WHERE key = 'platform_user_id'").run();
-    ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare("DELETE FROM meta WHERE key = 'platform_user_id'").run();
+    srv.ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     expect(host.handAbort).toBeNull();
@@ -85,7 +59,7 @@ describe('settlement lifecycle v5', () => {
     expect(rake).toBeGreaterThan(0);
 
     // Per-seat contract: ending - starting === net_delta + wire commissionDelta.
-    const proj = ctx.db
+    const proj = srv.ctx.db
       .prepare(
         'SELECT user_id, seat, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
       )
@@ -96,7 +70,7 @@ describe('settlement lifecycle v5', () => {
       ending_stack: number;
       net_delta: number;
     }[];
-    const comm = ctx.db
+    const comm = srv.ctx.db
       .prepare(
         "SELECT user_id, SUM(delta) AS d FROM ledger WHERE ref = ? AND kind = 'commission' GROUP BY user_id",
       )
@@ -105,7 +79,7 @@ describe('settlement lifecycle v5', () => {
     expect(commByUser.size).toBe(1);
     expect([...commByUser.values()][0]).toBe(rake);
     const bankerId = (
-      ctx.db.prepare('SELECT banker_id FROM rooms WHERE id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT banker_id FROM rooms WHERE id = ?').get(room.id) as {
         banker_id: number;
       }
     ).banker_id;
@@ -140,9 +114,9 @@ describe('settlement lifecycle v5', () => {
 
   it('P0-1: with an out-of-hand platform recipient every seat still reconciles net_delta', async () => {
     const { players, room, host } = await setupRoom(['plata', 'platb'], ['passive', 'passive']);
-    const { userId: platformId } = createUser(ctx.db, 'platformv5', 'c'.repeat(64), 'd'.repeat(64));
-    setPlatformUserId(ctx.db, platformId);
-    ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
+    const { userId: platformId } = createUser(srv.ctx.db, 'platformv5', 'c'.repeat(64), 'd'.repeat(64));
+    setPlatformUserId(srv.ctx.db, platformId);
+    srv.ctx.db.prepare('UPDATE rooms SET commission_bps = 500 WHERE id = ?').run(room.id);
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     const end = host.handEnd!;
@@ -158,7 +132,7 @@ describe('settlement lifecycle v5', () => {
     expect(settleEntry.payload.commissionDeltas).toEqual([]);
     expect(settleEntry.payload.commission).toBe(rake);
 
-    const proj = ctx.db
+    const proj = srv.ctx.db
       .prepare(
         'SELECT user_id, starting_stack, ending_stack, net_delta FROM hand_players WHERE hand_id = ?',
       )
@@ -176,7 +150,7 @@ describe('settlement lifecycle v5', () => {
     const commissionSum = (end.commissionDeltas ?? []).reduce((s, d) => s + d.delta, 0);
     expect(gameSum).toBe(-rake);
     expect(gameSum + commissionSum).toBe(-rake);
-    const platformStack = ctx.db
+    const platformStack = srv.ctx.db
       .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, platformId) as { stack: number };
     expect(platformStack.stack).toBe(rake);
@@ -185,25 +159,25 @@ describe('settlement lifecycle v5', () => {
   it('P0-3: an unresolvable pre-lifecycle transcript is quarantined and freezes the room', async () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-legacy-'));
     const dbPath = join(dir, 'game.db');
-    const saved = { ctx, baseUrl, hub };
+    const saved = { ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub };
     const app = createApp(dbPath);
     const appHub = attachHub(app.app, app.db, {
       cryptoTimeoutMs: 1500,
       actionTimeoutMs: 1500,
       autoDealMs: 3_600_000,
       readyCheckMs: 1500,
-      clock,
+      clock: srv.clock,
     });
     await app.app.listen({ port: 0 });
     const addr = app.app.server.address() as AddressInfo;
-    ctx = app;
-    hub = appHub;
-    baseUrl = `http://127.0.0.1:${addr.port}`;
+    srv.ctx = app;
+    srv.hub = appHub;
+    srv.baseUrl = `http://127.0.0.1:${addr.port}`;
     try {
       const { players, room, host } = await setupRoom(['lega', 'legb'], ['passive', 'passive']);
       // Simulate a database written before hand_lifecycle existed: a transcript
       // with no settlement marker and no reconcilable ledger/projection.
-      ctx.db
+      srv.ctx.db
         .prepare(
           "INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, '[]', ?)",
         )
@@ -225,15 +199,15 @@ describe('settlement lifecycle v5', () => {
         actionTimeoutMs: 1500,
         autoDealMs: 3_600_000,
         readyCheckMs: 1500,
-        clock,
+        clock: srv.clock,
       });
       await restarted.app.listen({ port: 0 });
       const addr2 = restarted.app.server.address() as AddressInfo;
-      ctx = restarted;
-      hub = nextHub;
-      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      srv.ctx = restarted;
+      srv.hub = nextHub;
+      srv.baseUrl = `http://127.0.0.1:${addr2.port}`;
       for (const p of players) {
-        p.baseUrl = baseUrl;
+        p.baseUrl = srv.baseUrl;
         await p.connect(room.id);
       }
       host.errors = [];
@@ -242,16 +216,16 @@ describe('settlement lifecycle v5', () => {
       for (const p of players) p.close();
       await restarted.app.close();
     } finally {
-      ctx = saved.ctx;
-      baseUrl = saved.baseUrl;
-      hub = saved.hub;
+      srv.ctx = saved.ctx;
+      srv.baseUrl = saved.baseUrl;
+      srv.hub = saved.hub;
     }
   }, 30000);
 
   it('P0-2: a rolled-back settlement leaves a durable running row that a graceful shutdown resolves', async () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-rollback-'));
     const dbPath = join(dir, 'game.db');
-    const saved = { ctx, baseUrl, hub };
+    const saved = { ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub };
     const app = createApp(dbPath);
     const appHub = attachHub(app.app, app.db, {
       cryptoTimeoutMs: 1500,
@@ -260,27 +234,27 @@ describe('settlement lifecycle v5', () => {
       readyCheckMs: 1500,
       showdownHoldMs: 400,
       settleHoldMs: 0,
-      clock,
+      clock: srv.clock,
       faultInjection: {
         persist: (attempt) => {
-          if (fault.persistFailThrough >= attempt) throw new Error('injected persist failure');
+          if (srv.fault.persistFailThrough >= attempt) throw new Error('injected persist failure');
         },
       },
     });
     await app.app.listen({ port: 0 });
     const addr = app.app.server.address() as AddressInfo;
-    ctx = app;
-    hub = appHub;
-    baseUrl = `http://127.0.0.1:${addr.port}`;
+    srv.ctx = app;
+    srv.hub = appHub;
+    srv.baseUrl = `http://127.0.0.1:${addr.port}`;
     try {
       const { players, room, host } = await setupRoom(['rba', 'rbb'], ['passive', 'passive']);
-      fault.persistFailThrough = 1000;
-      clock.freeze();
+      srv.fault.persistFailThrough = 1000;
+      srv.clock.freeze();
       host.send({ t: 'start_hand' });
       await host.waitFor(() => host.settlementFailures.length === 1, 8000);
       const handId = host.handId!;
       for (let i = 0; i < 4; i++) {
-        clock.advance(250);
+        srv.clock.advance(250);
         await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
       }
       expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
@@ -288,11 +262,11 @@ describe('settlement lifecycle v5', () => {
       // The rollback left no transcript and no marker - the old detector saw
       // nothing - but the durable lifecycle row survived.
       expect(
-        ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+        srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
       ).toBeUndefined();
-      expect(ctx.db.prepare('SELECT 1 FROM transcripts WHERE hand_id = ?').get(handId)).toBeUndefined();
+      expect(srv.ctx.db.prepare('SELECT 1 FROM transcripts WHERE hand_id = ?').get(handId)).toBeUndefined();
       expect(
-        ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
+        srv.ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
       ).toEqual({ status: 'running' });
 
       for (const c of players) c.close();
@@ -305,7 +279,7 @@ describe('settlement lifecycle v5', () => {
         restarted.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId),
       ).toEqual({ status: 'aborted' });
       expect(firstPendingHandLifecycle(restarted.db, room.id)).toBeNull();
-      fault.persistFailThrough = 0;
+      srv.fault.persistFailThrough = 0;
       const restartHub = attachHub(restarted.app, restarted.db, {
         cryptoTimeoutMs: 1500,
         actionTimeoutMs: 1500,
@@ -313,16 +287,16 @@ describe('settlement lifecycle v5', () => {
         readyCheckMs: 1500,
         showdownHoldMs: 0,
         settleHoldMs: 0,
-        clock,
+        clock: srv.clock,
       });
       await restarted.app.listen({ port: 0 });
       const addr2 = restarted.app.server.address() as AddressInfo;
-      ctx = restarted;
-      hub = restartHub;
-      baseUrl = `http://127.0.0.1:${addr2.port}`;
+      srv.ctx = restarted;
+      srv.hub = restartHub;
+      srv.baseUrl = `http://127.0.0.1:${addr2.port}`;
       // The old DB lifecycle protocol resumes: a fresh hand deals and settles.
       for (const p of players) {
-        p.baseUrl = baseUrl;
+        p.baseUrl = srv.baseUrl;
         await p.connect(room.id);
       }
       host.send({ t: 'start_hand' });
@@ -331,15 +305,15 @@ describe('settlement lifecycle v5', () => {
       for (const p of players) p.close();
       await restarted.app.close();
     } finally {
-      ctx = saved.ctx;
-      baseUrl = saved.baseUrl;
-      hub = saved.hub;
+      srv.ctx = saved.ctx;
+      srv.baseUrl = saved.baseUrl;
+      srv.hub = saved.hub;
     }
   }, 30000);
 
   it('P1-1/P1-2: a rolled-back 7-2 bounty is retryable, does not lock the room, and does not re-broadcast the show', async () => {
     const { players, room, host } = await setupRoom(['uha', 'uhb'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?').run(room.id);
     // Seat 1 (bob) is dealt 7-2 offsuit; the host folds, so bob wins by fold.
     const identity = Array.from({ length: 52 }, (_, i) => i);
     const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
@@ -350,9 +324,9 @@ describe('settlement lifecycle v5', () => {
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     const bob = players[1]!;
-    const gameRoom = hub.rooms.get(room.id)!;
+    const gameRoom = srv.hub.rooms.get(room.id)!;
 
-    fault.sevenDeuceFailOnce = true;
+    srv.fault.sevenDeuceFailOnce = true;
     bob.showCards();
     await new Promise((r) => setTimeout(r, 200));
     // A known, retryable business failure: the room must not go unhealthy...
@@ -370,8 +344,8 @@ describe('settlement lifecycle v5', () => {
 
   it('P1-1: a recoverable mark clears only on the exact verified reason and then deals again', async () => {
     const { players, room, host } = await setupRoom(['mha', 'mhb'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
-    const gameRoom = hub.rooms.get(room.id)!;
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = srv.hub.rooms.get(room.id)!;
     gameRoom.markUnhealthy('settlement failed: busy', { recoverable: true });
     expect(gameRoom.isUnhealthy()).toBe(true);
     expect(gameRoom.clearUnhealthy('some other reason')).toBe(false);
@@ -385,8 +359,8 @@ describe('settlement lifecycle v5', () => {
 
   it('P1-1: an unknown (non-recoverable) mark is not clearable and stays fail-closed', async () => {
     const { room, host } = await setupRoom(['nra', 'nrb'], ['passive', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
-    const gameRoom = hub.rooms.get(room.id)!;
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const gameRoom = srv.hub.rooms.get(room.id)!;
     gameRoom.markUnhealthy('TypeError: boom');
     expect(gameRoom.clearUnhealthy('TypeError: boom')).toBe(false);
     expect(gameRoom.isUnhealthy()).toBe(true);

@@ -1,11 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +28,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('player leave resilience', () => {
   it('a folded player leaving mid-hand no longer kills the hand', async () => {
@@ -197,8 +166,8 @@ describe('player leave resilience', () => {
     await host.waitFor(() => host.handId !== null);
 
     // a third player arrives while the hand is live
-    const late = new TestClient(baseUrl, 'j2late');
-    clients.push(late);
+    const late = new TestClient(srv.baseUrl, 'j2late');
+    srv.clients.push(late);
     await late.register();
     await late.api('/api/rooms/join', { joinCode: room.joinCode });
     const req = await late.api(`/api/rooms/${room.id}/buy`, { amount: 1000 });

@@ -1,7 +1,9 @@
 import type { AddressInfo } from 'node:net';
+import { afterEach, beforeEach } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { attachHub } from '../../src/hub.js';
 import type { GameClock, GameOpts } from '../../src/game.js';
+import type { TestClient } from './testClient.js';
 
 /**
  * Shared boot scaffolding for the split WebSocket integration suites.
@@ -153,4 +155,58 @@ export async function bootIntegrationServer(
   await ctx.app.listen({ port: 0 });
   const addr = ctx.app.server.address() as AddressInfo;
   return { ctx, baseUrl: `http://127.0.0.1:${addr.port}`, hub };
+}
+
+/**
+ * The live surface the split integration suites used to declare as six
+ * module-level `let`s plus a `beforeEach`/`afterEach` pair. Mutable on purpose:
+ * a few suites temporarily swap `ctx`/`hub`/`baseUrl` for a second file-backed
+ * app inside a test and restore them before the hook runs (that is the only way
+ * those suites keep a real restart observable), and others push their extra
+ * `TestClient`s onto the shared `clients` bag.
+ */
+export interface IntegrationServer {
+  ctx: IntegrationCtx;
+  baseUrl: string;
+  /** Sockets opened by `setupRoom`; closed by the shared `afterEach`. */
+  clients: TestClient[];
+  hub: IntegrationHub;
+  clock: ManualClock;
+  fault: FaultBag;
+}
+
+/**
+ * Register the shared boot hooks for a split integration suite and return the
+ * live context surface. Call once at module scope:
+ *
+ *   const srv = useIntegrationServer();
+ *   const setupRoom = (names, strategies = []) =>
+ *     createRoom(srv.baseUrl, names, strategies, srv.clients);
+ *
+ * Each `it` still gets a fresh `ManualClock`, a fresh fault bag and a fresh
+ * in-memory app on an ephemeral port, in the exact order the inline
+ * `beforeEach` used; the `afterEach` closes every collected socket and then the
+ * live `ctx.app`. Test bodies that reassign `srv.ctx`/`srv.hub`/`srv.baseUrl`
+ * for a restart do so on this object, so the hook always closes whatever app is
+ * current — identical to the old module-level `let` bindings.
+ */
+export function useIntegrationServer(): IntegrationServer {
+  const srv = {} as IntegrationServer;
+
+  beforeEach(async () => {
+    srv.clock = new ManualClock();
+    srv.fault = createFaultBag();
+    ({ ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub } = await bootIntegrationServer(
+      srv.clock,
+      srv.fault,
+    ));
+    srv.clients = [];
+  });
+
+  afterEach(async () => {
+    for (const c of srv.clients) c.close();
+    await srv.ctx.app.close();
+  });
+
+  return srv;
 }

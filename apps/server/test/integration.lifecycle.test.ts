@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
+import { describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,47 +33,22 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
 import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('full hand integration: lifecycle, showdown and abort', () => {
   it('a reconnect before the first socket opens never flushes onto the stale socket', async () => {
-    const c = new TestClient(baseUrl, 'racey');
-    clients.push(c);
+    const c = new TestClient(srv.baseUrl, 'racey');
+    srv.clients.push(c);
     await c.register();
     const room = await c.api('/api/rooms', { name: 'Race', sb: 10, bb: 20 });
 
@@ -137,7 +111,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
     );
     expect(settlements.length).toBeGreaterThan(0);
     expect(settlements[0].ref).toBe(players[0]!.handEnd!.head);
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
       .get(players[0]!.handEnd!.handId) as { head: string };
     expect(row.head).toBe(players[0]!.handEnd!.head);
@@ -242,7 +216,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
     // 1000 buy-in at setup, plus the hand's result, plus the mid-hand 500
     expect(me.stack).toBe(1000 + hostDelta + 500);
     // and the ledger agrees with the stack exactly
-    const sum = ctx.db
+    const sum = srv.ctx.db
       .prepare('SELECT SUM(delta) as s FROM ledger WHERE room_id = ? AND user_id = ?')
       .get(room.id, me.userId) as { s: number };
     expect(sum.s).toBe(me.stack);
@@ -289,10 +263,10 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
 
     // settlement was durably persisted and reached its committed terminal, so
     // close neither aborted, refunded nor voided the live hand
-    expect(ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId)).toBeTruthy();
+    expect(srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId)).toBeTruthy();
     expect(
       (
-        ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId) as {
+        srv.ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId) as {
           status: string;
         }
       ).status,
@@ -328,7 +302,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
 
   it('persists the settlement BEFORE the reveal hold, then broadcasts hand_end on expiry', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze(); // take manual control of the settle hold
+    srv.clock.freeze(); // take manual control of the settle hold
     host.send({ t: 'start_hand' });
     // the reveal is broadcast as soon as the hand settles...
     await host.waitFor(() => host.showdownAt !== null);
@@ -342,21 +316,21 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
 
     // DB already holds the whole hand: settlement marker, ledger, transcript,
     // and the moved stacks - all before any `hand_end`.
-    const marker = ctx.db
+    const marker = srv.ctx.db
       .prepare('SELECT hand_id FROM hand_settlements WHERE hand_id = ?')
       .get(handId) as { hand_id: string } | undefined;
     expect(marker?.hand_id).toBe(handId);
-    const transcript = ctx.db
+    const transcript = srv.ctx.db
       .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
       .get(handId) as { head: string } | undefined;
     expect(transcript).toBeDefined();
-    const settledStacks = ctx.db
+    const settledStacks = srv.ctx.db
       .prepare('SELECT SUM(stack) AS total FROM room_players WHERE room_id = ?')
       .get(room.id) as { total: number };
     expect(settledStacks.total).toBe(2000);
 
     // release the hold: `hand_end` lands, carrying the same stacks/head
-    clock.advance(400);
+    srv.clock.advance(400);
     await host.waitFor(() => host.handEnd !== null);
     expect(host.handEnd!.handId).toBe(handId);
     expect(host.handEnd!.head).toBe(transcript!.head);
@@ -391,7 +365,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
 
   it('a shutdown during the hold keeps the durable settlement and drops only hand_end', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
-    clock.freeze();
+    srv.clock.freeze();
     host.send({ t: 'start_hand' });
     // wait for the reveal but NOT the settlement broadcast
     await host.waitFor(() => host.showdownAt !== null);
@@ -401,22 +375,22 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
     // The settlement is already durable when the reveal goes out, so a crash /
     // shutdown in the hold can only lose the `hand_end` frame, never the hand.
     expect(
-      ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId),
     ).toBeTruthy();
 
-    void hub.rooms.get(room.id)?.shutdown();
+    void srv.hub.rooms.get(room.id)?.shutdown();
     // well past the hold: the timer was cancelled, so no hand_end...
-    clock.advance(5000);
+    srv.clock.advance(5000);
     expect(host.handEnd).toBeNull();
     expect(players[1]!.handEnd).toBeNull();
     expect(activeHands.has(room.id)).toBe(false);
     // ...but the hand is fully recoverable from the database.
     expect(
-      ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId),
+      srv.ctx.db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(handId),
     ).toBeTruthy();
     expect(
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
           .get(handId) as { n: number }
       ).n,
@@ -426,7 +400,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
   it('restarts onto the same DB and recovers the settlement written during the hold', async () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-hold-'));
     const dbPath = join(dir, 'game.db');
-    const saved = { ctx, baseUrl, hub };
+    const saved = { ctx: srv.ctx, baseUrl: srv.baseUrl, hub: srv.hub };
     const app = createApp(dbPath);
     const appHub = attachHub(app.app, app.db, {
       cryptoTimeoutMs: 1500,
@@ -435,16 +409,16 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
       readyCheckMs: 1500,
       showdownHoldMs: 400,
       settleHoldMs: 0,
-      clock,
+      clock: srv.clock,
     });
     await app.app.listen({ port: 0 });
     const addr = app.app.server.address() as AddressInfo;
-    ctx = app;
-    hub = appHub;
-    baseUrl = `http://127.0.0.1:${addr.port}`;
+    srv.ctx = app;
+    srv.hub = appHub;
+    srv.baseUrl = `http://127.0.0.1:${addr.port}`;
     try {
       const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
-      clock.freeze();
+      srv.clock.freeze();
       host.send({ t: 'start_hand' });
       await host.waitFor(() => host.showdownAt !== null);
       const handId = host.handId!;
@@ -472,9 +446,9 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
       expect(total.total).toBe(2000);
       await restarted.app.close();
     } finally {
-      ctx = saved.ctx;
-      baseUrl = saved.baseUrl;
-      hub = saved.hub;
+      srv.ctx = saved.ctx;
+      srv.baseUrl = saved.baseUrl;
+      srv.hub = saved.hub;
     }
   }, 25000);
 

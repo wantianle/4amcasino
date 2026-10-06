@@ -1,11 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
+import { describe, expect, it } from 'vitest';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +27,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('full hand integration: auto-deal and transcript replay', () => {
   it('the next hand deals itself while the host stays online', async () => {
@@ -108,7 +76,7 @@ describe('full hand integration: auto-deal and transcript replay', () => {
     // carol never clicks I'm ready: opt her out of the (now default-on)
     // server-side auto-ready, then the deadline passes and the other two play
     players[2]!.autoReady = false;
-    ctx.db.prepare('UPDATE users SET auto_ready = 0 WHERE id = ?').run(players[2]!.userId);
+    srv.ctx.db.prepare('UPDATE users SET auto_ready = 0 WHERE id = ?').run(players[2]!.userId);
     await Promise.all(
       players
         .slice(0, 2)
@@ -137,7 +105,7 @@ describe('full hand integration: auto-deal and transcript replay', () => {
     expect(bobSeatHole).toBeDefined();
     expect(new Set(bobSeatHole.payload.cards)).toEqual(new Set(players[1]!.myCards));
     // and the stored transcript still verifies end to end
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare('SELECT head FROM transcripts WHERE hand_id = ?')
       .get(players[0]!.handEnd!.handId) as { head: string };
     expect(row.head).toBe(hand.head);

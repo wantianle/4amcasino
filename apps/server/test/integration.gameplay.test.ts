@@ -1,11 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
+import { describe, expect, it } from 'vitest';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +27,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('P2 gameplay integration', () => {
   async function enable(host: TestClient, roomId: string, features: unknown): Promise<void> {
@@ -192,7 +160,7 @@ describe('P2 gameplay integration', () => {
     const firstId = players[0]!.handEnd!.handId;
     await players[0]!.waitIdle(room.id);
     // age the anchor past the 60s interval
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_gameplay_state SET schedule_reset_at = ? WHERE room_id = ?')
       .run(Date.now() - 61_000, room.id);
 
@@ -215,11 +183,11 @@ describe('P2 gameplay integration', () => {
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players, 15000);
     // stand bob down to a stack smaller than the ante before the bomb hand
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = 5 WHERE room_id = ? AND user_id = ?')
       .run(room.id, players[1]!.userId);
     const before = (
-      ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
+      srv.ctx.db.prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?').get(room.id) as {
         s: number;
       }
     ).s;
@@ -255,7 +223,7 @@ describe('P2 gameplay integration', () => {
     const last = updates[updates.length - 1]!;
     expect(last.remainingMs).toBeLessThan(10_000);
     expect(last.remainingMs).toBeGreaterThan(0);
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, players[0]!.userId) as { time_bank_ms: number };
     expect(row.time_bank_ms).toBe(last.remainingMs);
@@ -273,7 +241,7 @@ describe('P2 gameplay integration', () => {
     expect(players[0]!.handAbort).toBeNull();
     const updates = players[0]!.timeBankUpdates.filter((u) => u.seat === players[0]!.seat);
     expect(updates.some((u) => u.remainingMs === 0)).toBe(true);
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, players[0]!.userId) as { time_bank_ms: number };
     expect(row.time_bank_ms).toBe(0);
@@ -306,7 +274,7 @@ describe('P2 gameplay integration', () => {
     expect(players[0]!.handEnd!.deltas.reduce((s, d) => s + d.delta, 0)).toBe(0);
     expect(players[0]!.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
 
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
       .get(room.id) as { status: string };
     expect(row.status).toBe('applied');
@@ -361,14 +329,14 @@ describe('P2 gameplay integration', () => {
     host.send({ t: 'start_hand' });
     await players[0]!.waitFor(() => players[0]!.handId !== null, 5000);
     await players[0]!.waitFor(() => {
-      const r = ctx.db
+      const r = srv.ctx.db
         .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
         .get(room.id) as { status: string } | undefined;
       return r?.status === 'claimed';
     }, 5000);
     players[1]!.disconnect();
     await players[0]!.waitFor(() => players[0]!.handAbort !== null, 15000);
-    const row = ctx.db
+    const row = srv.ctx.db
       .prepare("SELECT status FROM room_feature_triggers WHERE room_id = ? AND kind = 'squid'")
       .get(room.id) as { status: string };
     expect(row.status).toBe('pending');
@@ -396,7 +364,7 @@ describe('P2 gameplay integration', () => {
     await players[0]!.waitIdle(room.id);
     for (const p of players) p.strategy = 'shove-flop';
     const before = (
-      ctx.db
+      srv.ctx.db
         .prepare('SELECT SUM(stack) AS s FROM room_players WHERE room_id = ?')
         .get(room.id) as { s: number }
     ).s;

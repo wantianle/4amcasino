@@ -1,11 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createApp } from '../src/app.js';
-import { attachHub } from '../src/hub.js';
+import { describe, expect, it } from 'vitest';
 import {
   cardLookup,
   genIdentity,
@@ -34,42 +27,17 @@ import {
   reconcileMissingSettlements,
   recoverOrphanedFeatureTriggers,
 } from '../src/db.js';
-import Database from 'better-sqlite3';
 import { TestClient, type Strategy } from './helpers/testClient.js';
 import { setupRoom as createRoom } from './helpers/testRoom.js';
-import { awaitDeal, awaitHandEnd } from './helpers/testRoom.js';
-import {
-  ManualClock,
-  createFaultBag,
-  bootIntegrationServer,
-  type FaultBag,
-  type IntegrationCtx,
-  type IntegrationHub,
-} from './helpers/integrationServer.js';
+import { awaitHandEnd } from './helpers/testRoom.js';
+import { useIntegrationServer } from './helpers/integrationServer.js';
 
-let ctx: IntegrationCtx;
-let baseUrl: string;
-let clients: TestClient[] = [];
-let hub: IntegrationHub;
-let clock: ManualClock;
-let fault: FaultBag;
-
-beforeEach(async () => {
-  clock = new ManualClock();
-  fault = createFaultBag();
-  ({ ctx, baseUrl, hub } = await bootIntegrationServer(clock, fault));
-  clients = [];
-});
-
-afterEach(async () => {
-  for (const c of clients) c.close();
-  await ctx.app.close();
-});
+const srv = useIntegrationServer();
 
 // Thin adapter onto the shared `setupRoom`, binding this file's server URL and
 // client collector so the migrated call sites stay byte-identical.
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
-  createRoom(baseUrl, names, strategies, clients);
+  createRoom(srv.baseUrl, names, strategies, srv.clients);
 
 describe('full hand integration: paid peek', () => {
   it('a paid peek costs a fixed 1bb, reveals only to the buyer and is ledger-conserving', async () => {
@@ -199,7 +167,7 @@ describe('full hand integration: paid peek', () => {
     await h.waitFor(() => h.peekOffers.length > 0);
     // the buyer spends/loses chips after offering: the accept must not silently
     // hang the requester - it gets an explicit failed result.
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = 0 WHERE room_id = ? AND user_id = ?')
       .run(room.id, bob.userId);
     h.acceptPeek(h.peekOffers[0]!.offerId);
@@ -221,7 +189,7 @@ describe('full hand integration: paid peek', () => {
     for (const p of first.players) p.send({ t: 'sit_out', sittingOut: true });
     const h1 = first.players[0]!;
     const b1 = first.players[1]!;
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = 20 WHERE room_id = ? AND user_id = ?')
       .run(first.room.id, b1.userId);
     b1.send({ t: 'peek_offer', handId: b1.handId, targetSeat: h1.seat });
@@ -234,13 +202,13 @@ describe('full hand integration: paid peek', () => {
     expect(b1.peekResults.at(-1)!.cards!.slice().sort()).toEqual(h1.myCards.slice().sort());
     const stack1 = (u: number) =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
           .get(first.room.id, u) as { stack: number }
       ).stack;
     expect(stack1(b1.userId)).toBe(0);
     expect(stack1(h1.userId)).toBe(1010);
-    const peekRows1 = ctx.db
+    const peekRows1 = srv.ctx.db
       .prepare("SELECT delta FROM ledger WHERE room_id = ? AND kind = 'peek'")
       .all(first.room.id) as { delta: number }[];
     expect(peekRows1.reduce((s, r) => s + r.delta, 0)).toBe(0);
@@ -251,7 +219,7 @@ describe('full hand integration: paid peek', () => {
     for (const p of second.players) p.send({ t: 'sit_out', sittingOut: true });
     const h2 = second.players[0]!;
     const b2 = second.players[1]!;
-    ctx.db
+    srv.ctx.db
       .prepare('UPDATE room_players SET stack = 19 WHERE room_id = ? AND user_id = ?')
       .run(second.room.id, b2.userId);
     b2.errors = [];
@@ -264,7 +232,7 @@ describe('full hand integration: paid peek', () => {
   it('a declined, badly-signed, badly-proven, or superseded peek sends exactly one result and moves no chips', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
     // disable auto-deal so an offer can be exercised across the between-hands window
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -272,13 +240,13 @@ describe('full hand integration: paid peek', () => {
 
     const peekLedger = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
           .get(room.id) as { n: number }
       ).n;
     const stacks = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
           .all(room.id) as { user_id: number; stack: number }[]
       );
@@ -356,7 +324,7 @@ describe('full hand integration: paid peek', () => {
 
   it('a target that reconnects after its offer expired is cleared by the snapshot', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -390,7 +358,7 @@ describe('full hand integration: paid peek', () => {
 
   it('a still-open offer is reasserted over a replacement socket and stays answerable', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -420,7 +388,7 @@ describe('full hand integration: paid peek', () => {
 
   it('a room shutdown tells a still-connected target its offer is over', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -429,7 +397,7 @@ describe('full hand integration: paid peek', () => {
     bob.send({ t: 'peek_offer', handId: bob.handId, targetSeat: h.seat });
     await h.waitFor(() => h.peekOffers.length > 0);
 
-    await hub.rooms.get(room.id)!.shutdown();
+    await srv.hub.rooms.get(room.id)!.shutdown();
     await h.waitFor(() => h.peekClosures.length > 0);
     const closure = h.peekClosures.at(-1)!;
     expect(closure.status).toBe('expired');
@@ -442,7 +410,7 @@ describe('full hand integration: paid peek', () => {
 
   it('an idle-reclaimed room clears a pending target banner on reconnect', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -456,7 +424,7 @@ describe('full hand integration: paid peek', () => {
     // shutdown path the process preClose uses. There is no socket to notify.
     h.disconnect();
     bob.disconnect();
-    await h.waitFor(() => hub.rooms.get(room.id) === undefined, 5000);
+    await h.waitFor(() => srv.hub.rooms.get(room.id) === undefined, 5000);
 
     // A new socket rebuilds the room with no offers; the empty snapshot clears
     // the banner (this is the cross-instance / restart boundary).
@@ -506,7 +474,7 @@ describe('full hand integration: paid peek', () => {
 
   it('a folder can buy a look at the still-private winner (the requester is the folder)', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -531,7 +499,7 @@ describe('full hand integration: paid peek', () => {
 
   it('a seated player who sat the hand out can still buy a look', async () => {
     const { players, room, host } = await setupRoom(['na', 'nb', 'nc']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [na, nb, nc] = players as [TestClient, TestClient, TestClient];
     // nc sits the hand out: only na and nb are dealt in
     nc.send({ t: 'sit_out', sittingOut: true });
@@ -561,7 +529,7 @@ describe('full hand integration: paid peek', () => {
       ['pa', 'pb', 'pc'],
       ['fold-first', 'fold-first', 'passive'],
     );
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
     for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
@@ -569,7 +537,7 @@ describe('full hand integration: paid peek', () => {
 
     const stackOf = (uid: number) =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
           .get(room.id, uid) as { stack: number }
       ).stack;
@@ -603,7 +571,7 @@ describe('full hand integration: paid peek', () => {
     expect(pa.peekResults).toHaveLength(0);
 
     // exact ledger shape: two requester -bb rows and two target +bb rows
-    const peekRows = ctx.db
+    const peekRows = srv.ctx.db
       .prepare(
         "SELECT user_id, delta FROM ledger WHERE room_id = ? AND kind = 'peek' ORDER BY user_id, delta",
       )
@@ -627,7 +595,7 @@ describe('full hand integration: paid peek', () => {
 
   it('refuses a peek when the target shows its cards after the offer was made', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -635,12 +603,12 @@ describe('full hand integration: paid peek', () => {
 
     const peekLedger = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
           .get(room.id) as { n: number }
       ).n;
     const stacks = () =>
-      ctx.db
+      srv.ctx.db
         .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
         .all(room.id) as { user_id: number; stack: number }[];
     const before = stacks();
@@ -674,11 +642,11 @@ describe('full hand integration: paid peek', () => {
 
   it('refuses a spectator peek explicitly instead of dropping it', async () => {
     const { players, room, host } = await setupRoom(['sa', 'sb'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     // a watch-only observer: a `spectators` row and NO `room_players` row
     const link = await host.api(`/api/rooms/${room.id}/spectate-settings`, { allow: true });
-    const spec = new TestClient(baseUrl, 'watcher');
-    clients.push(spec);
+    const spec = new TestClient(srv.baseUrl, 'watcher');
+    srv.clients.push(spec);
     await spec.register();
     const watch = await spec.api(`/api/watch/${link.token}`);
     expect(watch.roomId).toBe(room.id);
@@ -691,7 +659,7 @@ describe('full hand integration: paid peek', () => {
 
     const peekLedger = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
           .get(room.id) as { n: number }
       ).n;
@@ -708,7 +676,7 @@ describe('full hand integration: paid peek', () => {
 
   it('refuses a peek accepted after the buyer left their seat, moving no money', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -716,12 +684,12 @@ describe('full hand integration: paid peek', () => {
 
     const peekLedger = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
           .get(room.id) as { n: number }
       ).n;
     const stacks = () =>
-      ctx.db
+      srv.ctx.db
         .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
         .all(room.id) as { user_id: number; stack: number }[];
     const before = stacks();
@@ -762,7 +730,7 @@ describe('full hand integration: paid peek', () => {
 
   it('refuses a peek when the buyer membership row is gone, moving no money', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['fold-first', 'passive']);
-    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    srv.ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     const [h, bob] = players as [TestClient, TestClient];
     host.send({ t: 'start_hand' });
     await awaitHandEnd(players);
@@ -770,13 +738,13 @@ describe('full hand integration: paid peek', () => {
 
     const peekLedger = () =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
           .get(room.id) as { n: number }
       ).n;
     const stackOf = (uid: number) =>
       (
-        ctx.db
+        srv.ctx.db
           .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
           .get(room.id, uid) as { stack: number }
       ).stack;
@@ -789,11 +757,11 @@ describe('full hand integration: paid peek', () => {
 
     // The requester's membership row disappears entirely (an account merge or
     // an eviction, not merely `seat = NULL`), so there is no buyer to authorize.
-    ctx.db
+    srv.ctx.db
       .prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?')
       .run(room.id, h.userId);
     expect(
-      ctx.db
+      srv.ctx.db
         .prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?')
         .get(room.id, h.userId),
     ).toBeUndefined();
