@@ -30,6 +30,9 @@ interface RoomRow {
   id: string;
   name: string;
   playerCount: number;
+  /** 0/1 from SQLite, or boolean. A closed/archived table must never appear in
+   *  the sidebar's "Your tables" list. */
+  archived?: number | boolean;
 }
 interface PendingTasks {
   settlementsAwaitingMe: number;
@@ -73,7 +76,10 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
     void api
       .myRooms()
       .then((r) => {
-        if (active) setRooms(r.rooms.slice(0, 12));
+        // Belt and braces: the server already hides archived rooms by default,
+        // but a cached/older response must not put a closed table back in the
+        // sidebar. Archived tables live in Lobby/History, never here.
+        if (active) setRooms(r.rooms.filter((room: RoomRow) => !room.archived).slice(0, 12));
       })
       .catch(() => {});
     void api

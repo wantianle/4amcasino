@@ -1005,6 +1005,54 @@ describe('full hand integration', () => {
     expect(state.players.reduce((t: number, p: { stack: number }) => t + p.stack, 0)).toBe(3000);
   }, 20000);
 
+  it('a mid-hand close lets the current hand settle normally, then deals no next hand', async () => {
+    const { players, room, host } = await setupRoom(['clse1', 'clse2', 'clse3']);
+    host.send({ t: 'start_hand' });
+    // Every seat must be in a running hand before the close fires.
+    await Promise.all(players.map((p) => p.waitFor(() => p.handId !== null, 15000)));
+
+    // The host archives while the hand is in flight. Closing is archiving: the
+    // hand already dealt must finish and settle, never abort.
+    const close = await host.api(`/api/rooms/${room.id}/close`, {});
+    expect(close.ok).toBe(true);
+    expect(close.archived).toBe(true);
+    // The response must tell the client a hand is live, so a browser that has
+    // not yet seen hand_start does not navigate into an abort.
+    expect(close.handActive).toBe(true);
+
+    await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 25000)));
+    const handId = players[0]!.handEnd!.handId;
+    for (const p of players) {
+      // the decisive assertion: a natural hand_end, never a hand_abort
+      expect(p.handAbort).toBeNull();
+      expect(p.handEnd!.handId).toBe(handId);
+    }
+
+    // settlement was durably persisted and reached its committed terminal, so
+    // close neither aborted, refunded nor voided the live hand
+    expect(ctx.db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(handId)).toBeTruthy();
+    expect(
+      (
+        ctx.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId) as {
+          status: string;
+        }
+      ).status,
+    ).toBe('committed');
+
+    // no player is dealt into a next hand, even if the host asks for one
+    const ends = players.map((p) => p.handEndCount);
+    const starts = players.map((p) => p.handStartLog.length);
+    host.send({ t: 'start_hand' });
+    // Condition-based: wait for the server to reject the deal instead of a
+    // fixed sleep, then assert no player was dealt in.
+    await host.waitFor(() => host.errors.some((e) => /archived|closed/i.test(e)), 5000);
+    expect(host.errors.some((e) => /archived|closed/i.test(e))).toBe(true);
+    players.forEach((p, i) => {
+      expect(p.handEndCount).toBe(ends[i]);
+      expect(p.handStartLog.length).toBe(starts[i]);
+    });
+  }, 30000);
+
   it('fold-out ends the hand without any reveal', async () => {
     const { players, host } = await setupRoom(['host', 'bob'], ['fold-first', 'fold-first']);
     // heads-up: button/SB acts first and folds; BB wins blinds without showdown

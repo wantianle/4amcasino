@@ -325,13 +325,21 @@ export const api = {
     req('/api/register', { username, authKey, publicKey }),
   login: (username: string, authKey: string) => req('/api/login', { username, authKey }),
   me: () => req('/api/me'),
-  myRooms: () => req('/api/my-rooms'),
-  /** My results: every room this account was ever part of, including archived
-   *  ones, with `myNet` / `myHands` per room. Paged like the hand history:
-   *  `total`/`hasMore` describe the filtered set, and `archived` filters
-   *  server-side, so `/history` never silently loses rooms past one page.
-   *  `totals` are career aggregates over the whole filtered set. */
-  meRooms: (opts: { archived?: boolean; limit?: number; offset?: number } = {}) => {
+  /** The sidebar/lobby "your tables" list. Archived (closed) rooms are hidden
+   *  server-side by default; the lobby's explicit "Archived tables" section
+   *  asks for `all` so it can still show (and request restore for) them. */
+  myRooms: (opts: { archived?: boolean | 'all' } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.archived !== undefined) q.set('archived', String(opts.archived));
+    const qs = q.toString();
+    return req(`/api/my-rooms${qs ? `?${qs}` : ''}`);
+  },
+  /** My results: every room this account was ever part of. Paged like the hand
+   *  history: `total`/`hasMore` describe the filtered set, and `archived`
+   *  filters server-side (`true` = retired only, `false` = live only, `all` =
+   *  both; absent = live only), so `/history` never silently loses rooms past
+   *  one page. `totals` are career aggregates over the whole filtered set. */
+  meRooms: (opts: { archived?: boolean | 'all'; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (opts.archived !== undefined) q.set('archived', String(opts.archived));
     if (opts.limit !== undefined) q.set('limit', String(opts.limit));
@@ -427,7 +435,16 @@ export const api = {
       requestId: number;
     }>,
   /** Immediate room close: archive the room and clear seats; distinct from archiveRoom's approval flow. */
-  closeRoom: (roomId: string) => req(`/api/rooms/${roomId}/close`, {}, 'POST'),
+  closeRoom: (roomId: string) =>
+    req(`/api/rooms/${roomId}/close`, {}, 'POST') as Promise<{
+      ok: true;
+      roomId: string;
+      archived: true;
+      closedAt: number | null;
+      alreadyClosed: boolean;
+      /** Whether a hand was still running when the room was archived. */
+      handActive: boolean;
+    }>,
   deleteRoom: (roomId: string, note?: string) =>
     req(`/api/rooms/${roomId}/delete`, note ? { note } : {}) as Promise<{
       pending: true;

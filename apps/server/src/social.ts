@@ -173,7 +173,9 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
         `SELECT i.id, i.room_id as roomId, r.name as roomName, r.join_code as joinCode, r.sb, r.bb, i.ts,
                 COALESCE(u.display_name, u.username) as fromName
          FROM invites i JOIN rooms r ON r.id = i.room_id JOIN users u ON u.id = i.from_id
-         WHERE i.to_id = ? AND i.status = 'pending' ORDER BY i.ts DESC`,
+         WHERE i.to_id = ? AND i.status = 'pending'
+           AND r.archived = 0 AND r.deleted = 0
+         ORDER BY i.ts DESC`,
       )
       .all(req.userId);
     return { invites: rows };
@@ -504,7 +506,7 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
    *
    *  Idempotent: closing an already-closed room returns 200 with
    *  `alreadyClosed: true` instead of erroring. Request/response:
-   *  POST /api/rooms/:id/close  ->  { ok, roomId, archived, closedAt, alreadyClosed }
+   *  POST /api/rooms/:id/close  ->  { ok, roomId, archived, closedAt, alreadyClosed, handActive }
    *  404 no such room, 403 caller is neither the host nor the platform account. */
   app.post('/api/rooms/:id/close', authed, async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -527,6 +529,11 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       archived: true,
       closedAt: result.archivedAt,
       alreadyClosed: result.alreadyClosed,
+      // Whether a hand was still running when the room was archived. The
+      // closing client uses this authoritative flag to decide if it must stay
+      // mounted until that hand settles, instead of trusting only its local
+      // view (which may not have received hand_start yet).
+      handActive: activeHands.has(id),
     };
   });
 
@@ -886,7 +893,7 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
         `SELECT r.id, r.name, me.stack as myStack FROM rooms r
          JOIN room_players me ON me.room_id = r.id AND me.user_id = ?
          JOIN room_players them ON them.room_id = r.id AND them.user_id = ?
-         WHERE r.voided = 0 AND r.deleted = 0 ORDER BY r.created_at DESC`,
+         WHERE r.voided = 0 AND r.archived = 0 AND r.deleted = 0 ORDER BY r.created_at DESC`,
       )
       .all(req.userId, otherId) as { id: string; name: string; myStack: number }[];
     return { rooms: rooms.map((r) => ({ ...r, handActive: activeHands.has(r.id) })) };

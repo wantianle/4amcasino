@@ -189,10 +189,19 @@ export function InvitesPanel({ onJoined }: { onJoined: (roomId: string) => void 
           <Badge tone="indigo">{t('invite')}</Badge>
           <Button
             onClick={() =>
-              void api.respondInvite(i.id, true).then((r) => {
-                void load();
-                if (r.roomId) onJoined(r.roomId as string);
-              })
+              void api
+                .respondInvite(i.id, true)
+                .then((r) => {
+                  void load();
+                  if (r.roomId) onJoined(r.roomId as string);
+                })
+                .catch(() => {
+                  // The host can close/archive the table between this list
+                  // rendering and the accept landing, in which case the server
+                  // answers 409. Re-fetch so the now-undeliverable card is
+                  // removed instead of sitting there and 409ing forever.
+                  void load();
+                })
             }
           >
             {t('Join table')}

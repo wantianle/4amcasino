@@ -24,9 +24,23 @@ const tablePage: Record<string, string> = {
   'That change did not go through. Try again.': '改动没生效，再试一次。',
   'Could not stand them up': '没能让这名玩家起身离座。',
   'Full screen is unavailable in this browser.': '这个浏览器不支持全屏。',
-  'Close room': '关闭房间',
-  'Closing room…': '正在关闭房间…',
-  'Close this room now?': '现在关闭这个房间？关闭后会立即清空座位并归档。',
+
+  // ── Closing / archiving the room ──────────────────────────────────────
+  'Close and archive': '关闭并归档',
+  'Closing and archiving…': '正在关闭并归档…',
+  'Close and archive this room?': '关闭并归档这张桌？',
+  'Closing archives this table and stands everyone up. It disappears from the lobby, the sidebar and the public list, and no further hands are dealt - but nothing is deleted. The ledger and every hand stay readable, and anything still owed is still owed.':
+    '关闭会归档这张桌，并让所有人起身离座。它会从大厅、侧栏和公开列表中消失，也不再发牌——但不会删除任何数据。账本和每一手牌记录都仍可查看，欠账也仍然有效。',
+  'Close and archive (nothing is deleted)': '关闭并归档（不删除任何数据）',
+  'This room was closed and archived': '房主已关闭并归档本房间',
+  'The host closed and archived this table. Nothing was deleted - you can still read its hands and ledger from History.':
+    '房主已关闭并归档这张桌。没有删除任何数据——你仍可在「历史」中查看它的出牌记录和账本。',
+  'This hand finishes first, then the room archives. Keep playing - nothing is deleted.':
+    '本手打完后才会归档房间，请继续操作——不会删除任何数据。',
+  'The host closed this table. This hand finishes first, then you can leave - nothing is deleted.':
+    '房主已关闭这张桌。本手打完后即可离开——不会删除任何数据。',
+  'This hand finishes first, then you can leave. Keep playing - nothing is deleted.':
+    '本手打完后才能离开，请继续操作——不会删除任何数据。',
 
   // ── Turn / status lines ───────────────────────────────────────────────
   'You are not in this hand. You will be dealt in at the next deal.':

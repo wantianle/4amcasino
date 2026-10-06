@@ -82,7 +82,7 @@ export function LobbyPage() {
 
   useEffect(() => {
     api
-      .myRooms()
+      .myRooms({ archived: 'all' })
       .then((r) => setRooms(r.rooms))
       .catch(() => {});
     api

@@ -448,6 +448,13 @@ export function TablePage() {
   const storedRoom = useStore((s) => s.room);
   const room = storedRoom?.room.id === roomId ? storedRoom : null;
   const hand = useStore((s) => s.hand);
+  const handLive = hand.handId !== null && !hand.result && !hand.abort;
+  // The server's last room_state snapshot also knows whether a hand is running.
+  // It covers the window where the host closes before this browser has received
+  // hand_start. Once a hand is held locally its terminal frame wins: hand_end /
+  // hand_abort means it is over even if a stale snapshot still said handActive.
+  const serverHandActive = !!room?.handActive;
+  const handInFlight = handLive || (serverHandActive && hand.handId === null);
   const auth = useStore((s) => s.auth);
   const voiceState = useStore((s) => s.voice);
   const chat = useStore((s) => s.chat);
@@ -471,6 +478,20 @@ export function TablePage() {
   const [chatSeenCount, setChatSeenCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [closeRoomBusy, setCloseRoomBusy] = useState(false);
+  // In-app confirmation for closing (archiving) the table. Native confirm() is
+  // deliberately not used: the copy has to be explicit that nothing is deleted.
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  // Shown to everyone else when the host closes/archives the room (and to a
+  // member who opens an already-closed room), with a way back to the lobby.
+  const [archiveNotice, setArchiveNotice] = useState(false);
+  // Close flow owned by this tab: 'idle' = not closing from here, 'pending' =
+  // the close request is in flight, 'settling' = the server archived the room
+  // and we are waiting out the live hand so it settles instead of being
+  // aborted by our own departure.
+  const [closeFlow, setCloseFlow] = useState<'idle' | 'pending' | 'settling'>('idle');
+  // A member left the table while a hand was running: stay mounted (keep the
+  // hand's controls and crypto connection) and navigate once it finishes.
+  const [leavePending, setLeavePending] = useState(false);
   const [autoDealOpen, setAutoDealOpen] = useState(false);
   // ── P2 gameplay (Lane F) ──────────────────────────────────────────────────
   // The room's stored feature rules, fetched once on join and refreshed by the
@@ -646,6 +667,44 @@ export function TablePage() {
     return () => clearTimeout(timer);
   }, [room]);
 
+  // Archiving means the room is gone from the live app: everyone still looking
+  // at it gets an explicit notice and a way back to the lobby. While a hand is
+  // still running we deliberately do NOT raise the modal: the hand has to keep
+  // its controls and its crypto connection until it reaches a terminal frame,
+  // and an unavoidable exit dialog would abort it. Once the hand is done the
+  // notice (or, for the tab that closed it, the redirect below) takes over.
+  // A tab that did not drive the close still gets the notice even if the close
+  // HTTP response was lost: resetting `closeFlow` to idle re-runs this effect.
+  useEffect(() => {
+    if (!room?.room.archived) return;
+    // The archive notice owns the modal slot: drop any open close confirmation
+    // first so the two dialogs can never stack.
+    setCloseDialogOpen(false);
+    if (closeFlow !== 'idle') return;
+    if (handInFlight) return;
+    setArchiveNotice(true);
+  }, [room?.room.archived, closeFlow, handInFlight]);
+
+  // Any exit - the host's close or a member leaving - waits for the live hand
+  // to reach its terminal frame. Settlement is durable by then and no next hand
+  // can start, so this navigation can no longer abort the hand.
+  useEffect(() => {
+    if (handInFlight) return;
+    if (closeFlow === 'settling' || leavePending) window.location.assign('/lobby');
+  }, [closeFlow, leavePending, handInFlight]);
+
+  // The single exit used by every table exit point (the header back button and
+  // the early-return fallbacks). With a hand in flight we keep the page mounted
+  // and record the intent instead of unmounting: an unmount disconnects the
+  // socket and would abort the deal.
+  const requestLeave = () => {
+    if (handInFlight) {
+      setLeavePending(true);
+      return;
+    }
+    window.location.assign('/lobby');
+  };
+
   // floating sticker reactions over the table
   useEffect(() => {
     const fresh = chat.slice(lastChatLen.current);
@@ -700,7 +759,13 @@ export function TablePage() {
     return () => clearTimeout(timer);
   }, [errors, dismissError]);
 
-  const mySeat = room?.players.find((p) => p.userId === auth.userId)?.seat ?? null;
+  // The in-flight hand snapshots its own seats. Closing clears every
+  // room_players seat (that is what "stand everyone up" means for the next
+  // deal), but a hand already dealt must stay playable for those still in it -
+  // so while a hand is live we trust the hand's seat snapshot over the room row.
+  const handSeat = hand.seats.find((s) => s.userId === auth.userId)?.seat ?? null;
+  const roomSeat = room?.players.find((p) => p.userId === auth.userId)?.seat ?? null;
+  const mySeat = handLive && handSeat !== null ? handSeat : roomSeat;
   // v3 feedback #7a (client side): an auto-ready player who somehow was not
   // pre-marked by the server's ready check answers it the moment it opens -
   // nobody should ever have to click per hand when they opted into auto-ready.
@@ -716,7 +781,6 @@ export function TablePage() {
     room?.room.bankerId === auth.userId || room?.room.coBankerId === auth.userId || isHost;
   // no membership row at all means this login came through a watch link
   const amSpectator = !!room && !room.players.some((p) => p.userId === auth.userId);
-  const handLive = hand.handId !== null && !hand.result && !hand.abort;
   const myRoomStack = room?.players.find((p) => p.userId === auth.userId)?.stack ?? null;
   const meRoomPlayer = room?.players.find((p) => p.userId === auth.userId);
   // A fresh seat can legitimately have zero points before its first buy-in.
@@ -884,9 +948,7 @@ export function TablePage() {
               <Button variant="secondary" onClick={() => location.reload()}>
                 {t('Try again')}
               </Button>
-              <Link to="/lobby">
-                <Button>{t('Back to lobby')}</Button>
-              </Link>
+              <Button onClick={requestLeave}>{t('Back to lobby')}</Button>
             </div>
           </>
         ) : (
@@ -903,9 +965,9 @@ export function TablePage() {
                   <Button variant="secondary" onClick={() => location.reload()}>
                     {t('Retry')}
                   </Button>
-                  <Link to="/lobby">
-                    <Button variant="ghost">{t('Back to lobby')}</Button>
-                  </Link>
+                  <Button variant="ghost" onClick={requestLeave}>
+                    {t('Back to lobby')}
+                  </Button>
                 </div>
               </>
             )}
@@ -1229,7 +1291,9 @@ export function TablePage() {
        : (['auto-deal', 'sit-out', 'timer', 'preferences', 'hands', 'ledger'] as const)),
   ];
   const desktopMenuGroups = filterDesktopMenuGroups(utilityGroups, inlineSurfaced);
-  const canCloseRoom = !!isHost || !!auth.isPlatform;
+  // An already-archived table has nothing to close, and not offering the
+  // action also means the confirmation can never sit over an archive notice.
+  const canCloseRoom = (!!isHost || !!auth.isPlatform) && !room?.room.archived;
   const utilityItemClass =
     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white';
 
@@ -1240,13 +1304,34 @@ export function TablePage() {
         error instanceof Error ? error.message : t('That change did not go through. Try again.'),
       );
   const closeUtilityMenu = () => setMenuOpen(false);
+  // Confirmed from the in-app dialog (see sharedDialogs), never a native
+  // confirm(): closing archives the table and stands everyone up. Nothing is
+  // deleted, so the copy has to say so unambiguously.
   const closeRoomNow = async () => {
-    if (!canCloseRoom || closeRoomBusy || !window.confirm(t('Close this room now?'))) return;
+    if (!canCloseRoom || closeRoomBusy) return;
+    // Never stack the confirm over an archived notice.
+    setCloseDialogOpen(false);
     setCloseRoomBusy(true);
+    setCloseFlow('pending');
     try {
-      await api.closeRoom(roomId!);
-      window.location.assign('/lobby');
+      const res = (await api.closeRoom(roomId!)) as { handActive?: boolean } | undefined;
+      // The response carries the authoritative "was a hand running" flag, so the
+      // window where the server already dealt but this browser has not yet seen
+      // hand_start cannot navigate us into an abort. handInFlight is the local
+      // belt-and-braces fallback.
+      if (res?.handActive || handInFlight) {
+        // A hand is in flight: stay put and keep playing. The effect above
+        // navigates once it reaches its terminal frame, so the hand settles
+        // instead of being aborted by our departure.
+        setCloseFlow('settling');
+      } else {
+        window.location.assign('/lobby');
+      }
     } catch (error) {
+      // If the server archived and broadcast but the response was lost, reset
+      // to idle so the archived-notice effect re-runs and offers a way out; a
+      // genuine failure (403/409/network) surfaces here too.
+      setCloseFlow('idle');
       reportError(error);
     } finally {
       setCloseRoomBusy(false);
@@ -1682,7 +1767,75 @@ export function TablePage() {
       {/* An `unresolved` durable hand with no local failure frame: admin-only,
           no retry, no fabricated refund. */}
       <HandRecoveryBanner />
+      {/* The room is archived but a hand is still running. This is a banner,
+          not a dialog: the current hand keeps its controls and its crypto
+          connection until it reaches a terminal frame. */}
+      {(leavePending || !!room?.room.archived) && handInFlight && (
+        <div
+          role="status"
+          data-testid="table-archive-pending"
+          className="pointer-events-none fixed inset-x-0 top-0 z-50 bg-amber-400 px-4 py-2 text-center text-sm font-semibold text-amber-950 shadow-md"
+        >
+          {room?.room.archived
+            ? isHost
+              ? t('This hand finishes first, then the room archives. Keep playing - nothing is deleted.')
+              : t('The host closed this table. This hand finishes first, then you can leave - nothing is deleted.')
+            : t('This hand finishes first, then you can leave. Keep playing - nothing is deleted.')}
+        </div>
+      )}
       <AutoDealDialog open={autoDealOpen} onClose={() => setAutoDealOpen(false)} />
+      {/* Host close confirmation. The label and the body both say "archive,
+          nothing deleted" so it can never be mistaken for a data wipe. */}
+      <Dialog
+        open={closeDialogOpen}
+        onClose={() => setCloseDialogOpen(false)}
+        title={t('Close and archive this room?')}
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {t(
+            'Closing archives this table and stands everyone up. It disappears from the lobby, the sidebar and the public list, and no further hands are dealt - but nothing is deleted. The ledger and every hand stay readable, and anything still owed is still owed.',
+          )}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => setCloseDialogOpen(false)}
+            disabled={closeRoomBusy}
+          >
+            {t('Cancel')}
+          </Button>
+          <Button
+            variant="danger"
+            data-testid="table-close-confirm"
+            onClick={() => void closeRoomNow()}
+            disabled={closeRoomBusy}
+          >
+            {closeRoomBusy ? (
+              <Spinner label={t('Closing and archiving…')} />
+            ) : (
+              t('Close and archive (nothing is deleted)')
+            )}
+          </Button>
+        </div>
+      </Dialog>
+      {/* Shown to everyone else once the host has archived the table, and to a
+          member who opens a closed room directly. */}
+      <Dialog
+        open={archiveNotice}
+        onClose={() => window.location.assign('/lobby')}
+        title={t('This room was closed and archived')}
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {t(
+            'The host closed and archived this table. Nothing was deleted - you can still read its hands and ledger from History.',
+          )}
+        </p>
+        <div className="mt-4 flex justify-end">
+          <Button data-testid="table-archive-back" onClick={() => window.location.assign('/lobby')}>
+            {t('Back to lobby')}
+          </Button>
+        </div>
+      </Dialog>
       {features && (
         <GameplaySettingsDialog
           roomId={roomId!}
@@ -1874,14 +2027,15 @@ export function TablePage() {
         )}
         data-testid="table-header"
       >
-        <Link
-          to="/lobby"
+        <button
+          type="button"
+          onClick={requestLeave}
           className={cn(desktopIconClass, isPhone && 'row-span-2 h-11 w-11')}
           aria-label={t('Leave table')}
           title={t('Leave table')}
         >
           <ArrowLeft size={19} weight="bold" />
-        </Link>
+        </button>
         <div className={cn('min-w-0 md:flex-none md:pr-2', isPhone ? 'self-center' : 'flex-1')}>
           <h1 className="truncate font-display text-sm font-semibold tracking-[-0.02em] md:text-base">
             {room.room.name}
@@ -2183,11 +2337,15 @@ export function TablePage() {
                       type="button"
                       role="menuitem"
                       disabled={closeRoomBusy}
+                      data-testid="table-close-room"
                       className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 disabled:opacity-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                      onClick={() => void closeRoomNow()}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setCloseDialogOpen(true);
+                      }}
                     >
                       <X size={18} weight="bold" />
-                      {closeRoomBusy ? t('Closing room…') : t('Close room')}
+                      {closeRoomBusy ? t('Closing and archiving…') : t('Close and archive')}
                     </button>
                   )}
                 </div>

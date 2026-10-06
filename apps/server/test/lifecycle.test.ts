@@ -147,11 +147,21 @@ describe('exclude archived/deleted rooms from money and listings (Task 2)', () =
     expect(await myRoomIds(bob.token)).toContain(room.id);
     expect(await publicRoomIds()).toContain(room.id);
 
-    // Archived: drops out of settle + house, but stays in /api/my-rooms.
+    // Archived: drops out of settle + house + my-rooms. The default listing
+    // hides retired tables (archiving means the room disappears); the explicit
+    // `archived=all` view still returns it, so history is never lost.
     ctx.db.prepare('UPDATE rooms SET archived = 1, archived_at = ? WHERE id = ?').run(Date.now(), room.id);
     expect(await settleOtherIds(bob.token)).not.toContain(alice.userId);
     expect(await houseAccrued(alice.token)).toBe(0);
-    expect(await myRoomIds(bob.token)).toContain(room.id);
+    expect(await myRoomIds(bob.token)).not.toContain(room.id);
+    const allArchived = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/my-rooms?archived=all',
+      headers: auth(bob.token),
+    });
+    expect((allArchived.json() as { rooms: { id: string }[] }).rooms.map((r) => r.id)).toContain(
+      room.id,
+    );
 
     // Reset archived, then delete: drops out of settle + house + my-rooms + public.
     ctx.db.prepare('UPDATE rooms SET archived = 0, archived_at = NULL WHERE id = ?').run(room.id);

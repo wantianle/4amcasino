@@ -219,8 +219,14 @@ export function registerSettleRoutes(
                                     OR (high_user = ? AND confirmed_low = 1 AND confirmed_high = 0))`,
       )
       .get(req.userId, req.userId) as { n: number };
+    // A closed/archived table can no longer be joined, so a pending invite to
+    // one must not keep the sidebar badge lit. Same filter as GET /api/invites.
     const invites = db
-      .prepare("SELECT COUNT(*) as n FROM invites WHERE to_id = ? AND status = 'pending'")
+      .prepare(
+        `SELECT COUNT(*) as n FROM invites i JOIN rooms r ON r.id = i.room_id
+         WHERE i.to_id = ? AND i.status = 'pending'
+           AND r.archived = 0 AND r.deleted = 0`,
+      )
       .get(req.userId) as { n: number };
     const friendRequests = db
       .prepare("SELECT COUNT(*) as n FROM friends WHERE target_id = ? AND status = 'pending'")

@@ -667,14 +667,26 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     return { ok: true, features: readRoomFeatures(getRoom(db, id)!) };
   });
 
-  app.get('/api/my-rooms', authed, async (req) => {
+  // The sidebar/lobby "your tables" list. Archived (closed) rooms are hidden
+  // by DEFAULT so closing a table actually removes it from the live listings -
+  // the user's definition of archiving is "you can no longer see the room".
+  // The lobby's explicit collapsed "Archived tables" section passes
+  // `archived=all`; `archived=true` returns only retired rooms. The rows stay
+  // in the DB (nothing is deleted) and History still reads them.
+  app.get('/api/my-rooms', authed, async (req, reply) => {
+    const parsed = z
+      .object({ archived: z.enum(['true', 'false', 'all']).optional() })
+      .safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    const mode = parsed.data.archived ?? 'false';
+    const filter = mode === 'all' ? '' : `AND r.archived = ${mode === 'true' ? 1 : 0}`;
     const rows = db
       .prepare(
         `SELECT r.id, r.name, r.join_code as joinCode, r.sb, r.bb, r.archived as archived,
                 (SELECT COUNT(*) FROM room_players rp2 WHERE rp2.room_id = r.id
                    AND rp2.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) as playerCount
          FROM rooms r JOIN room_players rp ON rp.room_id = r.id
-         WHERE rp.user_id = ? AND r.deleted = 0 ORDER BY r.created_at DESC`,
+         WHERE rp.user_id = ? AND r.deleted = 0 ${filter} ORDER BY r.created_at DESC`,
       )
       .all(req.userId);
     return { rooms: rows };
@@ -687,8 +699,12 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
   // new table and survives every lifecycle state (rows are never dropped).
   // Query params are validated rather than silently clamped: a bad limit/offset
   // ("abc", 0, 201, -1) is a client bug and gets a 400, not a normalized page.
+  // `archived` is three-way: `true` = only retired rooms, `false` = only live
+  // ones, `all` = both. Absent defaults to `false`: the History page passes
+  // `all` explicitly for its "All" tab, while every other consumer gets the
+  // closed rooms filtered out (archiving means "you stop seeing the room").
   const meRoomsQuerySchema = z.object({
-    archived: z.enum(['true', 'false']).optional(),
+    archived: z.enum(['true', 'false', 'all']).optional(),
     limit: z.coerce.number().int().min(1).max(200).optional(),
     offset: z.coerce.number().int().min(0).optional(),
   });
@@ -697,8 +713,10 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     const parsed = meRoomsQuerySchema.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
     const where: string[] = [];
-    if (parsed.data.archived === 'true') where.push('r.archived = 1');
-    else if (parsed.data.archived === 'false') where.push('r.archived = 0');
+    const archivedMode = parsed.data.archived ?? 'false';
+    if (archivedMode === 'true') where.push('r.archived = 1');
+    else if (archivedMode === 'false') where.push('r.archived = 0');
+    // `all` intentionally pushes no filter: the History "All" tab.
     const limit = parsed.data.limit ?? 100;
     const offset = parsed.data.offset ?? 0;
     const whereSql = where.length ? `AND ${where.join(' AND ')}` : '';

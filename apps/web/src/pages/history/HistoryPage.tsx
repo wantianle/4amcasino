@@ -55,8 +55,10 @@ export function HistoryPage() {
         limit: PAGE_SIZE,
         offset,
         // The filter runs server-side so it applies to the whole history, not
-        // just the rooms already on screen.
-        ...(filter === 'all' ? {} : { archived: filter === 'archived' }),
+        // just the rooms already on screen. `all` must be explicit: the API's
+        // default hides archived rooms, and this page is the one place that is
+        // supposed to still show them under the "All" tab.
+        ...(filter === 'all' ? { archived: 'all' as const } : { archived: filter === 'archived' }),
       })
       .then((r) => {
         if (!active) return;

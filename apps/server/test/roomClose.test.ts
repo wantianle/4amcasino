@@ -349,7 +349,26 @@ describe('GET /api/me/rooms', () => {
 
     await ctx.app.inject({ method: 'POST', url: `/api/rooms/${joined.id}/close`, headers: auth(host.token) });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/api/me/rooms', headers: auth(bob.token) });
+    // Default listing hides the now-archived room: closing means it is gone
+    // from the live app, not merely flagged.
+    const defaultRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms',
+      headers: auth(bob.token),
+    });
+    expect(defaultRes.statusCode).toBe(200);
+    const defaultIds = (defaultRes.json() as { rooms: { roomId: string }[] }).rooms.map(
+      (r) => r.roomId,
+    );
+    expect(defaultIds).not.toContain(joined.id);
+    expect(defaultIds).not.toContain(neverJoined.id);
+
+    // The explicit archived view (History's dedicated tab) still returns it.
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?archived=true',
+      headers: auth(bob.token),
+    });
     expect(res.statusCode).toBe(200);
     const body = res.json() as {
       rooms: {
@@ -386,25 +405,35 @@ describe('GET /api/me/rooms', () => {
     expect(mine.myHands).toBe(1);
 
     // archived filter / pagination
-    const archived = await ctx.app.inject({
-      method: 'GET',
-      url: '/api/me/rooms?archived=true',
-      headers: auth(bob.token),
-    });
-    expect((archived.json() as { rooms: { roomId: string }[] }).rooms.map((r) => r.roomId)).toEqual([
-      joined.id,
-    ]);
     const active = await ctx.app.inject({
       method: 'GET',
       url: '/api/me/rooms?archived=false&limit=1&offset=0',
       headers: auth(bob.token),
     });
     expect((active.json() as { rooms: unknown[] }).rooms).toHaveLength(0);
+    // `all` returns both retired and live rooms (History's "All" tab).
+    const all = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?archived=all',
+      headers: auth(bob.token),
+    });
+    expect((all.json() as { rooms: { roomId: string }[] }).rooms.map((r) => r.roomId)).toContain(
+      joined.id,
+    );
 
-    // the host sees both rooms it participated in
+    // The host no longer sees the closed room in the default listing either;
+    // the explicit archived/all view still reaches it.
     const hostRes = await ctx.app.inject({ method: 'GET', url: '/api/me/rooms', headers: auth(host.token) });
     const hostIds = (hostRes.json() as { rooms: { roomId: string }[] }).rooms.map((r) => r.roomId);
-    expect(hostIds).toContain(joined.id);
+    expect(hostIds).not.toContain(joined.id);
+    const hostAll = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?archived=all',
+      headers: auth(host.token),
+    });
+    expect(
+      (hostAll.json() as { rooms: { roomId: string }[] }).rooms.map((r) => r.roomId),
+    ).toContain(joined.id);
 
     await ctx.app.close();
   });
@@ -431,7 +460,7 @@ describe('GET /api/me/rooms', () => {
 
     const res = await ctx.app.inject({
       method: 'GET',
-      url: '/api/me/rooms?limit=2&offset=0',
+      url: '/api/me/rooms?archived=all&limit=2&offset=0',
       headers: auth(host.token),
     });
     expect(res.statusCode).toBe(200);
@@ -456,12 +485,23 @@ describe('GET /api/me/rooms', () => {
 
     const second = await ctx.app.inject({
       method: 'GET',
-      url: '/api/me/rooms?limit=2&offset=2',
+      url: '/api/me/rooms?archived=all&limit=2&offset=2',
       headers: auth(host.token),
     });
     const body2 = second.json() as { rooms: { roomId: string }[]; hasMore: boolean };
     expect(body2.rooms.map((r) => r.roomId)).toEqual([idle.id]);
     expect(body2.hasMore).toBe(false);
+
+    // The default listing hides the retired room, so `total` drops to the two
+    // live tables and the archived one never appears.
+    const defaultRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/rooms?limit=10',
+      headers: auth(host.token),
+    });
+    const defaultBody = defaultRes.json() as { rooms: { roomId: string }[]; total: number };
+    expect(defaultBody.rooms.map((r) => r.roomId)).toEqual([active.id, idle.id]);
+    expect(defaultBody.total).toBe(2);
 
     // The archived filter is applied server-side, so total tracks the filter.
     const onlyArchived = await ctx.app.inject({
@@ -943,6 +983,137 @@ describe('GET /api/me/rooms query validation', () => {
   });
 });
 
+describe('A: archiving hides the room from every live listing', () => {
+  it('/api/my-rooms hides closed rooms by default, and only shows them on demand', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'list_host');
+    const live = await createRoom(ctx, host.token, 'Still Open');
+    const closed = await createRoom(ctx, host.token, 'Now Closed');
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${closed.id}/close`,
+      headers: auth(host.token),
+    });
+
+    const listed = async (url: string) =>
+      ((await ctx.app.inject({ method: 'GET', url, headers: auth(host.token) })).json() as {
+        rooms: { id: string }[];
+      }).rooms.map((r) => r.id);
+
+    // default: the closed room is gone from the sidebar/lobby listing
+    const def = await listed('/api/my-rooms');
+    expect(def).toContain(live.id);
+    expect(def).not.toContain(closed.id);
+
+    // the lobby's explicit collapsed section still reaches it
+    expect(await listed('/api/my-rooms?archived=all')).toEqual(
+      expect.arrayContaining([live.id, closed.id]),
+    );
+    // and the archived-only view returns just the retired table
+    expect(await listed('/api/my-rooms?archived=true')).toEqual([closed.id]);
+
+    await ctx.app.close();
+  });
+});
+
+describe('B: close stands everyone up before the next hand and never moves chips', () => {
+  const opts = {
+    cryptoTimeoutMs: 60_000,
+    actionTimeoutMs: 30_000,
+    autoDealMs: 1_000_000,
+    readyCheckMs: 100_000,
+    shutdownDrainMs: 50,
+  };
+  const fakeWs = (sink: ServerMsg[]) =>
+    ({ send: (text: string) => sink.push(JSON.parse(text)) }) as unknown as WebSocket;
+
+  it('a mid-hand close clears every seat, lets the hand settle, and writes no abort/void', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'stand_host');
+    const bob = await register(ctx.app, 'stand_bob');
+    const room = await createRoom(ctx, host.token);
+    await join(ctx, bob.token, room.joinCode);
+    seat(ctx, room.id, host.userId, 0, 1000);
+    seat(ctx, room.id, bob.userId, 1, 1000);
+    // real money is already on the table; closing must not swallow it
+    appendLedger(ctx.db, { roomId: room.id, userId: host.userId, delta: 1000, kind: 'purchase' });
+    appendLedger(ctx.db, { roomId: room.id, userId: bob.userId, delta: 1000, kind: 'purchase' });
+
+    const game = new GameRoom(ctx.db, room.id, genIdentity(), opts);
+    const sent: ServerMsg[] = [];
+    game.join(host.userId, fakeWs(sent));
+    game.join(bob.userId, fakeWs(sent));
+    (game as unknown as { startHand: () => void }).startHand();
+    expect(activeHands.has(room.id)).toBe(true);
+
+    const ledgerBefore = ctx.db
+      .prepare('SELECT COUNT(*) AS n FROM ledger WHERE room_id = ?')
+      .get(room.id) as { n: number };
+    const stacksBefore = ctx.db
+      .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+      .all(room.id) as { user_id: number; stack: number }[];
+
+    const close = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/close`,
+      headers: auth(host.token),
+    });
+    expect(close.statusCode).toBe(200);
+
+    // forced stand-up: no seat, everyone sitting out
+    const players = ctx.db
+      .prepare('SELECT user_id, seat, sitting_out FROM room_players WHERE room_id = ? ORDER BY user_id')
+      .all(room.id) as { user_id: number; seat: number | null; sitting_out: number }[];
+    expect(players).toHaveLength(2);
+    for (const p of players) {
+      expect(p.seat).toBeNull();
+      expect(p.sitting_out).toBe(1);
+    }
+
+    // the in-flight hand is NOT torn down and the settlement path is untouched:
+    // close never aborts, refunds, or rewrites the money rows.
+    expect(activeHands.has(room.id)).toBe(true);
+    expect((game as unknown as { hand: unknown }).hand).not.toBeNull();
+    const ledgerAfter = ctx.db
+      .prepare('SELECT COUNT(*) AS n FROM ledger WHERE room_id = ?')
+      .get(room.id) as { n: number };
+    expect(ledgerAfter.n).toBe(ledgerBefore.n);
+    expect(
+      ctx.db
+        .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'void-hand'")
+        .get(room.id),
+    ).toEqual({ n: 0 });
+    const aborts = ctx.db
+      .prepare("SELECT COUNT(*) AS n FROM transcripts WHERE room_id = ?")
+      .get(room.id) as { n: number };
+    expect(aborts.n).toBe(0);
+    const stacksAfter = ctx.db
+      .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+      .all(room.id) as { user_id: number; stack: number }[];
+    expect(stacksAfter).toEqual(stacksBefore);
+
+    // no next hand may start, and the rebroadcast room_state carries archived +
+    // every player off-seat
+    sent.length = 0;
+    game.handleMessage(host.userId, { t: 'start_hand' });
+    expect(sent.some((m) => m.t === 'hand_start')).toBe(false);
+    expect(sent.find((m) => m.t === 'error')).toBeDefined();
+    game.broadcastRoomState();
+    const state = sent.filter((m) => m.t === 'room_state').at(-1) as Extract<
+      ServerMsg,
+      { t: 'room_state' }
+    > & { room: { archived?: boolean }; players: { seat: number | null; sittingOut: boolean }[] };
+    expect(state.room.archived).toBe(true);
+    for (const p of state.players) {
+      expect(p.seat).toBeNull();
+      expect(p.sittingOut).toBe(true);
+    }
+
+    await game.shutdown();
+    await ctx.app.close();
+  });
+});
+
 describe('close concurrency and idempotency', () => {
   it('two overlapping closes yield exactly one transition and a stable archived_at', async () => {
     const ctx = createApp(':memory:');
@@ -1236,4 +1407,112 @@ describe('multi-room shutdown shares one connection without pragma cross-contami
     expect(activeHands.has(r2.id)).toBe(false);
     await ctx.app.close();
   }, 20000);
+});
+
+describe('C: archiving hides a room from invites, shared-rooms and the pending badge', () => {
+  it('a pending invite to a closed table is neither listed nor counted', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'arch_inv_host');
+    const bob = await register(ctx.app, 'arch_inv_bob');
+    becomeFriends(ctx, host.userId, bob.userId);
+    const room = await createRoom(ctx, host.token, 'Invite Doomed');
+
+    const invited = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/invite`,
+      headers: auth(host.token),
+      payload: { userId: bob.userId },
+    });
+    expect(invited.statusCode).toBe(200);
+
+    // While the table is live the invite is delivered and badged.
+    const before = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/invites',
+      headers: auth(bob.token),
+    });
+    expect(
+      (before.json() as { invites: { roomId: string }[] }).invites.map((i) => i.roomId),
+    ).toContain(room.id);
+    const badgeBefore = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/pending',
+      headers: auth(bob.token),
+    });
+    expect((badgeBefore.json() as { invites: number }).invites).toBe(1);
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/close`,
+      headers: auth(host.token),
+    });
+
+    // Archived: the invite row survives (nothing is deleted) but it can no
+    // longer be accepted, so it must not be listed or keep the sidebar badge
+    // lit. (The client's FriendsPanel refreshes on the accept's 409.)
+    const after = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/invites',
+      headers: auth(bob.token),
+    });
+    expect(
+      (after.json() as { invites: { roomId: string }[] }).invites.map((i) => i.roomId),
+    ).not.toContain(room.id);
+    const badgeAfter = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/me/pending',
+      headers: auth(bob.token),
+    });
+    expect((badgeAfter.json() as { invites: number }).invites).toBe(0);
+
+    const inviteId = (
+      ctx.db
+        .prepare("SELECT id FROM invites WHERE room_id = ? AND to_id = ?")
+        .get(room.id, bob.userId) as { id: number }
+    ).id;
+    const accept = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/invites/${inviteId}/respond`,
+      headers: auth(bob.token),
+      payload: { accept: true },
+    });
+    expect(accept.statusCode).toBe(409);
+
+    await ctx.app.close();
+  });
+
+  it('a closed room drops out of shared-rooms', async () => {
+    const ctx = createApp(':memory:');
+    const host = await register(ctx.app, 'arch_shared_host');
+    const bob = await register(ctx.app, 'arch_shared_bob');
+    const room = await createRoom(ctx, host.token, 'Shared Doomed');
+    await join(ctx, bob.token, room.joinCode);
+
+    const before = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/users/${bob.userId}/shared-rooms`,
+      headers: auth(host.token),
+    });
+    expect(
+      (before.json() as { rooms: { id: string }[] }).rooms.map((r) => r.id),
+    ).toContain(room.id);
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/close`,
+      headers: auth(host.token),
+    });
+
+    // A closed table is not a place to send someone points any more.
+    const after = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/users/${bob.userId}/shared-rooms`,
+      headers: auth(host.token),
+    });
+    expect(
+      (after.json() as { rooms: { id: string }[] }).rooms.map((r) => r.id),
+    ).not.toContain(room.id);
+
+    await ctx.app.close();
+  });
 });
