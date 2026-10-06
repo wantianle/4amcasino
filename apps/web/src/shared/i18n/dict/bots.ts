@@ -69,13 +69,9 @@ const bots: Record<string, string> = {
   Difficulty: '难度',
   Basic: '基础',
   Advanced: '进阶',
-  Master: '大师',
   'Uses the existing local rules.': '使用现有本地规则。',
   'Uses rules-v1 with modern preflop ranges and postflop heuristics.':
     '使用 rules-v1：现代翻前范围与翻后启发式。',
-  'Reserved: not implemented yet; runs as Advanced.': '预留：暂未实现，将按进阶运行。',
-  'Master is not implemented yet; this bot will run as Advanced.':
-    '大师难度暂未实现；该机器人将按进阶运行。',
   'Large language models are not affected by difficulty.': '大模型不受难度影响。',
   'Buy-in': '买入',
   'Custom buy-in in chips': '自定买入额（筹码）',

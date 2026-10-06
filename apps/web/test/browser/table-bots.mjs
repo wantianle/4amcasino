@@ -236,7 +236,7 @@ try {
               configuredSeat: seat,
               status: approved ? 'ready' : 'waiting_buy_approval',
               policyKind: req.policyKind ?? 'scripted',
-              difficulty: req.difficulty ?? 'low',
+              difficulty: req.difficulty ?? 'medium',
               createdAt: Date.now(),
               updatedAt: Date.now(),
               stoppedAt: null,
@@ -392,32 +392,30 @@ try {
         (await botList.textContent()).includes('进阶'),
         'bot list shows the medium difficulty label',
       );
-      // Difficulty is orthogonal to style. Exercise the default, the reserved
-      // high-tier notice, and the llm override before choosing medium to create.
+      // Difficulty is orthogonal to style. Two tiers remain (low / medium); the
+      // withdrawn `high` / Master tier is gone. Exercise the medium default, the
+      // llm override, then leave medium selected to create.
       const difficultyButtons = dialog.locator('button[aria-describedby^="bot-difficulty-"]');
       const policyButtons = dialog.locator('button[aria-describedby^="bot-policy-"]');
       assert(
-        (await difficultyButtons.nth(0).getAttribute('aria-checked')) === 'true',
-        'new bots default to low difficulty',
+        (await difficultyButtons.count()) === 2,
+        `difficulty offers exactly two tiers (got ${await difficultyButtons.count()})`,
       );
-      await difficultyButtons.nth(2).click();
       assert(
-        (await difficultyButtons.nth(2).getAttribute('aria-checked')) === 'true' &&
-          (await difficultyButtons.nth(0).getAttribute('aria-checked')) === 'false',
-        'high difficulty selection updates the selected radio state',
+        (await difficultyButtons.nth(1).getAttribute('aria-checked')) === 'true',
+        'new bots default to medium difficulty',
       );
-      await dialog.getByText(/大师难度暂未实现/).waitFor();
-      if (sc.mode === 'approved' && tag === 'desktop') {
-        await page.screenshot({
-          path: `${out}/02-difficulty-high-${tag}-${vp.width}x${vp.height}.png`,
-        });
-      }
+      await difficultyButtons.nth(0).click();
+      assert(
+        (await difficultyButtons.nth(0).getAttribute('aria-checked')) === 'true' &&
+          (await difficultyButtons.nth(1).getAttribute('aria-checked')) === 'false',
+        'low difficulty selection updates the selected radio state',
+      );
       await policyButtons.nth(4).click();
       assert(
-        (await difficultyButtons.count()) === 3 &&
+        (await difficultyButtons.count()) === 2 &&
           (await difficultyButtons.nth(0).isDisabled()) &&
-          (await difficultyButtons.nth(1).isDisabled()) &&
-          (await difficultyButtons.nth(2).isDisabled()),
+          (await difficultyButtons.nth(1).isDisabled()),
         'llm disables all difficulty controls',
       );
       await dialog.getByText('大模型不受难度影响。', { exact: true }).waitFor();

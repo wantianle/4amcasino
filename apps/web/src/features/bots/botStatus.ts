@@ -135,13 +135,14 @@ export const BOT_DIFFICULTIES: BotDifficultyOption[] = [
     label: t('Advanced'),
     blurb: t('Uses rules-v1 with modern preflop ranges and postflop heuristics.'),
   },
-  {
-    kind: 'high',
-    label: t('Master'),
-    blurb: t('Reserved: not implemented yet; runs as Advanced.'),
-  },
 ];
 
+/** Tiers the product has retired but that may still be persisted on a legacy
+ *  bot row. They run as the mapped tier, so the label reads that tier, not the
+ *  raw value. */
+const RETIRED_BOT_DIFFICULTIES: Record<string, BotDifficulty> = { high: 'medium' };
+
 export function botDifficultyLabel(kind: string): string {
-  return BOT_DIFFICULTIES.find((d) => d.kind === kind)?.label ?? kind;
+  const effective = RETIRED_BOT_DIFFICULTIES[kind] ?? (kind as BotDifficulty);
+  return BOT_DIFFICULTIES.find((d) => d.kind === effective)?.label ?? kind;
 }

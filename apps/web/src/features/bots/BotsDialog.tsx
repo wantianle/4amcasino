@@ -80,7 +80,7 @@ export function BotsDialog({
   }, [takenSeats]);
   const [seat, setSeat] = useState<number | null>(null);
   const [policy, setPolicy] = useState(BOT_POLICIES[0]!.kind);
-  const [difficulty, setDifficulty] = useState<BotDifficulty>('low');
+  const [difficulty, setDifficulty] = useState<BotDifficulty>('medium');
   const [buyBb, setBuyBb] = useState(100);
   const [buyChips, setBuyChips] = useState('');
   const [name, setName] = useState('');
@@ -287,7 +287,7 @@ export function BotsDialog({
                         {' · '}
                         {botPolicyLabel(bot.policyKind)}
                         {' · '}
-                        {botDifficultyLabel(bot.difficulty ?? 'low')}
+                        {botDifficultyLabel(bot.difficulty ?? 'medium')}
                       </span>
                      </span>
                      <span
@@ -477,7 +477,7 @@ export function BotsDialog({
                 {t('Difficulty')}
               </span>
               <div
-                className="grid grid-cols-3 gap-1.5"
+                className="grid grid-cols-2 gap-1.5"
                 role="radiogroup"
                 aria-label={t('Difficulty')}
               >
@@ -517,10 +517,6 @@ export function BotsDialog({
               {policy === 'llm' ? (
                 <p className="mt-1.5 text-xs text-slate-400">
                   {t('Large language models are not affected by difficulty.')}
-                </p>
-              ) : difficulty === 'high' ? (
-                <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-                  {t('Master is not implemented yet; this bot will run as Advanced.')}
                 </p>
               ) : null}
             </div>

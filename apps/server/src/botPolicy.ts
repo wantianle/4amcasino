@@ -2,12 +2,14 @@ import {
   DEFAULT_LLM_MAX_OUTPUT_TOKENS,
   DEFAULT_LLM_MIN_MODEL_BUDGET_MS,
   LlmPolicy,
+  P2_ALL_OFF,
   StylePolicy,
   resolveDifficulty,
   resolvePolicyForDifficulty,
   type BotDifficulty,
   type LlmMetric,
   type LlmPolicyOptions,
+  type P2Options,
   type Policy,
 } from '@4am/agent-core';
 
@@ -24,11 +26,11 @@ import {
  * is unavailable (missing key, timeout, budget exhausted) the bot keeps playing
  * a legal local game rather than erroring out.
  *
- * Difficulty is a separate, orthogonal axis (`low`/`medium`/`high`) resolved by
+ * Difficulty is a separate, orthogonal axis (`low`/`medium`) resolved by
  * `@4am/agent-core`'s `resolvePolicyForDifficulty`: `low` keeps the legacy style
- * resolution, `medium` forces the `rules-v1` engine and the reserved `high` tier
- * falls back to `medium` (with a warning). `policyKind='llm'` outranks all of
- * them - an LLM bot is never swapped for a rules engine by difficulty.
+ * resolution, `medium` forces the `rules-v1` engine; absent/unknown/withdrawn
+ * values fall back to `medium`. `policyKind='llm'` outranks all of them - an LLM
+ * bot is never swapped for a rules engine by difficulty.
  */
 
 /**
@@ -100,16 +102,44 @@ export interface BotPolicyResolution {
   kind: string;
   /** Effective difficulty tier after fallback (`high` never survives as `high`). */
   difficulty: BotDifficulty;
-  /** Tier as requested, preserved for observability (may be `high`/unknown). */
+  /** Tier as requested, preserved for observability (may be a withdrawn/unknown value). */
   requestedDifficulty: string | null;
-  /** True when a requested `high` was downgraded to `medium`. */
+  /** Always `false` now that `high` is withdrawn (no silent tier downgrade). */
   downgraded: boolean;
   policy: Policy;
   /**
-   * Human-readable notes: difficulty fallback (unknown value, reserved `high`),
+   * Human-readable notes: difficulty fallback (unknown value, withdrawn `high`),
    * unknown kind and invalid `policy_json`.
    */
   warnings: string[];
+}
+
+/**
+ * P2 rollback kill-switch, read from server env only (`llmOptionsFromEnv`'s
+ * sibling). The four P2 postflop switches are ON by default; this returns an
+ * explicit all-off override for the whole engine when either:
+ *
+ *  - `FOURAM_P2_ALL_OFF` is truthy (`1`/`true`/`on`/`yes`), or
+ *  - `FOURAM_P2=off` (also `false`/`0`/`no`).
+ *
+ * Anything else (including unset/invalid) returns `{}`, which keeps `DEFAULT_P2`
+ * (all on) - so production runs P2 unless an operator explicitly rolls it back.
+ * Scope: this only reverts the four P2 behaviours; it does NOT undo the
+ * always-on `evaluateHand` straight-draw fix, so call it "P2 all-off / P2
+ * rollback", never a full historical rollback. Ignored for `policyKind='llm'`
+ * (an LLM policy owns its own decision path).
+ */
+export function p2OptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<P2Options> {
+  const allOff = isTruthyFlag(env.FOURAM_P2_ALL_OFF);
+  const p2Raw = env.FOURAM_P2?.trim().toLowerCase();
+  const p2Off = p2Raw !== undefined && ['off', 'false', '0', 'no'].includes(p2Raw);
+  return allOff || p2Off ? { ...P2_ALL_OFF } : {};
+}
+
+/** Truthy env flag: `1`/`true`/`on`/`yes` (case-insensitive); everything else false. */
+function isTruthyFlag(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  return ['1', 'true', 'on', 'yes'].includes(raw.trim().toLowerCase());
 }
 
 /**
@@ -120,10 +150,14 @@ export interface BotPolicyResolution {
  * a rules engine by a difficulty tier, so `difficulty` only affects the local
  * styles/rules path. For every other kind the difficulty dispatches through
  * `resolvePolicyForDifficulty`:
- *   - `low` (default) -> legacy `ScriptedPolicy`/`StylePolicy`, unchanged;
- *   - `medium`        -> force `engine: 'rules-v1'` (`RulePolicy`);
- *   - `high`          -> reserved GTO tier, falls back to `medium` + warning.
+ *   - `low`    -> legacy `ScriptedPolicy`/`StylePolicy`, unchanged;
+ *   - `medium` -> force `engine: 'rules-v1'` (`RulePolicy`); this is the default;
+ *   - absent/unknown/withdrawn `high` -> `medium` (withdrawn reported in warnings).
  * The effective tier is returned so the runner/API can observe it.
+ *
+ * `p2` is forwarded to the underlying `RulePolicy`/`PostflopPolicy` (see
+ * {@link p2OptionsFromEnv}); it is ignored for the `llm` kind. Omit it for the
+ * default all-on behaviour.
  */
 export function resolveBotPolicyDetailed(
   kind: string | null | undefined,
@@ -131,6 +165,7 @@ export function resolveBotPolicyDetailed(
   llmOptions?: BotLlmOptions,
   seed?: number,
   difficulty?: string | null,
+  p2?: Partial<P2Options>,
 ): BotPolicyResolution {
   const difficultyResolution = resolveDifficulty(difficulty);
   if (isLlmPolicyKind(kind)) {
@@ -151,7 +186,7 @@ export function resolveBotPolicyDetailed(
     kind,
     policyJson,
     difficulty,
-    seed === undefined ? undefined : { seed },
+    seed === undefined && p2 === undefined ? undefined : { seed, p2 },
   );
   return {
     kind: resolved.kind,

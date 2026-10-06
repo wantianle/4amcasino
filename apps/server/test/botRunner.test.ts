@@ -164,7 +164,7 @@ describe('BotRunner decision loop', () => {
     expect(logs.join(' ')).toMatch(/policy rules-v1 selected \(kind tight-aggressive, difficulty medium\)/);
   });
 
-  it('reports the reserved high difficulty fallback at runner startup', () => {
+  it('reports the withdrawn high difficulty at runner startup', () => {
     const logs: string[] = [];
     const claim = claimedBot('bot1');
     claim.difficulty = 'high';
@@ -173,10 +173,12 @@ describe('BotRunner decision loop', () => {
       clientFactory: () => new FakeClient() as unknown as HeadlessClient,
       log: (l) => logs.push(l),
     });
-    expect(logs.join(' ')).toMatch(/not implemented/);
+    // A legacy `high` is still read and reported as withdrawn, then runs the
+    // default medium (rules-v1) engine. Core's `downgraded` is always false now,
+    // so no separate downgrade marker is emitted.
+    expect(logs.join(' ')).toMatch(/withdrawn/);
     expect(logs.join(' ')).toMatch(/policy rules-v1 selected \(kind tight-aggressive, difficulty medium\)/);
-    // Explicit, machine-parseable fallback marker for observability.
-    expect(logs.join(' ')).toMatch(/difficulty high -> medium \(downgraded=true\)/);
+    expect(logs.join(' ')).not.toMatch(/downgraded=true/);
   });
 
   it('keeps llm priority over difficulty at runner startup', () => {

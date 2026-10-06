@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { LlmPolicy, RulePolicy, ScriptedPolicy, StylePolicy } from '@4am/agent-core';
+import {
+  LlmPolicy,
+  P2_ALL_OFF,
+  RulePolicy,
+  ScriptedPolicy,
+  StylePolicy,
+  type DecisionLegalActions,
+  type DecisionSeat,
+  type DecisionView,
+} from '@4am/agent-core';
+import { cardFromName, type CardId } from '@4am/shared';
 import {
   DEFAULT_LLM_BASE_URL,
   DEFAULT_LLM_MAX_CALLS_PER_HAND,
@@ -9,6 +19,7 @@ import {
   DEFAULT_LLM_TIMEOUT_MS,
   isLlmPolicyKind,
   llmOptionsFromEnv,
+  p2OptionsFromEnv,
   resolveBotPolicyDetailed,
 } from '../src/botPolicy.js';
 
@@ -29,12 +40,13 @@ describe('resolveBotPolicyDetailed', () => {
     expect(resolved.warnings).toEqual([]);
   });
 
-  it('leaves the four built-in styles and scripted alias unchanged', () => {
-    const scripted = resolveBotPolicyDetailed('scripted', null);
+  it('leaves the four built-in styles and scripted alias unchanged at low', () => {
+    // `low` is the legacy opt-out; the medium default would force rules-v1.
+    const scripted = resolveBotPolicyDetailed('scripted', null, undefined, undefined, 'low');
     expect(scripted.policy).toBeInstanceOf(ScriptedPolicy);
     expect(scripted.kind).toBe('tight-aggressive');
 
-    const lag = resolveBotPolicyDetailed('loose-aggressive', null);
+    const lag = resolveBotPolicyDetailed('loose-aggressive', null, undefined, undefined, 'low');
     expect(lag.policy).toBeInstanceOf(StylePolicy);
     expect(lag.kind).toBe('loose-aggressive');
   });
@@ -66,8 +78,15 @@ describe('resolveBotPolicyDetailed', () => {
     maxCallsPerHand: 3,
   };
 
-  it('defaults difficulty to low and keeps the legacy scripted resolution', () => {
+  it('defaults difficulty to medium and runs the rules-v1 engine', () => {
     const resolved = resolveBotPolicyDetailed('scripted', null);
+    expect(resolved.difficulty).toBe('medium');
+    expect(resolved.policy).toBeInstanceOf(RulePolicy);
+    expect(resolved.policy.name).toBe('rules-v1');
+  });
+
+  it('honours an explicit low as a legacy opt-out', () => {
+    const resolved = resolveBotPolicyDetailed('scripted', null, undefined, undefined, 'low');
     expect(resolved.difficulty).toBe('low');
     expect(resolved.policy).toBeInstanceOf(ScriptedPolicy);
   });
@@ -82,20 +101,20 @@ describe('resolveBotPolicyDetailed', () => {
     expect(resolved.warnings).toEqual([]);
   });
 
-  it('high is reserved: falls back to medium and surfaces a warning', () => {
+  it('high is withdrawn: falls back to medium and surfaces a warning', () => {
     const resolved = resolveBotPolicyDetailed('loose-aggressive', null, undefined, undefined, 'high');
     expect(resolved.difficulty).toBe('medium');
     expect(resolved.requestedDifficulty).toBe('high');
-    expect(resolved.downgraded).toBe(true);
+    expect(resolved.downgraded).toBe(false);
     expect(resolved.policy.name).toBe('rules-v1');
     expect(resolved.warnings.join(' ')).toMatch(/high/);
-    expect(resolved.warnings.join(' ')).toMatch(/not implemented/);
+    expect(resolved.warnings.join(' ')).toMatch(/withdrawn/);
   });
 
-  it('unknown difficulty falls back to low with a warning', () => {
+  it('unknown difficulty falls back to medium with a warning', () => {
     const resolved = resolveBotPolicyDetailed('scripted', null, undefined, undefined, 'galaxy-brain');
-    expect(resolved.difficulty).toBe('low');
-    expect(resolved.policy).toBeInstanceOf(ScriptedPolicy);
+    expect(resolved.difficulty).toBe('medium');
+    expect(resolved.policy.name).toBe('rules-v1');
     expect(resolved.warnings.join(' ')).toMatch(/unknown difficulty/);
   });
 
@@ -105,14 +124,182 @@ describe('resolveBotPolicyDetailed', () => {
     expect(medium.difficulty).toBe('medium');
     expect(medium.warnings).toEqual([]);
 
-    // `high` still downgrades the reported tier (observability) but the policy
-    // remains the LLM, never rules-v1.
+    // A withdrawn `high` is reported (observability) but the policy stays the
+    // LLM, never rules-v1; `downgraded` is always false now.
     const high = resolveBotPolicyDetailed('llm', null, llmOpts, undefined, 'high');
     expect(high.policy).toBeInstanceOf(LlmPolicy);
     expect(high.difficulty).toBe('medium');
     expect(high.requestedDifficulty).toBe('high');
-    expect(high.downgraded).toBe(true);
-    expect(high.warnings.join(' ')).toMatch(/not implemented/);
+    expect(high.downgraded).toBe(false);
+    expect(high.warnings.join(' ')).toMatch(/withdrawn/);
+  });
+});
+
+describe('p2OptionsFromEnv', () => {
+  it('defaults to all-on (no override) when the switch is unset', () => {
+    expect(p2OptionsFromEnv({} as NodeJS.ProcessEnv)).toEqual({});
+    // An explicit off-ish value that is not a documented off token is ignored.
+    expect(p2OptionsFromEnv({ FOURAM_P2: 'maybe' } as NodeJS.ProcessEnv)).toEqual({});
+    expect(p2OptionsFromEnv({ FOURAM_P2_ALL_OFF: '0' } as NodeJS.ProcessEnv)).toEqual({});
+  });
+
+  it('FOURAM_P2_ALL_OFF=true returns the frozen all-off switches', () => {
+    for (const raw of ['1', 'true', 'on', 'yes', 'TRUE']) {
+      expect(p2OptionsFromEnv({ FOURAM_P2_ALL_OFF: raw } as NodeJS.ProcessEnv)).toEqual({
+        ...P2_ALL_OFF,
+      });
+    }
+  });
+
+  it('FOURAM_P2=off is an alias for the kill-switch', () => {
+    for (const raw of ['off', 'false', '0', 'no', 'OFF']) {
+      expect(p2OptionsFromEnv({ FOURAM_P2: raw } as NodeJS.ProcessEnv)).toEqual({ ...P2_ALL_OFF });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2 kill-switch through the PRODUCTION resolver chain
+// resolveBotPolicyDetailed -> resolvePolicyForDifficulty -> resolvePolicy
+//   -> RulePolicy({p2}) -> PostflopPolicy({p2})
+// ---------------------------------------------------------------------------
+
+function p2View(
+  hole: CardId[],
+  board: CardId[],
+  pot: number,
+  call: number,
+  seq: number,
+  memory: DecisionView['sessionMemory'],
+): DecisionView {
+  const villain: DecisionSeat = {
+    seat: 0,
+    userId: 2,
+    displayName: 'villain',
+    isMe: false,
+    stack: 1000,
+    committed: call,
+    total: call,
+    folded: false,
+    allIn: false,
+    sittingOut: false,
+    connected: true,
+  };
+  const me: DecisionSeat = { ...villain, seat: 1, userId: 1, displayName: 'hero', isMe: true };
+  const legalActions: DecisionLegalActions = {
+    canCheck: false,
+    canCall: true,
+    callAmount: call,
+    canBet: false,
+    canRaise: true,
+    minRaiseTo: call * 2,
+    maxRaiseTo: 1000,
+  };
+  return {
+    room: { id: 'r', name: 'r', sb: 1, bb: 2, minSettleHands: 0, sevenDeuceBonus: 0 },
+    hand: {
+      handId: `h${seq}`,
+      street: board.length >= 5 ? 'river' : board.length === 4 ? 'turn' : 'flop',
+      buttonSeat: 1,
+      board,
+      pot,
+      currentBet: call,
+      toAct: 1,
+      deadline: null,
+      myCards: hole,
+      mySeat: 1,
+    },
+    me,
+    legalActions,
+    potOdds: {
+      callAmount: call,
+      pot,
+      potOdds: call / (pot + call),
+      breakEvenEquity: call / (pot + call),
+    },
+    actionHistory: [],
+    opponents: [villain],
+    sessionMemory: memory,
+    historyComplete: true,
+    seatOrder: [0, 1],
+    actionSeq: seq,
+  };
+}
+
+describe('P2 env kill-switch reaches the production resolver chain', () => {
+  const c = (n: string) => cardFromName(n);
+  // A 10-hand maniac (shrinkage input) and a 0.9-pot size (sizeGrid input).
+  const maniac = {
+    seat: 0,
+    sampleHands: 10,
+    vpipHands: 8,
+    pfrHands: 7,
+    postflopBetsRaises: 12,
+    postflopCalls: 4,
+  };
+  const memory: DecisionView['sessionMemory'] = {
+    handsObserved: 50,
+    netChips: null,
+    recentHands: [],
+    opponents: [maniac],
+  };
+
+  /** Decide a fixed grid with a medium (rules-v1) resolution under `env`. */
+  function decisionsWith(env: NodeJS.ProcessEnv): string[] {
+    const policy = resolveBotPolicyDetailed(
+      'tight-aggressive',
+      null,
+      undefined,
+      7,
+      'medium',
+      p2OptionsFromEnv(env),
+    ).policy;
+    const boards = [
+      [c('Kh'), c('7d'), c('2c')],
+      [c('Th'), c('9h'), c('8h')],
+    ];
+    const holes = [
+      [c('Qs'), c('Qd')],
+      [c('3s'), c('3d')],
+    ];
+    const sizes: [number, number][] = [
+      [150, 50],
+      [190, 90],
+    ];
+    const out: string[] = [];
+    for (const board of boards)
+      for (const hole of holes)
+        for (const [pot, call] of sizes)
+          for (let seq = 0; seq < 12; seq++)
+            out.push(JSON.stringify(policy.decide(p2View(hole!, board!, pot, call, seq, memory))));
+    return out;
+  }
+
+  it('produces a RulePolicy and differs from the default all-on path', () => {
+    const on = resolveBotPolicyDetailed(
+      'tight-aggressive',
+      null,
+      undefined,
+      7,
+      'medium',
+      p2OptionsFromEnv({}),
+    ).policy;
+    const off = resolveBotPolicyDetailed(
+      'tight-aggressive',
+      null,
+      undefined,
+      7,
+      'medium',
+      p2OptionsFromEnv({ FOURAM_P2_ALL_OFF: '1' }),
+    ).policy;
+    expect(on).toBeInstanceOf(RulePolicy);
+    expect(off).toBeInstanceOf(RulePolicy);
+
+    const withDefault = decisionsWith({});
+    const withKillSwitch = decisionsWith({ FOURAM_P2_ALL_OFF: '1' });
+    // Decisive evidence that the env switch actually reaches the decisions,
+    // rather than merely sitting in the config object.
+    expect(withKillSwitch).not.toEqual(withDefault);
   });
 });
 

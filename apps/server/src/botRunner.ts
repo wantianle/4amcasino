@@ -2,13 +2,19 @@ import {
   HeadlessClient,
   SessionTracker,
   buildDecisionView,
+  type P2Options,
   type Policy,
 } from '@4am/agent-core';
 import type { Street } from '@4am/shared';
 import type { DB } from './db.js';
 import { activeHands } from './liveHands.js';
 import { markBotError, type ClaimedBot } from './botRoutes.js';
-import { isLlmPolicyKind, resolveBotPolicyDetailed, type BotLlmOptions } from './botPolicy.js';
+import {
+  isLlmPolicyKind,
+  p2OptionsFromEnv,
+  resolveBotPolicyDetailed,
+  type BotLlmOptions,
+} from './botPolicy.js';
 
 /**
  * Phase 1b: a single bot runner.
@@ -85,6 +91,13 @@ export interface BotRunnerOptions {
    * `policyKind` is `llm`; ignored otherwise.
    */
   llm?: BotLlmOptions;
+  /**
+   * P2 rollback switches for the rules-v1 postflop engine (see
+   * `p2OptionsFromEnv`). Omitted reads the server env
+   * (`FOURAM_P2_ALL_OFF`/`FOURAM_P2`), which defaults to P2 all-on. Ignored for
+   * the `llm` kind.
+   */
+  p2?: Partial<P2Options>;
   /**
    * Soft threshold (ms) after which graceful stop logs that a hand is still
    * active. It is NOT a hard cutoff: the runner keeps the socket open while the
@@ -330,14 +343,16 @@ export class BotRunner {
     } else {
       // Resolve the persisted kind + difficulty through the server resolver: the
       // four styles (aliases/overrides validated), the Phase 3 `llm` kind and the
-      // difficulty tier (low = legacy, medium = rules-v1, high = reserved ->
-      // medium). Invalid config degrades to the default style with a warning.
+      // difficulty tier (medium = rules-v1, the default; low = legacy). Invalid
+      // config degrades to the default style with a warning. The P2 rollback
+      // switches come from the server env unless a caller injects them.
       const resolved = resolveBotPolicyDetailed(
         claim.policyKind,
         claim.policyJson,
         opts.llm,
         undefined,
         claim.difficulty,
+        opts.p2 ?? p2OptionsFromEnv(),
       );
       this.policy = resolved.policy;
       this.policyIsLlm = opts.policyIsLlm ?? resolved.kind === 'llm';
@@ -346,13 +361,9 @@ export class BotRunner {
       this.log(
         `policy ${resolved.policy.name} selected (kind ${resolved.kind}, difficulty ${resolved.difficulty})`,
       );
-      // Explicit, machine-parseable fallback marker: `high` is reserved and
-      // downgraded to `medium`, never silently.
-      if (resolved.downgraded) {
-        this.log(
-          `difficulty ${resolved.requestedDifficulty} -> ${resolved.difficulty} (downgraded=true)`,
-        );
-      }
+      // A withdrawn `high` (or any unknown tier) is reported by the warnings loop
+      // below: core's `downgraded` is now always false, so there is no separate
+      // downgrade marker to emit.
       for (const warning of resolved.warnings) this.log(`policy warning: ${warning}`);
     }
     this.memoryEnabled = opts.memory !== false;

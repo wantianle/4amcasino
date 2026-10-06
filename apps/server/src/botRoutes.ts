@@ -62,7 +62,9 @@ export interface BotRow {
   status: BotStatus;
   policy_kind: string;
   policy_json: string | null;
-  /** Difficulty tier (`low` | `medium` | `high`); orthogonal to `policy_kind`. */
+  /** Effective difficulty tier (`low` | `medium`) after rollback; orthogonal
+   *  to `policy_kind`. Legacy hubs may still hold the withdrawn `high`, which
+   *  is read as `medium` by the resolver. */
   difficulty: string;
   seat: number | null;
   identity_ct: string | null;
@@ -77,19 +79,21 @@ export interface BotRow {
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 
 /**
- * Difficulty tiers accepted by the API. `high` is a reserved GTO tier: it is
- * accepted (400 only for genuinely unknown values) and the resolver falls back
- * to `medium` with a warning rather than producing illegal behaviour.
+ * Difficulty tiers accepted by the API. Only `low` and `medium` are writable;
+ * `high` is a withdrawn reserved GTO tier, so a create/update with it is a 400
+ * ("legacy persisted `high` rows are still readable and are migrated to
+ * `medium` on boot, but no new `high` may be written").
  */
-export const BOT_DIFFICULTIES = ['low', 'medium', 'high'] as const;
+export const BOT_DIFFICULTIES = ['low', 'medium'] as const;
 export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
 
 const createBotSchema = z.object({
   name: z.string().trim().min(1).max(24).optional(),
   policyKind: z.string().trim().min(1).max(40).default('scripted'),
   policyJson: z.string().max(20_000).optional(),
-  // Defaults to `low` so a create with no difficulty behaves exactly as before.
-  difficulty: z.enum(BOT_DIFFICULTIES).default('low'),
+  // Defaults to `medium` (the rules-v1 engine) so a create with no difficulty
+  // runs the strong new bot by default; `low` is an explicit opt-out.
+  difficulty: z.enum(BOT_DIFFICULTIES).default('medium'),
   seat: z.number().int().min(0).max(8),
   // Optional because a bot can also be funded later via POST .../buy; a bot with
   // no chips still has a purchase path, so it is never stranded at stack 0.

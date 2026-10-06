@@ -588,22 +588,68 @@ describe('shared buy service', () => {
 });
 
 describe('bot difficulty', () => {
-  it('defaults to low and persists it on create and GET', async () => {
+  /**
+   * A bare bot schema (current `medium` default) plus the migration's `meta`
+   * marker table, so `migrateBots` can be driven directly without a full
+   * `openDb`.
+   */
+  function botSchemaDb() {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE bot_accounts (
+        id TEXT PRIMARY KEY, room_id TEXT NOT NULL, owner_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL, policy_kind TEXT NOT NULL,
+        policy_json TEXT, difficulty TEXT NOT NULL DEFAULT 'medium', seat INTEGER,
+        identity_ct TEXT, identity_nonce TEXT, identity_tag TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, stopped_at INTEGER,
+        stop_requested_at INTEGER
+      );
+      CREATE TABLE agent_grants (
+        id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL, label TEXT,
+        scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL, can_play INTEGER NOT NULL,
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+    `);
+    return db;
+  }
+
+  function difficultyOf(db: Database.Database, id: string): string {
+    return (
+      db.prepare('SELECT difficulty FROM bot_accounts WHERE id = ?').get(id) as {
+        difficulty: string;
+      }
+    ).difficulty;
+  }
+
+  function insertBot(db: Database.Database, id: string, difficulty: string, userId: number): void {
+    db.prepare(
+      "INSERT INTO bot_accounts (id, room_id, owner_id, user_id, status, policy_kind, difficulty, created_at, updated_at) VALUES (?, 'r1', 1, ?, 'ready', 'scripted', ?, 0, 0)",
+    ).run(id, userId, difficulty);
+  }
+
+  it('defaults to medium and persists it on create and GET', async () => {
     const created = (await createBot({ seat: 1 })).json();
-    expect(created.bot.difficulty).toBe('low');
-    expect(botRow(created.bot.id).difficulty).toBe('low');
+    expect(created.bot.difficulty).toBe('medium');
+    expect(botRow(created.bot.id).difficulty).toBe('medium');
 
     const list = await ctx.app.inject({ url: `/api/rooms/${room}/bots`, headers: auth(hostToken) });
     const listed = list.json().bots.find((b: { id: string }) => b.id === created.bot.id);
-    expect(listed.difficulty).toBe('low');
+    expect(listed.difficulty).toBe('medium');
   });
 
-  it('accepts low / medium / high and persists the value verbatim', async () => {
-    for (const [i, difficulty] of (['low', 'medium', 'high'] as const).entries()) {
+  it('accepts low / medium and persists the value verbatim', async () => {
+    for (const [i, difficulty] of (['low', 'medium'] as const).entries()) {
       const created = (await createBot({ seat: i + 1, difficulty })).json();
       expect(created.bot.difficulty).toBe(difficulty);
       expect(botRow(created.bot.id).difficulty).toBe(difficulty);
     }
+  });
+
+  it('rejects the withdrawn high tier with 400 and creates no bot', async () => {
+    const res = await createBot({ seat: 1, difficulty: 'high' });
+    expect(res.statusCode).toBe(400);
+    expect((ctx.db.prepare('SELECT COUNT(*) AS n FROM bot_accounts').get() as { n: number }).n).toBe(0);
   });
 
   it('rejects an unknown difficulty with 400 and creates no bot', async () => {
@@ -656,7 +702,7 @@ describe('bot difficulty', () => {
             difficulty: string;
           }
         ).difficulty,
-      ).toBe('low');
+      ).toBe('medium');
 
       // Re-running is a no-op (no duplicate-column error) and preserves data.
       expect(() => migrateBots(legacy)).not.toThrow();
@@ -666,7 +712,98 @@ describe('bot difficulty', () => {
             difficulty: string;
           }
         ).difficulty,
-      ).toBe('low');
+      ).toBe('medium');
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('upgrades legacy low (old default) and withdrawn high rows to medium, idempotently', () => {
+    const legacy = new Database(':memory:');
+    try {
+      // An existing DB that already has `difficulty` with the OLD `low` default;
+      // `ensureColumn` must not rewrite the column, so the boot migration is the
+      // only thing that moves the stored rows.
+      legacy.exec(`
+        CREATE TABLE bot_accounts (
+          id TEXT PRIMARY KEY, room_id TEXT NOT NULL, owner_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL, policy_kind TEXT NOT NULL,
+          policy_json TEXT, difficulty TEXT NOT NULL DEFAULT 'low', seat INTEGER,
+          identity_ct TEXT, identity_nonce TEXT, identity_tag TEXT,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, stopped_at INTEGER,
+          stop_requested_at INTEGER
+        );
+        CREATE TABLE agent_grants (
+          id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL, label TEXT,
+          scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL, can_play INTEGER NOT NULL,
+          created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+        );
+      `);
+      const ins = legacy.prepare(
+        "INSERT INTO bot_accounts (id, room_id, owner_id, user_id, status, policy_kind, difficulty, created_at, updated_at) VALUES (?, 'r1', 1, ?, 'ready', 'scripted', ?, 0, 0)",
+      );
+      ins.run('old_low', 2, 'low');
+      ins.run('old_high', 3, 'high');
+      ins.run('already_medium', 4, 'medium');
+      ins.run('odd_value', 5, 'martian');
+
+      migrateBots(legacy);
+
+      const difficultyOf = (id: string) =>
+        (
+          legacy.prepare('SELECT difficulty FROM bot_accounts WHERE id = ?').get(id) as {
+            difficulty: string;
+          }
+        ).difficulty;
+      expect(difficultyOf('old_low')).toBe('medium');
+      expect(difficultyOf('old_high')).toBe('medium');
+      expect(difficultyOf('already_medium')).toBe('medium');
+      // Unknown values are left for the resolver's fallback, not rewritten here.
+      expect(difficultyOf('odd_value')).toBe('martian');
+
+      // Idempotent: a second boot changes nothing and never throws.
+      expect(() => migrateBots(legacy)).not.toThrow();
+      expect(difficultyOf('old_low')).toBe('medium');
+      expect(difficultyOf('old_high')).toBe('medium');
+      // The cut-over is now marked, so a later explicit `low` is never clobbered.
+      expect(
+        legacy.prepare("SELECT value FROM meta WHERE key = 'bot-difficulty-medium-1'").get(),
+      ).toBeTruthy();
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('keeps a user-chosen low across restarts once the marker is written', () => {
+    const legacy = botSchemaDb();
+    try {
+      // First boot: the marker is written and there is nothing to cut over.
+      migrateBots(legacy);
+      expect(
+        legacy.prepare("SELECT value FROM meta WHERE key = 'bot-difficulty-medium-1'").get(),
+      ).toBeTruthy();
+
+      // The user explicitly creates a `low` bot after the marker exists.
+      insertBot(legacy, 'chosen_low', 'low', 9);
+
+      // A restart must NOT re-run the cut-over: the deliberate `low` survives.
+      migrateBots(legacy);
+      expect(difficultyOf(legacy, 'chosen_low')).toBe('low');
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('corrects a lingering high even when the marker already exists', () => {
+    const legacy = botSchemaDb();
+    try {
+      migrateBots(legacy); // writes the one-shot marker
+      // `high` is unwritable now, but a legacy value can still surface (an old
+      // server writing during a rolling deploy, or a hand-edited DB).
+      insertBot(legacy, 'late_high', 'high', 9);
+
+      migrateBots(legacy);
+      expect(difficultyOf(legacy, 'late_high')).toBe('medium');
     } finally {
       legacy.close();
     }

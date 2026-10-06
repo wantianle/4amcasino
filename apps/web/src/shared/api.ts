@@ -100,7 +100,8 @@ export interface BotPublic {
   configuredSeat: number | null;
   status: BotStatus;
   policyKind: string;
-  /** Difficulty tier; `high` is accepted by the API but currently runs as medium. */
+  /** Difficulty tier; `medium` is the default. The withdrawn `high` is no longer
+   *  accepted on write (legacy rows are migrated to `medium` server-side). */
   difficulty: BotDifficulty;
   createdAt: number;
   updatedAt: number;
@@ -111,7 +112,7 @@ export interface BotPublic {
   stack: number;
 }
 
-export type BotDifficulty = 'low' | 'medium' | 'high';
+export type BotDifficulty = 'low' | 'medium';
 
 /** The buy request the create/buy endpoints echo back. `approved` means the
  *  chips already landed (host is the room's banker); `pending` waits in the
