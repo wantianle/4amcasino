@@ -16,6 +16,11 @@ import { legalActions, type PlayerAction, type ServerMsg } from '@4am/shared';
 import { t, tr } from './i18n/index.ts';
 import { handReducer } from './handReducer.ts';
 import { handEffectsReducer } from './handEffectsReducer.ts';
+import {
+  handLifecycleReducer,
+  type LifecycleMsg,
+  type LifecycleResult,
+} from './handLifecycleReducer.ts';
 import { useStore } from './store.ts';
 import { wsClient } from './ws.ts';
 import { voice } from './voice.ts';
@@ -339,65 +344,128 @@ export function sendChat(text: string, kind: 'text' | 'sticker' | 'phrase' = 'te
   wsClient.send({ t: 'chat', text, kind });
 }
 
+/** Route one class-B frame through the pure lifecycle reducer and execute the
+ *  ordered operations it returns. The impure capabilities the reducer is not
+ *  allowed to hold (the resync flag, the clock, the per-hand key, `localStorage`)
+ *  are resolved here and injected as data/thunks. */
+function runLifecycle(msg: LifecycleMsg): void {
+  const state = useStore.getState();
+  // `consumeResync()` is a consuming side effect: drain it here, once, exactly
+  // where the old `room_state` branch did, and hand the boolean to the reducer.
+  const resync = msg.t === 'room_state' ? wsClient.consumeResync() : false;
+  const result = handLifecycleReducer(
+    {
+      hand: state.hand,
+      lastHand: state.lastHand,
+      room: state.room,
+      registries: { terminalHands, endedHands, foldedByMe },
+      userId: state.auth.userId,
+      resync,
+      now: Date.now,
+      handKey: (handId) => handKeyFor(handId)?.toString(16) ?? null,
+    },
+    msg,
+  );
+  applyLifecycle(result);
+}
+
+/** Execute a `LifecycleResult`. Registry claims are applied first, then the
+ *  ordered ops are run start to finish so the interleaving of store writes and
+ *  effects is exactly the one the reducer chose. */
+function applyLifecycle(result: LifecycleResult): void {
+  const { terminalHands: terminalClaim, endedHands: endedClaim } = result.claims;
+  if (terminalClaim !== undefined) terminalHands.add(terminalClaim);
+  if (endedClaim !== undefined) endedHands.add(endedClaim);
+  for (const op of result.ops) {
+    if ('store' in op) {
+      const store = useStore.getState();
+      switch (op.store) {
+        case 'room':
+          store.setRoom(op.set);
+          break;
+        case 'hand':
+          if ('reset' in op) store.resetHand(op.reset);
+          else store.patchHand(op.patch);
+          break;
+        case 'lastHand':
+          store.setLastHand(op.set);
+          break;
+        case 'errors':
+          store.pushError(op.push);
+          break;
+      }
+      continue;
+    }
+    switch (op.effect) {
+      case 'sound':
+        play(op.name);
+        break;
+      case 'voice-sync':
+        voice.syncPeers(op.players);
+        break;
+      case 'drop-hand-key':
+        try {
+          localStorage.removeItem(KEY_PREFIX + op.handId);
+          sessionStorage.removeItem(KEY_PREFIX + op.handId);
+        } catch {
+          /* storage disabled */
+        }
+        break;
+      case 'prune-hand-keys': {
+        // previous hands' keys are no longer needed: the voluntary-show window
+        // for the last hand closes when a new one is dealt
+        const keep = KEY_PREFIX + op.keepHandId;
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+          const key = sessionStorage.key(i);
+          if (key?.startsWith(KEY_PREFIX) && key !== keep) sessionStorage.removeItem(key);
+        }
+        break;
+      }
+      case 'key-commit': {
+        const k = createHandKey(op.handId);
+        const commit = pointHex(handKeyCommit(k));
+        wsClient.send({
+          t: 'key_commit',
+          handId: op.handId,
+          commit,
+          sig: signContent(
+            useStore.getState().auth.identity!.secretKey,
+            op.handId,
+            'key_commit',
+            { commit },
+          ),
+        });
+        break;
+      }
+      case 'fold-key':
+        wsClient.send({
+          t: 'fold_key',
+          handId: op.handId,
+          key: op.key,
+          sig: signed(op.handId, 'fold_key', { key: op.key }),
+        });
+        break;
+      case 'reveal-key': {
+        const k = handKeyFor(op.handId);
+        if (k === null) break;
+        const key = k.toString(16);
+        wsClient.send({
+          t: 'reveal_key',
+          handId: op.handId,
+          key,
+          sig: signed(op.handId, 'reveal_key', { key }),
+        });
+        break;
+      }
+    }
+  }
+}
+
 export function handle(msg: ServerMsg): void {
   const store = useStore.getState();
   switch (msg.t) {
     case 'room_state': {
-      store.setRoom(msg);
-      // Authoritative snapshot restores countdown/readiness after a reconnect.
-      if (msg.autoDealAt !== undefined)
-        store.patchHand({ autoDealAt: msg.autoDealAt, readyCheck: msg.readyCheck ?? null });
-      // after a reconnect (deploy or network drop): if the server no longer has
-      // our hand, stop showing it as live instead of freezing the table
-      if (wsClient.consumeResync() && !msg.handActive) {
-        const h = useStore.getState().hand;
-        const failed = h.settlementFailed;
-        if (h.handId && failed && failed.handId === h.handId) {
-          // A pending durable-settlement failure is NOT resolved by the hand
-          // disappearing from the server. After a restart the `hand_lifecycle`
-          // row can still be unresolved, and a committed hand's `hand_end` may
-          // simply have been missed - absence of `handActive` is not proof the
-          // chips moved. Keep the recovery banner; a replayed `hand_end` (the
-          // server retains the terminal frame) clears it. Until then mark it
-          // orphaned: there is no live hand for the host to retry.
-          store.patchHand({
-            settlementFailed: {
-              ...failed,
-              orphaned: true,
-              retrying: false,
-              retryRequestedAt: null,
-            },
-            deadline: null,
-          });
-        } else if (h.handId && h.handRecovery === 'unresolved') {
-          // The server's durable answer for this hand is `unresolved`: it never
-          // reached a terminal transaction, so the missing live hand is NOT a
-          // restart refund. Keep the recovery state and stop the dead action
-          // timer; only an operator resolves it. Synthesising an abort here
-          // would fabricate a refund the durable state never made (and the next
-          // hand would still be refused).
-          store.patchHand({ deadline: null, baseDeadline: null });
-        } else if (h.handId && !h.result && !h.abort) {
-          store.patchHand({
-            abort: {
-              t: 'hand_abort',
-              handId: h.handId,
-              reason:
-                'The server restarted during this hand. Bets were returned; the host can deal again.',
-              blamedSeat: null,
-            },
-            deadline: null,
-            settlementFailed: null,
-          });
-          try {
-            localStorage.removeItem(KEY_PREFIX + h.handId);
-            sessionStorage.removeItem(KEY_PREFIX + h.handId);
-          } catch {
-            /* storage disabled */
-          }
-        }
-      }
-      voice.syncPeers(msg.players);
+      runLifecycle(msg);
       return;
     }
     case 'chat':
@@ -424,41 +492,7 @@ export function handle(msg: ServerMsg): void {
       return;
 
     case 'hand_start': {
-      const mySeat = mySeatIn(msg.seats);
-      // re-sent on reconnect: never wipe state we already have for this hand
-      const fresh = useStore.getState().hand.handId !== msg.handId;
-      if (fresh) {
-        // A refresh can receive this hand's `settlement_failed` BEFORE its
-        // `hand_start`: the server re-asserts the frozen settlement first, and
-        // a fresh client writes it against a null handId. An unconditional
-        // reset would erase exactly the banner the host needs. Keep it only when
-        // it names THIS hand - a previous hand's failure must never leak in.
-        const carry = useStore.getState().hand.settlementFailed;
-        store.resetHand({
-          handId: msg.handId,
-          seats: msg.seats,
-          buttonSeat: msg.buttonSeat,
-          settlementFailed: carry?.handId === msg.handId ? carry : null,
-        });
-        // previous hands' keys are no longer needed: the voluntary-show window
-        // for the last hand closes when a new one is dealt
-        for (let i = sessionStorage.length - 1; i >= 0; i--) {
-          const key = sessionStorage.key(i);
-          if (key?.startsWith('4am/handkey/') && key !== `4am/handkey/${msg.handId}`) {
-            sessionStorage.removeItem(key);
-          }
-        }
-      }
-      if (fresh) play('shuffle');
-      if (mySeat === null) return; // spectator
-      const k = createHandKey(msg.handId);
-      const commit = pointHex(handKeyCommit(k));
-      wsClient.send({
-        t: 'key_commit',
-        handId: msg.handId,
-        commit,
-        sig: signContent(store.auth.identity!.secretKey, msg.handId, 'key_commit', { commit }),
-      });
+      runLifecycle(msg);
       return;
     }
 
@@ -614,42 +648,7 @@ export function handle(msg: ServerMsg): void {
     }
 
     case 'action_applied': {
-      const { hand } = useStore.getState();
-      const soundFor = {
-        fold: 'muck',
-        check: 'knock',
-        call: 'chip',
-        bet: 'chips-slide',
-        raise: 'chips-slide',
-      } as const;
-      play(soundFor[msg.action.type]);
-      // my fold escrows my hand key with the server, so the hand can carry on
-      // without me if I disappear (requested by notpritam, docs/FEATURES.md)
-      // ...but only for a fold this browser actually made. Taking the server's
-      // word for it would let a forged action_applied pull the hand key out of a
-      // player who is still contesting the pot.
-      if (
-        msg.action.type === 'fold' &&
-        hand.handId === msg.handId &&
-        msg.seat === mySeatIn(hand.seats) &&
-        foldedByMe.has(msg.handId) &&
-        // The last fold settles synchronously on the server. There is no
-        // remaining hand to escrow for; replying would arrive after hand_end.
-        (hand.betting?.seats.filter((seat) => !seat.folded && seat.seat !== msg.seat).length ?? 0) >
-          1
-      ) {
-        const key = handKeyFor(msg.handId)?.toString(16);
-        if (key === undefined) return;
-        wsClient.send({
-          t: 'fold_key',
-          handId: msg.handId,
-          key,
-          sig: signed(msg.handId, 'fold_key', { key }),
-        });
-      }
-      store.patchHand({
-        lastActions: { ...hand.lastActions, [msg.seat]: { ...msg.action, auto: msg.auto } },
-      });
+      runLifecycle(msg);
       return;
     }
 
@@ -825,255 +824,32 @@ export function handle(msg: ServerMsg): void {
     }
 
     case 'settlement_failed': {
-      const h = useStore.getState().hand;
-      // A hand that already reached a terminal state must never be re-opened: a
-      // late or replayed frame from a replaced connection would otherwise
-      // resurrect the banner that `hand_end`/`hand_abort` just cleared.
-      if (terminalHands.has(msg.handId)) return;
-      // A frame naming an already-superseded hand must not resurrect the banner.
-      if (h.handId && h.handId !== msg.handId) return;
-      const prev = h.settlementFailed;
-      store.patchHand({
-        settlementFailed: {
-          handId: msg.handId,
-          reason: msg.reason,
-          attempt: msg.attempt,
-          retrying: msg.retrying,
-          // any frame answers the in-flight manual retry
-          retryRequestedAt: null,
-          manualRetry: prev?.handId === msg.handId ? prev.manualRetry : false,
-          // a live frame proves the server still has the hand: not orphaned
-          since: Date.now(),
-          orphaned: false,
-        },
-      });
-      // Never silent: the durable write failed, so the chips are not yet moved.
-      store.pushError(
-        msg.retrying
-          ? t('Settlement failed - retrying automatically (attempt {n}).', { n: msg.attempt })
-          : t('Settlement failed - the host must retry.'),
-      );
+      runLifecycle(msg);
       return;
     }
 
     case 'hand_end': {
-      // Record the terminal frame for its own hand BEFORE any guard: a retained
-      // replay of an older hand still has to stop a later `settlement_failed`
-      // for that same hand from reviving its banner.
-      endedHands.add(msg.handId);
-      terminalHands.add(msg.handId);
-      const cur = useStore.getState().hand.handId;
-      if (cur && cur !== msg.handId) {
-        // A terminal frame for a hand the client already moved past (a late
-        // frame from a replaced connection, or the server's retained replay of
-        // an older hand) must not touch the CURRENT hand's live state. But it
-        // still carries ITS OWN hand's terminal outcome, so clear a settlement
-        // failure naming that hand - that is what unsticks a stale banner.
-        if (useStore.getState().hand.settlementFailed?.handId === msg.handId) {
-          store.patchHand({ settlementFailed: null });
-        }
-        return;
-      }
-      const state = useStore.getState();
-      const mySeat = mySeatIn(state.hand.seats);
-      const myDelta = msg.deltas.find((d) => d.seat === mySeat)?.delta ?? 0;
-      play(myDelta > 0 ? 'win' : 'end');
-      // freeze the recap before the next deal wipes it: the "last hand" strip
-      // shows the winner and everyone's cards on demand
-      // (requested by notpritam, docs/FEATURES.md)
-      const h = state.hand;
-      const nameOf = (seat: number) =>
-        state.room?.players.find((p) => p.seat === seat)?.displayName ?? `Seat ${seat + 1}`;
-      // Freeze every run's board, not just the first two: a 3-run hand only
-      // reaches the recap through `boards`. showdown.multiRun (2-3 runs) is
-      // authoritative, then the legacy runTwice pair, then the live boards.
-      const showdownMultiRun = h.showdown?.multiRun ?? null;
-      const showdownTwice = h.showdown?.runTwice ?? null;
-      const boards = showdownMultiRun?.boards ?? showdownTwice?.boards ?? h.boards;
-      const multiRun = showdownMultiRun
-        ? { boards: showdownMultiRun.boards, awards: showdownMultiRun.awards }
-        : showdownTwice
-          ? { boards: showdownTwice.boards, awards: showdownTwice.awards }
-          : null;
-      store.setLastHand({
-        handId: msg.handId,
-        ts: Date.now(),
-        board: boards[0] ?? h.board,
-        board2: boards[1] ?? h.board2,
-        boards,
-        multiRun,
-        reveals: h.showdown?.reveals ?? [],
-        shown: h.shown,
-        deltas: msg.deltas,
-        commissionDeltas: msg.commissionDeltas,
-        runTwice: showdownTwice,
-        names: Object.fromEntries(h.seats.map((s) => [s.seat, nameOf(s.seat)])),
-      });
-      store.patchHand({
-        result: msg,
-        deadline: null,
-        baseDeadline: null,
-        multiRunOffer: null,
-        // the terminal frame can only be broadcast after the write committed
-        settlementFailed: null,
-        // A reconnect may have synthesised a refund abort before the server's
-        // retained terminal frame was replayed; a real hand_end supersedes it.
-        abort: null,
-        // A real terminal frame proves the hand committed: the durable
-        // `unresolved` answer (if any) no longer applies.
-        handRecovery: null,
-      });
-      // the hand key stays until the next deal so "Show cards" can still prove reveals
+      runLifecycle(msg);
       return;
     }
 
     case 'hand_abort': {
-      // Same stale-frame discipline as hand_end: an old connection's abort must
-      // not wipe the current hand's recovery state, but a matching failure for
-      // its OWN hand is exactly what the abort resolves.
-      endedHands.add(msg.handId);
-      terminalHands.add(msg.handId);
-      const cur = useStore.getState().hand.handId;
-      if (cur && cur !== msg.handId) {
-        if (useStore.getState().hand.settlementFailed?.handId === msg.handId) {
-          store.patchHand({ settlementFailed: null });
-        }
-        return;
-      }
-      store.patchHand({
-        abort: msg,
-        deadline: null,
-        baseDeadline: null,
-        multiRunOffer: null,
-        settlementFailed: null,
-        // A real abort is a terminal answer: any durable `unresolved` no longer
-        // applies.
-        handRecovery: null,
-      });
+      runLifecycle(msg);
       return;
     }
 
     case 'hand_recovery': {
-      // Durable answer for the hand we told the server we still hold, used when
-      // no live hand or retained frame can answer. It is the authoritative exit
-      // from an `orphaned` banner: once an operator resolves the lifecycle, the
-      // next reconnect reports `committed`/`aborted` here and the client moves
-      // on instead of insisting an administrator is still needed.
-      const h = useStore.getState().hand;
-      const failed = h.settlementFailed;
-      // A hand that already reached a terminal outcome must not be rewritten by
-      // a late/replayed durable answer. Evaluated BEFORE the `terminalHands.add`
-      // below - reading it after would always see the just-added id and the guard
-      // could never fire. The registry is the durable record: it outlives any
-      // single hand lifecycle, so a later hand that reuses the id is still
-      // rejected, which is the correct (idempotent) behaviour.
-      const alreadyTerminal = terminalHands.has(msg.handId);
-      if (msg.status === 'committed') {
-        terminalHands.add(msg.handId);
-        if (alreadyTerminal) return;
-        if (h.handId === msg.handId && !h.result) {
-          // No full terminal survived the restart. Close the hand as finished
-          // (chips moved) so the room_state resync neither synthesises a refund
-          // abort nor leaves a phantom live table. The recap is a recovered
-          // marker: per-seat detail is genuinely unavailable in this path.
-          store.patchHand({
-            result: {
-              t: 'hand_end',
-              handId: msg.handId,
-              head: '',
-              stacks: [],
-              deltas: [],
-              recovered: true,
-            },
-            abort: null,
-            deadline: null,
-            baseDeadline: null,
-            multiRunOffer: null,
-            settlementFailed: null,
-            // The hand is terminal now: clear the admin-only recovery state.
-            handRecovery: null,
-          });
-        } else if (failed?.handId === msg.handId) {
-          store.patchHand({ settlementFailed: null, handRecovery: null });
-        }
-        return;
-      }
-      if (msg.status === 'aborted') {
-        terminalHands.add(msg.handId);
-        if (alreadyTerminal) return;
-        if (h.handId === msg.handId || failed?.handId === msg.handId) {
-          store.patchHand({
-            abort: {
-              t: 'hand_abort',
-              handId: msg.handId,
-              reason: 'The hand was aborted by the server; bets were returned.',
-              blamedSeat: null,
-            },
-            result: null,
-            deadline: null,
-            baseDeadline: null,
-            multiRunOffer: null,
-            settlementFailed: null,
-            // Bets were returned: this is the terminal abort, so the durable
-            // `unresolved` state is resolved.
-            handRecovery: null,
-          });
-        }
-        return;
-      }
-      // unresolved: the hand never reached a terminal transaction. This is
-      // recorded even when NO `settlement_failed` frame was ever seen - the
-      // client still holds the hand, and its disappearance from a later
-      // `room_state` must not be read as a refund. Only an operator can resolve
-      // it, so surface admin-only status and never offer a retry that cannot
-      // succeed.
-      // A settled hand cannot become unresolved: a late durable answer must not
-      // mark it back. Declining here without adding to `terminalHands` keeps the
-      // distinction intact - `unresolved` is not a terminal state.
-      if (alreadyTerminal) return;
-      if (h.handId === msg.handId || failed?.handId === msg.handId) {
-        if (failed && failed.handId === msg.handId) {
-          store.patchHand({
-            handRecovery: 'unresolved',
-            settlementFailed: {
-              ...failed,
-              orphaned: true,
-              retrying: false,
-              retryRequestedAt: null,
-            },
-            deadline: null,
-            baseDeadline: null,
-          });
-        } else {
-          store.patchHand({ handRecovery: 'unresolved', deadline: null, baseDeadline: null });
-        }
-      }
+      runLifecycle(msg);
       return;
     }
 
     case 'transcript_entry': {
-      // The settlement entry is the hand's terminal record, and it is broadcast
-      // BEFORE the server asks for audit keys - whereas hand_end comes after,
-      // and a hand won by everyone folding never produces a showdown at all. So
-      // this, not hand_end, is the signal that answering need_keys is safe.
-      if (msg.type === 'settlement' || msg.type === 'hand_abort') endedHands.add(msg.handId);
+      runLifecycle(msg);
       return;
     }
 
     case 'need_keys': {
-      // The audit key opens the whole deck, so it goes out only once the hand is
-      // genuinely over. Answering this mid-hand - which the server can ask for at
-      // any moment - would hand it every hole card at the table at once.
-      if (!endedHands.has(msg.handId)) return;
-      const k = handKeyFor(msg.handId);
-      if (k === null) return;
-      const key = k.toString(16);
-      wsClient.send({
-        t: 'reveal_key',
-        handId: msg.handId,
-        key,
-        sig: signed(msg.handId, 'reveal_key', { key }),
-      });
+      runLifecycle(msg);
       return;
     }
 
