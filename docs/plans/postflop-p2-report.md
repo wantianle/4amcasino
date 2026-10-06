@@ -9,6 +9,11 @@
 4. `packages/agent-core/test/fixtures/postflopPolicyBaseline.ts`（差分基线；二轮新增，后续轮未再改）
 5. 本报告 `docs/plans/postflop-p2-report.md`（文档）
 
+> **当前状态（2026-10-06 回退）**：P2 四开关默认已于 2026-10-06 回退为**全关**。依据是
+> `docs/plans/2026-10-06-bot-ab-eval-results.md` 的首次真实 A/B 评测（`p2:all` cluster
+> CI `[-85.8, -17.1]`，裁决 `worse`）。下述"核心决策"是回退之前的历史记录，实现与逐项
+> 开关能力均保留，可通过显式配置重新开启（`FOURAM_P2=on` / 显式 `p2` 覆盖）。
+
 > 核心决策（2026-10-06 更新）：**P2 的四个行为开关默认全部开启**（`shrinkage` /
 > `sizeGrid` / `rangePropagation` / `buckets` 均 `true`）。实现与测试保留、可注入可关闭；
 > 显式传入 `P2_ALL_OFF`（或按开关传 `false`）即可一键回到旧路径，`P2_ALL_OFF` 与基线

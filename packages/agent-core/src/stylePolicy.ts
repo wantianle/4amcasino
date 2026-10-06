@@ -270,8 +270,9 @@ export interface PolicyResolution {
  * `tight-aggressive` path ignore it.
  *
  * `opts.p2` is forwarded to the `RulePolicy` built here, so the caller (server
- * resolver / difficulty dispatch) can inject the P2 rollback switches. Omitted
- * fields keep `DEFAULT_P2` (all on); pass `P2_ALL_OFF` for the rollback path.
+ * resolver / difficulty dispatch) can inject P2 switches. Omitted fields keep
+ * `DEFAULT_P2` (all off since the 2026-10-06 A/B revert); pass explicit switches
+ * on to opt into P2 (`P2_ALL_OFF` is now equivalent to the default).
  */
 export function resolvePolicy(
   kindRaw: string | null | undefined,

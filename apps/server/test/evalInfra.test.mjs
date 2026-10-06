@@ -383,10 +383,11 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
     expect(resolveEvalStrategy('p2:all').name).toBe('rules-v1');
   });
 
-  it('default arm is the explicit all-off baseline, isolated from the product all-on default', () => {
-    // The harness baseline must NOT track the shipped `DEFAULT_P2` (all-on):
-    // it is the pre-P2 engine, built by passing `P2_ALL_OFF` explicitly. That
-    // makes `rules-v1` a real A/B control for every `p2:*` arm.
+  it('default arm is the explicit all-off baseline, isolated from the product default', () => {
+    // The harness baseline must NOT track the shipped `DEFAULT_P2` (all-off since
+    // the 2026-10-06 A/B revert, but treated as an independent value): it is the
+    // pre-P2 engine, built by passing `P2_ALL_OFF` explicitly. That makes
+    // `rules-v1` a real A/B control for every `p2:*` arm.
     const allOff = new RulePolicy({ kind: 'tight-aggressive', p2: P2_ALL_OFF });
     const arm = makeStrategy('rules-v1');
     const alias = makeStrategy('default');
@@ -395,7 +396,8 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
       expect(arm.decide(view)).toEqual(expected);
       expect(alias.decide(view)).toEqual(expected);
     }
-    // ...and the alias really is the all-off arm, not the all-on product default.
+    // ...and the alias really is the explicit all-off arm, not a product default
+    // that could change.
     expect(armConfig('default').p2).toEqual(armConfig('rules-v1').p2);
   });
 

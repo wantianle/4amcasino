@@ -115,25 +115,35 @@ export interface BotPolicyResolution {
 }
 
 /**
- * P2 rollback kill-switch, read from server env only (`llmOptionsFromEnv`'s
- * sibling). The four P2 postflop switches are ON by default; this returns an
- * explicit all-off override for the whole engine when either:
+ * P2 postflop switches read from server env only (`llmOptionsFromEnv`'s sibling).
+ * The four switches are **OFF by default** since the 2026-10-06 A/B revert
+ * (`docs/plans/2026-10-06-bot-ab-eval-results.md`); this keeps the rollback
+ * reversible both ways:
  *
- *  - `FOURAM_P2_ALL_OFF` is truthy (`1`/`true`/`on`/`yes`), or
- *  - `FOURAM_P2=off` (also `false`/`0`/`no`).
+ *  - `FOURAM_P2=on`/`true`/`all` -> **explicit all-on** (the four switches
+ *    `true`); the capability stays available without a code change.
+ *  - `FOURAM_P2=off`/`false`/`0`/`no`, or `FOURAM_P2_ALL_OFF` truthy
+ *    (`1`/`true`/`on`/`yes`) -> explicit all-off ({@link P2_ALL_OFF}); the env
+ *    kill-switch is now redundant with the default but kept for compatibility.
+ *  - unset or an unrecognised value -> `{}`, which keeps `DEFAULT_P2` (all-off).
+ *    Unrecognised values are ignored rather than erroring, exactly as before.
  *
- * Anything else (including unset/invalid) returns `{}`, which keeps `DEFAULT_P2`
- * (all on) - so production runs P2 unless an operator explicitly rolls it back.
- * Scope: this only reverts the four P2 behaviours; it does NOT undo the
- * always-on `evaluateHand` straight-draw fix, so call it "P2 all-off / P2
- * rollback", never a full historical rollback. Ignored for `policyKind='llm'`
- * (an LLM policy owns its own decision path).
+ * `FOURAM_P2_ALL_OFF` wins over `FOURAM_P2` when both are set (kill-switch
+ * precedence). Scope: this only toggles the four P2 behaviours; it does NOT undo
+ * the always-on `evaluateHand` straight-draw fix, so it is not a full historical
+ * rollback. Ignored for `policyKind='llm'` (an LLM policy owns its own decision
+ * path).
  */
 export function p2OptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<P2Options> {
-  const allOff = isTruthyFlag(env.FOURAM_P2_ALL_OFF);
+  if (isTruthyFlag(env.FOURAM_P2_ALL_OFF)) return { ...P2_ALL_OFF };
   const p2Raw = env.FOURAM_P2?.trim().toLowerCase();
-  const p2Off = p2Raw !== undefined && ['off', 'false', '0', 'no'].includes(p2Raw);
-  return allOff || p2Off ? { ...P2_ALL_OFF } : {};
+  if (p2Raw !== undefined && ['on', 'true', 'all'].includes(p2Raw)) {
+    return { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true };
+  }
+  if (p2Raw !== undefined && ['off', 'false', '0', 'no'].includes(p2Raw)) {
+    return { ...P2_ALL_OFF };
+  }
+  return {};
 }
 
 /** Truthy env flag: `1`/`true`/`on`/`yes` (case-insensitive); everything else false. */
@@ -157,7 +167,8 @@ function isTruthyFlag(raw: string | undefined): boolean {
  *
  * `p2` is forwarded to the underlying `RulePolicy`/`PostflopPolicy` (see
  * {@link p2OptionsFromEnv}); it is ignored for the `llm` kind. Omit it for the
- * default all-on behaviour.
+ * default all-off behaviour (2026-10-06 A/B revert); pass an explicit `p2`
+ * override to opt into P2.
  */
 export function resolveBotPolicyDetailed(
   kind: string | null | undefined,

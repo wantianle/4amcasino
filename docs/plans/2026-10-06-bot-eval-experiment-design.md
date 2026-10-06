@@ -272,7 +272,8 @@ implemented). Keep the candidate set small and pre-registered — do not test al
 
 - `apps/server/test/helpers/evalStrategies.mjs` — **baseline isolation**:
   `defaultP2()` is now the explicit all-off `P2_ALL_OFF` snapshot, not the
-  shipped `DEFAULT_P2` (which is all-on). `rules-v1` / `baseline` / `default`
+  shipped `DEFAULT_P2` (all-off since the 2026-10-06 A/B revert; treated as an
+  independent value). `rules-v1` / `baseline` / `default`
   is therefore always the pre-P2 A/B control and every `p2:*` arm opens its
   switches from that all-off base — a product flip of `DEFAULT_P2` can no longer
   silently make the treatment identical to the control.

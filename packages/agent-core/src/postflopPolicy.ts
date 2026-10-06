@@ -1335,26 +1335,24 @@ export function buildVillainRange(
 
 /**
  * The four P2 behaviour switches. Each is independently injectable so a caller
- * (or a test) can A/B or disable one without touching the others.
+ * (or a test) can A/B or enable one without touching the others.
  *
- * **Every switch is ON by default (all four `true`).** The implementation and
- * its tests were originally landed behind an all-off default; the product
- * decision is now to run the implemented P2 engine by default. The switches
- * remain independently reversible: pass an explicit `p2` override (or the
- * frozen {@link P2_ALL_OFF} constant) to reproduce the pre-P2 decision path
- * exactly. Enable/disable is still per-`PostflopPolicy`/`RulePolicy` configurable,
- * so an eval or a kill-switch can turn any subset back off without a code change.
+ * **Every switch is OFF by default (all four `false`), reverted 2026-10-06 after
+ * the first real A/B evaluation.** The product briefly ran P2 all-on
+ * (commit `5e8566a`), but the eval at
+ * `docs/plans/2026-10-06-bot-ab-eval-results.md` found all-four-on
+ * significantly *worse* than the all-off baseline in its narrow rig (3-handed,
+ * `always-call` anchor, mirror strategy): `p2:all` cluster CI `[-85.8, -17.1]`,
+ * verdict `worse`. The user's ruling was therefore to turn P2 back off and
+ * return to the baseline while keeping the capability available. The
+ * implementation and its tests remain, so an explicit `p2` override (or a
+ * future eval-gated decision) can re-enable any subset without a code change.
  *
- * No A/B evidence yet proves each switch is a win; the four are therefore kept
- * independently switchable and the all-off path is regression-locked by the
- * baseline differential test. Treat this as an eval-gated default that is now
- * "on", not as a measured improvement.
- *
- * **Not byte-for-byte identical to the pre-P2 baseline even with every switch
- * off**: this file also carries an always-on `evaluateHand` fix (exclude
- * straight draws with no hero-only rank contribution; clear the draw flag at
- * `category >= 4`), which applies to hero and villain-combo evaluation
- * regardless of the switches. See `docs/plans/postflop-p2-report.md` §3.
+ * **Not byte-for-byte identical to the pre-P2 baseline**: this file also carries
+ * an always-on `evaluateHand` fix (exclude straight draws with no hero-only rank
+ * contribution; clear the draw flag at `category >= 4`), which applies to hero
+ * and villain-combo evaluation regardless of the switches. See
+ * `docs/plans/postflop-p2-report.md` §3 for the exact scope.
  */
 export interface P2Options {
   /** Beta posterior-mean opponent estimates instead of a `sampleHands < 10` cutoff. */
@@ -1368,26 +1366,33 @@ export interface P2Options {
 }
 
 /**
- * Frozen all-on default. `Object.freeze` + `Readonly<P2Options>` make "默认全开"
- * an immutable guarantee: a runtime write (`DEFAULT_P2.sizeGrid = false`) neither
+ * Frozen all-off default. `Object.freeze` + `Readonly<P2Options>` make "默认全关"
+ * an immutable guarantee: a runtime write (`DEFAULT_P2.sizeGrid = true`) neither
  * compiles nor takes effect, so the default parameters that read this constant
- * cannot be silently flipped. Callers that want a switch off pass their own
- * explicit `p2` option (or {@link P2_ALL_OFF} for all four).
+ * cannot be silently flipped. Callers that want a switch on must pass their own
+ * explicit `p2` option.
+ *
+ * Reverted to all-off (commit `5e8566a` had briefly made it all-on) on
+ * 2026-10-06 after the A/B eval `docs/plans/2026-10-06-bot-ab-eval-results.md`
+ * judged all-four-on `worse` than the all-off baseline (`p2:all` cluster CI
+ * `[-85.8, -17.1]`). See {@link P2Options}.
  */
 export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
-  shrinkage: true,
-  sizeGrid: true,
-  rangePropagation: true,
-  buckets: true,
+  shrinkage: false,
+  sizeGrid: false,
+  rangePropagation: false,
+  buckets: false,
 });
 
 /**
  * Frozen all-off configuration: the explicit revert / kill-switch back to the
  * pre-P2 decision path (`shrinkage` / `sizeGrid` / `rangePropagation` / `buckets`
- * all `false`). Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })` to
- * restore the behaviour the baseline differential test locks down. Kept as a
- * named constant so the rollback is one import away and cannot drift from the
- * `DEFAULT_P2` shape.
+ * all `false`). Since the 2026-10-06 A/B revert this is **byte-identical to
+ * {@link DEFAULT_P2}**; it is kept as a named constant because callers (server
+ * env `FOURAM_P2_ALL_OFF`, the eval harness) and tests reference it explicitly,
+ * so the one-import rollback / kill-switch cannot drift from the `DEFAULT_P2`
+ * shape. Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })`, or omit `p2`
+ * entirely for the same all-off default.
  */
 export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
   shrinkage: false,

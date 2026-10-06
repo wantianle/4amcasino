@@ -214,8 +214,9 @@ function assertSharedLegal(d: PolicyDecision, legal: DecisionLegalActions): void
 }
 
 const TAG = RULE_PRESETS['tight-aggressive'];
-// These tests lock the P0/P1 engine behaviour; P2 is explicitly reverted so the
-// default all-on P2 switches cannot perturb what is being asserted here.
+// These tests lock the P0/P1 engine behaviour. P2 now defaults to all-off
+// (2026-10-06 A/B revert), so the explicit `P2_ALL_OFF` is redundant but kept to
+// document the isolation from any future P2 default change.
 const policy = () => new PostflopPolicy({ params: TAG, seed: 7, p2: P2_ALL_OFF });
 
 // ---------------------------------------------------------------------------
@@ -293,7 +294,8 @@ describe('postflop: MDF', () => {
       samples,
       seed: deriveRulesSeed(policySeed, view),
       // Same P2 config as `policy()` so the equity read and the decision agree;
-      // this suite locks the P0/P1 engine with P2 explicitly off.
+      // this suite locks the P0/P1 engine with P2 explicitly off (the default
+      // after the 2026-10-06 A/B revert).
       villainRange: facingVillainRange(view, hole, potBefore, call, P2_ALL_OFF),
     });
     return {

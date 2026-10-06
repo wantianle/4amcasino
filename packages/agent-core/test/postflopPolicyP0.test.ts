@@ -29,7 +29,8 @@ import { RULE_PRESETS } from '../src/ruleStyles.js';
 
 const c = (n: string) => cardFromName(n);
 const SEED = 7;
-// P0 behaviour is locked with P2 explicitly reverted; the P2 default is all-on.
+// P0 behaviour is locked with P2 explicitly off (the default since the
+// 2026-10-06 A/B revert); the explicit constant keeps the isolation explicit.
 const policy = () =>
   new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed: SEED, p2: P2_ALL_OFF });
 

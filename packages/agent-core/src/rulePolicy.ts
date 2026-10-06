@@ -48,8 +48,10 @@ export interface RulePolicyOptions {
   fallback?: RuleFallbackPolicy;
   /**
    * P2 behaviour switches for the default postflop engine. Omitted fields keep
-   * `DEFAULT_P2` (all on); pass `P2_ALL_OFF` to revert the whole engine. Ignored
-   * when `postflop` is injected explicitly (the caller owns that engine's config).
+   * `DEFAULT_P2` (all off since the 2026-10-06 A/B revert); pass explicit
+   * switches on to opt into P2. `P2_ALL_OFF` is now equivalent to the default.
+   * Ignored when `postflop` is injected explicitly (the caller owns that
+   * engine's config).
    */
   p2?: Partial<P2Options>;
 }

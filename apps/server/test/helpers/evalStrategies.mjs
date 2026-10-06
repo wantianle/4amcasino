@@ -46,7 +46,8 @@ import {
  *   - `adaptive-preflop`                   -> `params.adaptivePreflop = true`
  *   - `p2:all+adaptive-preflop`            -> combined arm
  * Every arm starts from the explicit all-off `defaultP2()`, never the product
- * `DEFAULT_P2` (all-on), so `rules-v1` is always the A/B control.
+ * `DEFAULT_P2` (all-off since the 2026-10-06 A/B revert), so the baseline stays
+ * independent of how the product default is set.
  * An unknown segment (e.g. `p2:banana`, bare `sizeGrid`) resolves to `null`,
  * and `runEvalMatch` turns that into a hard error rather than silently seating
  * the wrong policy.
@@ -55,7 +56,8 @@ export const P2_FLAGS = ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets']
 
 /**
  * Explicit all-off P2 snapshot: the harness baseline, **decoupled from the
- * shipped `DEFAULT_P2` product default** (which is all-on). The baseline arm
+ * shipped `DEFAULT_P2` product default** (all-off since the 2026-10-06 A/B
+ * revert, but treated as an independent value that may change). The baseline arm
  * `rules-v1` must be the pre-P2 decision path regardless of how the product
  * flips its defaults, otherwise every `p2:*` arm would start from an all-on
  * config and a "one switch on" arm could be byte-identical to the baseline
@@ -153,8 +155,8 @@ export function makeArmPolicy(name, opts = {}) {
   // PostflopPolicy). The baseline (`rules-v1`, all off, adaptive off) is
   // decision-for-decision the pre-P2 engine; it is NOT the same object as the
   // shipped `new RulePolicy({ kind: 'tight-aggressive' })`, whose postflop
-  // engine now defaults to all-on `DEFAULT_P2`. The harness deliberately
-  // isolates its baseline from that product default.
+  // engine defaults to all-off `DEFAULT_P2` since the 2026-10-06 A/B revert. The
+  // harness deliberately isolates its baseline from that product default.
   const postflop = new PostflopPolicy({ params, seed, p2: parsed.p2 });
   return new RulePolicy({ kind: 'tight-aggressive', params, seed, postflop });
 }
