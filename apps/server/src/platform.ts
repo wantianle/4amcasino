@@ -27,6 +27,23 @@ export function isPlatform(db: DB, userId: number): boolean {
   return platformUserId(db) === userId;
 }
 
+/**
+ * SQL predicate: `expr` is NOT the configured Platform ("house") account.
+ *
+ * The platform id lives in `meta.platform_user_id`, so it is unknown when a
+ * query string is written: an uncorrelated subquery is how a read model counts
+ * or lists "real" users while leaving the house seat out. Every headcount /
+ * leaderboard read uses this one form - a room's player counts (public, my-rooms,
+ * history, admin) and the global leaderboard - so a future edit cannot drop the
+ * exclusion at just one site. Before it was extracted the copies differed only
+ * in whitespace; the semantics were already identical. When no platform account
+ * is configured the subquery is empty, `NOT IN ()` excludes nobody, and the
+ * house seat is simply absent.
+ */
+export function notPlatformAccountSql(expr: string): string {
+  return `${expr} NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key = '${KEY}')`;
+}
+
 /** requireUser, then require the caller to be the Platform account - 403 otherwise. */
 export function requirePlatform(db: DB) {
   const base = requireUser(db);

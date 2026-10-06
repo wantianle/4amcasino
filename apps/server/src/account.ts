@@ -2,7 +2,15 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DB } from './db.js';
-import { createSession, endSession, hashAuthKey, requireUser } from './auth.js';
+import {
+  authKeySchema,
+  createSession,
+  endSession,
+  hashAuthKey,
+  publicKeySchema,
+  requireUser,
+  usernameSchema,
+} from './auth.js';
 import { forgive, hitNamed, rateLimit } from './limits.js';
 
 /** Editing your password, your username, and getting back in when you have
@@ -16,10 +24,6 @@ import { forgive, hitNamed, rateLimit } from './limits.js';
  *
  *  A truly forgotten password is therefore an unrecoverable identity unless a
  *  recovery code was set up in advance - that code is the second door. */
-
-const authKey = z.string().length(64).regex(/^[0-9a-f]+$/);
-const pubKey = z.string().length(64).regex(/^[0-9a-f]+$/);
-const usernameSchema = z.string().min(2).max(24).regex(/^[a-zA-Z0-9_]+$/);
 
 // ── Recovery codes ───────────────────────────────────────────────────────────
 // A recovery code is minted by the server once, at signup, and returned in the
@@ -74,8 +78,9 @@ function sameHash(candidateHex: string, storedHex: string): boolean {
 }
 
 /** Re-keying while you are sitting in a hand would desync your seat's pubkey
- *  mid-deal, so we refuse rather than corrupt a live game. */
-function seatedSomewhere(db: DB, userId: number): boolean {
+ *  mid-deal, so we refuse rather than corrupt a live game. Shared with admin.ts:
+ *  the guard is the same whether the re-key is self-served or admin-initiated. */
+export function seatedSomewhere(db: DB, userId: number): boolean {
   return !!db
     .prepare('SELECT 1 FROM room_players WHERE user_id = ? AND seat IS NOT NULL LIMIT 1')
     .get(userId);
@@ -191,7 +196,7 @@ export function registerAccountRoutes(app: FastifyInstance, db: DB): void {
     },
     async (req, reply) => {
       const parsed = z
-        .object({ currentAuthKey: authKey, newAuthKey: authKey, newPublicKey: pubKey })
+        .object({ currentAuthKey: authKeySchema, newAuthKey: authKeySchema, newPublicKey: publicKeySchema })
         .safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
       const me = secretsFor(db, req.userId);
@@ -226,9 +231,9 @@ export function registerAccountRoutes(app: FastifyInstance, db: DB): void {
       const parsed = z
         .object({
           username: usernameSchema,
-          currentAuthKey: authKey,
-          newAuthKey: authKey,
-          newPublicKey: pubKey,
+          currentAuthKey: authKeySchema,
+          newAuthKey: authKeySchema,
+          newPublicKey: publicKeySchema,
         })
         .safeParse(req.body);
       if (!parsed.success) {
@@ -290,9 +295,9 @@ export function registerAccountRoutes(app: FastifyInstance, db: DB): void {
       const parsed = z
         .object({
           username: usernameSchema,
-          recoveryAuthKey: authKey,
-          newAuthKey: authKey,
-          newPublicKey: pubKey,
+          recoveryAuthKey: authKeySchema,
+          newAuthKey: authKeySchema,
+          newPublicKey: publicKeySchema,
         })
         .safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });

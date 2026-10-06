@@ -1,6 +1,22 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { SESSION_TTL_MS, type DB } from './db.js';
+
+/**
+ * Wire formats for the credential triple every auth entry point accepts
+ * (register/login in app.ts, self-serve password/username/recovery in
+ * account.ts, admin-initiated resets in admin.ts). Kept next to the functions
+ * that consume them - a credential IS `(username, authKey, publicKey)` here -
+ * so the schema cannot drift between the routes that accept one.
+ *
+ * `authKey` / `publicKey` are raw 32-byte hex (64 chars); `username` is the
+ * 2-24 char `[A-Za-z0-9_]` handle. The browser derives the keys, so the server
+ * only ever validates their shape.
+ */
+export const usernameSchema = z.string().min(2).max(24).regex(/^[a-zA-Z0-9_]+$/);
+export const authKeySchema = z.string().length(64).regex(/^[0-9a-f]+$/);
+export const publicKeySchema = z.string().length(64).regex(/^[0-9a-f]+$/);
 
 export function hashAuthKey(authKey: string, salt: string): string {
   return scryptSync(authKey, salt, 32).toString('hex');

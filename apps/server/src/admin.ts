@@ -1,35 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { writeAdminAudit, type DB } from './db.js';
-import { isPlatform, platformUserId, requirePlatform } from './platform.js';
-import { requireUser } from './auth.js';
+import { isPlatform, notPlatformAccountSql, platformUserId, requirePlatform } from './platform.js';
+import { authKeySchema, publicKeySchema, requireUser } from './auth.js';
 import { archiveRoom, roomEvents } from './rooms.js';
 import { mergeAccounts } from './merge.js';
-import { rekey } from './account.js';
+import { rekey, seatedSomewhere } from './account.js';
 import { activeHands } from './liveHands.js';
 import { abortPendingHandSettlement, applyPreparedHandSettlement } from './game.js';
 import { platformDues } from './house.js';
 import { registerPlatformControl } from './adminControl.js';
 import { derivePlatformCredentials } from './platform-crypto.js';
 import { gameNetLedgerDeltaSql, gameNetLedgerKindSql } from './handProjection.js';
-
-const authKey = z
-  .string()
-  .length(64)
-  .regex(/^[0-9a-f]+$/);
-const pubKey = z
-  .string()
-  .length(64)
-  .regex(/^[0-9a-f]+$/);
-
-/** Same guard as account.ts's seatedSomewhere: re-keying while seated would
- *  desync a live seat's pubkey mid-deal, whether the change is self-served
- *  or admin-initiated. */
-function seatedSomewhere(db: DB, userId: number): boolean {
-  return !!db
-    .prepare('SELECT 1 FROM room_players WHERE user_id = ? AND seat IS NOT NULL LIMIT 1')
-    .get(userId);
-}
 
 /** Net hand-settlement balance and distinct room count for one user - the
  *  manual "does this look right" surface an admin checks before approving a
@@ -294,7 +276,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
         `SELECT r.id AS id, r.name AS name, r.archived AS archived, r.commission_bps AS commissionBps,
                 COALESCE(u.display_name, u.username) AS hostName,
                 (SELECT COUNT(*) FROM room_players rp WHERE rp.room_id = r.id
-                   AND rp.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) AS playerCount
+                   AND ${notPlatformAccountSql('rp.user_id')}) AS playerCount
          FROM rooms r
          JOIN users u ON u.id = r.host_id
          WHERE r.deleted = 0 AND r.name LIKE ?
@@ -611,7 +593,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     const targetId = Number(id);
     if (!Number.isInteger(targetId)) return reply.code(400).send({ error: 'invalid input' });
 
-    const parsed = z.object({ newAuthKey: authKey, newPublicKey: pubKey }).safeParse(req.body);
+    const parsed = z.object({ newAuthKey: authKeySchema, newPublicKey: publicKeySchema }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
 
     const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId) as

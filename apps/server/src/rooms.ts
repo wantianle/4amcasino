@@ -10,7 +10,7 @@ import { appendLedger, verifyLedger } from './ledger.js';
 import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
-import { platformUserId } from './platform.js';
+import { notPlatformAccountSql, platformUserId } from './platform.js';
 import {
   perHandNetSelect,
   settlementNotVoidedSql,
@@ -407,7 +407,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         `SELECT r.id, r.name, r.sb, r.bb,
                 COALESCE(u.display_name, u.username) as hostName,
                 (SELECT COUNT(*) FROM room_players rp WHERE rp.room_id = r.id
-                   AND rp.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) as playerCount
+                   AND ${notPlatformAccountSql('rp.user_id')}) as playerCount
          FROM rooms r JOIN users u ON u.id = r.host_id
          WHERE r.visibility = 'public' AND r.archived = 0 AND r.deleted = 0
          ORDER BY r.created_at DESC LIMIT 30`,
@@ -677,7 +677,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       .prepare(
         `SELECT r.id, r.name, r.join_code as joinCode, r.sb, r.bb, r.archived as archived,
                 (SELECT COUNT(*) FROM room_players rp2 WHERE rp2.room_id = r.id
-                   AND rp2.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) as playerCount
+                   AND ${notPlatformAccountSql('rp2.user_id')}) as playerCount
          FROM rooms r JOIN room_players rp ON rp.room_id = r.id
          WHERE rp.user_id = ? AND r.deleted = 0 ${filter} ORDER BY r.created_at DESC`,
       )
@@ -759,7 +759,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
                 ) AS updatedAt,
                 r.deleted, r.voided,
                 (SELECT COUNT(*) FROM room_players rp2 WHERE rp2.room_id = r.id
-                   AND rp2.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) AS playerCount,
+                   AND ${notPlatformAccountSql('rp2.user_id')}) AS playerCount,
                 (rp.stack - COALESCE((
                   SELECT SUM(l.delta) FROM ledger l
                   WHERE l.room_id = r.id AND l.user_id = rp.user_id
@@ -991,7 +991,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         .prepare(
           `SELECT COUNT(*) as n FROM room_players rp
            WHERE rp.room_id = ? AND rp.sitting_out = 0
-             AND rp.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'platform_user_id')`,
+             AND ${notPlatformAccountSql('rp.user_id')}`,
         )
         .get(id) as { n: number };
       if (n < room.squid_min_players)

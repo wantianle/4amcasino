@@ -6,7 +6,15 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
 import { openDb, type DB } from './db.js';
-import { checkLogin, createSession, createUser, requireUser } from './auth.js';
+import {
+  authKeySchema,
+  checkLogin,
+  createSession,
+  createUser,
+  publicKeySchema,
+  requireUser,
+  usernameSchema,
+} from './auth.js';
 import { registerRoomRoutes } from './rooms.js';
 import { registerBotRoutes, type BotControl } from './botRoutes.js';
 import { leaderboardRankOf, registerProfileRoutes } from './profile.js';
@@ -19,19 +27,9 @@ import { isPlatform } from './platform.js';
 import { AgentError } from './botAccess.js';
 
 const registerSchema = z.object({
-  username: z
-    .string()
-    .min(2)
-    .max(24)
-    .regex(/^[a-zA-Z0-9_]+$/),
-  authKey: z
-    .string()
-    .length(64)
-    .regex(/^[0-9a-f]+$/),
-  publicKey: z
-    .string()
-    .length(64)
-    .regex(/^[0-9a-f]+$/),
+  username: usernameSchema,
+  authKey: authKeySchema,
+  publicKey: publicKeySchema,
 });
 const loginSchema = registerSchema.omit({ publicKey: true });
 

@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DB } from './db.js';
 import { requireUser } from './auth.js';
-import { isPlatform, platformUserId } from './platform.js';
+import { isPlatform, notPlatformAccountSql, platformUserId } from './platform.js';
 import { canBank, getRoom, isMember } from './rooms.js';
 import {
   gameNetLedgerDeltaSql,
@@ -158,7 +158,7 @@ const LEADERBOARD_SQL = `
          MAX(ph.net) as biggestWin
   FROM per_hand ph JOIN users u ON u.id = ph.user_id
   WHERE u.private_mode = 0
-    AND u.id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'platform_user_id')
+    AND ${notPlatformAccountSql('u.id')}
   GROUP BY u.id ORDER BY net DESC, handsPlayed DESC
 `;
 
