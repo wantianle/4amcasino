@@ -12,8 +12,16 @@ import { botStatusLabel, botStatusTone } from '../../features/bots/botStatus.ts'
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { ChipStack } from './ChipStack.tsx';
-import { BetFlight, ChipFlight, COLLECT_REVEAL_LEAD_MS, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
+import {
+  BetFlight,
+  ChipFlight,
+  COLLECT_REVEAL_LEAD_MS,
+  StackValue,
+  WinBadge,
+  useWinnerFx,
+} from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
+import { TableSeat } from './TableSeat.tsx';
 import { DealCard, DEAL_STAGGER_MS, SEAT_DEAL_STAGGER_MS } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
 import { useStore, type PeekResult } from '../../shared/store.ts';
@@ -84,7 +92,11 @@ export interface SeatView {
   bot?: { status: string; policyKind: string };
 }
 
-function actionLabel(a: PlayerAction & { auto?: boolean }, unit: 'chips' | 'bb', bb: number): string {
+function actionLabel(
+  a: PlayerAction & { auto?: boolean },
+  unit: 'chips' | 'bb',
+  bb: number,
+): string {
   if (a.type === 'fold') return a.auto ? t('Timed out') : t('Fold');
   if (a.type === 'check') return t('Check');
   if (a.type === 'call') return t('Call');
@@ -146,12 +158,30 @@ function HoleCards({
   if (faceDown) {
     return (
       <div className="table-pod-fan">
-        <DealCard delay={delay} handId={handId} motionKey={`${motionPrefix}:0`} epoch={dealMotionEpoch(handId, `${motionPrefix}:0`)}><PlayingCard
-          faceDown
-          size={size}
-          className="table-pod-fan-back table-pod-fan-back--first"
-        /></DealCard>
-        <DealCard delay={delay + DEAL_STAGGER_MS} handId={handId} motionKey={`${motionPrefix}:1`} epoch={dealMotionEpoch(handId, `${motionPrefix}:1`)}><PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" /></DealCard>
+        <DealCard
+          delay={delay}
+          handId={handId}
+          motionKey={`${motionPrefix}:0`}
+          epoch={dealMotionEpoch(handId, `${motionPrefix}:0`)}
+        >
+          <PlayingCard
+            faceDown
+            size={size}
+            className="table-pod-fan-back table-pod-fan-back--first"
+          />
+        </DealCard>
+        <DealCard
+          delay={delay + DEAL_STAGGER_MS}
+          handId={handId}
+          motionKey={`${motionPrefix}:1`}
+          epoch={dealMotionEpoch(handId, `${motionPrefix}:1`)}
+        >
+          <PlayingCard
+            faceDown
+            size={size}
+            className="table-pod-fan-back table-pod-fan-back--last"
+          />
+        </DealCard>
       </div>
     );
   }
@@ -159,7 +189,21 @@ function HoleCards({
   return (
     <div className={cn('flex items-center', narrow ? 'gap-0.5' : 'gap-[5px]')}>
       {cards.slice(0, 2).map((c, i) => (
-        <DealCard key={`${i}-${c}`} reveal={reveal} delay={delay + i * DEAL_STAGGER_MS} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace className={gold?.has(c) ? 'table-card-gold' : undefined} /></DealCard>
+        <DealCard
+          key={`${i}-${c}`}
+          reveal={reveal}
+          delay={delay + i * DEAL_STAGGER_MS}
+          handId={handId}
+          epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)}
+          motionKey={`${motionPrefix}:${i}`}
+        >
+          <PlayingCard
+            card={c}
+            size={size}
+            podFace
+            className={gold?.has(c) ? 'table-card-gold' : undefined}
+          />
+        </DealCard>
       ))}
     </div>
   );
@@ -302,11 +346,14 @@ export function RoundTable({
   const [hud, setHud] = useState<RoomHud | null>(null);
   const hudOpener = useRef<HTMLElement | null>(null);
   const closeHud = useCallback(() => setHudUserId(null), []);
-  const openHud = useCallback((userId: number, opener: HTMLElement) => {
-    hudOpener.current = opener;
-    setHud(null);
-    setHudUserId(userId);
-  }, [hudRoomId]);
+  const openHud = useCallback(
+    (userId: number, opener: HTMLElement) => {
+      hudOpener.current = opener;
+      setHud(null);
+      setHudUserId(userId);
+    },
+    [hudRoomId],
+  );
   // L2: one tap on ANY seat's stack flips pts ⇄ BB for every money label
   // (this device); the preference lives in the shared store so the action bar
   // and this table can never disagree.
@@ -456,7 +503,7 @@ export function RoundTable({
       {/* review fix #16: invisible until the first real measurement so a
         pre-fit frame can never flash; m-auto keeps it centered while still
         scrollable when it overflows */}
-           <div
+      <div
         className={cn('relative m-auto shrink-0', !measured && 'invisible')}
         style={{ width: canvas.w * k, height: canvas.h * k }}
       >
@@ -483,42 +530,44 @@ export function RoundTable({
           <div
             aria-hidden="true"
             className="table-ground absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-             style={{
-               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).shadow.dropPx}px)`,
-               width: `${(narrow ? PHONE_FELT : FELT).shadow.wPct}%`,
-               height: `${(narrow ? PHONE_FELT : FELT).shadow.hPct}%`,
+            style={{
+              top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).shadow.dropPx}px)`,
+              width: `${(narrow ? PHONE_FELT : FELT).shadow.wPct}%`,
+              height: `${(narrow ? PHONE_FELT : FELT).shadow.hPct}%`,
             }}
           />
           <div
             aria-hidden="true"
             className="table-rail-side absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-             style={{
-               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).side.dropPx}px)`,
-               width: `${(narrow ? PHONE_FELT : FELT).side.wPct}%`,
-               height: `${(narrow ? PHONE_FELT : FELT).side.hPct}%`,
+            style={{
+              top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).side.dropPx}px)`,
+              width: `${(narrow ? PHONE_FELT : FELT).side.wPct}%`,
+              height: `${(narrow ? PHONE_FELT : FELT).side.hPct}%`,
             }}
           />
           <div
             aria-hidden="true"
             className="table-rail-top absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-             style={{
-               width: `${(narrow ? PHONE_FELT : FELT).rim.wPct}%`,
-               height: `${(narrow ? PHONE_FELT : FELT).rim.hPct}%`,
-             }}
+            style={{
+              width: `${(narrow ? PHONE_FELT : FELT).rim.wPct}%`,
+              height: `${(narrow ? PHONE_FELT : FELT).rim.hPct}%`,
+            }}
           />
           <div
             aria-hidden="true"
             className="table-felt absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-             style={{
-               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).inset.dropPx}px)`,
-               width: `${(narrow ? PHONE_FELT : FELT).inset.wPct}%`,
-               height: `${(narrow ? PHONE_FELT : FELT).inset.hPct}%`,
+            style={{
+              top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).inset.dropPx}px)`,
+              width: `${(narrow ? PHONE_FELT : FELT).inset.wPct}%`,
+              height: `${(narrow ? PHONE_FELT : FELT).inset.hPct}%`,
             }}
           >
             <span className="table-felt-watermark">4AM · CASINO</span>
           </div>
 
-          <div className="table-deck" data-table-deck aria-hidden="true"><PlayingCard faceDown size="xs" /></div>
+          <div className="table-deck" data-table-deck aria-hidden="true">
+            <PlayingCard faceDown size="xs" />
+          </div>
           {/* pot, board, and status live at the center (A5: the pot row is the
               first child, i.e. centered directly above the cards area).
               H2 size budget: with centerBudget on (the live table), content
@@ -578,8 +627,10 @@ export function RoundTable({
             const strength = handTypes?.[seat] ?? null;
             const peekTarget = !isMe ? peekTargets?.[seat] : undefined;
             const peekResult = peekResults?.[seat];
-            const peekCards = !isMe && peekResult?.targetSeat === seat && peekResult.targetUserId === p.userId
-              ? peekResult.cards : undefined;
+            const peekCards =
+              !isMe && peekResult?.targetSeat === seat && peekResult.targetUserId === p.userId
+                ? peekResult.cards
+                : undefined;
             const privatePeekVisible = !isMe && !!peekCards?.length;
             const cardsVisible =
               (p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed)) ||
@@ -729,20 +780,15 @@ export function RoundTable({
                     </AnimatePresence>
                   </div>
                 )}
-                <div
-                  ref={(el) => {
+                <TableSeat
+                  seat={seat}
+                  x={x}
+                  y={y}
+                  tx={tx}
+                  ty={ty}
+                  heroTop={isMe && narrow}
+                  podRef={(el) => {
                     podEls.current[seat] = el;
-                  }}
-                  className={cn(
-                    'absolute z-20 flex flex-col items-center gap-[4px]',
-                    // L6: on the phone the hero's pill row rides ABOVE the
-                    // card so it cannot spill down into the console cluster.
-                    isMe && narrow && 'table-pod--hero-top',
-                  )}
-                  style={{
-                    left: `${x}%`,
-                    top: `${y}%`,
-                    transform: `translate(${tx}, ${ty}) translateY(var(--table-pod-lift, 0px))`,
                   }}
                 >
                   {/* L2 seat unit (rev-3 mockup): ONE dark plaque card holds
@@ -752,21 +798,23 @@ export function RoundTable({
                       rev-3 rules: one hairline + one shadow, ≤1 role corner
                       (merged tooltip), dimmed folded/offline/sitting-out. */}
 
-                   <div className="table-pod-visual" data-testid={`seat-pod-${seat}`}>
-                     {peekTarget && !privatePeekVisible && (
-                       <button
-                         type="button"
-                         className="table-peek-eye"
-                         aria-label={t('Peek at {name}', { name: p.displayName })}
-                         title={t('Peek at {name}', { name: p.displayName })}
-                         disabled={peekTarget.sent}
-                         onClick={peekTarget.onPeek}
-                         data-testid={`peek-eye-${seat}`}
-                       >
-                         <Eye size={17} weight="bold" aria-hidden="true" />
-                         <span className="sr-only">{t('1 BB, paid only if they agree to show you')}</span>
-                       </button>
-                     )}
+                  <div className="table-pod-visual" data-testid={`seat-pod-${seat}`}>
+                    {peekTarget && !privatePeekVisible && (
+                      <button
+                        type="button"
+                        className="table-peek-eye"
+                        aria-label={t('Peek at {name}', { name: p.displayName })}
+                        title={t('Peek at {name}', { name: p.displayName })}
+                        disabled={peekTarget.sent}
+                        onClick={peekTarget.onPeek}
+                        data-testid={`peek-eye-${seat}`}
+                      >
+                        <Eye size={17} weight="bold" aria-hidden="true" />
+                        <span className="sr-only">
+                          {t('1 BB, paid only if they agree to show you')}
+                        </span>
+                      </button>
+                    )}
                     {isMe && myCards.length > 0 && (
                       <div
                         className={cn(
@@ -803,7 +851,9 @@ export function RoundTable({
                         <div
                           className={cn(
                             'table-pod-holo',
-                             isMe || p.revealed || peekCards ? 'table-pod-holo--side' : 'table-pod-holo--fan',
+                            isMe || p.revealed || peekCards
+                              ? 'table-pod-holo--side'
+                              : 'table-pod-holo--fan',
                           )}
                         >
                           <HoleCards
@@ -811,12 +861,18 @@ export function RoundTable({
                             delay={i * SEAT_DEAL_STAGGER_MS}
                             size={holeSize}
                             narrow={narrow}
-                              cards={isMe ? myCards : peekCards ?? p.revealed}
-                              faceDown={!isMe && !peekCards && !p.revealed}
+                            cards={isMe ? myCards : (peekCards ?? p.revealed)}
+                            faceDown={!isMe && !peekCards && !p.revealed}
                             handId={handId}
-                              motionPrefix={peekCards ? `peek:${p.seat}` : p.revealed ? `reveal:${p.seat}` : `hole:seat:${p.seat}`}
-                              reveal={!!p.revealed || !!peekCards}
-                              gold={goldBySeat?.[p.seat]}
+                            motionPrefix={
+                              peekCards
+                                ? `peek:${p.seat}`
+                                : p.revealed
+                                  ? `reveal:${p.seat}`
+                                  : `hole:seat:${p.seat}`
+                            }
+                            reveal={!!p.revealed || !!peekCards}
+                            gold={goldBySeat?.[p.seat]}
                           />
                         </div>
                       )}
@@ -832,36 +888,44 @@ export function RoundTable({
                           dim && 'table-avatar-ring--dim',
                         )}
                       >
-                        {hudRoomId ? <button
-                          type="button"
-                          onClick={(event) => openHud(p.userId, event.currentTarget)}
-                          aria-label={`${p.displayName} · ${t('Player HUD')}`}
-                          aria-haspopup="dialog"
-                          className="block rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300"
-                        >
-                          <Avatar
-                            userId={p.userId}
-                            name={p.displayName}
-                            version={p.avatarVersion}
-                            // L6: phone avatars ride one tier down (hero 42,
-                            // opponents 32 design px) so the compact pod
-                            // clears the board budget at 9 seats.
-                            size={isMe ? 'md' : 'sm'}
-                            className={cn(
-                              'rounded-full',
-                              isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
-                              !isMe && !narrow && 'h-[40px]! w-[40px]!',
-                            )}
-                          />
-                        </button> : <div aria-hidden="true">
-                          <Avatar
-                            userId={p.userId}
-                            name={p.displayName}
-                            version={p.avatarVersion}
-                            size={isMe ? 'md' : 'sm'}
-                            className={cn('rounded-full', isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'), !isMe && !narrow && 'h-[40px]! w-[40px]!')}
-                          />
-                        </div>}
+                        {hudRoomId ? (
+                          <button
+                            type="button"
+                            onClick={(event) => openHud(p.userId, event.currentTarget)}
+                            aria-label={`${p.displayName} · ${t('Player HUD')}`}
+                            aria-haspopup="dialog"
+                            className="block rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300"
+                          >
+                            <Avatar
+                              userId={p.userId}
+                              name={p.displayName}
+                              version={p.avatarVersion}
+                              // L6: phone avatars ride one tier down (hero 42,
+                              // opponents 32 design px) so the compact pod
+                              // clears the board budget at 9 seats.
+                              size={isMe ? 'md' : 'sm'}
+                              className={cn(
+                                'rounded-full',
+                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
+                                !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                              )}
+                            />
+                          </button>
+                        ) : (
+                          <div aria-hidden="true">
+                            <Avatar
+                              userId={p.userId}
+                              name={p.displayName}
+                              version={p.avatarVersion}
+                              size={isMe ? 'md' : 'sm'}
+                              className={cn(
+                                'rounded-full',
+                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
+                                !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                              )}
+                            />
+                          </div>
+                        )}
                         {corner && (
                           <span
                             role="img"
@@ -899,54 +963,66 @@ export function RoundTable({
                       </div>
                       <div className="table-pod-info">
                         <div className="table-pod-name-row">
-                        <div className="table-pname" title={p.displayName}>
-                          {p.displayName}
-                        </div>
-                        {hudRoomId && <SeatBadges player={(Array.isArray(hud?.players) ? hud.players.filter(isValidHudPlayer) : []).find((v) => v.userId === p.userId)} minHands={hud?.minHands ?? 0} />}
+                          <div className="table-pname" title={p.displayName}>
+                            {p.displayName}
+                          </div>
+                          {hudRoomId && (
+                            <SeatBadges
+                              player={(Array.isArray(hud?.players)
+                                ? hud.players.filter(isValidHudPlayer)
+                                : []
+                              ).find((v) => v.userId === p.userId)}
+                              minHands={hud?.minHands ?? 0}
+                            />
+                          )}
                         </div>
                         <div className="table-pod-detail-row">
-                        <button
-                          type="button"
-                          onClick={toggleStackUnit}
-                          aria-label={stackHint}
-                          title={stackHint}
-                          className={cn('table-pstack', p.broke && 'table-pstack--out')}
-                        >
-                          {stackUnit === 'chips' ? (
-                            <>
-                              <StackValue stack={p.stack} won={p.won} flightLead={collectLead} />
-                              <span className="table-pstack-unit">{t('pts')}</span>
-                            </>
-                          ) : (
-                            <>
-                              {bbCount}
-                              <span className="table-pstack-unit">BB</span>
-                            </>
-                          )}
-                        </button>
-                        {showAction && lastAction?.type !== 'check' && (
-                          <motion.div
-                            key={
-                              lastAction ? `${lastAction.type}-${lastAction.amount ?? 0}` : 'all-in'
-                            }
-                            initial={reduce ? false : { scale: 1.35, y: -2 }}
-                            animate={{ scale: 1, y: 0 }}
-                            transition={{ type: 'spring', stiffness: 220, damping: 22 }}
-                            className={cn(
-                              'table-paction',
-                              !lastAction
-                                ? 'table-paction--allin'
-                                : aggressive
-                                  ? 'table-paction--aggr'
-                                  : folded
-                                    ? 'table-paction--fold'
-                                    : '',
-                            )}
+                          <button
+                            type="button"
+                            onClick={toggleStackUnit}
+                            aria-label={stackHint}
+                            title={stackHint}
+                            className={cn('table-pstack', p.broke && 'table-pstack--out')}
                           >
-                            {lastAction ? actionLabel(lastAction, stackUnit, bb) : t('All-in')}
-                          </motion.div>
-                        )}
-                        {lastAction?.type === 'check' && <span className="table-paction table-paction--check">{t('Check')}</span>}
+                            {stackUnit === 'chips' ? (
+                              <>
+                                <StackValue stack={p.stack} won={p.won} flightLead={collectLead} />
+                                <span className="table-pstack-unit">{t('pts')}</span>
+                              </>
+                            ) : (
+                              <>
+                                {bbCount}
+                                <span className="table-pstack-unit">BB</span>
+                              </>
+                            )}
+                          </button>
+                          {showAction && lastAction?.type !== 'check' && (
+                            <motion.div
+                              key={
+                                lastAction
+                                  ? `${lastAction.type}-${lastAction.amount ?? 0}`
+                                  : 'all-in'
+                              }
+                              initial={reduce ? false : { scale: 1.35, y: -2 }}
+                              animate={{ scale: 1, y: 0 }}
+                              transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+                              className={cn(
+                                'table-paction',
+                                !lastAction
+                                  ? 'table-paction--allin'
+                                  : aggressive
+                                    ? 'table-paction--aggr'
+                                    : folded
+                                      ? 'table-paction--fold'
+                                      : '',
+                              )}
+                            >
+                              {lastAction ? actionLabel(lastAction, stackUnit, bb) : t('All-in')}
+                            </motion.div>
+                          )}
+                          {lastAction?.type === 'check' && (
+                            <span className="table-paction table-paction--check">{t('Check')}</span>
+                          )}
                         </div>
                         <CheckFeedback action={lastAction} handId={handId} />
                         {strength && <div className="table-pstrength">{strength}</div>}
@@ -1081,7 +1157,7 @@ export function RoundTable({
                       </button>
                     )}
                   </div>
-                </div>
+                </TableSeat>
               </div>
             );
           })}
@@ -1119,12 +1195,26 @@ export function RoundTable({
             />
           );
         })}
-      {hudRoomId && hudUserId !== null && <PlayerHud roomId={hudRoomId} userId={hudUserId} onClose={closeHud} opener={hudOpener.current} onData={setHud} />}
+      {hudRoomId && hudUserId !== null && (
+        <PlayerHud
+          roomId={hudRoomId}
+          userId={hudUserId}
+          onClose={closeHud}
+          opener={hudOpener.current}
+          onData={setHud}
+        />
+      )}
     </div>
   );
 }
 
-function CheckFeedback({ action, handId }: { action?: SeatView['lastAction']; handId: string | null }) {
+function CheckFeedback({
+  action,
+  handId,
+}: {
+  action?: SeatView['lastAction'];
+  handId: string | null;
+}) {
   const [run, setRun] = useState(0);
   useEffect(() => {
     if (action?.type !== 'check') return;
@@ -1135,5 +1225,9 @@ function CheckFeedback({ action, handId }: { action?: SeatView['lastAction']; ha
     const timer = setTimeout(() => setRun(0), 1800);
     return () => clearTimeout(timer);
   }, [run]);
-  return run ? <span key={run} className="table-check-feedback" role="status">{t('Check')}</span> : null;
+  return run ? (
+    <span key={run} className="table-check-feedback" role="status">
+      {t('Check')}
+    </span>
+  ) : null;
 }

@@ -75,11 +75,20 @@ export const FELT = {
 /** Phone-only surface proportions. The measured table ratio uses rim, not
  * shadow: shadow is atmosphere, while rim is the visible rail boundary. */
 export const PHONE_FELT = {
-  shadow: { wPct: 88, hPct: 84, dropPx: 36 },
+  shadow: { wPct: 88, hPct: 86, dropPx: 36 },
   side: { wPct: 86, hPct: 82, dropPx: 26 },
-  rim: { wPct: 86, hPct: 82, dropPx: 0 },
+  rim: { wPct: 86, hPct: 85, dropPx: 0 },
   inset: { wPct: 82, hPct: 78, dropPx: 1 },
 } as const;
+
+/** The measured phone table boundary is the visible rim, not the canvas or
+ * atmospheric shadow. Keep deliberate margin over the 1.35 gate so CSS
+ * rounding cannot turn a passing vertical table into a borderline one. */
+export const PHONE_RIM_RATIO =
+  (PHONE_CANVAS.h * PHONE_FELT.rim.hPct) / (PHONE_CANVAS.w * PHONE_FELT.rim.wPct);
+if (PHONE_RIM_RATIO < 1.38) {
+  throw new Error(`Phone rim must remain at least 1.38:1; got ${PHONE_RIM_RATIO}`);
+}
 
 /** The tighter ellipse between the seats and the pot where each seat's
  *  street-bet pile + D/SB/BB discs ride. The straight-bottom seat gets a

@@ -7,11 +7,20 @@ import {
 import {
   centerColumnBudgetPx,
   PHONE_CANVAS,
+  PHONE_FELT,
+  PHONE_RIM_RATIO,
   SEAT_ANCHOR_PHONE,
   TABLE_CANVAS,
 } from '../src/widgets/table/geometry.ts';
 
 describe('table center-column geometry', () => {
+  it('keeps the measured phone rim safely above the vertical-table gate', () => {
+    const measured =
+      (PHONE_CANVAS.h * PHONE_FELT.rim.hPct) / (PHONE_CANVAS.w * PHONE_FELT.rim.wPct);
+    expect(PHONE_RIM_RATIO).toBe(measured);
+    expect(PHONE_RIM_RATIO).toBeGreaterThanOrEqual(1.38);
+  });
+
   it('reserves the visible desktop hero holo overhang only when requested', () => {
     const baseline = centerColumnBudgetPx(TABLE_CANVAS);
     expect(baseline).toBeCloseTo(204, 5);
