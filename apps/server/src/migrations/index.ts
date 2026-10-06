@@ -1,7 +1,7 @@
-import * as dbModel from '../db.js';
 import type { DB } from '../db.js';
 import { migrateAgentPlatform } from '../agentSchema.js';
 import { migrateHandStats } from '../handProjection.js';
+import { reconcileMissingSettlements } from '../transcriptReconcile.js';
 import { migrate } from './base.js';
 import { migrateBots } from './bots.js';
 import { migrateAdminAudit } from './adminAudit.js';
@@ -19,11 +19,11 @@ export type Migration = { name: string; run: (db: DB) => void };
  * adding or reordering steps.
  *
  * The `base` step now lives in `./base.ts`, which has no runtime dependency on
- * `db.ts`, so it is imported by name like every other standalone step. The one
- * remaining step implemented in `db.ts` (`reconcile-lifecycle`) is reached
- * through the `dbModel` namespace and only dereferenced when the step runs:
- * `db.ts` imports this runner, so at module-evaluation time its own exports are
- * not installed yet and a direct named import would resolve to `undefined`.
+ * `db.ts`, so it is imported by name like every other standalone step. The
+ * `reconcile-lifecycle` step lives in `../transcriptReconcile.js`, which also
+ * imports `db.ts` for the `DB` type only, so it too is imported by name. This
+ * module no longer touches `db.ts` at runtime, breaking the last `db.ts` <->
+ * `migrations/index.ts` cycle (and the thunk that worked around it).
  */
 export const STEPS: Migration[] = [
   { name: 'base', run: migrate },
@@ -32,7 +32,7 @@ export const STEPS: Migration[] = [
   { name: 'bots', run: migrateBots },
   { name: 'hand-stats', run: migrateHandStats },
   // needs: hand-stats (creates hands / hand_players).
-  { name: 'reconcile-lifecycle', run: (db) => dbModel.reconcileMissingSettlements(db) },
+  { name: 'reconcile-lifecycle', run: reconcileMissingSettlements },
   { name: 'admin-audit', run: migrateAdminAudit },
   { name: 'settlement-prepared', run: migrateSettlementPrepared },
   { name: 'rooms-index', run: migrateRoomsIndex },
