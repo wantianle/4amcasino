@@ -1,3 +1,10 @@
+/**
+ * HTTP response DTOs for the house/platform admin surface. This is the
+ * `protocol` layer - response shapes only, no computation - shared so the
+ * server routes and the web API/types agree. It is deliberately NOT in the
+ * same layer as the pure poker rules even though both were once in one barrel.
+ */
+
 export interface HouseBalance {
   accrued: number;
   /** Payments recorded by users; these are not bank-confirmed receipts. */

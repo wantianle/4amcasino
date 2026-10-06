@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { BettingState, PlayerAction, Street } from './betting.js';
+import type { BettingState, PlayerAction } from './betting.js';
 import type { CardId } from './cards.js';
 import type { RoomGameplaySettings } from './roomRules.js';
 
@@ -507,7 +507,9 @@ export type ServerMsg =
       head: string;
     };
 
-export type { BettingState, PlayerAction, Street };
+// NOTE: `BettingState`/`PlayerAction`/`Street` are NOT re-exported from here.
+// They live in ./betting.ts and are published once by ./index.ts; re-exporting
+// them here gave the same symbol two export paths on the public barrel.
 
 // ---- new-gameplay server payload helpers ----
 

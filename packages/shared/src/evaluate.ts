@@ -1,5 +1,8 @@
 import { type CardId, rankOf, suitOf } from './cards.js';
 
+/**
+ * Ordered hand categories; the index is the packed score's category number.
+ */
 export const HAND_CATEGORY_NAMES = [
   'High Card',
   'Pair',
@@ -12,6 +15,26 @@ export const HAND_CATEGORY_NAMES = [
   'Straight Flush',
 ] as const;
 
+/**
+ * A hand score is a packed 32-bit integer, and that bit layout is a
+ * cross-package CONTRACT - not an implementation detail:
+ *
+ *   bits 20-31   category index into {@link HAND_CATEGORY_NAMES},
+ *                i.e. the value {@link handCategory} returns
+ *   nibble 16-19 tiebreak 0 (main rank / pair rank / straight high)
+ *   nibble 12-15 tiebreak 1
+ *   nibble  8-11 tiebreak 2
+ *   nibble  4-7  tiebreak 3
+ *   nibble  0-3  tiebreak 4
+ *
+ * `apps/web/src/shared/i18n/pokerLabels.ts` decodes exactly this layout: its
+ * `tScore` switches on `handCategory(score)` and reads the nibbles with
+ * `(score >> (16 - 4 * i)) & 0xf` while importing nothing but `handCategory`.
+ * Renumbering a category or moving a nibble therefore does NOT fail to compile
+ * - it silently mistranslates every showdown label. `test/scoreLayout.test.ts`
+ * freezes the layout with literal score values and exact category numbers;
+ * change that test deliberately if this contract ever moves.
+ */
 export function handCategory(score: number): number {
   return score >> 20;
 }

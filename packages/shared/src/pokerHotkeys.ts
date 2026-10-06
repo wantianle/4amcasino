@@ -1,3 +1,11 @@
+/**
+ * Poker keyboard-shortcut preference CONTRACT, shared by the server and the
+ * web (it is not web-only): `apps/server/src/profile.ts` validates and persists
+ * a user's shortcuts with `parsePokerHotkeys`/`DEFAULT_POKER_HOTKEYS`, and the
+ * web Settings editor renders/edits the same shape. Only the event adapter
+ * `pokerBindingFromEvent` is web-facing.
+ */
+
 export const POKER_HOTKEY_ACTIONS = [
   'fold',
   'check',
