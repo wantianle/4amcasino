@@ -14,6 +14,7 @@ import {
   DEFAULT_P2,
   DRAW_BUCKETS,
   MADE_BUCKETS,
+  P2_ALL_OFF,
   POSTFLOP_SIZE_GRID,
   PostflopPolicy,
   bucketAdvantage,
@@ -440,7 +441,7 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     // Raw continuous read: 0.9 sits in no size bucket -> balanced.
     expect(chooseVillainModel({ ...base, betFraction: 0.9 }, false)).toBe('balanced');
     // Grid read: 0.9 snaps to 1.0 pot -> value-heavy. This is an intentional
-    // behaviour change of the sizeGrid switch, inert while it is off by default.
+    // behaviour change of the sizeGrid switch, now on by default.
     expect(chooseVillainModel({ ...base, betFraction: 0.9 }, true)).toBe('value-heavy');
   });
 
@@ -452,9 +453,11 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     expect(chooseVillainModel({ ...base, betFraction: 1 })).toBe('value-heavy');
     expect(chooseVillainModel({ ...base, betFraction: 2 })).toBe('value-heavy');
     expect(chooseVillainModel({ ...base, betFraction: 0.5, allIn: true })).toBe('value-heavy');
-    // The default `sizeGrid` argument follows DEFAULT_P2 (off), so an old
-    // single-argument call keeps the raw-continuous read.
-    expect(chooseVillainModel({ ...base, betFraction: 0.9 })).toBe('balanced');
+    // The default `sizeGrid` argument follows DEFAULT_P2 (now on), so a
+    // single-argument call snaps the odd 0.9 to 1.0 -> value-heavy.
+    expect(chooseVillainModel({ ...base, betFraction: 0.9 })).toBe('value-heavy');
+    // An explicit off restores the raw-continuous read.
+    expect(chooseVillainModel({ ...base, betFraction: 0.9 }, false)).toBe('balanced');
   });
 });
 
@@ -740,9 +743,9 @@ describe('postflop P2: range propagation', () => {
     expect(preflopRaiseCount(threeBet)).toBe(2);
     expect(facingVillainModel(called, 100, 50, ON)).toBe('balanced');
     expect(facingVillainModel(threeBet, 100, 50, ON)).toBe('value-heavy');
-    // The toggle off reproduces the base read; the all-off DEFAULT also does.
+    // The toggle off reproduces the base read; the default (all-on) tightens.
     expect(facingVillainModel(threeBet, 100, 50, OFF)).toBe('balanced');
-    expect(facingVillainModel(threeBet, 100, 50)).toBe('balanced');
+    expect(facingVillainModel(threeBet, 100, 50)).toBe('value-heavy');
   });
 
   it('tightens a four-way pot relative to heads-up for the same bet', () => {
@@ -759,8 +762,8 @@ describe('postflop P2: range propagation', () => {
     });
     expect(facingVillainModel(headsUp, 100, 50, ON)).toBe('balanced');
     expect(facingVillainModel(fourWay, 100, 50, ON)).toBe('value-heavy');
-    // Inert by default: the same inputs read balanced with DEFAULT_P2.
-    expect(facingVillainModel(fourWay, 100, 50)).toBe('balanced');
+    // The default (all-on) propagation tightens the four-way read too.
+    expect(facingVillainModel(fourWay, 100, 50)).toBe('value-heavy');
   });
 
   // -- historyComplete contract (disconnect gap / mid-hand join) --------------
@@ -1012,33 +1015,42 @@ describe('postflop P2: decision-level on-vs-off', () => {
     for (let i = 0; i < 50; i++) expect(p.decide(v())).toEqual(first);
   });
 
-  it('DEFAULT_P2 is frozen: the all-off default cannot be mutated at runtime (P0-2)', () => {
+  it('DEFAULT_P2 is frozen all-on: the default cannot be mutated at runtime (P0-2)', () => {
     // The constant must not be a mutable object that default parameters alias,
-    // or `DEFAULT_P2.sizeGrid = true` would silently flip every default read.
+    // or `DEFAULT_P2.sizeGrid = false` would silently revert every default read.
     expect(Object.isFrozen(DEFAULT_P2)).toBe(true);
     for (const key of ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets'] as const) {
-      expect(Reflect.set(DEFAULT_P2, key, true)).toBe(false);
-      expect(DEFAULT_P2[key]).toBe(false);
+      expect(Reflect.set(DEFAULT_P2, key, false)).toBe(false);
+      expect(DEFAULT_P2[key]).toBe(true);
     }
     expect({ ...DEFAULT_P2 }).toEqual({
+      shrinkage: true,
+      sizeGrid: true,
+      rangePropagation: true,
+      buckets: true,
+    });
+    // A refused mutation leaves the all-on semantics intact: the default
+    // parameter still reads `true`, so 0.9 pot snaps to the value-heavy read.
+    expect(
+      chooseVillainModel({ allIn: false, heroWasAggressor: false, wet: false, betFraction: 0.9 }),
+    ).toBe('value-heavy');
+
+    // The named kill-switch constant is the immutable all-off counterpart.
+    expect(Object.isFrozen(P2_ALL_OFF)).toBe(true);
+    expect({ ...P2_ALL_OFF }).toEqual({
       shrinkage: false,
       sizeGrid: false,
       rangePropagation: false,
       buckets: false,
     });
-    // A refused mutation leaves the all-off semantics intact: the default
-    // parameter still reads `false`, so 0.9 pot stays on the raw-continuous path.
-    expect(
-      chooseVillainModel({ allIn: false, heroWasAggressor: false, wet: false, betFraction: 0.9 }),
-    ).toBe('balanced');
   });
 });
 
 // ---------------------------------------------------------------------------
-// default (all-off) versus the true HEAD f4a5904 baseline, per input
+// explicit P2_ALL_OFF versus the true HEAD f4a5904 baseline, per input
 // ---------------------------------------------------------------------------
 
-describe('postflop P2: default Configuration is the HEAD baseline', () => {
+describe('postflop P2: explicit all-off reproduces the HEAD baseline', () => {
   const DRY = [c('Kh'), c('7d'), c('2c')];
 
   /** A deterministic grid that exercises every input the P0/P1 engine reads. */
@@ -1122,12 +1134,12 @@ describe('postflop P2: default Configuration is the HEAD baseline', () => {
   }
 
   it(
-    'decides every generated view identically with DEFAULT_P2 and HEAD f4a5904',
+    'an explicit P2_ALL_OFF config reproduces the HEAD f4a5904 baseline',
     { timeout: 120_000 },
     () => {
       const views = baselineGrid();
       expect(views.length).toBeGreaterThan(200);
-      const current = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2: all off
+      const current = new PostflopPolicy({ params: PARAMS, seed: SEED, p2: P2_ALL_OFF });
       const baseline = new BaselinePostflopPolicy({ params: PARAMS, seed: SEED });
       for (let i = 0; i < views.length; i++) {
         const view = views[i]!;
@@ -1138,7 +1150,20 @@ describe('postflop P2: default Configuration is the HEAD baseline', () => {
     },
   );
 
-  it('an explicit all-off config equals the default config', () => {
+  it('the default all-on config is NOT the pre-P2 baseline (P2 is live by default)', () => {
+    const views = baselineGrid();
+    const def = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2: all on
+    const baseline = new BaselinePostflopPolicy({ params: PARAMS, seed: SEED });
+    let differs = 0;
+    for (const view of views) {
+      if (JSON.stringify(def.decide(view)) !== JSON.stringify(baseline.decide(view))) differs++;
+    }
+    // Decisive evidence that the four default-on switches actually reach the
+    // decision (not merely sit in the config object).
+    expect(differs).toBeGreaterThan(0);
+  });
+
+  it('an explicit all-off config differs from the default all-on config', () => {
     const views = baselineGrid().slice(0, 120);
     const def = new PostflopPolicy({ params: PARAMS, seed: SEED });
     const explicit = new PostflopPolicy({
@@ -1146,6 +1171,11 @@ describe('postflop P2: default Configuration is the HEAD baseline', () => {
       seed: SEED,
       p2: { shrinkage: false, sizeGrid: false, rangePropagation: false, buckets: false },
     });
-    for (const view of views) expect(def.decide(view)).toEqual(explicit.decide(view));
+    // If these were equal, "default is all-on" would be a no-op claim.
+    expect(
+      views.some(
+        (view) => JSON.stringify(def.decide(view)) !== JSON.stringify(explicit.decide(view)),
+      ),
+    ).toBe(true);
   });
 });

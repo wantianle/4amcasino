@@ -11,6 +11,7 @@ import {
   type StyleParams,
 } from './policyStyles.js';
 import { RulePolicy } from './rulePolicy.js';
+import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE, detectRulesEngine, parseRuleConfig } from './ruleStyles.js';
 import { ScriptedPolicy } from './scriptedPolicy.js';
 
@@ -267,11 +268,15 @@ export interface PolicyResolution {
  * `opts.seed` is an optional seam for experiments/reproducibility: it seeds the
  * `StylePolicy`/`RulePolicy` RNG. `ScriptedPolicy` and the default
  * `tight-aggressive` path ignore it.
+ *
+ * `opts.p2` is forwarded to the `RulePolicy` built here, so the caller (server
+ * resolver / difficulty dispatch) can inject the P2 rollback switches. Omitted
+ * fields keep `DEFAULT_P2` (all on); pass `P2_ALL_OFF` for the rollback path.
  */
 export function resolvePolicy(
   kindRaw: string | null | undefined,
   policyJson?: string | null,
-  opts?: { seed?: number },
+  opts?: { seed?: number; p2?: Partial<P2Options> },
 ): PolicyResolution {
   const warnings: string[] = [];
   const normalized = normalizePolicyKind(kindRaw);
@@ -289,6 +294,8 @@ export function resolvePolicy(
       kind: presetKind,
       params: cfg.params,
       seed: opts?.seed,
+      // P2 rollback switches from the caller (server env); omitted = DEFAULT_P2.
+      p2: opts?.p2,
       // Exception fallback: `RulePolicy` runs its own rules-v1 postflop engine
       // and only uses this (legal, seeded) StylePolicy if that engine throws.
       fallback: new StylePolicy(kind, { seed: opts?.seed }),

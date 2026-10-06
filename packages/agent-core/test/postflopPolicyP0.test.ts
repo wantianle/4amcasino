@@ -12,6 +12,7 @@ import { estimateEquity } from '../src/equity.js';
 import {
   P0_EQUITY_SAMPLES,
   P0_MULTIWAY_EQUITY_SAMPLES,
+  P2_ALL_OFF,
   PostflopPolicy,
   buildVillainRange,
   chooseVillainModel,
@@ -28,7 +29,9 @@ import { RULE_PRESETS } from '../src/ruleStyles.js';
 
 const c = (n: string) => cardFromName(n);
 const SEED = 7;
-const policy = () => new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed: SEED });
+// P0 behaviour is locked with P2 explicitly reverted; the P2 default is all-on.
+const policy = () =>
+  new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed: SEED, p2: P2_ALL_OFF });
 
 // ---------------------------------------------------------------------------
 // view builders

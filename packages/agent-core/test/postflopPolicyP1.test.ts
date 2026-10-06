@@ -9,6 +9,7 @@ import type {
 } from '../src/decisionView.js';
 import { estimateEquity } from '../src/equity.js';
 import {
+  P2_ALL_OFF,
   PostflopPolicy,
   buildVillainRange,
   facingVillainRange,
@@ -24,7 +25,9 @@ import { RULE_PRESETS } from '../src/ruleStyles.js';
 
 const c = (n: string) => cardFromName(n);
 const SEED = 7;
-const policy = () => new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed: SEED });
+// P1 behaviour is locked with P2 explicitly reverted; the P2 default is all-on.
+const policy = () =>
+  new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed: SEED, p2: P2_ALL_OFF });
 
 // ---------------------------------------------------------------------------
 // view builders (mirrors the P0 suite so the two lanes are comparable)

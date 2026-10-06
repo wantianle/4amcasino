@@ -1,4 +1,5 @@
 import type { Policy } from './policy.js';
+import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE } from './ruleStyles.js';
 import { resolvePolicy, type PolicyResolution } from './stylePolicy.js';
 
@@ -7,25 +8,34 @@ import { resolvePolicy, type PolicyResolution } from './stylePolicy.js';
  * style). The mapping is:
  *
  *   - `low`    -> the legacy resolution: a style without `engine: 'rules-v1'`
- *                 gets `ScriptedPolicy`/`StylePolicy` exactly as before (the
- *                 default, so existing bots are unchanged);
+ *                 gets `ScriptedPolicy`/`StylePolicy` exactly as before;
  *   - `medium` -> forces the chart-based `rules-v1` engine (`RulePolicy`),
- *                 regardless of whether `policy_json` opted in; preflop is
- *                 implemented, postflop still uses the documented placeholder
- *                 fallback (same as an explicit `engine: 'rules-v1'` today);
- *   - `high`   -> RESERVED for a future GTO tier. It is not implemented, so the
- *                 backend accepts the value but explicitly falls back to
- *                 `medium` and reports a warning - never silently.
+ *                 regardless of whether `policy_json` opted in; preflop and
+ *                 postflop both run the real `rules-v1` engines (the postflop
+ *                 engine is `PostflopPolicy`, not the old placeholder). This is
+ *                 now the DEFAULT tier;
+ *   - `high`   -> was RESERVED for a future GTO tier and never implemented. It
+ *                 has been **withdrawn** from the tier list so the product no
+ *                 longer offers a choice that silently ran as `medium`. A
+ *                 persisted/legacy `high` request is still parsed and reported
+ *                 as withdrawn (never silently), then resolves to the default.
  *
  * Difficulty never dies silently: the effective tier and any fallback are
  * returned so the server can log/surface them.
  */
 
-export type BotDifficulty = 'low' | 'medium' | 'high';
+export type BotDifficulty = 'low' | 'medium';
 
-export const BOT_DIFFICULTIES = ['low', 'medium', 'high'] as const;
+export const BOT_DIFFICULTIES = ['low', 'medium'] as const;
 
-export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = 'low';
+/**
+ * Tiers that were once accepted but have no implementation. Kept as an explicit
+ * list so a legacy value is reported as "withdrawn" (with a precise warning)
+ * rather than as a generic parse error.
+ */
+export const RETIRED_BOT_DIFFICULTIES = ['high'] as const;
+
+export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = 'medium';
 
 /** Case/space-insensitive difficulty parser; null for unknown/empty values. */
 export function normalizeBotDifficulty(raw: string | null | undefined): BotDifficulty | null {
@@ -35,22 +45,25 @@ export function normalizeBotDifficulty(raw: string | null | undefined): BotDiffi
 }
 
 export interface DifficultyResolution {
-  /** Effective tier after fallback: `high` never survives as `high`. */
+  /** Effective tier after fallback (always one of `BOT_DIFFICULTIES`). */
   difficulty: BotDifficulty;
   /** The tier as requested, preserved for observability; null when absent. */
   requested: string | null;
-  /** True when an explicit `high` was downgraded to `medium`. */
+  /**
+   * Always `false` now that `high` is withdrawn (no tier silently downgrades);
+   * kept on the shape so the server's observability contract is unchanged.
+   */
   downgraded: boolean;
-  /** True when an unrecognised value was ignored and `low` used. */
+  /** True when a withdrawn/unrecognised value was ignored and the default used. */
   ignored: boolean;
   warnings: string[];
 }
 
 /**
  * Resolve a requested difficulty to its effective tier:
- *   - absent/empty        -> `low` (silent default);
- *   - unknown value       -> `low` + warning (server validation 400s first);
- *   - `high` (GTO)        -> `medium` + warning (reserved, not implemented);
+ *   - absent/empty        -> `medium` (the default, no warning);
+ *   - unknown value       -> `medium` + warning (server validation 400s first);
+ *   - `high` (withdrawn)  -> `medium` + "withdrawn" warning (never silent);
  *   - `low`/`medium`      -> itself.
  */
 export function resolveDifficulty(raw: string | null | undefined): DifficultyResolution {
@@ -61,16 +74,14 @@ export function resolveDifficulty(raw: string | null | undefined): DifficultyRes
   }
   const normalized = normalizeBotDifficulty(requested);
   if (!normalized) {
-    warnings.push(`unknown difficulty "${requested}"; falling back to ${DEFAULT_BOT_DIFFICULTY}`);
-    return { difficulty: DEFAULT_BOT_DIFFICULTY, requested, downgraded: false, ignored: true, warnings };
-  }
-  if (normalized === 'high') {
-    // GTO reserved: no implementation exists, so fall back to the strongest
-    // available tier rather than failing or behaving illegally.
+    const key = requested.trim().toLowerCase();
+    const retired = (RETIRED_BOT_DIFFICULTIES as readonly string[]).includes(key);
     warnings.push(
-      'difficulty "high" (GTO, reserved) is not implemented; falling back to medium (rules-v1)',
+      retired
+        ? `difficulty "${requested}" (reserved GTO tier) is withdrawn; falling back to ${DEFAULT_BOT_DIFFICULTY}`
+        : `unknown difficulty "${requested}"; falling back to ${DEFAULT_BOT_DIFFICULTY}`,
     );
-    return { difficulty: 'medium', requested, downgraded: true, ignored: false, warnings };
+    return { difficulty: DEFAULT_BOT_DIFFICULTY, requested, downgraded: false, ignored: true, warnings };
   }
   return { difficulty: normalized, requested, downgraded: false, ignored: false, warnings };
 }
@@ -78,9 +89,9 @@ export function resolveDifficulty(raw: string | null | undefined): DifficultyRes
 export interface DifficultyPolicyResolution extends PolicyResolution {
   /** Effective tier actually used to pick the policy. */
   difficulty: BotDifficulty;
-  /** Tier as requested, preserved for observability (may be `high`/unknown). */
+  /** Tier as requested, preserved for observability (may be a withdrawn/unknown value). */
   requestedDifficulty: string | null;
-  /** True when a requested `high` was downgraded to `medium`. */
+  /** Always `false` now that `high` is withdrawn. */
   downgraded: boolean;
   /** Warnings produced by difficulty resolution alone (observability). */
   difficultyWarnings: string[];
@@ -132,12 +143,17 @@ function forceRulesEngine(policyJson: string | null | undefined): {
  * is left completely untouched: `low` calls it verbatim (zero regression), while
  * `medium` injects `engine: 'rules-v1'` before calling it. The returned
  * `warnings` merge difficulty warnings first, then the rules/style warnings.
+ *
+ * `opts.p2` is forwarded verbatim to {@link resolvePolicy}, so the server's P2
+ * rollback switches reach the `RulePolicy`/`PostflopPolicy` built underneath the
+ * rules branch. It applies to `low` too (a `policy_json` that opts into
+ * `rules-v1` runs a `RulePolicy` there as well).
  */
 export function resolvePolicyForDifficulty(
   kindRaw: string | null | undefined,
   policyJson: string | null | undefined,
   difficultyRaw?: string | null,
-  opts?: { seed?: number },
+  opts?: { seed?: number; p2?: Partial<P2Options> },
 ): DifficultyPolicyResolution {
   const d = resolveDifficulty(difficultyRaw);
 
@@ -153,9 +169,9 @@ export function resolvePolicyForDifficulty(
     };
   }
 
-  // `medium` (including a `high` downgraded to `medium`): the rules engine wins
-  // over a plain style, but the persisted `policy_kind` still selects the rule
-  // preset (the rules branch inside `resolvePolicy` handles that).
+  // `medium` (the default tier): the rules engine wins over a plain style, but
+  // the persisted `policy_kind` still selects the rule preset (the rules branch
+  // inside `resolvePolicy` handles that).
   const forced = forceRulesEngine(policyJson);
   const resolved = resolvePolicy(kindRaw, forced.json, opts);
   return {
@@ -174,7 +190,7 @@ export function policyForDifficulty(
   kindRaw: string | null | undefined,
   policyJson: string | null | undefined,
   difficultyRaw: string | null | undefined,
-  opts?: { seed?: number },
+  opts?: { seed?: number; p2?: Partial<P2Options> },
 ): Policy {
   return resolvePolicyForDifficulty(kindRaw, policyJson, difficultyRaw, opts).policy;
 }

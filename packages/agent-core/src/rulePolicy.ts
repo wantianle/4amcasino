@@ -3,7 +3,7 @@ import type { DecisionLegalActions, DecisionView } from './decisionView.js';
 import { mulberry32 } from './equity.js';
 import type { Policy, PolicyDecision } from './policy.js';
 import type { PolicyKind } from './policyStyles.js';
-import { PostflopPolicy } from './postflopPolicy.js';
+import { PostflopPolicy, type P2Options } from './postflopPolicy.js';
 import { choosePreflopIntent, type PreflopChoice } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import { RULE_PRESETS, type RuleParams } from './ruleStyles.js';
@@ -46,6 +46,12 @@ export interface RulePolicyOptions {
   postflop?: RuleFallbackPolicy;
   /** Exception fallback if the postflop engine throws; defaults to check/call/fold. */
   fallback?: RuleFallbackPolicy;
+  /**
+   * P2 behaviour switches for the default postflop engine. Omitted fields keep
+   * `DEFAULT_P2` (all on); pass `P2_ALL_OFF` to revert the whole engine. Ignored
+   * when `postflop` is injected explicitly (the caller owns that engine's config).
+   */
+  p2?: Partial<P2Options>;
 }
 
 /** Defensive normalisation shared with `StylePolicy`: malformed legal actions
@@ -134,7 +140,7 @@ export class RulePolicy implements Policy {
     this.params = opts.params ?? RULE_PRESETS[this.kind];
     this.seed = opts.seed ?? 0x9e3779b9;
     this.postflop =
-      opts.postflop ?? new PostflopPolicy({ params: this.params, seed: this.seed });
+      opts.postflop ?? new PostflopPolicy({ params: this.params, seed: this.seed, p2: opts.p2 });
     this.fallback = opts.fallback ?? new ConservativePostflopPolicy();
   }
 

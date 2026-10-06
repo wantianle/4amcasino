@@ -92,11 +92,13 @@ function view(myCards: CardId[]): DecisionView {
 }
 
 describe('normalizeBotDifficulty', () => {
-  it('accepts the three tiers case/space-insensitively', () => {
-    expect(BOT_DIFFICULTIES).toEqual(['low', 'medium', 'high']);
+  it('accepts the remaining tiers case/space-insensitively; high is withdrawn', () => {
+    expect(BOT_DIFFICULTIES).toEqual(['low', 'medium']);
     expect(normalizeBotDifficulty(' LOW ')).toBe('low');
     expect(normalizeBotDifficulty('Medium')).toBe('medium');
-    expect(normalizeBotDifficulty('high')).toBe('high');
+    // `high` was never implemented and is withdrawn from the tier list, so it
+    // no longer parses as a valid tier.
+    expect(normalizeBotDifficulty('high')).toBeNull();
   });
 
   it('returns null for empty or unknown values', () => {
@@ -109,8 +111,9 @@ describe('normalizeBotDifficulty', () => {
 });
 
 describe('resolveDifficulty', () => {
-  it('defaults to low with no warning when absent', () => {
+  it('defaults to medium with no warning when absent', () => {
     const d = resolveDifficulty(undefined);
+    expect(DEFAULT_BOT_DIFFICULTY).toBe('medium');
     expect(d.difficulty).toBe(DEFAULT_BOT_DIFFICULTY);
     expect(d.requested).toBeNull();
     expect(d.downgraded).toBe(false);
@@ -125,18 +128,18 @@ describe('resolveDifficulty', () => {
     expect(medium.warnings).toEqual([]);
   });
 
-  it('downgrades the reserved high tier to medium with a warning', () => {
+  it('reports a withdrawn high and falls back to the default (medium)', () => {
     const high = resolveDifficulty('high');
     expect(high.difficulty).toBe('medium');
     expect(high.requested).toBe('high');
-    expect(high.downgraded).toBe(true);
-    expect(high.warnings.join(' ')).toMatch(/high/);
-    expect(high.warnings.join(' ')).toMatch(/not implemented/);
+    expect(high.downgraded).toBe(false);
+    expect(high.ignored).toBe(true);
+    expect(high.warnings.join(' ')).toMatch(/withdrawn/);
   });
 
-  it('falls back to low and warns on an unknown value', () => {
+  it('falls back to medium and warns on an unknown value', () => {
     const unknown = resolveDifficulty('galaxy-brain');
-    expect(unknown.difficulty).toBe('low');
+    expect(unknown.difficulty).toBe('medium');
     expect(unknown.ignored).toBe(true);
     expect(unknown.warnings.join(' ')).toMatch(/unknown difficulty/);
   });
@@ -168,10 +171,10 @@ describe('resolvePolicyForDifficulty: low keeps today\u2019s behaviour', () => {
     expect(overridden.policy.name).toBe('style-tight-aggressive');
   });
 
-  it('treats a missing difficulty as low (default)', () => {
+  it('treats a missing difficulty as medium (default)', () => {
     const missing = resolvePolicyForDifficulty('tight-aggressive', null);
-    expect(missing.difficulty).toBe('low');
-    expect(missing.policy.name).toBe('scripted-tight-aggressive');
+    expect(missing.difficulty).toBe('medium');
+    expect(missing.policy.name).toBe('rules-v1');
     expect(missing.warnings).toEqual([]);
   });
 
@@ -265,15 +268,15 @@ describe('resolvePolicyForDifficulty: medium forces rules-v1', () => {
   });
 });
 
-describe('resolvePolicyForDifficulty: high is reserved', () => {
-  it('falls back to medium (rules-v1), keeps requested=high and warns', () => {
+describe('resolvePolicyForDifficulty: high is withdrawn', () => {
+  it('falls back to the default medium (rules-v1), keeps requested=high and warns', () => {
     const high = resolvePolicyForDifficulty('tight-aggressive', null, 'high');
     expect(high.policy).toBeInstanceOf(RulePolicy);
     expect(high.policy.name).toBe('rules-v1');
     expect(high.difficulty).toBe('medium');
     expect(high.requestedDifficulty).toBe('high');
-    expect(high.downgraded).toBe(true);
-    expect(high.difficultyWarnings.join(' ')).toMatch(/not implemented/);
+    expect(high.downgraded).toBe(false);
+    expect(high.difficultyWarnings.join(' ')).toMatch(/withdrawn/);
     expect(high.warnings.join(' ')).toMatch(/high/);
   });
 
@@ -286,10 +289,10 @@ describe('resolvePolicyForDifficulty: high is reserved', () => {
 });
 
 describe('resolvePolicyForDifficulty: unknown difficulty', () => {
-  it('falls back to low and reports the unknown value', () => {
+  it('falls back to the default medium (rules-v1) and reports the unknown value', () => {
     const unknown = resolvePolicyForDifficulty('tight-aggressive', null, 'galaxy-brain');
-    expect(unknown.difficulty).toBe('low');
-    expect(unknown.policy.name).toBe('scripted-tight-aggressive');
+    expect(unknown.difficulty).toBe('medium');
+    expect(unknown.policy.name).toBe('rules-v1');
     expect(unknown.requestedDifficulty).toBe('galaxy-brain');
     expect(unknown.warnings.join(' ')).toMatch(/unknown difficulty/);
   });

@@ -19,6 +19,7 @@ import type {
 import type { PolicyDecision } from '../src/policy.js';
 import type { PolicyKind } from '../src/policyStyles.js';
 import {
+  P2_ALL_OFF,
   PostflopPolicy,
   bluffBetProbability,
   bluffToValueRatio,
@@ -213,7 +214,9 @@ function assertSharedLegal(d: PolicyDecision, legal: DecisionLegalActions): void
 }
 
 const TAG = RULE_PRESETS['tight-aggressive'];
-const policy = () => new PostflopPolicy({ params: TAG, seed: 7 });
+// These tests lock the P0/P1 engine behaviour; P2 is explicitly reverted so the
+// default all-on P2 switches cannot perturb what is being asserted here.
+const policy = () => new PostflopPolicy({ params: TAG, seed: 7, p2: P2_ALL_OFF });
 
 // ---------------------------------------------------------------------------
 
@@ -289,7 +292,9 @@ describe('postflop: MDF', () => {
       opponents: active,
       samples,
       seed: deriveRulesSeed(policySeed, view),
-      villainRange: facingVillainRange(view, hole, potBefore, call),
+      // Same P2 config as `policy()` so the equity read and the decision agree;
+      // this suite locks the P0/P1 engine with P2 explicitly off.
+      villainRange: facingVillainRange(view, hole, potBefore, call, P2_ALL_OFF),
     });
     return {
       equity: estimate.equity,
