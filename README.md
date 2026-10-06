@@ -4,8 +4,6 @@
 
 [**Play it live →**](https://4amcasino.com) · [How it's fair (60s animated tour)](https://4amcasino.com/fair) · [MIT licensed](LICENSE)
 
-![The 4AM Casino landing page](docs/media/landing.jpg)
-
 Instead of trusting a server to deal, every player's browser takes part in a
 [mental poker](https://en.wikipedia.org/wiki/Mental_poker) protocol: the deck is encoded as
 points on the ristretto255 curve, each player masks and shuffles it with a secret per-hand key,
@@ -17,10 +15,6 @@ Chips are play money. Players buy points from a **bank**; the room's **banker** 
 purchase, and every chip movement — buys, pots, bounties, transfers — lands in an append-only,
 **hash-chained ledger** the whole room can verify, so the group settles up outside the app.
 No real payments, ever.
-
-| The table | The fairness tour |
-| --- | --- |
-| ![A hand in progress on the round isometric table](docs/media/table.png) | ![The animated mental-poker explainer](docs/media/fair.png) |
 
 ## What's inside
 
