@@ -5,36 +5,25 @@ import { genIdentity } from '@4am/mental-poker';
 import type { DB } from './db.js';
 import { userForToken, touchPresence } from './auth.js';
 import { isMember, isSpectator, roomEvents } from './rooms.js';
-import {
-  GameRoom,
-  GameError,
-  AUTO_DEAL_INTERVAL_MS,
-  AUTO_DEAL_READY_CHECK_MS,
-  type GameOpts,
-} from './game.js';
+import { GameRoom, GameError, type GameOpts } from './game.js';
 import { LIMITS } from './limits.js';
 import { agentMaySend, resolveAgentGrant } from './botAccess.js';
+import { readTunable } from './tunables.js';
 
 // 10s per attempt with 3 retries: a stalled player gets a fixed ~40s to rejoin.
 // The auto-deal cadence must be short or "auto deal" feels manual, so the hub
 // always supplies it rather than relying on the engine's fallback. Both timers
 // stay operator-tunable via env (a per-deployment cadence should not need a
-// rebuild): see AUTO_DEAL_INTERVAL_MS / AUTO_DEAL_READY_CHECK_MS for the
-// defaults and why they are what they are.
-function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts {
+// rebuild); they are declared - and parsed - only in `tunables.ts`
+// (`FOURAM_AUTO_DEAL_INTERVAL_MS` / `FOURAM_AUTO_DEAL_READY_CHECK_MS`), so the
+// `/api/config` table and the room's game options can never drift apart.
+export function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts {
   return {
     cryptoTimeoutMs: 10_000,
     actionTimeoutMs: 45_000,
-    autoDealMs: positiveInt(env.FOURAM_AUTO_DEAL_INTERVAL_MS, AUTO_DEAL_INTERVAL_MS),
-    readyCheckMs: positiveInt(env.FOURAM_AUTO_DEAL_READY_CHECK_MS, AUTO_DEAL_READY_CHECK_MS),
+    autoDealMs: readTunable('autoDealIntervalMs', env),
+    readyCheckMs: readTunable('autoDealReadyCheckMs', env),
   };
-}
-
-/** Non-numeric, non-positive or empty env values silently fall back to the
- *  default, matching `botPolicy.ts`'s `positiveInt`. */
-function positiveInt(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 /** Same-origin only. The game socket carries a session credential, so a page on

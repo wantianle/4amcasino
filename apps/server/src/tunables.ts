@@ -15,6 +15,22 @@ import { createHash } from 'node:crypto';
  * value falls back to the declared default rather than erroring, so a typo in
  * `.env` can never crash the server.
  *
+ * `min`/`max` encode SEMANTIC validity, not product taste: they exist only to
+ * reject values that would break the machine (a `0` hard-stop turning every stop
+ * into an immediate abort; a timer delay past what `setTimeout` can represent).
+ * A large-but-legal operator value must genuinely take effect - the whole point
+ * of this table is "change `.env`, restart, done" - so the bounds are set as
+ * wide as the consuming mechanism allows and are never an arbitrary ceiling.
+ * (The runtime has its own independent safety caps where they matter: the bot
+ * think buffer is capped against the action clock by `planThinkWaitMs`, so its
+ * configured max needs no upper bound at all.)
+ *
+ * Behavior note vs. the pre-`tunables.ts` parsers: `FOURAM_BOT_HARD_STOP_MS`
+ * used to accept any positive number and `Math.floor` it - so `0.5` silently
+ * became `0`, i.e. an immediate hard abort. The table instead treats `< 1` as
+ * invalid and falls back to the 2-minute default; that is a deliberate fix, not
+ * an accident (see the spec's `min`).
+ *
  * `public` is a security boundary, not documentation: ONLY specs marked
  * `public: true` are ever emitted by `GET /api/config`. Secrets (`LLM_API_KEY`,
  * `BOT_IDENTITY_KEY`, ...) are deliberately absent from this table, so there is
@@ -25,6 +41,15 @@ import { createHash } from 'node:crypto';
 export type TunableKind = 'int';
 
 /**
+ * Largest delay `setTimeout` can represent (2^31 - 1 ms, ~24.8 days). Used as
+ * the upper bound for parameters that are handed straight to a timer: Node
+ * fires any larger delay immediately and emits a `TimeoutOverflowWarning`,
+ * which would silently invert the meaning of a huge configured value. This is
+ * a platform ceiling, not a product cap.
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
+
+/**
  * Canonical defaults. These are the values an unset env var resolves to, and the
  * source of truth other modules import (e.g. `DEFAULT_THINK_CONFIG`).
  */
@@ -33,6 +58,9 @@ export const TUNABLE_DEFAULTS = {
   botThinkMinMs: 150,
   botThinkMaxMs: 450,
   botHardStopMs: 120_000,
+  // Server self-use: auto-deal cadence (was `hub.ts`'s `defaultGameOpts`).
+  autoDealIntervalMs: 3_500,
+  autoDealReadyCheckMs: 1_500,
   // Downstream to the web client: motion durations, read from CSS custom
   // properties. Defaults mirror `apps/web/src/app/table-tokens.css` and the
   // `WIN_FX_MS` / `STACK_LAND_MS` constants in `widgets/table/WinnerFx.tsx`.
@@ -67,7 +95,9 @@ export const TUNABLES = [
     kind: 'int',
     default: TUNABLE_DEFAULTS.botThinkMinMs,
     min: 0,
-    max: 10_000,
+    // No practical upper bound: `planThinkWaitMs` already caps the actual wait
+    // against the action clock, so a huge configured max cannot wedge a hand.
+    max: Number.MAX_SAFE_INTEGER,
     public: false,
     describe: 'Lower bound of the bot think-delay buffer (ms).',
   },
@@ -77,7 +107,7 @@ export const TUNABLES = [
     kind: 'int',
     default: TUNABLE_DEFAULTS.botThinkMaxMs,
     min: 0,
-    max: 10_000,
+    max: Number.MAX_SAFE_INTEGER,
     public: false,
     describe: 'Upper bound of the bot think-delay buffer (ms).',
   },
@@ -86,10 +116,37 @@ export const TUNABLES = [
     env: 'FOURAM_BOT_HARD_STOP_MS',
     kind: 'int',
     default: TUNABLE_DEFAULTS.botHardStopMs,
+    // `< 1` is invalid: `0.5` floors to 0, and a zero hard-stop aborts every
+    // graceful stop immediately. That differs from the old parser, which accepted
+    // any positive number and returned the floored `0` (see module note).
     min: 1,
-    max: 600_000,
+    // `stop()` schedules this through a real `setTimeout` (`settlesWithin`), so
+    // the ceiling is the timer limit, not an opinion about stop duration.
+    max: MAX_TIMER_MS,
     public: false,
     describe: 'Hard upper bound on a graceful bot stop (ms).',
+  },
+  {
+    key: 'autoDealIntervalMs',
+    env: 'FOURAM_AUTO_DEAL_INTERVAL_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.autoDealIntervalMs,
+    // Positive only, matching the old `hub.ts` `positiveInt`: a `0`/negative
+    // cadence would make the room deal as fast as the event loop allows.
+    min: 1,
+    max: MAX_TIMER_MS,
+    public: false,
+    describe: 'Auto-deal cadence after a hand settles (ms).',
+  },
+  {
+    key: 'autoDealReadyCheckMs',
+    env: 'FOURAM_AUTO_DEAL_READY_CHECK_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.autoDealReadyCheckMs,
+    min: 1,
+    max: MAX_TIMER_MS,
+    public: false,
+    describe: 'Auto-deal ready-check consent window (ms).',
   },
   {
     key: 'tableDurPulseMs',

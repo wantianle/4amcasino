@@ -13,8 +13,14 @@ import './index.css';
  *
  * The durations below are overlaid onto `:root` as inline custom properties,
  * which outrank the stylesheet's `:root` block, so the committed defaults in
- * `app/table-tokens.css` need no edit. If the fetch fails the stylesheet wins
- * and the app renders unchanged - configuration is best-effort, never a gate.
+ * `app/table-tokens.css` need no edit.
+ *
+ * The fetch is applied BEFORE the first render, bounded by
+ * `RUNTIME_CONFIG_TIMEOUT_MS`: consumers such as `DealCard` read these custom
+ * properties at animation start, so a first frame painted against the
+ * stylesheet defaults would silently ignore a configured `.env` value. The
+ * timeout is the escape hatch - a failed, slow, or hung request still renders
+ * (with the defaults), so configuration is a bounded gate, never a white screen.
  */
 
 /** Public duration key -> CSS custom property. Anything the server does not
@@ -69,12 +75,59 @@ export async function applyRuntimeConfig(
   }
 }
 
+/**
+ * How long the bootstrap waits for `/api/config` before rendering with the
+ * stylesheet defaults. Same-origin on the deployment target (Render / LAN), so
+ * p99 is well under 200ms; 400ms is ~2x headroom and still below the shortest
+ * animation it configures (`--table-dur-glow`, 450ms default). Past it we would
+ * rather paint than hold a blank `#root` on a hung request.
+ */
+export const RUNTIME_CONFIG_TIMEOUT_MS = 400;
+
+/**
+ * Resolve once the runtime config has been applied OR `timeoutMs` has elapsed,
+ * whichever comes first. The fetch is deliberately NOT aborted on timeout: a
+ * slow-but-live server still lays its values down for every later read, while
+ * the first render is never blocked longer than the timeout.
+ */
+export async function applyRuntimeConfigBeforeRender(
+  fetchImpl: typeof fetch = fetch,
+  root: HTMLElement | undefined = typeof document === 'undefined'
+    ? undefined
+    : document.documentElement,
+  timeoutMs: number = RUNTIME_CONFIG_TIMEOUT_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      applyRuntimeConfig(fetchImpl, root),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 const rootEl = typeof document === 'undefined' ? null : document.getElementById('root');
 if (rootEl) {
-  void applyRuntimeConfig();
-  ReactDOM.createRoot(rootEl).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>,
-  );
+  // Apply the server's public durations BEFORE the first render. `DealCard`
+  // reads `--table-dur-highlight` from computed style when its animation starts,
+  // so rendering first would make the first frame use `table-tokens.css`'s
+  // committed default and silently ignore `.env`. The wait is bounded by
+  // `RUNTIME_CONFIG_TIMEOUT_MS`; a hung request must never white-screen the app,
+  // and whatever the promise settles to, we always render.
+  void (async () => {
+    try {
+      await applyRuntimeConfigBeforeRender();
+    } catch {
+      // Best effort: fall through and paint with the stylesheet defaults.
+    }
+    ReactDOM.createRoot(rootEl).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>,
+    );
+  })();
 }

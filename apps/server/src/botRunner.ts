@@ -228,10 +228,16 @@ export const DEFAULT_BOT_HARD_STOP_MS = TUNABLE_DEFAULTS.botHardStopMs;
 
 /**
  * Resolve the hard-stop bound from the server env. `FOURAM_BOT_HARD_STOP_MS`
- * must be a positive integer within bounds; anything else (unset, empty, `0`,
- * negative, NaN) falls back to `DEFAULT_BOT_HARD_STOP_MS` - a zero/negative
- * bound would turn every stop into an immediate hard abort. Explicit
- * `opts.hardStopMs` (tests) still wins over this. Declared in `tunables.ts`.
+ * must be a positive integer; anything else (unset, empty, `0`, negative, NaN)
+ * falls back to `DEFAULT_BOT_HARD_STOP_MS` - a zero/negative bound would turn
+ * every stop into an immediate hard abort. Explicit `opts.hardStopMs` (tests)
+ * still wins over this. Declared in `tunables.ts`.
+ *
+ * Behavior change from the pre-`tunables.ts` parser: a positive sub-1 value
+ * such as `0.5` used to be floored to `0` (an immediate hard abort); it now
+ * falls back to the default, which matches the documented "must be a positive
+ * integer" contract. There is no arbitrary upper cap any more - the only bound
+ * is the `setTimeout` ceiling, so a large operator value really takes effect.
  */
 export function botHardStopMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   return readTunable('botHardStopMs', env);
