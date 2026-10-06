@@ -79,6 +79,9 @@ export class TestClient {
         netBySeat?: { seat: number; net: number }[];
       })
     | null = null;
+  /** The automatic 7-2 bounty frame, or null when it was never delivered (e.g.
+   *  a lost-notification fault at `broadcast_before_seven_deuce`). */
+  sevenDeuceResult: Extract<ServerMsg, { t: 'seven_deuce' }> | null = null;
   featureStarted: Extract<ServerMsg, { t: 'feature_started' }>[] = [];
   identity = genIdentity();
   ws!: WebSocket;
@@ -476,6 +479,10 @@ export class TestClient {
       }
       case 'squid_result': {
         this.squidResult = msg;
+        break;
+      }
+      case 'seven_deuce': {
+        this.sevenDeuceResult = msg;
         break;
       }
       case 'feature_started': {

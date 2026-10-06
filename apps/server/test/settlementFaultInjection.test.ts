@@ -18,6 +18,7 @@ import { activeHands } from '../src/liveHands.js';
 import { TestClient } from './helpers/testClient.js';
 import { setupRoom, awaitHandEnd } from './helpers/testRoom.js';
 import {
+  SEED_TIME_BANK_EPOCH,
   count,
   lifecycle,
   makeWrite,
@@ -66,21 +67,81 @@ const SETTLEMENT_POINTS: SettlementFaultPoint[] = [
 
 const ONE = (db: DB, sql: string, ...args: unknown[]): number => count(db, sql, ...args);
 
-/** Every money/audit fact the settlement transaction could write. */
+/** Prepared-row columns a rollback must leave byte-identical.
+ *
+ *  `attempts` is DELIBERATELY absent: `applyPreparedHandSettlement` bumps it
+ *  BEFORE the money transaction (game.ts:1578-1580), so a rolled-back attempt
+ *  still advances it. It is asserted separately via `preparedAttempts()`. */
+function preparedState(db: DB, handId = 'h1'): {
+  room_id: string;
+  head: string;
+  input_json: string;
+  input_hash: string;
+  resolved_at: number | null;
+  resolved_by: number | null;
+  resolution: string | null;
+  last_error: string | null;
+} {
+  return db
+    .prepare(
+      `SELECT room_id, head, input_json, input_hash, resolved_at, resolved_by, resolution, last_error
+       FROM hand_settlement_prepared WHERE hand_id = ?`,
+    )
+    .get(handId) as {
+    room_id: string;
+    head: string;
+    input_json: string;
+    input_hash: string;
+    resolved_at: number | null;
+    resolved_by: number | null;
+    resolution: string | null;
+    last_error: string | null;
+  };
+}
+
+/** `attempts` lives OUTSIDE the money transaction, so it is EXPECTED to grow. */
+function preparedAttempts(db: DB, handId = 'h1'): number {
+  return (
+    db.prepare('SELECT attempts FROM hand_settlement_prepared WHERE hand_id = ?').get(handId) as {
+      attempts: number;
+    }
+  ).attempts;
+}
+
+/** Every money/audit fact the settlement transaction could write, EXCEPT the
+ *  out-of-transaction `attempts` counter.
+ *
+ *  This is the "must not change on rollback" set: marker + transcript + every
+ *  ledger leg (poker, squid, commission, 7-2) + stats projection + the full
+ *  gameplay counters + per-player stacks AND the time-bank snapshot +
+ *  commission-rate rows + the frozen prepared row's resolved state. */
 function moneyState(db: DB) {
   return {
     settlements: ONE(db, 'SELECT COUNT(*) AS n FROM hand_settlements'),
     transcripts: ONE(db, 'SELECT COUNT(*) AS n FROM transcripts'),
     ledger: ONE(db, 'SELECT COUNT(*) AS n FROM ledger'),
+    commissionRates: ONE(db, 'SELECT COUNT(*) AS n FROM hand_commission_rates'),
     hands: ONE(db, 'SELECT COUNT(*) AS n FROM hands'),
     handPlayers: ONE(db, 'SELECT COUNT(*) AS n FROM hand_players'),
-    gameplay: ONE(db, 'SELECT COUNT(*) AS n FROM room_gameplay_state'),
+    // Full gameplay counters, not just the row count: the writer increments
+    // `completed_hands` and may stamp `last_bomb_*` in the same transaction.
+    gameplay: db
+      .prepare(
+        `SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at
+         FROM room_gameplay_state WHERE room_id = ?`,
+      )
+      .all('r1'),
+    // Stacks plus the per-player time-bank snapshot the same transaction writes.
     stacks: db
-      .prepare('SELECT user_id, stack FROM room_players WHERE room_id = ? ORDER BY user_id')
+      .prepare(
+        `SELECT user_id, stack, time_bank_ms, time_bank_hands, time_bank_epoch
+         FROM room_players WHERE room_id = ? ORDER BY user_id`,
+      )
       .all('r1'),
     triggers: db
       .prepare('SELECT id, status, claimed_hand_id FROM room_feature_triggers ORDER BY id')
       .all(),
+    prepared: preparedState(db),
   };
 }
 
@@ -100,7 +161,17 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
     const db = openDb(':memory:');
     seed(db);
     seedClaimedTrigger(db);
-    persistPreparedInput(db, makeWrite({ triggerIds: [1] }));
+    persistPreparedInput(
+      db,
+      makeWrite({
+        triggerIds: [1],
+        timeBankEpoch: SEED_TIME_BANK_EPOCH,
+        timeBanks: [
+          { userId: 1, ms: 111, hands: 1 },
+          { userId: 2, ms: 222, hands: 2 },
+        ],
+      }),
+    );
     const seen: SettlementFaultPoint[] = [];
     const result = applyPreparedHandSettlement(db, 'h1', { phase: (p) => seen.push(p) });
     expect(result.status).toBe('applied');
@@ -115,6 +186,33 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
     expect(seen.indexOf('settlement_before_transaction')).toBe(
       seen.lastIndexOf('settlement_before_transaction'),
     );
+    // Proof the new rollback targets are NOT vacuous on the success path:
+    // a non-zero rake really wrote the commission leg...
+    expect(ONE(db, 'SELECT COUNT(*) AS n FROM hand_commission_rates')).toBe(1);
+    expect(
+      ONE(db, "SELECT COUNT(*) AS n FROM ledger WHERE room_id = 'r1' AND kind = 'commission'"),
+    ).toBe(1);
+    // ...the time-bank snapshot really moved...
+    expect(
+      db
+        .prepare(
+          'SELECT time_bank_ms, time_bank_hands, time_bank_epoch FROM room_players WHERE room_id = ? AND user_id = ?',
+        )
+        .get('r1', 1),
+    ).toEqual({ time_bank_ms: 111, time_bank_hands: 1, time_bank_epoch: SEED_TIME_BANK_EPOCH });
+    // ...and the gameplay counters really advanced from the seeded row.
+    expect(
+      db
+        .prepare(
+          'SELECT completed_hands, last_bomb_completed_hands, last_bomb_at, schedule_reset_at FROM room_gameplay_state WHERE room_id = ?',
+        )
+        .get('r1'),
+    ).toEqual({
+      completed_hands: 8,
+      last_bomb_completed_hands: 2,
+      last_bomb_at: 1111,
+      schedule_reset_at: 2222,
+    });
     db.close();
   });
 
@@ -124,8 +222,19 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
       const db = openDb(':memory:');
       seed(db);
       seedClaimedTrigger(db);
-      const { hash } = persistPreparedInput(db, makeWrite({ triggerIds: [1] }));
+      const { hash } = persistPreparedInput(
+        db,
+        makeWrite({
+          triggerIds: [1],
+          timeBankEpoch: SEED_TIME_BANK_EPOCH,
+          timeBanks: [
+            { userId: 1, ms: 111, hands: 1 },
+            { userId: 2, ms: 222, hands: 2 },
+          ],
+        }),
+      );
       const before = moneyState(db);
+      const attemptsBefore = preparedAttempts(db);
 
       let thrown: unknown;
       try {
@@ -143,7 +252,12 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
 
       // ---- complete rollback: not just the marker ----
       expect(lifecycle(db)).toBe('prepared');
+      // Everything durable the transaction touches is byte-identical.
       expect(moneyState(db)).toEqual(before);
+      // `attempts` is bumped OUTSIDE the transaction, so it must MOVE even
+      // though the money rolled back. Asserting it separately keeps the
+      // equality above honest (it could never pass if attempts were included).
+      expect(preparedAttempts(db)).toBe(attemptsBefore + 1);
 
       // The frozen input itself is untouched and unresolved.
       const prep = db
@@ -194,6 +308,8 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
     const db = openDb(':memory:');
     seed(db);
     const { hash } = persistPreparedInput(db, makeWrite());
+    const before = moneyState(db);
+    const attemptsBefore = preparedAttempts(db);
     expect(() =>
       applyPreparedHandSettlement(db, 'h1', {
         phase: (p) => {
@@ -203,20 +319,19 @@ describe('P0-3 B: a throw inside the money transaction is a COMPLETE rollback', 
       }),
     ).toThrow(/injected programming error/);
     expect(lifecycle(db)).toBe('quarantined');
-    // Nothing applied, and the frozen input is still byte-identical.
-    expect(moneyState(db)).toEqual({
-      settlements: 0,
-      transcripts: 0,
-      ledger: 0,
-      hands: 0,
-      handPlayers: 0,
-      gameplay: 0,
-      stacks: [
-        { user_id: 1, stack: 1000 },
-        { user_id: 2, stack: 1000 },
-      ],
-      triggers: [],
+    // Nothing on the books moved.
+    const after = moneyState(db);
+    const { prepared: beforePrepared, ...beforeBooks } = before;
+    const { prepared: afterPrepared, ...afterBooks } = after;
+    expect(afterBooks).toEqual(beforeBooks);
+    // The frozen input is still byte-identical; quarantine only stamps the
+    // failure evidence onto the prepared row's `last_error`.
+    expect(afterPrepared).toEqual({
+      ...beforePrepared,
+      last_error: 'injected programming error',
     });
+    // `attempts` still moved, because it is bumped outside the transaction.
+    expect(preparedAttempts(db)).toBe(attemptsBefore + 1);
     expect(
       (
         db
@@ -600,6 +715,11 @@ describe('P0-3 C/D (live): a lost broadcast after commit never undoes money', ()
         ),
       ).toBe(2);
       expect(host.handEnd!.squidDeltas!.reduce((s, d) => s + d.delta, 0)).toBe(0);
+      // The frame really was lost: the phase hook threw before room.broadcast,
+      // so no client ever saw `squid_result`. This is the direct proof that
+      // "lost notification" (not just "money committed") is what happened.
+      expect(host.squidResult).toBeNull();
+      expect(players[1]!.squidResult).toBeNull();
       expect(gameRoom.isUnhealthy()).toBe(false);
     } finally {
       for (const c of clients) c.close();
@@ -639,6 +759,11 @@ describe('P0-3 C/D (live): a lost broadcast after commit never undoes money', ()
       expect(bounty).toHaveLength(2);
       expect(bounty.reduce((s, r) => s + r.delta, 0)).toBe(0);
       expect(bounty.find((r) => r.delta === 25)).toBeTruthy();
+      // The `seven_deuce` frame really was lost: the phase hook threw before
+      // room.broadcast, so no client ever saw it even though the bounty is
+      // durably in the ledger.
+      expect(host.sevenDeuceResult).toBeNull();
+      expect(players[1]!.sevenDeuceResult).toBeNull();
       expect(gameRoom.isUnhealthy()).toBe(false);
     } finally {
       for (const c of clients) c.close();
