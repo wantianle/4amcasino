@@ -62,9 +62,9 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 
 ## 6. API 与前端
 - 普通模式=现状（`/style`、`/timeline`、`/me/hand-history`、rooms hands、profile）语义不变。
-- 新增 `GET /api/me/stats`（from/to/roomId/gameKind/position/street/ipOop/opponentId/minHands）返回 `{sample, stats:{<metric>:{hits,opportunities,pct}}, byPosition, byStreet, byIpOop, trend, dataQuality}`——**比率必须同时返回分子/分母**。
-- `GET /api/users/:id/stats`（隐私更严，private_mode 隐藏）。
-- `GET /api/rooms/:id/hud`（room member；minHands<20 样本不足、<50 低置信度）。
+- 现有接口契约 `GET /api/me/stats`（from/to/roomId/gameKind/position/street/ipOop/opponentId/minHands）返回 `{sample, stats:{<metric>:{hits,opportunities,pct}}, byPosition, byStreet, byIpOop, trend, dataQuality}`——**比率必须同时返回分子/分母**（已落地于 `apps/server/src/handStats.ts`）。
+- 现有接口契约 `GET /api/users/:id/stats`（隐私更严，private_mode 隐藏）。
+- 现有接口契约 `GET /api/rooms/:id/hud`（room member；minHands<20 样本不足、<50 低置信度）。
 - 新增 `pages/stats/ProStatsPage.tsx` + `features/stats/{StatGrid,StatFilterBar,PositionMatrix,StreetStatsTable,OpponentHudTable}.tsx`；`/players/:id/stats`、`/room/:id/hud`；`?mode=pro` 显式 opt-in；metric version 变更提示。
 
 ## 7. 回填迁移
@@ -137,11 +137,12 @@ streak: { tier: 'hot2'|'hot1'|'cold1'|'cold2'|null, netBB: number, sample: numbe
 | `GET /api/users/:id/stats` | 仅**本人**见 `streak`；非本人 `streak: null`（即使对方未开 `private_mode`，通用 stats 仍可见）。`private_mode` 非本人整包 redacted（`streak: null`）。 |
 | `GET /api/rooms/:id/hud` | 同房可见成员见 `streak`；`private_mode` 且非本人整条 hidden（`streak: null`）；样本不足 `streak: null`。 |
 
-### METRIC_VERSION 与 web 侧同步（另一 lane）
-本改动把 `METRIC_VERSION` 1 → 2。web 侧需同步：
+### METRIC_VERSION 与 web 侧同步（数据已接入）
+本改动把 `METRIC_VERSION` 1 → 2。web 侧状态：
 - `features/stats/types.ts`：`StreakTier`（`'hot2'|'hot1'|'cold1'|'cold2'`）、`StreakResult`（`{tier, netBB, sample}`）、`HandStats.streak`、`HiddenStats.streak: null`、`HudPlayer.streak`。
-- `SeatBadges` / HUD 组件：仅当 `streak !== null && streak.tier !== null` 渲染徽标；`tier=null`（中性）或 `streak=null`（隐藏/低样本）不渲染。
+- **数据已接入**：`widgets/table/PlayerHud.tsx` 已消费 `p.streak`（渲染 `Last 50 hands: {net} bb · {sample} hands`）。
+- **视觉徽标仍待验收**：四档热/冷徽标（配色 + 图标，且 `streak !== null && streak.tier !== null` 才显示）尚未在座位头像/名字旁完全落地；`tier=null`（中性）或 `streak=null`（隐藏/低样本）不渲染的设计不变。
 - mock/fixture 里的 `metricVersion` 更新为 2，补齐 `streak` 字段。
 
-### 前端（另一 lane 待办）
-徽标放座位头像/名字旁。四档配色：红/黄/绿/蓝/紫需与既有 VPIP 色阶协商后再定（本 lane 不实现 UI）。
+### 前端（数据已接入；视觉徽标待验收）
+徽标放座位头像/名字旁。四档配色：红/黄/绿/蓝/紫需与既有 VPIP 色阶协商后再定；数据管道（`streak`）已接入 `PlayerHud.tsx`，**视觉徽标渲染本身仍待验收**。

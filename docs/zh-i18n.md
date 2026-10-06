@@ -66,7 +66,7 @@
 | showdown | 摊牌 | |
 | hole cards | 底牌 | 「Your cards stay yours」语境统一用「底牌」 |
 | community cards | 公共牌 | |
-| run it twice | 跑两次牌 | 桌面提示「🔁 Run it twice?」→「🔁 跑两次？」；GIF 角标 `RUN 2` →「第 2 跑」 |
+| run it multiple times / multi-run | 多次发牌 | 桌面提示「🔁 Run it how many times?」→「🔁 发几次牌？」；GIF 角标 `RUN 2` →「第 2 跑」 |
 | banker / backup banker | 账房 / 副账房 | ⚠️ 绝不译「庄家」。这里的 banker 是管点数买卖与结算的朋友，「庄家」在扑克语境=荷官/平台，会引起歧义 |
 | ledger | 账本 | 页面标题「账本」，行内「流水」可用于列表语境 |
 | settle up | 结账 | 「Bought from the bank (to settle up)」→「向银行买入（用于结账）」 |
@@ -102,7 +102,6 @@
 | hand abort / void hand | 本手作废 / 作废手牌 | 徽章「作废」 |
 | purchase / transfer / revert | 买入 / 转账 / 撤销 | 账本 kind 徽章 |
 | hand-settlement | 结算 | 徽章「结算」 |
-| tournament formats: Freezeout / Knockout / Fixed-hand league | 淘汰制 / 击倒赛 / 固定手数月赛 | 「月赛」若与业务不符改「循环赛」；三选一后全站锁死 |
 | provably fair / fair play guide | 可验证发牌 / 公平玩法说明 | 页脚「Fair play」→「公平玩法」 |
 | 4AM Casino / 4AM | **不翻译** | 品牌名保留原文；正文中英混排时按 4.5 加半角空格 |
 
@@ -179,7 +178,7 @@
 
 - 模板变量名 **逐字保留**：`${n}`、`${rate}`、`no such user: ${fromUsername}` 里的 `${...}` 一律不动，只动周围的 prose。
 - 中文可自由调整变量位置（中文没有英文的词序枷锁），但**禁止把一个变量拆进两个分句**。
-- 服务器拼好的成品句（账本 note、abort reason、`Seat 3 votes to run it twice`）走「短语库模板匹配」（6.2），匹配不到就**原样显示英文**——宁可露出英文，不可显示错误的中文。
+- 服务器拼好的成品句（账本 note、abort reason、`Seat 3 chooses to run it 2 times`）走「短语库模板匹配」（6.2），匹配不到就**原样显示英文**——宁可露出英文，不可显示错误的中文。
 - 徽章、按钮里英文源没有变量的，中文也不许加。
 
 ### 4.3 品牌与专名
@@ -357,9 +356,9 @@
 | Your balance. Bought {n} total. | 余额。累计买入 {n}。 |
 | Bet amount / Raise to / Enter to confirm | 下注金额 / 加注至 / 回车确认 |
 | Enter a whole-chip amount from {min} to {max}. | 请输入 {min} 到 {max} 之间的整数筹码。 |
-| 🔁 Run it twice? · {n}s（TablePage） | 🔁 跑两次？· {n} 秒 |
+| 🔁 Run it how many times?（MultiRunPrompt） | 🔁 发几次牌？ |
 | Could not send your action. | 操作没发出去，再试一次。 |
-| Seat {n} votes to run it {twice|once}（replay 旁白） | {n} 号位选择跑{两遍|一遍} |
+| Seat {n} chooses to run it {count} times（replay 旁白） | {n} 号位选择跑 {count} 次 |
 
 ### 5e. 落地页 `LandingPage.tsx` —— 英雄区、三步、FAQ（已按 3.2 删减）
 
@@ -437,7 +436,7 @@
    - 上游新增句子 → 词典查不到 → **回退显示英文**（永远不出错、不会白屏），且可用脚本列出未命中键当作待译清单；
    - 上游改动句子 → 只在该行 t() 处可能冲突，且 codemod 可对 diff 重跑；
    - 术语一致性可集中审计（词典就是唯一的真相源 + 走查面）。
-   - 需人工二次处理的只有"拼句式"文案（如 replay 的 `Seat N votes to run it twice`），改成整句模板键 + 变量。
+   - 需人工二次处理的只有"拼句式"文案（如 replay 的 `Seat N chooses to run it {count} times`），改成整句模板键 + 变量。
 2. **服务器 prose**：不改协议。让 `packages/shared` 把 server 现在散发的散文字面量收口成导出常量（server 引用、web 词典同源），客户端 `tr(enText)`：精确匹配 → 模板匹配（正则捕获 `${name}` 等）→ 原样回退。这一层同样覆盖 ledger `kind` 徽章与 note、`hand_abort.reason`、`betting.ts` 抛出的 `minimum is ${x}` / `raise rights closed` 等。**注意 server 端 prose 大小写风格不统一（`invalid input` vs `Invalid agent access settings.`），短语库键要归一化匹配（trim + 首字母不敏感），但输出遵循中文规范。**
 3. **Canvas 文案**（shareCard.ts / replayGif.ts）：同一 `tr()`，外加两条专属规则——① 画布版词典允许更短的变体键（`POT 1,200` → 「底池 1,200」；`RUN 2` → 「第 2 跑」；`4amcasino.com · provably fair` → 「4amcasino.com · 发牌可验证」）；② 现有 `.slice(0, 40)` / `ellipsize` 对 CJK 依然可用（slice 按码点截断没问题），但**字体栈必须补 CJK**：`Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif`，否则导出图是豆腐块；GIF/分享图上的中文建议同步做一次字重与描边检查。
 4. **格式化**：`fmt()` 换 `Intl.NumberFormat('zh-CN')`（行为几乎不变，保住占位）；把散落的 27 处裸 `toLocaleString()/toLocaleDateString()/toLocaleTimeString()` 收口到 `shared/lib/datetime.ts` 三个 helper（`fmtTime/fmtDate/fmtRelative`，统一 zh-CN 与 4.1 的相对时间规则）。这是纯机械 codemod，零上游冲突面。
@@ -452,4 +451,18 @@
 
 ---
 
-*设计依据文件：SettingsPage.tsx、KeyboardShortcuts.tsx、LoginPage.tsx、ProfileDialog.tsx、ActionBar.tsx、LandingPage.tsx、ChatPanel.tsx、TablePage.tsx、gameClient.ts、replay.ts、LedgerPage.tsx、shared/{evaluate,betting,commission,tournamentPolicy,pokerHotkeys,cards}.ts、apps/web/shared/lib/cn.ts、server/{game,rooms,ledger,settle,rake,account,admin,profile}.ts、apps/web/index.html。未改动任何源码。*
+*设计依据文件：SettingsPage.tsx、KeyboardShortcuts.tsx、LoginPage.tsx、ProfileDialog.tsx、ActionBar.tsx、LandingPage.tsx、ChatPanel.tsx、TablePage.tsx、gameClient.ts、replay.ts、LedgerPage.tsx、shared/{evaluate,betting,commission,pokerHotkeys,cards}.ts、apps/web/shared/lib/cn.ts、server/{game,rooms,ledger,settle,rake,account,admin,profile}.ts、apps/web/index.html。未改动任何源码。*
+
+---
+
+## 附录 A. 历史术语迁移（非现役）
+
+以下为早期"run it twice / 跑两次牌"的二元投票术语，**已被 multi-run 协议取代**
+（`run_count_choice` / `run_count_agree`，1–3 次，落后方选次数、领先方同意）。仅作历史资料保留，
+不得作为现役文案依据：
+
+| 历史英文串 | 历史译法 | 现役对应 |
+| --- | --- | --- |
+| `🔁 Run it twice?` / `🔁 Run it twice? · {n}s` | 跑两次？ | `🔁 Run it how many times?`（「🔁 发几次牌？」） |
+| `Seat {n} votes to run it {twice\|once}` | {n} 号位选择跑{两遍\|一遍} | `Seat {n} chooses to run it {count} times`（「{n} 号位选择跑 {count} 次」） |
+| `votes to run it twice` | 投票跑两次 | `chooses to run it {count} times` |

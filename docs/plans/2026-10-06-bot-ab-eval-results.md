@@ -36,8 +36,10 @@ node --import tsx apps/server/test/helpers/evalAbCombine.mjs \
   --min-block-length=10 --bootstrap-iters=10000 --out=/tmp/bot-ab/combined.json
 ```
 
-Arms: `rules-v1` is the **explicit `P2_ALL_OFF`** control (decoupled from the
-product `DEFAULT_P2`, which is all-on); `p2:all` opens all four P2 switches
+Arms: `rules-v1` is the **explicit `P2_ALL_OFF`** control; the current product
+`DEFAULT_P2` is **also all-off** (reverted after this eval), but the test still
+passes the control explicitly so a future change to the product default cannot
+silently pollute the contrast; `p2:all` opens all four P2 switches
 (`shrinkage+sizeGrid+rangePropagation+buckets`); `p2:shrinkage` opens only the
 opponent-shrinkage model. `adaptivePreflop` is off in every arm. Only the P2
 config differs, so this is a clean treatment/control contrast.

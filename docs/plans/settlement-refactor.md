@@ -74,12 +74,12 @@
 
 | reject 主题 | 当前核查结果 | 仍需解决的结构问题 |
 |---|---|---|
-| 内存 stacks 不含自动 7-2 | 最新 `Hand.persistSettlement()` 已调用 `applyFinalStacks()`，自动 bounty 也已计入 combined deltas。`game.ts:3918–4044†` | 只在 `applied` 分支回填；缺座位时静默返回；`hand_end` 仍独立重组 deltas |
+| 内存 stacks 不含自动 7-2 | 最新 `Hand.persistSettlement()` 已调用 `applyFinalStacks()`，自动 bounty 也已计入 combined deltas。`game.ts:3918–4044†` | 缺少参与者行已 fail-closed（显式抛 `settlement missing participant row`）；`hand_end` 仍独立重组 deltas；故障测试与回执审计仍待补齐 |
 | 自动 7-2 在 `onDone()` 后另开事务 | 当前自动 7-2 已进入 `applyHandSettlement()`；`onDone` 注释明确不再支付。`game.ts:458–487,1450–1458†` | fold-winner 自愿亮牌奖金仍为独立交易，幂等依赖内存 Set |
 | compute/persist/broadcast/finalize 混合 | 已有 `publishSettlement`、`persistSettlement`、`broadcastHandEnd` 等方法 | 方法拆分没有形成类型和数据所有权边界，仍访问同一组可变私有状态 |
 | 冻结无恢复入口 | 已新增 `retry_settlement` 和 `Hand.retrySettlement()`。`game.ts:1155–1164,3899 起†` | 只能恢复尚在内存中的 Hand；无持久 prepared 输入 |
 | 重启后可能继续发牌 | 已新增 `firstUnsettledHand()`、`startHand()` 检查。`game.ts:808 起,1364 起†` | 检测只覆盖“有 transcript、无 marker”，不能识别主事务完全回滚的未结算手 |
-| duplicate 后可能再次支付 7-2 | 当前 duplicate 路径及提交后路径补调 `markSevenDeucePaid()` | 依据候选内存结果而非已提交回执；支付标记不 durable；writer duplicate 仍返回空结果 |
+| duplicate 后可能再次支付 7-2 | 当前 duplicate 路径及提交后路径补调 `markSevenDeucePaid()` | 依据候选内存结果而非已提交回执；支付标记不 durable；writer duplicate 现走 `loadSettledReceipt()`，返回含 `finalStacks`/`gameDeltas`/`commissionDeltas` 的完整回执 |
 | 未知错误被当作普通客户端错误 | `hub.ts:250–270†` 已区分 `GameError` 并调用 `markUnhealthy()` | settlement catch、timer catch、其他回调尚未形成统一分类与健康状态处理 |
 
 这里的“已局部修复”仅表示核查到对应代码，**不等于该 lane 已经审查通过或故障测试通过**。
@@ -105,14 +105,14 @@
 
 | 副作用 | 执行时机与顺序 | 是否 durable | 失败、崩溃和重放行为 | 位置 |
 |---|---|---|---|---|
-| `hand_settlements` marker | 事务开始后首先插入，初始 `final_stacks='[]'` | 主事务提交后 durable | 后续任何异常使 marker 一并回滚；冲突即提前返回 duplicate | `applyHandSettlement`:376–384† |
+| `hand_settlements` marker | 事务开始后首先插入，初始 `final_stacks='[]'` 仅作事务内占位；真实 final stacks 在事务末尾写入 | 主事务提交后 durable | 初始空串与真实值在**同一事务**内完成，任何异常使 marker 一并回滚，**不能形成合法的"marker 已提交、final stacks 仍缺"半提交阶段**；冲突即提前返回 duplicate | `applyHandSettlement`:376–384† |
 | `room_players.stack` 主更新 | marker 成功后，按 `stack = stack + delta` 增量更新 | 主事务 | 回滚则不移动资金；增量方式保留手中途批准的买入 | 同函数：386–425† |
-| 非负与主结算守恒检查 | stack 更新后、rake 收款入账前 | 检查本身不 durable | 失败抛错并回滚；当前缺失玩家行使用 `?? 0`，不是完整的参与者存在性断言 | 同函数：406–425† |
+| 非负与主结算守恒检查 | stack 更新后、rake 收款入账前 | 检查本身不 durable | 失败抛错并回滚；缺失参与者行已显式抛 `settlement missing participant row`（fail-closed），不再用 `?? 0` 静默批准 | 同函数：406–425† |
 | poker ledger | stack 检查后，非零记录 `kind='hand-settlement'`、`ref=head` | 主事务 | 与资金、marker 一起回滚；duplicate 不追加 | 同函数：427–436† |
 | squid ledger | poker ledger 后，`kind='squid-game'`、`ref=head` | 主事务 | 同上 | 同函数：437–447† |
 | rake | poker/squid ledger 后调用 `settleRake()` | 主事务 | commission rate、收款人 membership、stack credit、commission ledger 同成同败 | `game.ts:448–456†`；`rake.ts:30–55` |
 | 自动 showdown 7-2 | 金额在 Hand 中先算；资金已包含在 `stackDeltas`；writer 此处只追加独立 ledger legs | 主事务 | 不再是 `onDone` 的晚付交易；marker 控制主事务只执行一次 | `game.ts:458–487†` |
-| 最终 stacks 重读 | rake 和其他资金移动之后，重读参与者及 rake 收款人 | 读结果随后写入 marker/projection | 当前首次提交返回实际 DB stacks；duplicate 不加载历史结果 | 同函数：489–506† |
+| 最终 stacks 重读 | rake 和其他资金移动之后，重读参与者及 rake 收款人 | 读结果随后写入 marker/projection | 当前首次提交返回实际 DB stacks；duplicate 经 `loadSettledReceipt()` 加载并严格校验历史结果（身份/head/rake/final_stacks，`game.ts:635–880†`） | 同函数：489–506† |
 | time bank | 最终 stacks 重读后，逐人检查 epoch，再写余额和计数 | 主事务 | epoch 不匹配跳过并返回 `timeBankSkipped`，不能覆盖配置重置 | 同函数：508–526† |
 | feature trigger | `claimed → applied`，设置 `resolved_at` | 主事务 | writer 重放不重复推进；失败回滚 | 同函数：528–533† |
 | transcript | 保存完整 entries 与 head | 主事务 | 事务失败则完全没有本次 transcript；并非每个 action 都已经落入此表 | 同函数：535–537† |
@@ -139,7 +139,7 @@
 | `need_keys` | strict-audit/TV replay 时，计算结算后等待 key 或 timeout | 否 | 等待状态和收到的未提交 key 会随进程丢失 | `settle()` audit 分支†；`onRevealKey():约3720 起†` |
 | epoch mismatch 审计追加 | 每次 `persistSettlement()` 尝试前查 epoch | 内存追加，成功事务才 durable | 重试再次执行可能追加新的诊断 entry，因此“重试输入完全相同”目前并未由结构保证 | `persistSettlement():约3950–3973†` |
 | `settlementApplied=true` | writer 返回后 | 否 | 财务提交和内存采用不是一个步骤；崩溃后只能靠 DB 判断 | `persistSettlement():约4017 起†` |
-| 最终 stacks 回填 | 首次 `applied` 后 `applyFinalStacks()` | 否，来源 durable | 玩家映射数量不符时静默返回旧 stacks；duplicate 不走此回填 | `applyFinalStacks():4034 起†` |
+| 最终 stacks 回填 | 首次 `applied` 后 `applyFinalStacks()` | 否，来源 durable | 玩家映射不全/非法时显式抛错（fail-closed），不静默回退旧 stacks；`applyFinalStacks()` 对 `applied` 与 `duplicate` 均采用回执 | `applyFinalStacks():4034 起†` |
 | showdown 广播 | 主事务成功后 | WS 非 durable；允许的 agent event 另存 | 失败被 `safeBroadcast()` 捕获；不能撤销结算 | `publishSettlement():3764 起†` |
 | squid 广播 | showdown 后、hand_end 前 | WS 非 durable；当前 agent whitelist 不含此帧 | 丢帧不回滚资金；重连 hold 分支可重发 squid | 同函数†；`agentEvents.ts:43–60` |
 | seven_deuce 广播 | 自动奖金已提交后 | WS 非 durable；当前 agent whitelist 不含此帧 | 丢帧不重新支付 | 同函数† |
@@ -902,4 +902,4 @@ running
 9. 所有不变量与故障矩阵通过独立审查和测试。
 10. 每批结构与行为变更均能单独解释、验证、回滚。
 
-**如果只能做到拆文件，却仍需要人肉追踪哪些阶段会改钱、哪些 stacks 才是真实结果，这次结算重构就尚未完成。**
+**财务 writer 已提供 durable `finalStacks` 回执**（`HandSettlementOutcome.finalStacks`，由资金动作后重读返回，`game.ts:1036–1053,1139–1169`）。**尚未完成的是让所有 broadcast/finalize 路径强制只消费该回执**，而不是各自重组资金事实；这一点做不到，这次结算重构就尚未完成。

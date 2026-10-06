@@ -1,6 +1,8 @@
 # 人数自适应翻前范围 —— 第一、二、三步（RFI / HU / 面对 open / 剩余 spot）
 
-- 状态：三步均已实现，flag 默认关闭（`adaptivePreflop=false`），不改变现有行为
+- 状态：三步均已实现，flag **默认开启**（`ADAPTIVE_PREFLOP_DEFAULT=true`，可用
+  `FOURAM_ADAPTIVE_PREFLOP` 或显式 `adaptivePreflop:false` 关闭）；不可信人数/历史
+  （`headcountReliable`/`historyComplete` 不满足）或显式 `adaptivePreflop:false` 时回退 legacy
 - 关联代码：`packages/agent-core/src/preflopCharts/**`、`preflopPolicy.ts`、`decisionView.ts`、`ruleStyles.ts`
 - 数据来源：`~/dev/preflop-trainer/data/external/{frla-gto-nl100,mhl-nl100}`
 - 验收测试：`packages/agent-core/test/preflopAdaptive.test.ts`（67 例）；
@@ -136,8 +138,8 @@ B7 14.12% > B8 12.66%，单调。
 
 ## 6. 落地接缝
 
-- `RuleParams` 新增 `adaptivePreflop: boolean`，四个 preset 均 `false`；
-  `parseRuleConfig` 单独按布尔解析（不进数值 `PARAM_RANGES`）。
+- `RuleParams` 新增 `adaptivePreflop: boolean`，四个 preset 均取 `ADAPTIVE_PREFLOP_DEFAULT`
+  （默认开；`FOURAM_ADAPTIVE_PREFLOP` 可显式关闭）；`parseRuleConfig` 单独按布尔解析（不进数值 `PARAM_RANGES`）。
 - `buildMix(ctx, params)`：先试 `buildAdaptiveMix`，返回 `null` 时回退
   `buildLegacyMix`（原 `RFI_RANGES`/`RFI_MARGINAL`/`ISO_RANGES`/`BB_DEFEND`/
   `CALL_VS_OPEN`/`FACING_3BET_*` 全部原样）。
@@ -167,13 +169,14 @@ B7 14.12% > B8 12.66%，单调。
 
 ## 7. 回退证明
 
-`test/preflopAdaptive.test.ts` 断言：
+`test/preflopAdaptive.test.ts` 断言（下列 flag on/off 均为**显式传入**的开关值，用于隔离
+自适应与 legacy 两条路径；默认配置是 flag 开，不该把这里的对照读成"默认关闭"）：
 
 - `adaptivePreflop=false`、`historyComplete=false`、无 `seatOrder` 时
   `adaptivePreflopAvailable === false`；
-- flag 关时 9-max UTG 宽度 == `parseRange(RFI_RANGES.UTG).combos/1326`
-  （10.26%），且 flag 开时宽度不同（12.66%）；
-- flag 开时 `<20BB` 的 `22` 仍 fold、`AA` 仍 raise（走 `SHORT_JAM_RANGES`）；
+- **显式** off 时 9-max UTG 宽度 == `parseRange(RFI_RANGES.UTG).combos/1326`
+  （10.26%），**显式** on 时宽度不同（12.66%）；
+- **显式** on 时 `<20BB` 的 `22` 仍 fold、`AA` 仍 raise（走 `SHORT_JAM_RANGES`）；
 - value 牌在 `preflopScale=0.5` 下 raise+call=1，不 fold；
 - 路由正确性（新增）：同一 `position/dealtCount/slot` 下 `historyComplete=true`
   与 `false` 两个 view，`preflopMixCacheKey` 不同；`vi.resetModules()` 取全新
@@ -310,7 +313,7 @@ MP/LJ/HJ→25.46%，CO→30.44%，BTN→39.32%，SB→42.73%）。
 
 ### 10.5 回退证明
 
-- flag 关：`adaptivePreflopAvailable === false`，facingOpen 宽度 = 旧
+- **显式** flag 关（`adaptivePreflop:false`）：`adaptivePreflopAvailable === false`，facingOpen 宽度 = 旧
   `BB_DEFEND[openerGroup]` 表（测试用 `legacyRangeWidth(BB_DEFEND.EP)` 对照）。
 - hero 不是当前决策者或已不能行动：`heroActive` / `heroToAct` 为 false 时
   unopened 与 facingOpen 两条自适应分支都关闭；契约测试覆盖 hero

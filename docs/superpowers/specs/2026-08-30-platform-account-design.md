@@ -98,14 +98,16 @@ the running DB migrates in place.
 
 ## 5. Subsystem C — rake to Platform (forward + history rewrite)
 
-### 5.1 Forward
-`Hand.finalizeSettlement()` (`apps/server/src/game.ts:1841`) currently credits
-`room.banker_id`. Change the rake branch (`game.ts:1873-1884`) to credit the
-Platform user:
-- ensure a `room_players` row exists for the Platform user in this room (lazily
-  insert seat=NULL if absent — Platform holds chips but never sits),
-- `UPDATE room_players.stack += rake` for `platform_user_id`,
-- `appendLedger({ userId: platform_user_id, kind:'commission', ... })`.
+### 5.1 Forward (current status)
+当前 rake recipient 已是 **platform-first、banker-fallback**：`Hand.finalizeSettlement()`
+解析为 `platformUserId(db) ?? settleRoom.banker_id`（`apps/server/src/game.ts:4737-4743`），
+writer 通过 `settleRake()` 以 `rakeRecipientId` 入账（`game.ts:995-1002`）。本方案**剩余工作**
+是补齐 platform account 的 seed / adoption（确保 `platform_user_id` 在目标房间有
+`room_players` 行，必要时以 `seat=NULL` 懒插入 —— Platform 持有筹码但从不入座）与全量部署
+验证，最终移除 banker fallback：
+- 目标态：`UPDATE room_players.stack += rake` 与
+  `appendLedger({ userId: platform_user_id, kind:'commission', ... })` 只作用于 Platform，
+  不再回退到 `room.banker_id`。
 
 ### 5.2 House-dues attribution is unaffected
 `houseDues` (`settle.ts:103`) attributes each player's real-money share from
@@ -140,6 +142,11 @@ For each room with any `kind='commission'` entry not already keyed to Platform:
   without a completed backup.
 
 ## 6. Subsystem E — archived rooms stop counting + archive/delete via Platform
+
+> **状态（规划中 / 未落地）**：本节 6.2 描述的"archive/delete 走
+> `room_lifecycle_requests` 审批请求"尚未实现。当前 `POST /api/rooms/:id/close` 与
+> `POST /api/admin/rooms/:id/archive|delete` 仍为直接（幂等、原子）变更；
+> `room_lifecycle_requests` 表虽已建 schema，但审批流未接线。以下为设计目标。
 
 ### 6.1 Money exclusion
 Add `AND r.archived = 0 AND r.deleted = 0` to:

@@ -9,18 +9,19 @@
 4. `packages/agent-core/test/fixtures/postflopPolicyBaseline.ts`（差分基线；二轮新增，后续轮未再改）
 5. 本报告 `docs/plans/postflop-p2-report.md`（文档）
 
-> **当前状态（2026-10-06 回退）**：P2 四开关默认已于 2026-10-06 回退为**全关**。依据是
+> **当前状态（2026-10-06 A/B 回退）**：P2 四开关默认**全关**（`DEFAULT_P2` 四项均
+> `false`，与 `P2_ALL_OFF` 逐字段相同）。依据是
 > `docs/plans/2026-10-06-bot-ab-eval-results.md` 的首次真实 A/B 评测（`p2:all` cluster
-> CI `[-85.8, -17.1]`，裁决 `worse`）。下述"核心决策"是回退之前的历史记录，实现与逐项
-> 开关能力均保留，可通过显式配置重新开启（`FOURAM_P2=on` / 显式 `p2` 覆盖）。
+> CI `[-85.8, -17.1]`，裁决 `worse`）。实现与逐项开关能力均保留，可通过显式配置开启
+> （`FOURAM_P2=on` / 显式 `p2` 覆盖）。
 
-> 核心决策（2026-10-06 更新）：**P2 的四个行为开关默认全部开启**（`shrinkage` /
-> `sizeGrid` / `rangePropagation` / `buckets` 均 `true`）。实现与测试保留、可注入可关闭；
-> 显式传入 `P2_ALL_OFF`（或按开关传 `false`）即可一键回到旧路径，`P2_ALL_OFF` 与基线
-> `f4a5904` 的 P0/P1 决策**在差分网格覆盖的输入上逐输入一致**（见 §3）。
+> 核心决策（**回退前历史记录**，2026-10-06）：曾经把 **P2 的四个行为开关默认全部开启**
+> （`shrinkage` / `sizeGrid` / `rangePropagation` / `buckets` 均 `true`）。该方向随后被
+> A/B 评测推翻并回退为**全关**。无论默认值如何，`DEFAULT_P2`（现为全关）与显式
+> `P2_ALL_OFF` 都与基线 `f4a5904` 的 P0/P1 决策**在差分网格覆盖的输入上逐输入一致**（见 §3）。
 > 唯一的 P0 差异是 `evaluateHand` 的 `straightDraw` 有意修复（rank 来源判定 + made-straight
-> 语义，见 §1.1 的 scope 说明）。无 A/B 证据（§6）表明四项均为净收益，故保留逐项开关作为
-> eval / kill-switch；默认方向按产品决策改为"开"。
+> 语义，见 §1.1 的 scope 说明）。逐项开关保留作为 eval / kill-switch；显式传 `true`（或
+> `FOURAM_P2=on`）才开启对应能力。
 
 ---
 
@@ -30,27 +31,28 @@
 
 | 能力 | 关键 API | 默认 | 状态 |
 | --- | --- | --- | --- |
-| #2 收缩估计 | `sessionMemory.shrinkRate / shrinkConfidence / estimateOpponent / OPPONENT_PRIORS` | **开** | 输入契约补全 + 测试 |
-| #3 尺寸网格 + 最近邻 | `POSTFLOP_SIZE_GRID / snapBetFraction / gridFraction` | **开** | 中点语义断言 + 说明 |
-| #4 24 牌力桶 | `MADE_BUCKETS × DRAW_BUCKETS / handBucket / bucketStrength / bucketAdvantage` | **开** | 语义断言补全；`bucketAdvantage` 标实验 API |
-| #1 范围传播 | `preflopRaiseCount / propagateVillainModel` | **开** | `historyComplete` 契约修复 |
+| #2 收缩估计 | `sessionMemory.shrinkRate / shrinkConfidence / estimateOpponent / OPPONENT_PRIORS` | **关**（回退后） | 输入契约补全 + 测试 |
+| #3 尺寸网格 + 最近邻 | `POSTFLOP_SIZE_GRID / snapBetFraction / gridFraction` | **关**（回退后） | 中点语义断言 + 说明 |
+| #4 24 牌力桶 | `MADE_BUCKETS × DRAW_BUCKETS / handBucket / bucketStrength / bucketAdvantage` | **关**（回退后） | 语义断言补全；`bucketAdvantage` 标实验 API |
+| #1 范围传播 | `preflopRaiseCount / propagateVillainModel` | **关**（回退后） | `historyComplete` 契约修复 |
 
 `Policy.decide(view)` 契约不变；`RulePolicy` 仍经 `PostflopPolicy`，无需改 `rulePolicy.ts`。
 
 ```ts
 export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
-  shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true,
+  shrinkage: false, sizeGrid: false, rangePropagation: false, buckets: false,
 });
-// 显式回退 / kill-switch：一键回到旧路径
+// 显式开启 / 同形的具名 kill-switch（当前与默认逐字段相同）
 export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
   shrinkage: false, sizeGrid: false, rangePropagation: false, buckets: false,
 });
 ```
 
-显式全关（`P2_ALL_OFF`）时，`facingVillainModel` 不调用传播、`opponentModelStats` 走旧
-`sampleHands < 10` 路径、`buildVillainRange` 跳过桶加权、`chooseVillainModel` 用原始连续
-尺寸分档——即基线的 P0/P1 行为。`Object.freeze` 使"默认全开"成为**运行时不可变**的保证，
-`P2_ALL_OFF` 则是同形状的不可变全关常量（§1.2）。
+默认全关（`DEFAULT_P2`，与显式 `P2_ALL_OFF` 逐字段相同）时，`facingVillainModel` 不调用
+传播、`opponentModelStats` 走旧 `sampleHands < 10` 路径、`buildVillainRange` 跳过桶加权、
+`chooseVillainModel` 用原始连续尺寸分档——即基线的 P0/P1 行为。`Object.freeze` 使"默认全关"
+成为**运行时不可变**的保证，`P2_ALL_OFF` 则是同形状的不可变全关常量（§1.2）；只有显式传
+`true` 才开启对应能力。
 
 ---
 
@@ -103,8 +105,8 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
 
 ### 1.2 P0-2（二轮）`DEFAULT_P2` 可被运行时修改
 
-**问题**：`export const DEFAULT_P2: P2Options = {...}` 的属性仍可写
-（`DEFAULT_P2.sizeGrid = false`），而多个默认参数直接引用它 → "默认全开"不是不可变保证。
+**问题（回退前历史）**：`export const DEFAULT_P2: P2Options = {...}` 的属性仍可写
+（`DEFAULT_P2.sizeGrid = false`），而多个默认参数直接引用它 → "默认值"不是不可变保证。
 
 **修法**：
 
@@ -114,13 +116,15 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
   `Readonly<P2Options>`；`buildVillainRange` 的 `opts` 为 `Readonly<Pick<P2Options, 'buckets'>>`。
   `chooseVillainModel` / `opponentModelStats` 读取的是布尔字段，值类型即 `boolean`。
 
-**不可变证据**（`postflopPolicyP2.test.ts > DEFAULT_P2 is frozen all-on... (P0-2)`）：
+**不可变证据**（`postflopPolicyP2.test.ts > DEFAULT_P2 is frozen all-off... (P0-2)`）：
 
 - `Object.isFrozen(DEFAULT_P2) === true`。
-- 对四个键各做 `Reflect.set(DEFAULT_P2, key, false) === false`，写后 `DEFAULT_P2[key] === true`。
-- `{ ...DEFAULT_P2 }` 为全 `true`；`Object.isFrozen(P2_ALL_OFF) === true` 且展开为全 `false`。
-- 默认参数读取走全开路径：`chooseVillainModel({ betFraction: 0.9 })`（不传第二参）→ `value-heavy`。
-- 编译期另由 `Readonly<P2Options>` 阻止 `DEFAULT_P2.sizeGrid = false`。
+- 对四个键各做 `Reflect.set(DEFAULT_P2, key, true) === false`，写后 `DEFAULT_P2[key] === false`。
+- `{ ...DEFAULT_P2 }` 为全 `false`；`Object.isFrozen(P2_ALL_OFF) === true`，且 `{ ...P2_ALL_OFF }`
+  与 `{ ...DEFAULT_P2 }` 相等（回退后同形；见下）。
+- 默认参数读取走全关路径：`chooseVillainModel({ betFraction: 0.9 })`（不传第二参）→ `balanced`
+  （与基线一致）；显式传 `{ sizeGrid: true }` 才 snap 到 `1.0` → `value-heavy`。
+- 编译期另由 `Readonly<P2Options>` 阻止 `DEFAULT_P2.sizeGrid = true` 这类写入。
 
 ### 1.3 P1-3（二轮）默认差分网格缺 `sizeGrid` 真正敏感输入
 
@@ -145,7 +149,7 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
 
 ### 1.5 P2 债务清理（翻前第三步同批，`c4fb6d2` / `2b3e2e7`）
 
-复审指出的 P2 遗留问题，默认方向改为全开（`P2_ALL_OFF` 可取回旧行为），仅收紧契约与补测试：
+复审指出的 P2 遗留问题（该批之后默认方向曾短暂改为全开，随后于 2026-10-06 回退为全关），仅收紧契约与补测试：
 
 1. **`isOverpair` 签名收紧：`ev` 必填**。旧签名 `ev?: HandEval` 在省略 `ev` 时直接
    按角子对判定，会把 `AA` on `QQx`（两对）误报为超对。现在 `ev` 为必需参数，
@@ -163,7 +167,7 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
 5. **`blockerFactor` 补测试**：文档化仿射式 `clamp(0.4 + 1.6·clamp01(blocker), 0.2, 2.2)`
    （有效输入域 [0.4, 2.0]，中性点 blocker=0.375 → 1），断言边界、严格单调、
    非有限输入不产生 NaN。exposed range tilt 增加有限正值与 flush 份额边界测试。
-   四开关默认全开；`postflopPolicyBaseline` 差分由显式 `P2_ALL_OFF` 保持通过。
+   四开关默认全关（回退后）；`postflopPolicyBaseline` 差分由默认路径与显式 `P2_ALL_OFF` 共同保持通过。
 
 ---
 
@@ -207,11 +211,11 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 ### 2.6 `bucketAdvantage` 未接入
 
 如实标注为实验 API、未接入任何决策：policy 无调用点，且仅 `buckets` 开启时其相关权重生效。
-（`buckets` 现已默认开启；该 API 仍需 A/B 复核后方可视为已验证。）
+（`buckets` 默认关闭（2026-10-06 A/B 回退后）；该 API 仍需 A/B 复核后方可视为已验证。）
 
 ---
 
-## 3. 显式全关基线一致性差分证据
+## 3. 默认全关基线一致性差分证据
 
 `test/fixtures/postflopPolicyBaseline.ts` 由
 `git show f4a5904:packages/agent-core/src/postflopPolicy.ts` **生成**；仅做了三处归一化：
@@ -219,21 +223,21 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 （c）顶部增加 fixture 说明注释（`DO NOT EDIT BY HAND`）。**决策逻辑体与 `f4a5904` 逐字节一致**，
 不是"整文件逐字节副本"。文件头注释已同步此措辞。
 
-差分测试 `an explicit P2_ALL_OFF config reproduces the HEAD f4a5904 baseline`：
+差分测试 `the default (all-off) config reproduces the HEAD f4a5904 baseline`：
 
 - `baselineGrid()` 生成约 700 个视图（见 §1.3），覆盖四牌面、五底牌、五种尺寸、
   3 个 actionSeq、3-bet 线 + maniac、断线视图、station 样本、all-in、unopened。
-- 每个视图用 `toEqual` 比较 `new PostflopPolicy({params, seed, p2: P2_ALL_OFF})` 与
+- 每个视图用 `toEqual` 比较默认构造的 `new PostflopPolicy({params, seed})` 与
   `new BaselinePostflopPolicy({params, seed})` 的完整 `PolicyDecision`（action + reason）。
-- 另有 `the default all-on config is NOT the pre-P2 baseline (P2 is live by default)` 证明
-  默认全开确实偏离基线（临时 probe 实测：700 视图中 479 个与基线决策不同），以及
-  `an explicit all-off config differs from the default all-on config` 证明二者不相等。
+- 另有 `an explicit P2_ALL_OFF config equals the default all-off config` 证明默认值与
+  显式全关逐输入相等；`an explicit all-on config is live and differs from the default all-off
+  path` 证明显式全开确实偏离默认（回退前的临时 probe 实测：700 视图中 479 个与基线决策不同）。
 
-> 结论：在上述输入集上显式 `P2_ALL_OFF` 与基线逐输入一致；默认（全开）则偏离基线，
-> 证明四个默认开关真实生效。二者共享 `decisionView` / `equity` /
+> 结论：在上述输入集上默认（全关）与显式 `P2_ALL_OFF`、与基线逐输入一致；显式全开则偏离
+> 基线，证明四个开关在显式开启时真实生效。二者共享 `decisionView` / `equity` /
 > `preflopPolicy`，差分隔离出的正是 `postflopPolicy.ts` + `sessionMemory.ts` 的 P2 改动。
 >
-> **准确 scope**：默认开启的是四项 P2 功能；本次另包含**始终生效**的 `evaluateHand` 修正——
+> **准确 scope**：可显式开启的是四项 P2 功能（默认全关）；本次另包含**始终生效**的 `evaluateHand` 修正——
 > 排除没有 hero 独有 rank 贡献的顺子补牌，并对 `category>=4` 清除顺听标记。该修正同时作用于
 > **hero 评估与 villain combo 评估**，因此即使 hero 自己的 draw 标记未变，range 权重与最终
 > equity 仍可能改变（已知差异不止「三类输入」：如 `Ks Qd / 2c 3d 5h 6s` 这类有缺口公面顺听、
@@ -244,17 +248,20 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 
 ## 4. 测试清单与复跑结果
 
+> 下表为 **2026-10-06 A/B 回退前、默认全开时** 的历史复跑结果（保留对照）。回退后的
+> 差分结论见 §3，断言名称以下文「关键断言」为准。
+
 | 命令 | 结果 |
 | --- | --- |
-| `npx vitest run packages/agent-core/test` | **413 passed / 2 skipped / 16 files**（P2 文件 44 用例；默认改为全开后复跑） |
+| `npx vitest run packages/agent-core/test` | **413 passed / 2 skipped / 16 files**（P2 文件 44 用例；回退前默认全开时复跑） |
 | `npx vitest run packages/agent-core/test/postflopPolicyP2.test.ts` | **44 passed** |
 | `npx tsc --noEmit -p packages/agent-core/tsconfig.json` | 通过（退出 0） |
 | `git diff --check -- packages/agent-core` | 通过（退出 0，无空白错误） |
 
-关键断言：shrinkage 契约；尺寸网格最近邻与中点；`0.9→1.0→value-heavy`；24 桶语义与完备性；
+关键断言：shrinkage 契约；尺寸网格最近邻与中点；`0.9→1.0→value-heavy`（显式全开时）；24 桶语义与完备性；
 **P0 rank 来源判定（board 同 rank 不计、wheel、hero 两卡）**；**made straight → `straightDraw 0`**；
 **P0-1 四张公面顺听不归 hero**；**P0-2 `Object.isFrozen` + `Reflect.set` 拒绝写入**；
-`historyComplete` 门禁；四开关决策级 on/off；**默认全开 ≠ 基线（479/700 视图）+ `P2_ALL_OFF` == 基线**。
+`historyComplete` 门禁；四开关决策级 on/off；**默认全关 == 基线 + 显式全开 ≠ 基线（479/700 视图）**。
 
 ---
 
@@ -272,37 +279,37 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
 
 上一轮报告中的 `12.31 / 10.89 / 21.75 / 42.02ms` 属**另一批次**的历史测量值，与上表不可直接
 比较；机器负载、并发与 cache 状态都会影响 p95。开关检查分布在模型、range 与 exploit 路径中，
-且始终生效的 `evaluateHand` draw 修正也会执行；四个开关默认开启，其检查也必然执行，因此
-不宜用「开关默认关所以不在热路径」解释性能；本表不作为收益或回归证据。
+默认全关时不执行；但始终生效的 `evaluateHand` draw 修正仍会执行，故性能不宜简单归因于开关；
+本表不作为收益或回归证据。
 
 ---
 
-## 6. A/B 评测方案（后续独立任务）
+## 6. A/B 评测方案（设计 + 已落地状态）
 
-目标：判定默认开启的 P2 是否带来胜率收益、以及各开关的边际收益。**当前结论：P2 胜率收益未证明。**
-默认方向已改为全开（`DEFAULT_P2` 四项 `true`），本节的 A/B 用于事后验证与逐项取舍。
+目标：判定 P2 是否带来胜率收益、以及各开关的边际收益。**当前结论（2026-10-06 A/B）：
+`p2:all`（四项全开）相对全关显著更差，默认已回退为全关；各开关的单独边际收益仍未证明。**
+评测已在 `docs/plans/2026-10-06-bot-ab-eval-results.md` 落地（`p2:all` cluster CI
+`[-85.8, -17.1]`，裁决 `worse`）；本节保留 arm 命名与接入设计供后续逐项取舍复用。
 
-- **臂（arms）**：`baseline`（`P2_ALL_OFF` 全关）、`shrinkage only`、`size grid only`、
-  `range propagation only`、`buckets only`、组合候选 `shrinkage+sizeGrid+rangePropagation`
-  与 `+buckets`。
-- **arm factory（设计已记录，尚未实现，属后续独立任务）**：现状
-  `apps/server/test/helpers/evalStrategies.mjs` 的 `makeStrategy(name, opts)` **只有**
-  `always-fold` / `always-call` / `equity-threshold` 三个基线，**没有** `PostflopPolicy`
-  import、没有 `p2:` 解析、没有 arm 配置。设计的接入方式为：新增 `p2` 前缀解析
-  （如 `p2:shrinkage+sizeGrid` / `p2:shrinkage+sizeGrid+rangePropagation+buckets`），把开关集合
-  解析为 `Partial<P2Options>` 并构造
-  `new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed, p2 })`，`name` 保留原始
-  arm 串；`isBaselineStrategy` / `isSupportedStrategy` 同步识别 `p2:` 前缀。**这些均未落地**，
-  本次不修改 server 代码。
-- **配置记录与结果标识（同属后续任务的设计）**：届时结果 JSON 记录每臂的 `name` 与解析后的
-  `p2` 配置（如 `arms: [{ seat, name: 'p2:shrinkage', p2: { shrinkage: true } }]`）以及
-  `baseline` 的 `DEFAULT_P2` 快照；结果按 arm 名 + p2 config 作键，避免同名不同配置混淆。
+- **臂（arms）**：`rules-v1`（显式 `P2_ALL_OFF` 全关 control）、`p2:shrinkage`、
+  `p2:sizeGrid`、`p2:rangePropagation`、`p2:buckets`、组合候选 `p2:shrinkage+sizeGrid+rangePropagation`
+  与 `p2:all`（`+buckets`）；`p2:all+adaptive-preflop` 为合并臂。
+- **arm factory（已落地）**：`apps/server/test/helpers/evalStrategies.mjs` 现提供
+  `parseArmName` / `armConfig` / `makeArmPolicy` / `isArmStrategy`：按 `+` 连接的 arm 串解析
+  `p2:` 前缀（`p2:all` 或 `p2:<flag>[+<flag>]`，如 `p2:shrinkage+sizeGrid`）为 `Partial<P2Options>`，
+  并从显式全关 `defaultP2()` 起构造
+  `new PostflopPolicy({ params: RULE_PRESETS['tight-aggressive'], seed, p2 })` 注入
+  `new RulePolicy(...)`；未知段（如 `p2:banana`）解析为 `null` 并硬报错，不静默换成错误策略。
+- **配置记录与结果标识（已落地）**：`armConfig(name)` 返回 `{ name, p2, adaptivePreflop }`，
+  结果按 arm 名 + 解析后的 `p2` config 作键，避免同名不同配置混淆；control 始终从
+  `P2_ALL_OFF` 快照出发，不依赖产品 `DEFAULT_P2` 的当前取值。
 - **控制变量**：同 seed 序列、同一 bot pool（各风格 × 位置轮转）、同一手数预算。
 - **规模**：先 ≥ 20 万手/臂（复用 duplicate round-robin + bootstrap），报告 95% bootstrap CI。
 - **指标**：bb/100（主）；fold / call / raise（及 bet / check）分布；按位置、底池大小、街、
   人数分组；必要时加 VPIP/PFR/aggression 与摊牌胜率。
-- **判定**：bb/100 的 CI 下界 > 0 视为候选提升；单开关无显著收益则可单独关闭该开关
-  （默认已开）；组合需相对 baseline 显著且不劣化风险指标。
+- **判定**：bb/100 的 CI 下界 > 0 视为候选提升；单开关无显著收益则不开启该开关
+  （默认全关）；组合需相对 baseline 显著且不劣化风险指标。当前 `p2:all` 判定为 `worse`，
+  故保持默认全关。
 - 复用 `apps/server/test/helpers/evalMatch.mjs` 的确定性洗牌 / Duplicate 对局 / 成对 round-robin
   / bootstrap CI。
 
@@ -316,7 +323,7 @@ rank-completion 计数而非精确 outs（`HandEval.straightDraw` / `evaluateHan
   仅在（a）公面四张连续且 hero 不参与、（b）hero 与公面同 rank 构成顺子、（c）hero 已成顺这三类
   输入上与基线不同（有意修复）。**差分仅覆盖 `baselineGrid()` 的输入**，该网格不含上述三类，故
   §3 仍逐输入一致；差异由 §1.1 的专门单测锁定。
-- A/B 的 `p2:` arm factory 仅为**设计记录、尚未实现**（server 代码本次未改）。
+- A/B 的 `p2:` arm factory 已落地于 `apps/server/test/helpers/evalStrategies.mjs`（§6）。
 - `foldToBet` 先验已定义但**未接线**（`OpponentStats` 无字段，`decisionView.ts` 属其它 lane）。
 - `bucketAdvantage` 为**实验 API、未接入决策**。
 - 尺寸网格会改变多个尺寸的 model 分档，不只限于某个区间；已实测：`0.41` 关闭时 `balanced`、

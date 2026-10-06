@@ -51,8 +51,8 @@
 
 ## 5. 车道计划
 - **Lane E（独占，串行）**：`game.ts` + `hub.ts` + 集成测试。依赖 0/A/B，已就绪。**最高风险**，勿并行改 game.ts。
-- **Wave 2（E 稳定后并行）**：Lane F=2D（TablePage/ActionBar/TurnProgress/RoundTable/players/LastHandStrip+dict）、Lane G=3D（table3d/**）、Lane H=server prose 词典。
-- **收尾**：跑共享/服务端/权益/集成测试（正常手、炸弹两种调度、短前注、计时银行动作与超时、2/3 跑同意与拒绝与两段超时、多人强制 1 跑、鱿鱼单跑/并列/多跑全赢/分跑无领赏、炸弹×多跑×鱿鱼同手、崩溃恢复）；web typecheck；2D/3D 重连手测；每笔经济后校验账本与筹码守恒。
+- **Wave 2（E 稳定后并行）**：Lane F=2D（TablePage/ActionBar/TurnProgress/RoundTable/players/LastHandStrip+dict）、Lane H=server prose 词典。
+- **收尾**：跑共享/服务端/权益/集成测试（正常手、炸弹两种调度、短前注、计时银行动作与超时、2/3 跑同意与拒绝与两段超时、多人强制 1 跑、鱿鱼单跑/并列/多跑全赢/分跑无领赏、炸弹×多跑×鱿鱼同手、崩溃恢复）；web typecheck；2D 重连手测；每笔经济后校验账本与筹码守恒。
 
 ## 6. 主要风险
 **B4 × 计时/回合过渡改造**：现引擎假设“投票先于亮牌 / 至多两张牌 / 同一 yes-no / broadcast 可 mintage deadline / 专门的两跑结算分支”。B4 全部推翻。必须由单一 owner 用显式“回合协调器”一次性改造，避免：计时被延长、`toAct=null` 卡在翻牌、过期同意消息误伤、重复/缺失牌索引、奇数筹码分配错、鱿鱼误发给只赢一跑者、重连取不回当前决策阶段。
