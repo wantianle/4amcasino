@@ -189,6 +189,9 @@ export function BettingPanel({
   const myUserId = useStore((s) => s.auth.userId);
   // A10: quick sizes come from the account's pot-ratio slots.
   const betRatios = useStore((s) => s.prefs.betRatios);
+  // The table's money display unit (shared store, toggled from any seat stack):
+  // every amount below renders in this ONE unit, never chips AND BB at once.
+  const stackUnit = useStore((s) => s.prefs.stackUnit);
   const connected = useStore((s) => s.wsConnected);
   const rootRef = useRef<HTMLDivElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -206,6 +209,13 @@ export function BettingPanel({
   const bb = room?.room.bb ?? 1;
   const handIdle = !hand.handId || handOver;
   const sb = room?.room.sb ?? 1;
+  // Chips are the settlement currency, so the legal window and the slider stay
+  // chip-denominated; `showBB` only changes how every amount is DISPLAYED. The
+  // editable amount converts in and out so the panel shows exactly one unit.
+  const showBB = stackUnit === 'bb';
+  const toUnit = (chips: number) => (showBB ? bbOf(chips, bb) : chips);
+  const fromUnit = (value: number) => (showBB ? Math.round(value * Math.max(1, bb)) : value);
+  const unitText = (chips: number) => (showBB ? `${toUnit(chips)} BB` : fmt(chips));
   // L4: the merged deal post shows 「Invite a friend to deal.」 vs 「Deal
   // when ready.」 on the opponent count - same rule the old top-right box used.
   const opponentsHere = room
@@ -469,12 +479,12 @@ export function BettingPanel({
           <p className="table-sub">
             {la.callAmount > 0 && (
               <>
-                {t('To call {n}', { n: fmt(la.callAmount) })} ·{' '}
+                {t('To call {n}', { n: unitText(la.callAmount) })} ·{' '}
               </>
             )}
-            {t('Pot {n}', { n: fmt(pot) })}
+            {t('Pot {n}', { n: unitText(pot) })}
           </p>
-          {/* amount (chips + BB) */}
+          {/* amount in the table's ONE display unit (never chips AND BB) */}
           <div className="flex items-end justify-between gap-1.5">
             <label className="min-w-0 text-[0.62rem] uppercase tracking-wide text-[var(--table-faint)]">
               {st.currentBet === 0 ? t('Bet amount') : t('Raise to')}
@@ -483,21 +493,19 @@ export function BettingPanel({
                   ref={amountRef}
                   type="number"
                   inputMode="numeric"
-                  min={la.minRaiseTo}
-                  max={la.maxRaiseTo}
+                  min={toUnit(la.minRaiseTo)}
+                  max={toUnit(la.maxRaiseTo)}
                   step={1}
-                  value={Number.isFinite(raiseTo) ? raiseTo : ''}
+                  value={Number.isFinite(raiseTo) ? toUnit(raiseTo) : ''}
                   aria-label={t('Bet or raise amount')}
                   aria-keyshortcuts={binding('raise')}
                   disabled={pending || settling}
                   {...amountInput}
-                  onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : +e.target.value)}
+                  onChange={(e) => setRaiseTo(e.target.value === '' ? NaN : fromUnit(+e.target.value))}
                   onBlur={() => setRaiseClamped(raiseTo)}
                   className="table-amt min-h-8 w-24 min-w-0 px-2 py-1 text-sm text-right font-bold outline-none"
                 />
-                <span className="table-bb text-[0.7rem]">
-                  {bbOf(legalRaiseTo, bb)} BB
-                </span>
+                <span className="table-bb text-[0.7rem]">{showBB ? 'BB' : t('pts')}</span>
               </span>
             </label>
           </div>
@@ -506,13 +514,13 @@ export function BettingPanel({
             <div className="flex items-center justify-between gap-2" role="status">
               <span className="table-bb table-bb--quiet font-display text-[0.62rem]">{t('All-in')}</span>
               <span className="table-bb table-bb--quiet text-[0.62rem]">
-                {fmt(la.maxRaiseTo)} {t('chips')}
+                {unitText(la.maxRaiseTo)}
               </span>
             </div>
           ) : (
             <div className="flex min-h-9 items-center gap-1.5">
               <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
-                {bbOf(la.minRaiseTo, bb)}
+                {toUnit(la.minRaiseTo)}
               </span>
               <input
                 type="range"
@@ -544,7 +552,7 @@ export function BettingPanel({
                 aria-label={t('Raise amount')}
               />
               <span className="table-bb table-bb--quiet font-display text-[0.62rem]">
-                {bbOf(la.maxRaiseTo, bb)}
+                {toUnit(la.maxRaiseTo)}
               </span>
             </div>
           )}
@@ -614,14 +622,12 @@ export function BettingPanel({
                     t('Check')
                   ) : (
                     <>
-                      {t('Call')} <span className="table-btn-amt">{fmt(la.callAmount)}</span>
+                      {t('Call')}{' '}
+                      <span className="table-btn-amt">{unitText(la.callAmount)}</span>
                     </>
                   )}
                   {hint(la.canCheck ? 'check' : 'call')}
                 </span>
-                {!la.canCheck && (
-                  <span className="table-btn-sub text-[0.6rem]">{bbOf(la.callAmount, bb)} BB</span>
-                )}
               </span>
             </Button>
             <Button
@@ -634,10 +640,9 @@ export function BettingPanel({
               <span className="flex flex-col items-center leading-tight">
                 <span>
                   {st.currentBet === 0
-                    ? t('Bet {n}', { n: fmt(legalRaiseTo) })
-                    : t('Raise to {n}', { n: fmt(legalRaiseTo) })}
+                    ? t('Bet {n}', { n: unitText(legalRaiseTo) })
+                    : t('Raise to {n}', { n: unitText(legalRaiseTo) })}
                 </span>
-                <span className="table-btn-sub text-[0.6rem]">{bbOf(legalRaiseTo, bb)} BB</span>
               </span>
             </Button>
           </div>

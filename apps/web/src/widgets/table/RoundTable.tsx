@@ -15,7 +15,7 @@ import { BetFlight, ChipFlight, StackValue, WinBadge, useWinnerFx } from './Winn
 import { TurnProgress } from './TurnProgress.tsx';
 import { DealCard } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
-import type { PeekResult } from '../../shared/store.ts';
+import { useStore, type PeekResult } from '../../shared/store.ts';
 import {
   anchorOf,
   angleOf,
@@ -82,12 +82,14 @@ export interface SeatView {
   bot?: { status: string; policyKind: string };
 }
 
-function actionLabel(a: PlayerAction & { auto?: boolean }): string {
+function actionLabel(a: PlayerAction & { auto?: boolean }, unit: 'chips' | 'bb', bb: number): string {
   if (a.type === 'fold') return a.auto ? t('Timed out') : t('Fold');
   if (a.type === 'check') return t('Check');
   if (a.type === 'call') return t('Call');
-  if (a.type === 'bet') return t('Bet {n}', { n: fmt(a.amount ?? 0) });
-  return t('Raise to {n}', { n: fmt(a.amount ?? 0) });
+  const amount = a.amount ?? 0;
+  const shown = unit === 'chips' ? fmt(amount) : `${Math.round(amount / Math.max(1, bb))} BB`;
+  if (a.type === 'bet') return t('Bet {n}', { n: shown });
+  return t('Raise to {n}', { n: shown });
 }
 
 /** Measure the stage container so the canvas can be scaled to fit it. */
@@ -158,24 +160,11 @@ function HoleCards({
   );
 }
 
-/** L2 (rev-3 mockup): the seat stack's display UNIT (points ⇄ big blinds) is
- *  a LOCAL preference — tapping any seat's number toggles it for every seat
- *  on THIS client only; it is deliberately never synced to account Prefs.
- *  Persisted per device; default points. */
-const STACK_UNIT_KEY = '4am-stack-unit';
-
-function useStackUnit(): ['chips' | 'bb', () => void] {
-  const [unit, setUnit] = useState<'chips' | 'bb'>(() =>
-    localStorage.getItem(STACK_UNIT_KEY) === 'bb' ? 'bb' : 'chips',
-  );
-  const toggle = () =>
-    setUnit((u) => {
-      const next = u === 'chips' ? 'bb' : 'chips';
-      localStorage.setItem(STACK_UNIT_KEY, next);
-      return next;
-    });
-  return [unit, toggle];
-}
+/** The table's money display UNIT (points ⇄ big blinds) is the ONE persisted
+ *  preference `prefs.stackUnit` (shared store) — tapping any seat's number
+ *  toggles it for every seat AND every money label on this client (the felt
+ *  bets, the action bar, the betting panel). There is deliberately no second
+ *  local copy: a single source is what keeps every display in agreement. */
 
 export function RoundTable({
   seats,
@@ -282,8 +271,12 @@ export function RoundTable({
     setHud(null);
     setHudUserId(userId);
   }, [hudRoomId]);
-  // L2: one tap on ANY seat's stack flips pts ⇄ BB for every seat (local pref)
-  const [stackUnit, toggleStackUnit] = useStackUnit();
+  // L2: one tap on ANY seat's stack flips pts ⇄ BB for every money label
+  // (this device); the preference lives in the shared store so the action bar
+  // and this table can never disagree.
+  const stackUnit = useStore((s) => s.prefs.stackUnit);
+  const setPrefs = useStore((s) => s.setPrefs);
+  const toggleStackUnit = () => setPrefs({ stackUnit: stackUnit === 'chips' ? 'bb' : 'chips' });
   const reduce = useReducedMotion();
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
@@ -674,7 +667,11 @@ export function RoundTable({
                               // fits between them without covering a card.
                               size={narrow ? 'xs' : 'sm'}
                             />
-                            <span className="table-bet-amt">{fmt(committed)}</span>
+                            <span className="table-bet-amt">
+                              {stackUnit === 'chips'
+                                ? fmt(committed)
+                                : `${Math.round(committed / Math.max(1, bb))} BB`}
+                            </span>
                           </motion.div>
                         </motion.div>
                       )}
@@ -893,7 +890,7 @@ export function RoundTable({
                                     : '',
                             )}
                           >
-                            {lastAction ? actionLabel(lastAction) : t('All-in')}
+                            {lastAction ? actionLabel(lastAction, stackUnit, bb) : t('All-in')}
                           </motion.div>
                         )}
                         {lastAction?.type === 'check' && <span className="table-paction table-paction--check">{t('Check')}</span>}

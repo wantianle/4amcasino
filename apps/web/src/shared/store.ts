@@ -100,6 +100,15 @@ export const isTableSkin = (value: unknown): value is TableSkin =>
 // that sanitizer, which migrates the legacy four-slot list to the five-slot
 // default rather than keeping a stale shape alive.
 
+/** Reads `prefs.stackUnit`, folding in the retired per-device `4am-stack-unit`
+ *  key on the first run after the upgrade so a player who already chose BB
+ *  keeps it. This is a one-time migration, not a second live source. */
+function readStackUnit(stored: unknown): 'chips' | 'bb' {
+  if (stored === 'bb' || stored === 'chips') return stored;
+  if (typeof localStorage === 'undefined') return 'chips';
+  return localStorage.getItem('4am-stack-unit') === 'bb' ? 'bb' : 'chips';
+}
+
 export interface Prefs {
   pokerHotkeys: PokerHotkeys;
   displayName: string;
@@ -435,7 +444,9 @@ export const useStore = create<Store>()(
                         isCardFace(stored?.cardFace)
                         ? stored.cardFace === 'gg-four-color'
                         : stored?.fourColor !== false
-                      : (stored?.[key as keyof Prefs] ?? fallback),
+                      : key === 'stackUnit'
+                        ? readStackUnit(stored?.stackUnit)
+                        : (stored?.[key as keyof Prefs] ?? fallback),
             ]),
           ) as unknown as Prefs,
         };

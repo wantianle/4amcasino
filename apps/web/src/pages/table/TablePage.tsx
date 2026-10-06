@@ -443,7 +443,17 @@ export function TablePage() {
   // A fresh seat can legitimately have zero points before its first buy-in.
   // Only show the recovery dialog after this player has bought/played here.
   const hasPlayedOrBought = !!meRoomPlayer && (meRoomPlayer.totalBought > 0 || hand.seats.some((s) => s.seat === mySeat));
-  const amBroke = mySeat !== null && myRoomStack === 0 && !handLive && hasPlayedOrBought;
+  // `brokeNow` deliberately ignores the hand lifecycle: a player who is out of
+  // chips needs to buy whether or not a hand is running. The PROMPT is still
+  // only raised between hands (`!handLive` below) so it never pops over a live
+  // deal - but once it is on screen, the next deal must not yank it out from
+  // under a purchase the player is filling in. `buyPromptShown` latches the
+  // offer open until the player dismisses it or is no longer broke.
+  const brokeNow = mySeat !== null && myRoomStack === 0 && hasPlayedOrBought;
+  const [buyPromptShown, setBuyPromptShown] = useState(false);
+  useEffect(() => {
+    if (brokeNow && !handLive) setBuyPromptShown(true);
+  }, [brokeNow, handLive]);
   // review fix #8: one scheduled flip per deadline, no page-wide 500ms ticker
   const urgent = useUrgentAt(hand.deadline, handLive);
   const utilityGroups = tableUtilityGroups({
@@ -502,10 +512,14 @@ export function TablePage() {
       .catch(() => setStandings([]));
   }, [standingsOpen, roomId, hand.result, hand.abort]);
 
-  // re-arm the buy-in prompt whenever the broke state resolves (approval landed / stood up)
+  // resolve / re-arm the prompt: leaving the broke state closes the latch and
+  // clears the dismissal, so the next broke episode offers a fresh prompt.
   useEffect(() => {
-    if (!amBroke) setBrokeDismissed(false);
-  }, [amBroke]);
+    if (!brokeNow) {
+      setBuyPromptShown(false);
+      setBrokeDismissed(false);
+    }
+  }, [brokeNow]);
 
   // urgency beep, once per deadline, when it's your turn
   useEffect(() => {
@@ -1505,7 +1519,7 @@ export function TablePage() {
       )}
       <BrokeBuyInDialog
         roomId={roomId!}
-        open={amBroke && !brokeDismissed}
+        open={brokeNow && buyPromptShown && !brokeDismissed}
         onClose={() => setBrokeDismissed(true)}
       />
       <ShareHandDialog open={shareOpen} onClose={() => setShareOpen(false)} data={shareData} />
@@ -2141,8 +2155,14 @@ export function TablePage() {
                     transition={{ type: 'spring', stiffness: 320, damping: 18 }}
                     className="table-pot-val"
                   >
-                    <NumberFlow value={pot} />
+                    {/* the pot follows the same shared unit preference as the
+                        seat stacks and the action bar: BB when the table is in
+                        BB, points otherwise - never a second, chip-only total. */}
+                    <NumberFlow
+                      value={prefs.stackUnit === 'bb' ? Math.round(pot / Math.max(1, room?.room.bb ?? 1)) : pot}
+                    />
                   </motion.span>
+                  {prefs.stackUnit === 'bb' && <span className="table-pot-label">BB</span>}
                 </div>
               )}
               {/* the felt keeps its layout while a result flashes over it */}
