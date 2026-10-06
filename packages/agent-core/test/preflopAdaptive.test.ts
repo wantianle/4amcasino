@@ -39,6 +39,7 @@ import {
   slotsForDealtCount,
   taperRawSpot,
   worstCellDeviation,
+  type PreflopChart,
 } from '../src/preflopCharts/index.js';
 import { FRLA_BB_DEFEND, FRLA_RFI, MHL_HU } from '../src/preflopCharts/data/index.js';
 import {
@@ -55,7 +56,12 @@ import {
   RFI_RANGES,
 } from '../src/preflopRanges.js';
 import { compileRangeMix, mixFor, parseRange, type RangeEntry } from '../src/rangeParser.js';
-import { RULE_PRESETS, type RuleParams } from '../src/ruleStyles.js';
+import {
+  ADAPTIVE_PREFLOP_DEFAULT,
+  RULE_PRESETS,
+  type RuleParams,
+} from '../src/ruleStyles.js';
+import type { PolicyKind } from '../src/policyStyles.js';
 import * as Baseline from './fixtures/preflopPolicyBaseline.js';
 import * as BaselineRule from './fixtures/rulePolicyBaseline.js';
 
@@ -69,7 +75,12 @@ import * as BaselineRule from './fixtures/rulePolicyBaseline.js';
  */
 
 const ADAPTIVE: RuleParams = { ...RULE_PRESETS['tight-aggressive'], adaptivePreflop: true };
-const LEGACY = RULE_PRESETS['tight-aggressive'];
+/**
+ * Explicit kill-switch. The adaptive engine is the shipped default
+ * (`ADAPTIVE_PREFLOP_DEFAULT === true`), so the legacy route must be requested
+ * on purpose rather than assumed from an untouched preset.
+ */
+const LEGACY: RuleParams = { ...RULE_PRESETS['tight-aggressive'], adaptivePreflop: false };
 
 const c = (n: string) => cardFromName(n);
 
@@ -151,9 +162,27 @@ function measuredWidth(view: DecisionView, params: RuleParams): number {
   return sum / COMBOS.length;
 }
 
+/**
+ * Combo-weighted width of the adaptive RFI *core*: the chart's pure (`value`)
+ * raises plus its flat-call residual. `tight-aggressive` (`preflopScale === 1`)
+ * folds the whole `marginal` edge layer, so its measured RFI width equals this
+ * core width exactly.
+ */
+function adaptiveRfiCoreWidth(chart: PreflopChart): number {
+  let combos = 0;
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    const raise = m.raise + m.allin;
+    if (raise > 0 && m.raiseRole === 'value') combos += parseRange(key).combos * raise;
+    combos += parseRange(key).combos * m.call;
+  }
+  return combos / COMBOS.length;
+}
+
 type Policy = { choosePreflopIntent: typeof choosePreflopIntent };
 
-/** Same as `measuredWidth`, but against a freshly (re)imported) policy module. */
+/** Same as `measuredWidth`, but against a freshly (re)imported policy module. */
 function measuredWidthWith(policy: Policy, view: DecisionView, params: RuleParams): number {
   let sum = 0;
   for (const cards of COMBOS) {
@@ -571,7 +600,9 @@ describe('adaptive preflop cache key', () => {
     expect(adaptiveCtx.position).toBe(legacyCtx.position);
     expect(preflopMixCacheKey(adaptiveCtx, ADAPTIVE)).not.toBe(preflopMixCacheKey(legacyCtx, ADAPTIVE));
 
-    const adaptiveWidth = chartWidth(rfiChartForSlot(8)!);
+    // `tight-aggressive` (preflopScale 1) folds the adaptive `marginal` edge
+    // layer, so its adaptive RFI width is exactly the chart's pure-value core.
+    const adaptiveWidth = adaptiveRfiCoreWidth(rfiChartForSlot(8)!);
     const legacyWidth = legacyRfiWidth('UTG');
     expect(Math.abs(adaptiveWidth - legacyWidth)).toBeGreaterThan(0.01);
 
@@ -1612,5 +1643,197 @@ describe('step 3: flag-off differential against the 5f9b12a baseline', () => {
       }
     }
     expect(adaptiveDiffs).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// default direction: adaptive is ON for every preset, legacy is the opt-out
+// ---------------------------------------------------------------------------
+
+describe('adaptive preflop default direction', () => {
+  const PRESET_KINDS: PolicyKind[] = [
+    'tight-aggressive',
+    'loose-aggressive',
+    'calling-station',
+    'constrained-random',
+  ];
+  const DEFAULT_CARDS: CardId[][] = [
+    [c('Ac'), c('Kd')],
+    [c('Ac'), c('Ad')],
+    [c('7c'), c('2d')],
+    [c('5c'), c('5d')],
+  ];
+  const legal = (view: DecisionView): DecisionLegalActions => {
+    const currentBet = view.hand?.currentBet ?? 0;
+    const committed = view.me?.committed ?? 0;
+    const callAmount = Math.max(0, currentBet - committed);
+    return {
+      canCheck: callAmount === 0,
+      canCall: callAmount > 0,
+      callAmount,
+      canBet: false,
+      canRaise: true,
+      minRaiseTo: Math.max(currentBet * 2, 200),
+      maxRaiseTo: 20_000,
+    };
+  };
+
+  it('ships with ADAPTIVE_PREFLOP_DEFAULT on and every preset opting in', () => {
+    expect(ADAPTIVE_PREFLOP_DEFAULT).toBe(true);
+    for (const kind of PRESET_KINDS) {
+      expect(RULE_PRESETS[kind].adaptivePreflop, kind).toBe(true);
+    }
+  });
+
+  it('routes all four default presets to the adaptive charts (not the legacy tables)', () => {
+    // 9-max UTG first-in: headcount reliable, history complete, hero to act and
+    // nobody behind has acted. Pre-flip this exact view ran the legacy UTG RFI
+    // table; the default now serves the B8 adaptive chart.
+    const view = nHandedView(9, 2, [c('Ac'), c('Kd')]);
+    const ctx = derivePreflopContext(view);
+    const adaptiveCoreWidth = adaptiveRfiCoreWidth(rfiChartForSlot(8)!);
+    const legacyWidth = measuredWidth(view, { ...RULE_PRESETS['tight-aggressive'], adaptivePreflop: false });
+
+    for (const kind of PRESET_KINDS) {
+      const params = RULE_PRESETS[kind];
+      // The route resolver says adaptive for the untouched preset...
+      expect(adaptivePreflopAvailable(ctx, params), kind).toBe(true);
+      expect(preflopMixCacheKey(ctx, params), kind).toMatch(/\|adaptive$/);
+      // ...and the untouched preset compiles the *same* mix as an explicit
+      // `adaptivePreflop:true`, while diverging from the explicit legacy route.
+      expect(measuredWidth(view, params), kind).toBe(measuredWidth(view, { ...params, adaptivePreflop: true }));
+      expect(Math.abs(measuredWidth(view, params) - legacyWidth), kind).toBeGreaterThan(0.01);
+    }
+    // Decisive mix identity: tight-aggressive (preflopScale 1) folds the
+    // adaptive `marginal` edge layer, so its measured width is exactly the
+    // chart's pure-value core — not the full chart width.
+    expect(measuredWidth(view, RULE_PRESETS['tight-aggressive'])).toBeCloseTo(adaptiveCoreWidth, 9);
+    expect(legacyWidth).toBeCloseTo(parseRange(RFI_RANGES.UTG).combos / COMBOS.length, 9);
+  });
+
+  it('the explicit kill-switch is byte-identical to the frozen baseline for every preset', () => {
+    const views: DecisionView[] = [
+      nHandedView(9, 2, []), // unopened 9-max
+      nHandedView(6, 5, []), // 6-max BTN first-in
+      nHandedView(2, 0, []), // HU first-in
+      auctionView({ n: 6, heroSeat: 5, history: [act(2, 'call')], currentBet: 100 }), // limped
+      faceOpenView(6, 1, 2, []), // BB vs open
+      auctionView({
+        n: 6,
+        heroSeat: 5,
+        history: [act(2, 'raise', 250), act(4, 'raise', 750)],
+        pending: [5, 0, 1],
+        currentBet: 750,
+      }), // cold 3-bet
+    ];
+    for (const kind of PRESET_KINDS) {
+      const off: RuleParams = { ...RULE_PRESETS[kind], adaptivePreflop: false };
+      for (const view of views) {
+        for (const cards of DEFAULT_CARDS) {
+          for (const roll of [0.1, 0.5, 0.9]) {
+            const v: DecisionView = { ...view, hand: { ...view.hand!, myCards: cards } };
+            const cur = choosePreflopIntent(v, off, () => roll);
+            const base = Baseline.choosePreflopIntent(v, off, () => roll);
+            // Full PreflopChoice equality: intent + frequencies + context +
+            // hand class, not just the final action.
+            expect({ kind, roll, cur }).toEqual({ kind, roll, cur: base });
+          }
+        }
+      }
+    }
+  });
+
+  it('the kill-switch also matches the frozen RulePolicy decision (action + amount + reason)', () => {
+    const view = faceOpenView(6, 1, 2, []);
+    const v: DecisionView = {
+      ...view,
+      legalActions: legal(view),
+      hand: { ...view.hand!, myCards: [c('Ac'), c('Kd')] },
+    };
+    for (const kind of PRESET_KINDS) {
+      const off: RuleParams = { ...RULE_PRESETS[kind], adaptivePreflop: false };
+      for (const seed of [1, 3, 5]) {
+        const cur = new RulePolicy({ params: off, seed }).decide(v);
+        const base = new BaselineRule.RulePolicy({ params: off, seed }).decide(v);
+        expect({ kind, seed, cur }).toEqual({ kind, seed, cur: base });
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// adaptive RFI style contract: the four presets must differ by preflopScale
+// ---------------------------------------------------------------------------
+
+describe('adaptive RFI style contract (default engine)', () => {
+  // `preflopScale` ascends in exactly this order, so the RFI width must too:
+  //   tight-aggressive 1.00 < constrained-random 1.10 < calling-station 1.15
+  //   < loose-aggressive 1.50
+  const RELAXING: PolicyKind[] = [
+    'tight-aggressive',
+    'constrained-random',
+    'calling-station',
+    'loose-aggressive',
+  ];
+  const rfiWidth = (view: DecisionView, kind: PolicyKind) => measuredWidth(view, RULE_PRESETS[kind]);
+
+  function assertGradient(view: DecisionView, label: string): number[] {
+    const w = RELAXING.map((k) => rfiWidth(view, k));
+    for (let i = 1; i < w.length; i++) {
+      expect(w[i]!, `${label}: ${RELAXING[i]} > ${RELAXING[i - 1]}`).toBeGreaterThan(w[i - 1]!);
+    }
+    // Minimum separations so a future change cannot silently collapse the
+    // styles back onto each other (the regression oracle rejected).
+    expect(w[1]! - w[0]!, `${label}: random - TAG`).toBeGreaterThan(0.001);
+    expect(w[2]! - w[1]!, `${label}: station - random`).toBeGreaterThan(0.0005);
+    expect(w[3]! - w[0]!, `${label}: LAG - TAG`).toBeGreaterThan(0.005);
+    return w;
+  }
+
+  it('9-max UTG first-in (B8): LAG > station > random > TAG', () => {
+    const w = assertGradient(nHandedView(9, 2, []), '9max-UTG');
+    // A point-scale spread, not the ~0.002 the fixed-chart-width behaviour had.
+    expect(w[3]! - w[0]!).toBeGreaterThan(0.01);
+  });
+
+  it('9-max BTN late position (B2): the same order holds', () => {
+    const w = assertGradient(nHandedView(9, 8, []), '9max-BTN');
+    expect(w[3]! - w[0]!).toBeGreaterThan(0.01);
+  });
+
+  it('6-max UTG keeps the order too', () => {
+    assertGradient(nHandedView(6, 2, []), '6max-UTG');
+  });
+
+  it('matches the legacy route order on the same spots', () => {
+    const views: Array<[string, DecisionView]> = [
+      ['9max-UTG', nHandedView(9, 2, [])],
+      ['9max-BTN', nHandedView(9, 8, [])],
+      ['6max-UTG', nHandedView(6, 2, [])],
+    ];
+    const ascending = (w: number[]) => w.every((x, i) => i === 0 || x > w[i - 1]!);
+    for (const [label, view] of views) {
+      const adaptive = RELAXING.map((k) => rfiWidth(view, k));
+      const legacy = RELAXING.map((k) =>
+        measuredWidth(view, { ...RULE_PRESETS[k], adaptivePreflop: false }),
+      );
+      expect(ascending(adaptive), `${label}: adaptive order`).toBe(true);
+      expect(ascending(legacy), `${label}: legacy order`).toBe(true);
+    }
+  });
+
+  it('only wider styles open the marginal edge (TAG folds it)', () => {
+    const view = nHandedView(9, 2, []);
+    const chart = rfiChartForSlot(8)!;
+    // tight-aggressive has preflopScale 1, so the whole `marginal` layer is
+    // folded and the width is exactly the chart's pure-value core.
+    expect(rfiWidth(view, 'tight-aggressive')).toBeCloseTo(adaptiveRfiCoreWidth(chart), 9);
+    // The full chart is wider: the edge exists, it is just style-gated.
+    expect(chartWidth(chart)).toBeGreaterThan(rfiWidth(view, 'tight-aggressive'));
+    // Even the widest preset stays within the source anchor's width (B5 UTG),
+    // so no style is allowed to manufacture range past the provider data.
+    expect(rfiWidth(view, 'loose-aggressive')).toBeLessThanOrEqual(
+      chartWidth(rfiChartForSlot(5)!),
+    );
   });
 });

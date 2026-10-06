@@ -19,6 +19,31 @@ import { normalizePolicyKind, type PolicyKind } from './policyStyles.js';
 
 export const RULES_ENGINE = 'rules-v1';
 
+/**
+ * Default direction of the headcount-adaptive preflop engine: **on**.
+ *
+ * The adaptive charts (`preflopCharts/`) are now the default engine for every
+ * rules-v1 preset; the position-named legacy tables remain as the explicit
+ * fallback and are still the regression baseline. The `adaptivePreflop` field
+ * on `RuleParams` is the kill-switch:
+ *
+ *  - default (this constant) = `true` → adaptive whenever the headcount is
+ *    trustworthy and the spot has an adaptive anchor;
+ *  - per-bot `policy_json.adaptivePreflop = false` → that bot runs the legacy
+ *    position tables (explicit opt-out);
+ *  - `FOURAM_ADAPTIVE_PREFLOP=0` (also `false`/`off`/`no`) flips the *default*
+ *    back to legacy for every preset — the environment-wide kill-switch. An
+ *    explicit per-bot boolean still wins over the default.
+ *
+ * A documented env switch keeps the rollback to the legacy engine a one-liner
+ * without a redeploy, while the default direction is adaptive.
+ */
+export const ADAPTIVE_PREFLOP_DEFAULT: boolean = (() => {
+  const raw = typeof process !== 'undefined' ? process.env?.FOURAM_ADAPTIVE_PREFLOP : undefined;
+  if (raw === undefined || raw.trim() === '') return true;
+  return !['0', 'false', 'off', 'no'].includes(raw.trim().toLowerCase());
+})();
+
 export interface RuleParams {
   preflopScale: number;
   threeBetScale: number;
@@ -27,10 +52,12 @@ export interface RuleParams {
   multiwayBluffScale: number;
   maxOverbetFrequency: number;
   /**
-   * Experimental (default false): resolve first-in preflop spots from the
-   * headcount-adaptive charts (`preflopCharts/`) keyed by `behindUnacted`
-   * instead of the position-named legacy tables. Falls back to the legacy
-   * tables whenever the headcount/spot is not reliable.
+   * Kill-switch for the headcount-adaptive charts. Defaults to
+   * `ADAPTIVE_PREFLOP_DEFAULT` (on): first-in spots resolve from the adaptive
+   * charts (`preflopCharts/`) keyed by `behindUnacted` instead of the
+   * position-named legacy tables. `false` deliberately routes the bot back to
+   * the legacy tables; so does a headcount/spot the adaptive path cannot trust
+   * (missing `seatOrder`, incomplete history, HU facing a raise, ...).
    */
   adaptivePreflop: boolean;
 }
@@ -43,7 +70,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.5,
     maxOverbetFrequency: 0.15,
-    adaptivePreflop: false,
+    adaptivePreflop: ADAPTIVE_PREFLOP_DEFAULT,
   },
   'loose-aggressive': {
     preflopScale: 1.5,
@@ -52,7 +79,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1.15,
     multiwayBluffScale: 0.8,
     maxOverbetFrequency: 0.35,
-    adaptivePreflop: false,
+    adaptivePreflop: ADAPTIVE_PREFLOP_DEFAULT,
   },
   // A station opens a touch wide (but far less than a LAG) and almost never
   // 3-bets or bluffs.
@@ -63,7 +90,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.2,
     maxOverbetFrequency: 0,
-    adaptivePreflop: false,
+    adaptivePreflop: ADAPTIVE_PREFLOP_DEFAULT,
   },
   'constrained-random': {
     preflopScale: 1.1,
@@ -72,7 +99,7 @@ export const RULE_PRESETS: Record<PolicyKind, RuleParams> = {
     valueBetScale: 1,
     multiwayBluffScale: 0.7,
     maxOverbetFrequency: 0.25,
-    adaptivePreflop: false,
+    adaptivePreflop: ADAPTIVE_PREFLOP_DEFAULT,
   },
 };
 

@@ -24,11 +24,15 @@ import {
   buildDerivedChart,
   canonicalSlot,
   chartToRangeEntries,
+  chartWidth,
   computeBehindPending,
   continueWidthScale,
+  HAND_KEYS,
   multiwayWidthScale,
   preflopActionOrder,
   rescaleRangeMix,
+  rfiChartForSlot,
+  type PreflopChart,
 } from './preflopCharts/index.js';
 import {
   compileRangeMix,
@@ -405,8 +409,10 @@ export function derivePreflopContext(view: DecisionView): PreflopContext {
 const mixCache = new Map<string, Map<string, CompiledMix>>();
 
 /**
- * The legacy position-named baseline charts. Kept as the default and as the
- * fallback when the headcount-adaptive path is disabled or not trustworthy.
+ * The legacy position-named baseline charts. No longer the default: the
+ * headcount-adaptive path is the default engine (see `ADAPTIVE_PREFLOP_DEFAULT`)
+ * and this is the explicit fallback when adaptive is switched off
+ * (`params.adaptivePreflop === false`) or the spot/headcount cannot be trusted.
  */
 function buildLegacyMix(ctx: PreflopContext): Map<string, CompiledMix> {
   let mix: Map<string, CompiledMix>;
@@ -685,6 +691,62 @@ function buildDerivedAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> 
   return compileRangeMix(chartToRangeEntries(chart));
 }
 
+/**
+ * Adaptive RFI entries with an explicit `marginal` edge layer, so the style
+ * presets differ on the adaptive default exactly as they do on the legacy
+ * tables.
+ *
+ * The adaptive RFI chart alone cannot carry the gradient: `buildChartMix`'s
+ * threshold narrowing leaves every `p = 1` class untouched, so the 9-max tail
+ * (B6..B8) — a narrowing of the UTG anchor — keeps only a sliver of mixed
+ * (raise/fold) cells (B8 ≈ 0.14pt). Tagging just those as marginal would leave
+ * the four presets within ~0.1pt of each other, which is the bug this fixes.
+ *
+ * So the edge layer is taken from the slot's **anchor** — the UTG anchor for the
+ * 9-max tail, the chart itself for B1..B5 — where the solver's mixed raises
+ * exist in full. It is scaled by the slot's headcount ratio
+ * (`chartWidth / anchorWidth <= 1`) so `B6 > B7 > B8` stays true, and compiled
+ * with role `marginal`: `effectiveFrequencies` opens it at `preflopScale - 1`,
+ * i.e. `tight-aggressive` (scale 1) folds it, `loose-aggressive` (1.5) opens
+ * half, `calling-station` (1.15) and `constrained-random` (1.1) a tenth or so.
+ *
+ * The weight is the anchor's own raise frequency times the headcount ratio, so
+ * a marginal open is `raise * (preflopScale - 1) <= raise <= 1`: it never
+ * exceeds the frequency the source anchor gave the class, never invents a class
+ * the anchor does not play, and therefore never widens past the source. The
+ * premium core is untouched (`value` raises keep their full frequency).
+ */
+function adaptiveRfiEntries(chart: PreflopChart, ctx: PreflopContext): RangeEntry[] {
+  const entries: RangeEntry[] = [];
+  // Core: every style opens the chart's pure (`value`) raises and its flat
+  // calls. The mixed cells are handled as the edge layer below instead.
+  for (const key of HAND_KEYS) {
+    const m = chart.mix[key];
+    if (!m) continue;
+    const raise = m.raise + m.allin;
+    if (raise > 0 && m.raiseRole === 'value') {
+      entries.push({ range: key, action: 'raise', weight: raise, role: 'value' });
+    }
+    if (m.call > 0) entries.push({ range: key, action: 'call', weight: m.call });
+  }
+  // Edge: the anchor's mixed raises, scaled to this slot's headcount. For
+  // B1..B5 the anchor is the chart itself (identity, ratio 1); for the 9-max
+  // tail it is B5, the UTG anchor the tail extrapolates from.
+  const tail = ctx.actorSlot > 5;
+  const anchor = tail ? rfiChartForSlot(5) : chart;
+  if (anchor) {
+    const ratio = tail ? Math.min(1, chartWidth(chart) / chartWidth(anchor)) : 1;
+    for (const key of HAND_KEYS) {
+      const m = anchor.mix[key];
+      if (!m || m.raiseRole !== 'bluff') continue;
+      const raise = m.raise + m.allin;
+      if (raise <= 0) continue;
+      entries.push({ range: key, action: 'raise', weight: raise * ratio, role: 'marginal' });
+    }
+  }
+  return entries;
+}
+
 function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
   if (ctx.spot === 'facingOpen') {
     if (ctx.positionGroup === 'BB') {
@@ -696,7 +758,11 @@ function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null 
   if (ctx.spot === 'unopened') {
     const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
     if (!chart) return null;
-    return compileRangeMix(chartToRangeEntries(chart));
+    // HU stays on the literal chart split: it is a single MHL-anchored spot
+    // (`HU.SB_OPEN`, ~87% open with a large limp share) that must not drift from
+    // its source. The multiway RFI path carries the explicit marginal layer.
+    if (ctx.headsUp) return compileRangeMix(chartToRangeEntries(chart));
+    return compileRangeMix(adaptiveRfiEntries(chart, ctx));
   }
   return buildDerivedAdaptiveMix(ctx);
 }
@@ -734,9 +800,11 @@ export function preflopMixCacheKey(ctx: PreflopContext, params: RuleParams): str
 }
 
 /**
- * Resolve the compiled mix for `ctx`. With `params.adaptivePreflop` on and a
- * trustworthy headcount, first-in spots use the slot-keyed adaptive charts; in
- * every other case the legacy position-named tables run unchanged.
+ * Resolve the compiled mix for `ctx`. `params.adaptivePreflop` defaults to on,
+ * so with a trustworthy headcount the adaptive charts serve every covered spot;
+ * a spot/headcount the adaptive path cannot trust — or an explicit
+ * `adaptivePreflop:false` kill-switch — falls back to the legacy position tables
+ * unchanged.
  */
 function buildMix(ctx: PreflopContext, params: RuleParams): Map<string, CompiledMix> {
   const cacheKey = preflopMixCacheKey(ctx, params);

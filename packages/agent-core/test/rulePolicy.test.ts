@@ -26,7 +26,7 @@ import {
   type CompiledMix,
 } from '../src/rangeParser.js';
 import { RulePolicy } from '../src/rulePolicy.js';
-import { RULE_PRESETS, parseRuleConfig } from '../src/ruleStyles.js';
+import { RULE_PRESETS, parseRuleConfig, type RuleParams } from '../src/ruleStyles.js';
 import { resolvePolicy } from '../src/stylePolicy.js';
 
 const c = (n: string) => cardFromName(n);
@@ -37,6 +37,18 @@ const KINDS: PolicyKind[] = [
   'calling-station',
   'constrained-random',
 ];
+
+/**
+ * Explicit legacy engine. The headcount-adaptive charts are the shipped default
+ * now, so tests that characterise the legacy position tables / marginal-open
+ * style knobs opt into the legacy route on purpose instead of inheriting an
+ * untouched preset (which is adaptive). Adaptive coverage lives in
+ * `preflopAdaptive.test.ts`.
+ */
+const legacyParams = (kind: PolicyKind): RuleParams => ({
+  ...RULE_PRESETS[kind],
+  adaptivePreflop: false,
+});
 
 // ---------------------------------------------------------------------------
 // small view builders
@@ -356,7 +368,12 @@ describe('preflop RFI frequency', () => {
       const expected = EXACT_COMBOS[pos];
       // Sanity: the expected count is what the table parses to.
       expect(parseRange(RFI_RANGES[pos]).combos).toBe(expected);
-      const policy = new RulePolicy({ kind: 'tight-aggressive', seed: 1 });
+      // This pins the *legacy* RFI table count, so force the legacy engine.
+      const policy = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      });
       let raises = 0;
       for (const cards of combos) {
         const d = policy.decide(preflopView(pos, cards));
@@ -369,7 +386,11 @@ describe('preflop RFI frequency', () => {
   it('stays within the nominal band on every position (exact enumeration)', () => {
     const combos = allCombos();
     for (const [pos, [lo, hi]] of Object.entries(NOMINAL) as [Pos, [number, number]][]) {
-      const policy = new RulePolicy({ kind: 'tight-aggressive', seed: 1 });
+      const policy = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      });
       let raises = 0;
       for (const cards of combos) {
         const d = policy.decide(preflopView(pos, cards));
@@ -477,7 +498,8 @@ describe('RulePolicy: incomplete history is not silence', () => {
 });
 
 describe('RulePolicy: short stacks', () => {
-  const tag = RULE_PRESETS['tight-aggressive'];
+  // Short-stack behaviour is the legacy rules-v1 stack mapping; pin the engine.
+  const tag = legacyParams('tight-aggressive');
 
   it('jams QQ facing a 3-bet at 19BB instead of folding', () => {
     const v = preflopView(
@@ -516,7 +538,11 @@ describe('RulePolicy: short stacks', () => {
       },
       1900,
     );
-    const d = new RulePolicy({ kind: 'tight-aggressive', seed: 1 }).decide(v);
+    const d = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      }).decide(v);
     expect(d.action).toEqual({ type: 'raise', amount: 1900 });
     expect(d.reason).toMatch(/all-in/);
   });
@@ -531,7 +557,11 @@ describe('RulePolicy: short stacks', () => {
       const choice = choosePreflopIntent(v, tag, () => 0.99);
       expect(choice.intent).toBe('fold');
       expect(choice.frequencies.raise).toBe(0);
-      const d = new RulePolicy({ kind: 'tight-aggressive', seed: 1 }).decide(v);
+      const d = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      }).decide(v);
       expect(d.action.type).toBe('fold');
     }
   });
@@ -554,7 +584,11 @@ describe('RulePolicy: short stacks', () => {
       });
       const v = preflopView('BTN', cards, { legalActions: legal }, 1900);
       expect(choosePreflopIntent(v, tag, () => 0.99).intent).toBe('raise');
-      const d = new RulePolicy({ kind: 'tight-aggressive', seed: 1 }).decide(v);
+      const d = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      }).decide(v);
       expect(d.action).toEqual({ type: 'raise', amount: 1900 });
       expect(d.reason).toMatch(/all-in/);
     }
@@ -567,7 +601,11 @@ describe('RulePolicy: short stacks', () => {
       [c('2c'), c('2d')],
     ]) {
       const v = preflopView('BTN', cards, {}, 10_000);
-      const d = new RulePolicy({ kind: 'tight-aggressive', seed: 1 }).decide(v);
+      const d = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      }).decide(v);
       expect(d.action.type).toBe('raise');
       expect(d.action.amount).toBeLessThan(10_000);
     }
@@ -678,7 +716,11 @@ describe('preflop spots', () => {
       legalActions: legal,
       actionSeq: 2,
     });
-    const d = new RulePolicy({ kind: 'tight-aggressive', seed: 1 }).decide(trash);
+    const d = new RulePolicy({
+        kind: 'tight-aggressive',
+        seed: 1,
+        params: legacyParams('tight-aggressive'),
+      }).decide(trash);
     expect(d.action).toEqual({ type: 'check' });
   });
 
@@ -712,14 +754,15 @@ describe('RulePolicy: scaling semantics', () => {
       actionHistory: [publicRaise(2, 300, 0)],
       actionSeq: 3,
     });
-    const choice = choosePreflopIntent(v, RULE_PRESETS['loose-aggressive'], () => 0.5);
+    // These style knobs are the legacy marginal-open mechanism; pin the engine.
+    const choice = choosePreflopIntent(v, legacyParams('loose-aggressive'), () => 0.5);
     expect(choice.frequencies.raise + choice.frequencies.call).toBeLessThanOrEqual(1 + 1e-9);
   });
 
   it('makes loose styles genuinely wider than tight-aggressive on marginal hands', () => {
     const q4s = preflopView('BTN', [c('Qc'), c('4c')], { actionSeq: 0 });
     const raiseRate = (kind: PolicyKind) =>
-      choosePreflopIntent(q4s, RULE_PRESETS[kind], () => 0.5).frequencies.raise;
+      choosePreflopIntent(q4s, legacyParams(kind), () => 0.5).frequencies.raise;
     const tag = raiseRate('tight-aggressive');
     const lag = raiseRate('loose-aggressive');
     const station = raiseRate('calling-station');
@@ -731,7 +774,7 @@ describe('RulePolicy: scaling semantics', () => {
   });
 
   it('applies the multiway discount to bluffs only, not value', () => {
-    const tag = RULE_PRESETS['tight-aggressive'];
+    const tag = legacyParams('tight-aggressive');
     const bluff = [c('Ac'), c('5c')]; // A5s: a weighted 3-bet bluff
     const single = choosePreflopIntent(
       preflopView('BTN', bluff, { actionHistory: [publicRaise(2, 300, 0)], actionSeq: 3 }),
@@ -762,7 +805,7 @@ describe('RulePolicy: scaling semantics', () => {
     const width = (pos: Pos, kind: PolicyKind) => {
       let sum = 0;
       for (const cards of combos) {
-        sum += choosePreflopIntent(preflopView(pos, cards), RULE_PRESETS[kind], () => 0.5).frequencies.raise;
+        sum += choosePreflopIntent(preflopView(pos, cards), legacyParams(kind), () => 0.5).frequencies.raise;
       }
       return sum;
     };
@@ -781,11 +824,11 @@ describe('RulePolicy: scaling semantics', () => {
     const combos = allCombos();
     for (const kind of KINDS) {
       for (const cards of combos) {
-        const open = choosePreflopIntent(preflopView('BTN', cards), RULE_PRESETS[kind], () => 0.5).frequencies;
+        const open = choosePreflopIntent(preflopView('BTN', cards), legacyParams(kind), () => 0.5).frequencies;
         expect(open.raise + open.call).toBeLessThanOrEqual(1 + 1e-9);
         const facing = choosePreflopIntent(
           preflopView('BTN', cards, { actionHistory: [publicRaise(2, 300, 0)], actionSeq: 1 }),
-          RULE_PRESETS[kind],
+          legacyParams(kind),
           () => 0.5,
         ).frequencies;
         expect(facing.raise + facing.call).toBeLessThanOrEqual(1 + 1e-9);
