@@ -335,8 +335,14 @@ export function BotsDialog({
                         type="button"
                         disabled={busy !== null}
                         onClick={() => {
-                          setBuyFor(buyFor === key ? null : key);
-                          setBuyAmt('');
+                          if (buyFor === key) {
+                            setBuyFor(null);
+                          } else {
+                            // expanding starts at 100 BB of the current table -
+                            // the host's default add-chips gesture, not an empty box
+                            setBuyFor(key);
+                            setBuyAmt(String(100 * bb));
+                          }
                         }}
                         className="!min-h-8 !px-3 !text-xs"
                         title={t('Add chips for this bot')}
@@ -352,7 +358,7 @@ export function BotsDialog({
                           onClick={() => remove(bot)}
                           className="!min-h-8 !px-3 !text-xs"
                         >
-                          {t('Remove for good?')}
+                          {t('Delete for good?')}
                         </Button>
                       ) : (
                         <Button
@@ -361,10 +367,10 @@ export function BotsDialog({
                           disabled={busy !== null}
                           onClick={() => setRemoveArmed(key)}
                           className="!min-h-8 !px-3 !text-xs !text-rose-600 dark:!text-rose-400"
-                          title={t('Remove this bot')}
+                          title={t('Delete this bot')}
                         >
                           <Trash size={13} />
-                          {t('Remove')}
+                          {t('Delete')}
                         </Button>
                       )}
                     </span>
@@ -376,7 +382,13 @@ export function BotsDialog({
                           key={n}
                           type="button"
                           onClick={() => setBuyAmt(String(n * bb))}
-                          className="rounded-lg border border-slate-200/70 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                          aria-pressed={Number(buyAmt) === n * bb}
+                          className={cn(
+                            'rounded-lg border px-2.5 py-1 text-xs font-semibold tabular-nums transition-colors',
+                            Number(buyAmt) === n * bb
+                              ? 'border-indigo-500 bg-indigo-600 text-white'
+                              : 'border-slate-200/70 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800',
+                          )}
                         >
                           {n} BB
                         </button>

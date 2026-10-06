@@ -99,6 +99,12 @@ export function Dialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // Backdrop close must not fire on a text-selection drag: when the press
+  // starts inside the panel and the release lands on the overlay, the browser
+  // dispatches the click on their common ancestor - the overlay itself - so
+  // `e.target === overlay` is true even though the user never clicked the
+  // backdrop. Record where the press began and only close when it began here.
+  const pressedOnOverlayRef = useRef(false);
   useEffect(() => {
     if (!open) return;
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -157,7 +163,17 @@ export function Dialog({
       data-ui-dialog
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-      onClick={onClose}
+      onPointerDown={(e) => {
+        // remember whether this gesture *pressed* the backdrop itself; a
+        // text-selection drag that starts inside the panel and releases over
+        // the backdrop also lands its `click` here (the browser dispatches
+        // such a click on the common ancestor), and must not close the dialog
+        pressedOnOverlayRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && pressedOnOverlayRef.current) onClose();
+        pressedOnOverlayRef.current = false;
+      }}
       role="dialog"
       aria-modal="true"
       aria-label={title}

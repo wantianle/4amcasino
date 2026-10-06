@@ -3,7 +3,7 @@
 // room → 房间, table → 牌桌, seat → 号位 (server.ts), buy-in → 买入,
 // banker → 账房, chips → 筹码. Play styles use the standard CJK poker terms
 // 紧凶/松凶/紧弱/松弱. Reused, NOT redefined here: 'Seat {n}' / 'Retry' /
-// 'Cancel' / 'Send' / 'Remove' / 'Settings' and the pod copy (table.ts),
+// 'Cancel' / 'Send' / 'Delete' / 'Settings' and the pod copy (table.ts),
 // 'Chip leader' / 'Ready'-adjacent pills; every server-provided error
 // ('that seat is taken', 'BOT_IDENTITY_KEY is not configured…', …) lives in
 // dict/server.ts and reaches the UI through tr() inside ApiError.
@@ -44,8 +44,9 @@ const bots: Record<string, string> = {
   'Add chips': '补码',
   'Current stack': '当前筹码',
   'Add chips for this bot': '给这个机器人补码',
-  'Remove this bot': '移除这个机器人',
-  'Remove for good?': '确认移除？',
+  // the server's remove route is a hard delete, so the copy says 删除, not 移除
+  'Delete this bot': '永久删除这个机器人',
+  'Delete for good?': '确认永久删除？',
   'Chips to add for {name}': '给 {name} 补多少筹码',
   amount: '数量',
   'Goes through the banker queue, same as a player.': '和真人一样走账房的审批队列。',

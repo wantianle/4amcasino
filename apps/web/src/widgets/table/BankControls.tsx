@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
@@ -36,7 +36,7 @@ export function BankControls({
   const [sendNote, setSendNote] = useState('');
   const [sendDone, setSendDone] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [amount, setAmount] = useState(500);
+  const [amount, setAmount] = useState(() => (room?.room.bb ?? 20) * 100);
   const [note, setNote] = useState('');
   const [sent, setSent] = useState(false);
   const [requests, setRequests] = useState<BuyRequest[]>([]);
@@ -50,6 +50,18 @@ export function BankControls({
   const restoreHubFocus = useRef(true);
   const isMainBanker = room?.room.bankerId === userId;
   const isBanker = isMainBanker || room?.room.coBankerId === userId;
+
+  // The buy dialog always opens at 100 BB of the *current* table. bb rides in
+  // on room_state and may arrive after this component mounted, so reading it
+  // in useState alone is not enough — reset on every open, through a ref so a
+  // bb change while the dialog is open never stomps a typed amount.
+  // Layout timing: the re-seed lands before the dialog's first paint, so a
+  // reopen never flashes the previous session's amount.
+  const bbRef = useRef(20);
+  bbRef.current = room?.room.bb ?? 20;
+  useLayoutEffect(() => {
+    if (buyOpen) setAmount(bbRef.current * 100);
+  }, [buyOpen]);
 
   useEffect(() => {
     if (!isBanker) return;

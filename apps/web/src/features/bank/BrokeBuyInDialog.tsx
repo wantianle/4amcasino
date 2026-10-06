@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../shared/api.ts';
 import { leaveSeat } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
@@ -22,11 +22,18 @@ export function BrokeBuyInDialog({
   const userId = useStore((s) => s.auth.userId);
   const pendingBuy = room?.players.find((p) => p.userId === userId)?.pendingBuy ?? 0;
   const pushError = useStore((s) => s.pushError);
-  const [amount, setAmount] = useState(() => (room?.room.bb ?? 20) * 50);
+  const [amount, setAmount] = useState(() => (room?.room.bb ?? 20) * 100);
   const [sent, setSent] = useState(false);
   const guard = useAsyncGuard();
-  useEffect(() => {
-    if (!open) setSent(false);
+  // bb rides in on room_state and may land after mount: re-seed the default
+  // (100 BB of the current table) every time the dialog opens, via a ref so a
+  // bb change while it is open never stomps a typed amount. Layout timing
+  // keeps the first paint honest: the dialog never flashes a stale default.
+  const bbRef = useRef(20);
+  bbRef.current = room?.room.bb ?? 20;
+  useLayoutEffect(() => {
+    if (open) setAmount(bbRef.current * 100);
+    else setSent(false);
   }, [open]);
 
   function buy(e: React.FormEvent) {
