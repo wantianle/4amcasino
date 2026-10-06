@@ -52,10 +52,41 @@ try {
       await page.screenshot({ path: `${out}/${name}-${width}.png`, fullPage: true });
     }
     await page.goto(`${base}/room/baseline`);
-    await page.getByRole('button', { name: 'HUD', exact: true }).click();
-    await page.getByText('统计已隐藏', { exact: true }).waitFor();
-    assert(!(await page.locator('[data-hud-player="3"]').innerText()).includes('VPIP'), 'Hidden player leaked stats');
-    assert(!(await page.locator('[data-hud-player="4"]').innerText()).includes('VPIP'), 'Low sample player leaked stats');
+    // The HUD opens per seat (there is no global HUD button): each seat avatar is
+    // a button whose accessible name is "<displayName> · 玩家 HUD", and the dialog
+    // renders only the clicked player's row. Hidden / below-threshold players are
+    // checked by opening their own button.
+    const hudDialog = page.getByRole('dialog', { name: '玩家 HUD' });
+    const openHud = async (name) => {
+      await page.getByRole('button', { name: `${name} · 玩家 HUD`, exact: true }).click();
+      await hudDialog.waitFor();
+    };
+    const closeHud = async () => {
+      await hudDialog.getByRole('button', { name: '关闭', exact: true }).click();
+      await hudDialog.waitFor({ state: 'hidden' });
+    };
+    await openHud('Alex');
+    assert(
+      (await page.locator('[data-hud-player="2"]').innerText()).includes('VPIP'),
+      'Sufficient player lost its stats',
+    );
+    await closeHud();
+    await openHud('Hidden player');
+    assert(
+      (await page.locator('[data-hud-player="3"]').innerText()).includes('统计已隐藏'),
+      'Hidden player lost the hidden hint',
+    );
+    assert(
+      !(await page.locator('[data-hud-player="3"]').innerText()).includes('VPIP'),
+      'Hidden player leaked stats',
+    );
+    await closeHud();
+    await openHud('New player');
+    assert(
+      !(await page.locator('[data-hud-player="4"]').innerText()).includes('VPIP'),
+      'Low sample player leaked stats',
+    );
+    await closeHud();
     await page.screenshot({ path: `${out}/hud-${width}.png`, fullPage: true });
     await context.close();
   }

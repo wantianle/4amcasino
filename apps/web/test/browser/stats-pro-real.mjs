@@ -85,8 +85,26 @@ try {
   assert(await page.getByText(String(mainStats.sample), { exact: true }).count() > 0, 'real sample not rendered');
   assert(await page.getByText('VPIP', { exact: true }).count() > 0, 'real VPIP not rendered');
   for (const [name, label] of [['overview', '总览'], ['position', '位置'], ['street', '街'], ['ip', 'IP / OOP']]) { await page.getByRole('button', { name: label, exact: true }).click(); await page.screenshot({ path: `${OUT}/real-${name}-1440.png`, fullPage: true }); }
+  // The HUD is now per-seat, so the hidden account must actually hold a seat for
+  // its avatar button to exist. Sit it down from its own session, then let the
+  // room broadcast reach the main page.
+  const hiddenCtx = await browser.newContext({ viewport: { width: 1024, height: 768 }, reducedMotion: 'reduce' });
+  await hiddenCtx.addInitScript((blob) => localStorage.setItem('4am-auth', JSON.stringify(blob)), { state: { auth: { token: hidden.token, userId: hidden.userId, username: hidden.username, identity: { publicKey: hidden.publicKey, secretKey: hidden.secretKey } } }, version: 0 });
+  const hiddenPage = await hiddenCtx.newPage();
+  await hiddenPage.goto(`${BASE}/room/${handoff.roomId}`, { waitUntil: 'domcontentloaded' });
+  const sitSpot = hiddenPage.locator('.table-sit-spot').first();
+  await sitSpot.waitFor();
+  await sitSpot.click();
+  await hiddenCtx.close();
+  await sleep(400);
   await page.goto(`${BASE}/room/${handoff.roomId}`, { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: 'HUD', exact: true }).click();
+  // The HUD is opened from the hidden player's own seat avatar (there is no
+  // global HUD button); its accessible name is "<displayName> · 玩家 HUD".
+  const hiddenHud = hudById.get(hidden.userId);
+  const hiddenName = hiddenHud?.displayName || hiddenHud?.username;
+  assert(hiddenName, 'hidden player missing from the room HUD roster');
+  await page.getByRole('button', { name: `${hiddenName} · 玩家 HUD`, exact: true }).click();
+  await page.getByRole('dialog', { name: '玩家 HUD' }).waitFor();
   await page.getByText('统计已隐藏', { exact: true }).waitFor();
   await page.screenshot({ path: `${OUT}/real-hud-1440.png`, fullPage: true });
   assert(!(await page.locator(`[data-hud-player="${hidden.userId}"]`).innerText()).includes('VPIP'), 'hidden HUD stats leaked');
