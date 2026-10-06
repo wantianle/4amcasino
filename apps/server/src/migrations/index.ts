@@ -5,6 +5,7 @@ import { migrateHandStats } from '../handProjection.js';
 import { migrateBots } from './bots.js';
 import { migrateAdminAudit } from './adminAudit.js';
 import { migrateSettlementPrepared } from './settlementPrepared.js';
+import { migrateRoomsIndex } from './roomsIndex.js';
 
 /** One named, ordered schema migration. */
 export type Migration = { name: string; run: (db: DB) => void };
@@ -31,6 +32,7 @@ export const STEPS: Migration[] = [
   { name: 'reconcile-lifecycle', run: (db) => dbModel.reconcileMissingSettlements(db) },
   { name: 'admin-audit', run: migrateAdminAudit },
   { name: 'settlement-prepared', run: migrateSettlementPrepared },
+  { name: 'rooms-index', run: migrateRoomsIndex },
 ];
 
 /** Run every schema migration in its registered order. */
