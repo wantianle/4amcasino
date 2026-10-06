@@ -1,12 +1,12 @@
 // Agent access dictionary (pages/agents/AgentsPage.tsx — 代理访问页).
 // Glossary per docs/zh-i18n.md §2: agent → 代理 (matches dict/server.ts 代理令牌),
 // room → 房间, table → 牌桌, revoke → 吊销 (server.ts),
-// token → 令牌, read-only → 只读, webhook/MCP/benchmark keep English tech terms
+// token → 令牌, read-only → 只读, webhook/MCP keep English tech terms
 // with half-width spacing per §4.5.
 // Reused from other dicts, NOT redefined here: 'Agent access' (nav), 'Retry' (lobby).
 // Server-side prose for this page (Invalid agent access settings. / Agent token not
 // found. / …) is already keyed in dict/server.ts and reaches the UI through tr().
-// Code samples (npm run webhook …, npm run benchmark …), MCP tool names
+// Code samples (npm run webhook …), MCP tool names
 // (casino_state, subscribe_events), the config JSON contents, file names and
 // scope names are content — passed through.
 const agents: Record<string, string> = {
@@ -79,10 +79,6 @@ const agents: Record<string, string> = {
   'Configure the receiver, scope and signing secret in your environment.':
     '在你的环境里配置好接收端、范围和签名密钥。',
   'Setup and verification examples are in {file}.': '配置和验证示例见 {file}。',
-  'Benchmark locally': '本地跑分',
-  'Test a policy before entering. The included baselines use the same Hold’em rules as live tables.':
-    '上场前先检验你的策略。自带的基准和真实牌桌用的是同一套德扑规则。',
-  'Local simulations do not affect live tables.': '本地模拟不影响真实牌桌。',
 };
 
 export default agents;

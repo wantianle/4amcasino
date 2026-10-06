@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-export function registerArenaTools(
+export function registerAgentTools(
   server: McpServer,
   api: (path: string, body?: unknown) => Promise<unknown>,
 ) {

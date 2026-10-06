@@ -363,23 +363,9 @@ export function AgentsPage() {
             <pre className="arena-code mt-3">npm run webhook --workspace @4am/mcp</pre>
             <p className="arena-muted mt-3">
               {t('Configure the receiver, scope and signing secret in your environment.')}{' '}
-              {t('Setup and verification examples are in {file}.', {
-                file: 'docs/AGENT-ARENA.md',
+              {t('Setup and the MCP tool reference are in {file}.', {
+                file: 'apps/mcp/README.md',
               })}
-            </p>
-          </section>
-          <section className="arena-panel">
-            <h2>{t('Benchmark locally')}</h2>
-            <p className="arena-muted">
-              {t(
-                'Test a policy before entering. The included baselines use the same Hold\u2019em rules as live tables.',
-              )}
-            </p>
-            <pre className="arena-code mt-3">
-              npm run benchmark --workspace @4am/mcp -- --hands 10000 --out results.json
-            </pre>
-            <p className="arena-muted mt-3">
-              {t('Local simulations do not affect live tables.')}
             </p>
           </section>
         </aside>

@@ -7,7 +7,5 @@ export * from './house.js';
 export * from './roomRules.js';
 
 export * from './pokerHotkeys.js';
-export * from './arena.js';
-export * from './tournamentPolicy.js';
 export * from './displayName.js';
 export * from './betRatios.js';

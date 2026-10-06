@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { HeadlessClient } from './client.js';
-import { registerArenaTools } from './arenaTools.js';
+import { registerAgentTools } from './agentTools.js';
 
 /**
  * MCP server for 4AM Casino: gives an AI agent a real seat at the table.
@@ -58,7 +58,7 @@ const run = async (fn: () => Promise<string> | string) => {
 };
 
 const server = new McpServer({ name: '4am-casino', version: '1.1.0' });
-registerArenaTools(server, async (path, body) => {
+registerAgentTools(server, async (path, body) => {
   if (!agentToken) return (await ready()).api(path, body);
   const response = await fetch(baseUrl + path, {
     method: body === undefined ? 'GET' : 'POST',

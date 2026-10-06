@@ -7,9 +7,34 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHmac } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { assertContinuousHistory, webhookHeaders } from '../src/webhook-relay.js';
+
+it('requires an explicit resync when retained webhook history is lost', () => {
+  expect(() => assertContinuousHistory(12, { oldestCursor: 50, resyncRecommended: true })).toThrow(
+    /resynchroniz/i,
+  );
+  expect(() =>
+    assertContinuousHistory(0, { oldestCursor: 50, resyncRecommended: false }),
+  ).not.toThrow();
+  expect(() =>
+    assertContinuousHistory(50, { oldestCursor: 50, resyncRecommended: false }),
+  ).not.toThrow();
+});
+
+it('signs the exact webhook body, event ID and timestamp', () => {
+  const key = Buffer.alloc(32, 7);
+  const body = '{"event":"hand"}';
+  const headers = webhookHeaders('id-1', 123, body, `whsec_${key.toString('base64')}`);
+  expect(headers['webhook-signature']).toBe(
+    `v1,${createHmac('sha256', key).update(`id-1.123.${body}`).digest('base64')}`,
+  );
+  expect(webhookHeaders('id-2', 123, body, key.toString('base64'))['webhook-signature']).not.toBe(
+    headers['webhook-signature'],
+  );
+});
 
 it('retries signed webhook delivery and checkpoints only after receiver acknowledgement', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'arena-relay-'));
+  const directory = await mkdtemp(join(tmpdir(), '4am-relay-'));
   const checkpoint = join(directory, 'cursor.json');
   const key = Buffer.alloc(32, 8);
   const received: { id: string; body: string; timestamp: string; signature: string }[] = [];
