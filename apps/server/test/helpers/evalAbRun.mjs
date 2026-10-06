@@ -38,6 +38,12 @@ function cfgStr(name, envName, fallback) {
 
 const ARM = cfgStr('arm', 'ARM', 'p2:all');
 const REF = cfgStr('ref', 'REF', 'rules-v1');
+// Opponent pool (A3): when `--opponent` names a shipped style, seat 0 becomes
+// that RulePolicy (with optional `--sizing=grid|nonGrid`) instead of the legacy
+// `always-call` anchor. Empty = keep the legacy anchor. Harness-only; the
+// opponent is rebuilt fresh for each seating inside `runReplicatedComparison`.
+const OPPONENT = cfgStr('opponent', 'OPPONENT', '');
+const OPPONENT_SIZING = cfgStr('sizing', 'SIZING', 'grid');
 const SEED_START = Math.floor(cfg('seed-start', 'SEED_START', 1000));
 const REPLICAS = Math.max(1, Math.floor(cfg('replicas', 'REPLICAS', 5)));
 const HANDS = Math.max(1, Math.floor(cfg('hands', 'HANDS', 50)));
@@ -60,6 +66,7 @@ const result = await runReplicatedComparison(ARM, REF, {
   seeds,
   hands: HANDS,
   memory: true,
+  opponent: OPPONENT ? { style: OPPONENT, sizing: OPPONENT_SIZING } : null,
   bootstrapIters: ITERS,
   mde: MDE,
   alpha: ALPHA,
@@ -78,6 +85,8 @@ const result = await runReplicatedComparison(ARM, REF, {
         JSON.stringify({
           arm: ARM,
           reference: REF,
+          opponent: OPPONENT || null,
+          opponentSizing: OPPONENT ? OPPONENT_SIZING : null,
           seed: r.seed,
           clean: r.clean,
           hands: r.hands,
@@ -131,6 +140,8 @@ const report = {
   kind: 'bot-ab-replicated-run',
   arm: ARM,
   reference: REF,
+  opponent: OPPONENT || null,
+  opponentSizing: OPPONENT ? OPPONENT_SIZING : null,
   seedStart: SEED_START,
   seedStep: SEED_STEP,
   replicas: REPLICAS,
