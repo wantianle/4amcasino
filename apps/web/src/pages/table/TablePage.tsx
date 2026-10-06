@@ -32,23 +32,14 @@ import NumberFlow from '@number-flow/react';
 import {
   bestFive,
   describeScore,
-  evaluate5,
   evaluate7,
-  handCategory,
-  rankOf,
-  HAND_CATEGORY_NAMES,
-  type CardId,
   type RoomGameplaySettings,
-  type ServerMsg,
 } from '@4am/shared';
 import {
-  agreeRunCount,
   answerPeek,
   bindGameClient,
-  chooseRunCount,
   imReady,
   offerPeek,
-  ritVote,
   setSitOut,
   sit,
   startHand,
@@ -67,7 +58,7 @@ import { cn, fmt } from '../../shared/lib/cn.ts';
 import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
 import { tNode } from '../../shared/i18n/trans.tsx';
-import { tHandCategory, tScore } from '../../shared/i18n/pokerLabels.ts';
+import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import type { SeatView } from '../../widgets/table/RoundTable.tsx';
@@ -96,351 +87,18 @@ import {
   type TableUtilityAction,
   type TableUtilityGroupId,
 } from './tableUi.ts';
-
-function useNow(tickMs = 500): number {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const iv = setInterval(() => setNow(Date.now()), tickMs);
-    return () => clearInterval(iv);
-  }, [tickMs]);
-  return now;
-}
-
-/**
- * Review fix #8: instead of ticking the whole TablePage twice a second,
- * urgency is ONE scheduled flip per deadline (fires at T-10s, clears at T).
- */
-function useUrgentAt(deadline: number | null, handLive: boolean): boolean {
-  const [urgent, setUrgent] = useState(false);
-  useEffect(() => {
-    if (!handLive || !deadline) {
-      setUrgent(false);
-      return;
-    }
-    const check = () => setUrgent(deadline - Date.now() <= 10_000);
-    check();
-    const toUrgent = Math.max(0, deadline - 10_000 - Date.now());
-    const toPass = Math.max(toUrgent, deadline - Date.now());
-    const t1 = setTimeout(check, toUrgent);
-    const t2 = setTimeout(() => setUrgent(false), toPass);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [deadline, handLive]);
-  return urgent;
-}
-
-/** The header countdown: the only component that ticks off `deadline`. */
-function CountdownChip({ deadline, urgent }: { deadline: number; urgent: boolean }) {
-  const now = useNow(500);
-  const secs = Math.max(0, Math.ceil((deadline - now) / 1000));
-  return (
-    <span
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-100 px-2.5 py-1.5 font-display text-sm font-semibold tabular-nums dark:bg-slate-900',
-        urgent && 'animate-urgent bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-300',
-      )}
-    >
-      <Timer size={15} weight="bold" /> 0:{String(secs).padStart(2, '0')}
-    </span>
-  );
-}
-
-/** The run-it-twice vote banner, with its own countdown - ticking here, not
- *  in the page body (review fix #8). */
-function RunTwicePrompt({
-  offer,
-  mySeat,
-}: {
-  offer: { deadlineTs: number; voters: number[]; voted: boolean };
-  mySeat: number | null;
-}) {
-  const now = useNow();
-  return (
-    <div className="table-prompt z-20">
-      <span className="table-prompt-head">
-        {t('🔁 Run it twice? · {n}s', {
-          n: Math.max(0, Math.ceil((offer.deadlineTs - now) / 1000)),
-        })}
-      </span>
-      {mySeat !== null && offer.voters.includes(mySeat) && !offer.voted ? (
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            className="border-0 bg-[var(--table-gold)]! text-[var(--table-gold-ink)]! hover:bg-[var(--table-gold-hi)]!"
-            onClick={() => ritVote(true)}
-          >
-            {t('Twice 🔁')}
-          </Button>
-          <Button
-            variant="secondary"
-            className="border-0 bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!"
-            onClick={() => ritVote(false)}
-          >
-            {t('Once')}
-          </Button>
-        </div>
-      ) : (
-        <span className="table-prompt-note">
-          {t('Everyone is all-in - the rest of the board deals twice if all agree.')}
-        </span>
-      )}
-    </div>
-  );
-}
+import { holeStrengthLabel } from './holeStrengthLabel.ts';
+import { useUrgentAt } from './hooks/useUrgentAt.ts';
+import { useViewportSize } from './hooks/useViewportSize.ts';
+import { CountdownChip } from './ui/CountdownChip.tsx';
+import { RunTwicePrompt } from './ui/RunTwicePrompt.tsx';
+import { MultiRunPrompt } from './ui/MultiRunPrompt.tsx';
+import { DesktopIconButton, desktopIconClass } from './ui/DesktopIconButton.tsx';
 
 interface FloatingReaction {
   id: number;
   emoji: string;
   left: number;
-}
-
-type MultiRunOfferMsg = Extract<ServerMsg, { t: 'multi_run_offer' }>;
-
-/**
- * P2 B4 (docs/p2-gameplay-design.md): the server-authoritative staged
- * all-in multi-run negotiation, replacing the old run-it-twice vote.
- *
- * stage `choice`  - the BEHIND hand picks how many times to run the board
- *                   (1-3, countdown on offer.deadlineTs);
- * stage `agreement` - the AHEAD hand must accept the pick or fall back to
- *                   one run. Everyone else watches a read-only line.
- *
- * The pick is optimistic on the buttons only (the game client patches
- * requestedRuns); boards are NEVER created here - they arrive with the
- * board_open frames after multi_run_result resolves the hand.
- */
-function MultiRunPrompt({
-  offer,
-  mySeat,
-  nameOf,
-}: {
-  offer: MultiRunOfferMsg;
-  mySeat: number | null;
-  nameOf: (seat: number) => string;
-}) {
-  const now = useNow();
-  const secs = Math.max(0, Math.ceil((offer.deadlineTs - now) / 1000));
-  const amBehind = mySeat !== null && mySeat === offer.behindSeat;
-  const amAhead = mySeat !== null && mySeat === offer.aheadSeat;
-  const behind = nameOf(offer.behindSeat);
-  // one in-flight decision per decisionId: after a click the buttons die until
-  // the server's next offer frame (new stage, or the result clearing it)
-  const [sentPick, setSentPick] = useState<string | null>(null);
-  useEffect(() => {
-    setSentPick(null);
-  }, [offer.decisionId, offer.stage]);
-  // if the socket ate the first attempt, hand the player their buttons back
-  // after a few seconds - a re-sent choice the server already processed is
-  // refused by its stage guard, so retrying can only help
-  useEffect(() => {
-    if (!sentPick) return;
-    const iv = setTimeout(() => setSentPick(null), 4000);
-    return () => clearTimeout(iv);
-  }, [sentPick]);
-
-  const pick = (count: 1 | 2 | 3) => {
-    if (sentPick) return;
-    // chooseRunCount() patches requestedRuns optimistically; the latch just
-    // keeps a double-click from sending a second signed choice.
-    setSentPick(`${offer.decisionId}:${count}`);
-    chooseRunCount(count);
-  };
-  const answer = (agree: boolean) => {
-    if (sentPick) return;
-    setSentPick(`${offer.decisionId}:${agree ? 'y' : 'n'}`);
-    agreeRunCount(agree);
-  };
-
-  const myEquity =
-    mySeat === null ? null : (offer.equities.find((e) => e.seat === mySeat)?.bps ?? null);
-  const chosen = offer.requestedRuns !== undefined && offer.requestedRuns > 1;
-
-  let headline: string;
-  let detail: string | null = null;
-  if (offer.stage === 'choice') {
-    if (amBehind && !chosen) {
-      headline = t('You are behind');
-      if (myEquity !== null) detail = t('Equity {pct}%', { pct: Math.round(myEquity / 100) });
-    } else if (amBehind) {
-      headline = t('Waiting for the ahead player to confirm…');
-    } else {
-      headline = t('The behind player is choosing how many times to run the board…');
-      detail = behind;
-    }
-  } else {
-    headline = amAhead
-      ? t('They asked to run it {n} times', { n: offer.requestedRuns ?? 2 })
-      : t('Waiting for the ahead player to confirm…');
-    if (amAhead) detail = behind;
-  }
-
-  const acting =
-    (offer.stage === 'choice' && amBehind && (!chosen || sentPick !== null)) ||
-    (offer.stage === 'agreement' && amAhead);
-
-  return (
-    <div
-      role="region"
-      aria-live="polite"
-      aria-label={t('Multi-run all-in decision')}
-      className="table-prompt z-20"
-    >
-      <div className="flex items-center gap-2">
-        <span className="table-prompt-head">{t('🔁 Run it how many times?')}</span>
-        <span
-          className={cn(
-            'rounded-full bg-white/10 px-2 py-0.5 font-display text-xs font-bold tabular-nums text-[var(--table-gold-hi)]',
-            secs <= 5 && 'bg-[var(--table-red)]/80 text-white',
-          )}
-        >
-          {t('{n}s', { n: secs })}
-        </span>
-      </div>
-      <p className="table-prompt-detail text-center">
-        {headline}
-        {detail && <span className="table-prompt-note ml-1.5 font-normal">{detail}</span>}
-      </p>
-      {offer.stage === 'choice' && amBehind ? (
-        <div className="flex gap-2">
-          {([1, 2, 3] as const).map((count) => (
-            <Button
-              key={count}
-              variant="secondary"
-              className={cn(
-                'border-0',
-                count > 1
-                  ? 'bg-[var(--table-gold)]! text-[var(--table-gold-ink)]! hover:bg-[var(--table-gold-hi)]!'
-                  : 'bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!',
-              )}
-              disabled={sentPick !== null}
-              onClick={() => pick(count)}
-            >
-              {t('Deal {n} times', { n: count })}
-            </Button>
-          ))}
-        </div>
-      ) : offer.stage === 'agreement' && amAhead ? (
-        <div className="flex gap-2">
-          <Button
-            variant="success"
-            disabled={sentPick !== null}
-            onClick={() => answer(true)}
-            className="text-sm!"
-          >
-            {t('Agree')}
-          </Button>
-          <Button
-            variant="secondary"
-            className="border-0 bg-[var(--table-surface-btn)]! text-[var(--table-muted)]! hover:bg-[var(--table-surface-btn)]!"
-            disabled={sentPick !== null}
-            onClick={() => answer(false)}
-          >
-            {t('Just once')}
-          </Button>
-        </div>
-      ) : null}
-      {!acting && (
-        <span className="table-prompt-note">
-          {offer.stage === 'choice'
-            ? t(
-                'Only the losing side chooses; dealing more than once needs the other side to agree.',
-              )
-            : t('Declining or running out of time means one run.')}
-        </span>
-      )}
-    </div>
-  );
-}
-
-const desktopIconClass =
-  'relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-[color,background-color,transform] duration-200 hover:bg-slate-200/70 hover:text-slate-900 active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
-
-function DesktopIconButton({
-  label,
-  onClick,
-  children,
-  active = false,
-  badge = 0,
-  buttonRef,
-  className,
-  hasPopup,
-  expanded,
-  'data-testid': dataTestId,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-  active?: boolean;
-  badge?: number;
-  buttonRef?: React.Ref<HTMLButtonElement>;
-  className?: string;
-  hasPopup?: boolean;
-  expanded?: boolean;
-  'data-testid'?: string;
-}) {
-  return (
-    <button
-      ref={buttonRef}
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      aria-haspopup={hasPopup ? 'menu' : undefined}
-      aria-expanded={hasPopup ? expanded : undefined}
-      data-testid={dataTestId}
-      className={cn(
-        desktopIconClass,
-        active && 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-        className,
-      )}
-    >
-      {children}
-      {badge > 0 && (
-        <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-600 px-1 text-[0.62rem] font-bold text-white ring-2 ring-slate-100 dark:ring-slate-950">
-          {badge > 9 ? '9+' : badge}
-        </span>
-      )}
-    </button>
-  );
-}
-
-/** The layout minimum is 1280×720 (docs/table-redesign-spec.md). Below that,
- *  button labels drop to icon-only first; only the table canvas itself scales
- *  down (the RoundTable fits its container), never wrapping. A SHORT viewport
- *  (landscape phones) gets the phone oval too: the desktop canvas floors there
- *  at a scale whose bottom seats end up underneath the corner cluster. */
-function useViewportSize(): { w: number; h: number } {
-  const [size, setSize] = useState(() =>
-    typeof window === 'undefined'
-      ? { w: 1280, h: 800 }
-      : { w: window.innerWidth, h: window.innerHeight },
-  );
-  useEffect(() => {
-    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return size;
-}
-
-/** Live hand strength of the two cards in hand (carried over from the old
- *  mobile table when phone and desktop merged into one layout). */
-function holeStrengthLabel(myCards: CardId[], board: CardId[]): string | null {
-  if (myCards.length < 2) return null;
-  const all = [...myCards, ...board];
-  if (all.length < 5) {
-    return rankOf(myCards[0]!) === rankOf(myCards[1]!) ? 'Pair' : 'High Card';
-  }
-  let best = 0;
-  if (all.length === 7) best = evaluate7(all);
-  else if (all.length === 5) best = evaluate5(all);
-  else
-    for (let skip = 0; skip < all.length; skip++)
-      best = Math.max(best, evaluate5(all.filter((_, i) => i !== skip)));
-  const cat = HAND_CATEGORY_NAMES[handCategory(best)] ?? null;
-  return cat ? tHandCategory(cat) : null;
 }
 
 export function TablePage() {
