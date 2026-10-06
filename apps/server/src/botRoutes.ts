@@ -1,6 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { identityFromSeed } from '@4am/mental-poker';
+import {
+  BOT_DIFFICULTIES,
+  BOT_STATUSES,
+  DEFAULT_BOT_DIFFICULTY,
+  type BotDifficulty,
+  type BotStatus,
+} from '@4am/shared';
 import { z } from 'zod';
 import type { DB } from './db.js';
 import { createUser, requireUser } from './auth.js';
@@ -26,18 +33,13 @@ import { pickFunBotName } from './botNames.js';
  * implies a valid, just-issued grant.
  */
 
-export const BOT_STATUSES = [
-  'created',
-  'waiting_buy_approval',
-  'ready',
-  'starting',
-  'running',
-  'stopping',
-  'stopped',
-  'removed',
-  'error',
-] as const;
-export type BotStatus = (typeof BOT_STATUSES)[number];
+/**
+ * Bot lifecycle states live in @4am/shared so the web UI can type its display
+ * copy against the same list. Re-exported here because this module owns the
+ * state machine and is the import site the server/tests use.
+ */
+export { BOT_STATUSES };
+export type { BotStatus };
 
 /**
  * Allowed transitions:
@@ -82,10 +84,12 @@ const tokenHash = (token: string) => createHash('sha256').update(token).digest('
  * Difficulty tiers accepted by the API. Only `low` and `medium` are writable;
  * `high` is a withdrawn reserved GTO tier, so a create/update with it is a 400
  * ("legacy persisted `high` rows are still readable and are migrated to
- * `medium` on boot, but no new `high` may be written").
+ * `medium` on boot, but no new `high` may be written"). The tier list and
+ * default come from @4am/shared so they cannot drift from the runner resolver;
+ * the strict-write choice is deliberate and unchanged.
  */
-export const BOT_DIFFICULTIES = ['low', 'medium'] as const;
-export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
+export { BOT_DIFFICULTIES };
+export type { BotDifficulty };
 
 const createBotSchema = z.object({
   name: z.string().trim().min(1).max(24).optional(),
@@ -93,7 +97,7 @@ const createBotSchema = z.object({
   policyJson: z.string().max(20_000).optional(),
   // Defaults to `medium` (the rules-v1 engine) so a create with no difficulty
   // runs the strong new bot by default; `low` is an explicit opt-out.
-  difficulty: z.enum(BOT_DIFFICULTIES).default('medium'),
+  difficulty: z.enum(BOT_DIFFICULTIES).default(DEFAULT_BOT_DIFFICULTY),
   seat: z.number().int().min(0).max(8),
   // Optional because a bot can also be funded later via POST .../buy; a bot with
   // no chips still has a purchase path, so it is never stranded at stack 0.

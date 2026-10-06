@@ -1,3 +1,10 @@
+import {
+  BOT_DIFFICULTIES,
+  DEFAULT_BOT_DIFFICULTY,
+  RETIRED_BOT_DIFFICULTIES,
+  parseBotDifficulty,
+  type BotDifficulty,
+} from '@4am/shared';
 import type { Policy } from './policy.js';
 import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE } from './ruleStyles.js';
@@ -22,27 +29,24 @@ import { resolvePolicy, type PolicyResolution } from './stylePolicy.js';
  *
  * Difficulty never dies silently: the effective tier and any fallback are
  * returned so the server can log/surface them.
+ *
+ * The tier list, default and retired set live in @4am/shared so the HTTP API's
+ * zod enum and this resolver cannot drift. The resolver keeps its own strict
+ * parser below: unlike the shared `normalizeBotDifficulty` (which collapses an
+ * unwritable value to the default), `resolveDifficulty` must distinguish a
+ * withdrawn `high` from a typo to emit the right warning.
  */
 
-export type BotDifficulty = 'low' | 'medium';
-
-export const BOT_DIFFICULTIES = ['low', 'medium'] as const;
+export { BOT_DIFFICULTIES, DEFAULT_BOT_DIFFICULTY, RETIRED_BOT_DIFFICULTIES };
+export type { BotDifficulty };
 
 /**
- * Tiers that were once accepted but have no implementation. Kept as an explicit
- * list so a legacy value is reported as "withdrawn" (with a precise warning)
- * rather than as a generic parse error.
+ * Case/space-insensitive difficulty parser; null for unknown/empty values, and
+ * also null for a retired tier like `high` (reported separately by
+ * {@link resolveDifficulty}). Alias of the shared strict parser so agent-core's
+ * public API is unchanged.
  */
-export const RETIRED_BOT_DIFFICULTIES = ['high'] as const;
-
-export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = 'medium';
-
-/** Case/space-insensitive difficulty parser; null for unknown/empty values. */
-export function normalizeBotDifficulty(raw: string | null | undefined): BotDifficulty | null {
-  if (!raw) return null;
-  const key = raw.trim().toLowerCase();
-  return (BOT_DIFFICULTIES as readonly string[]).includes(key) ? (key as BotDifficulty) : null;
-}
+export const normalizeBotDifficulty = parseBotDifficulty;
 
 export interface DifficultyResolution {
   /** Effective tier after fallback (always one of `BOT_DIFFICULTIES`). */
