@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/app.js';
 import { createUser } from '../src/auth.js';
-import { openDb } from '../src/db.js';
+import { openDb, migrateBetRatios } from '../src/db.js';
 import { appendLedger } from '../src/ledger.js';
 import {
   ALL_IN_RATIO,
@@ -443,11 +443,162 @@ describe('quick-bet ratio slots', () => {
     expect(JSON.parse(raw.bet_ratios)).toEqual(five);
   });
 
-  it('keeps a legacy four-slot list readable', async () => {
+  it('rejects the legacy four-slot list now that only five slots are accepted', async () => {
     const alice = await user('bets4');
     const four = [0.5, 1, 1.5, ALL_IN_RATIO];
-    expect((await putRatios(alice.token, four)).statusCode).toBe(200);
-    expect((await getProfile(alice.token)).betRatios).toEqual(four);
+    expect((await putRatios(alice.token, four)).statusCode).toBe(400);
+  });
+
+  it('is idempotent: the second migrateBetRatios run issues zero UPDATEs', () => {
+    const db = openDb(':memory:');
+    try {
+      // Count every write to bet_ratios (seed writes included; we baseline after).
+      db.exec(`CREATE TABLE bet_ratio_updates (n INTEGER);
+        CREATE TRIGGER count_bet_ratio_update AFTER UPDATE OF bet_ratios ON users
+        BEGIN INSERT INTO bet_ratio_updates (n) VALUES (1); END;`);
+      const legacy = createUser(db, 'mig-legacy', 'c'.repeat(64), 'p');
+      const legal = createUser(db, 'mig-legal', 'd'.repeat(64), 'p');
+      const set = db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?');
+      set.run(JSON.stringify([0.5, 1, 1.5, ALL_IN_RATIO]), legacy.userId);
+      const legalJson = JSON.stringify([1 / 3, 0.5, 0.75, 1, 2]);
+      set.run(legalJson, legal.userId);
+      const count = () =>
+        (db.prepare('SELECT COUNT(*) AS n FROM bet_ratio_updates').get() as { n: number }).n;
+      const before = count(); // both seed writes above
+
+      migrateBetRatios(db);
+      expect(count()).toBe(before + 1); // only the legacy four-slot row
+      const read = (id: number) =>
+        (db.prepare('SELECT bet_ratios FROM users WHERE id = ?').get(id) as { bet_ratios: string })
+          .bet_ratios;
+      expect(JSON.parse(read(legacy.userId))).toEqual(DEFAULT_BET_RATIOS);
+      expect(read(legal.userId)).toBe(legalJson); // untouched
+
+      migrateBetRatios(db);
+      expect(count()).toBe(before + 1); // second run: zero additional UPDATEs
+    } finally {
+      db.close();
+    }
+  });
+
+  it('does not rewrite a valid five-slot row, even with spaces/newlines/1e0 spellings', () => {
+    const db = openDb(':memory:');
+    try {
+      const { userId } = createUser(db, 'rawfive', 'e'.repeat(64), 'p');
+      // 0.5 and 1 written as equivalent numeric literals; JSON.parse makes them
+      // the allowed options, so the row is already valid and must stay as-is.
+      const raw = '[\n  0.25,\n  5e-1,\n  0.75,\n  1e0,\n  2\n]';
+      db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?').run(raw, userId);
+      migrateBetRatios(db);
+      const got = (
+        db.prepare('SELECT bet_ratios FROM users WHERE id = ?').get(userId) as {
+          bet_ratios: string;
+        }
+      ).bet_ratios;
+      expect(got).toBe(raw); // byte-for-byte untouched
+    } finally {
+      db.close();
+    }
+  });
+
+  it('migrates a mixed batch (NULL, empty, bad JSON, four, five) without aborting', () => {
+    const db = openDb(':memory:');
+    try {
+      const nullU = createUser(db, 'mx-null', 'f'.repeat(64), 'p');
+      const emptyU = createUser(db, 'mx-empty', 'g'.repeat(64), 'p');
+      const badU = createUser(db, 'mx-bad', 'h'.repeat(64), 'p');
+      const fourU = createUser(db, 'mx-four', 'i'.repeat(64), 'p');
+      const fiveU = createUser(db, 'mx-five', 'j'.repeat(64), 'p');
+      const five = [1 / 3, 0.5, 0.75, 1, 2];
+      const set = db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?');
+      set.run('', emptyU.userId);
+      set.run('{not json', badU.userId);
+      set.run(JSON.stringify([0.5, 1, 1.5, ALL_IN_RATIO]), fourU.userId);
+      set.run(JSON.stringify(five), fiveU.userId);
+      // nullU is left as NULL (never saved).
+
+      migrateBetRatios(db);
+
+      const read = (id: number) =>
+        (
+          db.prepare('SELECT bet_ratios FROM users WHERE id = ?').get(id) as {
+            bet_ratios: string | null;
+          }
+        ).bet_ratios;
+      expect(read(nullU.userId)).toBeNull();
+      expect(JSON.parse(read(emptyU.userId)!)).toEqual(DEFAULT_BET_RATIOS);
+      expect(JSON.parse(read(badU.userId)!)).toEqual(DEFAULT_BET_RATIOS);
+      expect(JSON.parse(read(fourU.userId)!)).toEqual(DEFAULT_BET_RATIOS);
+      expect(JSON.parse(read(fiveU.userId)!)).toEqual(five);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('migrates a stored legacy four-slot list to the five-slot default on startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-bets-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      // First boot creates the schema (no rows, so nothing to migrate).
+      const seed = openDb(path);
+      const { userId } = createUser(seed, 'legacybets', 'a'.repeat(64), 'p');
+      seed
+        .prepare('UPDATE users SET bet_ratios = ? WHERE id = ?')
+        .run(JSON.stringify([0.5, 1, 1.5, ALL_IN_RATIO]), userId);
+      seed.close();
+
+      // Second boot rewrites the legacy four slots to the current default.
+      const booted = openDb(path);
+      try {
+        const raw = booted
+          .prepare('SELECT bet_ratios FROM users WHERE id = ?')
+          .get(userId) as { bet_ratios: string };
+        expect(JSON.parse(raw.bet_ratios)).toEqual(DEFAULT_BET_RATIOS); // 33/50/75/100/150
+        expect(JSON.parse(raw.bet_ratios)).toHaveLength(BET_RATIO_SLOTS);
+      } finally {
+        booted.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an already-valid five-slot list untouched on startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-bets-keep-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      const five = [1 / 3, 0.5, 0.75, 1, 2];
+      const seed = openDb(path);
+      const { userId } = createUser(seed, 'legacybets5', 'b'.repeat(64), 'p');
+      seed
+        .prepare('UPDATE users SET bet_ratios = ? WHERE id = ?')
+        .run(JSON.stringify(five), userId);
+      seed.close();
+
+      const booted = openDb(path);
+      try {
+        const raw = booted
+          .prepare('SELECT bet_ratios FROM users WHERE id = ?')
+          .get(userId) as { bet_ratios: string };
+        expect(JSON.parse(raw.bet_ratios)).toEqual(five);
+      } finally {
+        booted.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('serves a five-slot list even if a legacy four-slot value is in the row', async () => {
+    const alice = await user('betsread');
+    // Simulate a row whose migration has not run yet (e.g. written by an old
+    // process): the GET sanitizer must still hand back the five-slot default.
+    ctx.db
+      .prepare('UPDATE users SET bet_ratios = ? WHERE id = ?')
+      .run(JSON.stringify([0.5, 1, 1.5, ALL_IN_RATIO]), alice.userId);
+    const got = (await getProfile(alice.token)).betRatios;
+    expect(got).toEqual(DEFAULT_BET_RATIOS);
+    expect(got).toHaveLength(BET_RATIO_SLOTS);
   });
 
   it('accepts an all-in slot in the five-slot shape', async () => {
@@ -457,9 +608,10 @@ describe('quick-bet ratio slots', () => {
     expect((await getProfile(alice.token)).betRatios).toEqual(five);
   });
 
-  it('rejects a list that is neither four nor five slots', async () => {
+  it('rejects a list that is not five slots', async () => {
     const alice = await user('betsbad');
     expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75])).statusCode).toBe(400);
+    expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75, 1])).statusCode).toBe(400);
     expect((await putRatios(alice.token, [1 / 3, 0.5, 0.75, 1, 1.5, 2])).statusCode).toBe(400);
   });
 

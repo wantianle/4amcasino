@@ -1,13 +1,18 @@
 import Database from 'better-sqlite3';
 import {
-  LEGACY_ROOM_COMMISSION_BPS,
   NEW_ROOM_COMMISSION_BPS,
   MAX_QUALIFYING_HANDS,
+  DEFAULT_BET_RATIOS,
+  sanitizeBetRatios,
 } from '@4am/shared';
 import { computeHead } from '@4am/mental-poker';
-import { initializePlatformSettings } from './platformSettings.js';
+import {
+  initializePlatformSettings,
+  migrateRoomCommissionDefaults,
+} from './platformSettings.js';
+import { migrateRoomFeatureDefaults } from './gameplaySettings.js';
 import { migrateAgentPlatform } from './agentSchema.js';
-import { migrateHandStats } from './handProjection.js';
+import { migrateHandStats, SEVEN_DEUCE_SHOW_KIND } from './handProjection.js';
 import { verifyLedger } from './ledger.js';
 
 export type DB = Database.Database;
@@ -15,6 +20,35 @@ export type DB = Database.Database;
 /** How long a login lasts. Long enough that a weekly game never re-authenticates
  *  mid-session, short enough that a leaked token eventually dies. */
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Rewrite every stored quick-bet-ratio list that is not the current five-slot
+ *  shape to the five-slot default. The old format allowed four slots and read
+ *  them back untouched forever, so accounts created before the fifth slot
+ *  existed would keep a four-button action bar. Runs on every boot and is
+ *  idempotent by construction: a valid five-slot save is left byte-for-byte
+ *  alone (JSON round-trips unchanged), so re-running never clobbers a player's
+ *  real pick. Damaged/foreign JSON also resolves to the default. */
+export function migrateBetRatios(db: DB): void {
+  const rows = db
+    .prepare('SELECT id, bet_ratios FROM users WHERE bet_ratios IS NOT NULL')
+    .all() as { id: number; bet_ratios: string }[];
+  if (rows.length === 0) return;
+  const rewrite = db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?');
+  const defaultJson = JSON.stringify(DEFAULT_BET_RATIOS);
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.bet_ratios);
+    } catch {
+      parsed = null;
+    }
+    // `sanitizeBetRatios` returns the input untouched when it is already the
+    // five-slot shape, so a string mismatch means this row needs migrating.
+    if (JSON.stringify(sanitizeBetRatios(parsed)) !== JSON.stringify(parsed)) {
+      rewrite.run(defaultJson, row.id);
+    }
+  }
+}
 
 export function openDb(path: string): DB {
   const db = new Database(path);
@@ -288,7 +322,11 @@ function migrate(db: DB): void {
     MAX_QUALIFYING_HANDS,
     MAX_QUALIFYING_HANDS,
   );
-  ensureColumn(db, 'rooms', 'auto_approve_buys', 'INTEGER NOT NULL DEFAULT 0');
+  // New rooms auto-approve buy-ins by default; the host/banker can still gate
+  // them per room (the settings toggle is unchanged). For a room that already
+  // exists the column keeps its old default, so the one-shot
+  // `room-defaults-on-1` migration flips existing rows.
+  ensureColumn(db, 'rooms', 'auto_approve_buys', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'seven_deuce_bonus', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'private_mode', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'last_seen', 'INTEGER NOT NULL DEFAULT 0');
@@ -308,12 +346,16 @@ function migrate(db: DB): void {
   ensureColumn(db, 'rooms', 'meet_link', 'TEXT');
   ensureColumn(db, 'rooms', 'visibility', "TEXT NOT NULL DEFAULT 'private'");
   ensureColumn(db, 'rooms', 'spectate_token', 'TEXT');
-  ensureColumn(db, 'rooms', 'allow_spectators', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'rooms', 'tv_replays', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'allow_spectators', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'rooms', 'tv_replays', 'INTEGER NOT NULL DEFAULT 1');
   // Existing rooms already continued automatically after hands.
   ensureColumn(db, 'rooms', 'auto_deal', 'INTEGER NOT NULL DEFAULT 1');
   // Install the original per-room schema before the runtime settings migration.
   // Install and backfill atomically so a restart cannot mistake old rooms for new ones.
+  // A room entering this path (pre-room-level-commission schema) gets the
+  // CURRENT rate from the column default; the old 1% backfill is gone. Rooms on
+  // a schema that already has the column are handled once by
+  // `migrateRoomCommissionDefaults` below.
   db.transaction(() => {
     const columns = db.pragma('table_info(rooms)') as { name: string }[];
     if (!columns.some((c) => c.name === 'commission_bps')) {
@@ -323,10 +365,13 @@ function migrate(db: DB): void {
         'commission_bps',
         `INTEGER NOT NULL DEFAULT ${NEW_ROOM_COMMISSION_BPS}`,
       );
-      db.prepare('UPDATE rooms SET commission_bps = ?').run(LEGACY_ROOM_COMMISSION_BPS);
     }
   })();
   initializePlatformSettings(db);
+  // Existing installs already have a platform_settings row, so
+  // initializePlatformSettings leaves their rooms at the old 1%; this one-shot
+  // marker migration moves them (and only them) to the current rate.
+  migrateRoomCommissionDefaults(db);
   ensureColumn(db, 'users', 'show_best_hand', 'INTEGER NOT NULL DEFAULT 1');
   // "deal me in without asking every hand" is the default now: the server
   // auto-marks auto-ready players the moment the ready window opens. A player
@@ -361,9 +406,14 @@ function migrate(db: DB): void {
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(AUTO_READY_MARKER, '1');
   }).immediate();
   ensureColumn(db, 'users', 'poker_hotkeys', 'TEXT');
-  // Quick-bet ratios (A10): the four table action-bar slots, stored as a JSON
+  // Quick-bet ratios (A10): five table action-bar slots, stored as a JSON
   // array of pot fractions (with -1 as the all-in sentinel).
   ensureColumn(db, 'users', 'bet_ratios', 'TEXT');
+  // One-time data migration: accounts that saved the older four-slot list (or
+  // any damaged/foreign value) are rewritten to the current five-slot default
+  // so the action bar never renders a stale shape. Idempotent, see the
+  // function comment.
+  migrateBetRatios(db);
   // account recovery: hash of the one-time recovery code, salted like a password
   // (requested by notpritam, docs/FEATURES.md)
   // Signup order, as its own fact rather than something inferred from the
@@ -516,23 +566,27 @@ function migrate(db: DB): void {
 
   // ---- new-gameplay room settings (squid / time bank / bomb pot / multi-run) --
   // Each feature is independent: a room can switch one on without the others.
-  // The numeric defaults mirror the shared RoomGameplaySettings defaults except
-  // where the orchestrator specified otherwise (e.g. 3 min squid players).
-  ensureColumn(db, 'rooms', 'squid_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  // All four are ON for a new room (the new-gameplay default); a host can still
+  // turn any of them off. The numeric defaults mirror the shared
+  // RoomGameplaySettings defaults except where the orchestrator specified
+  // otherwise (e.g. 3 min squid players). Rooms created before the default-on
+  // policy keep the old `0`s because `ensureColumn` never rewrites an existing
+  // column; `migrateRoomFeatureDefaults` flips those rows once.
+  ensureColumn(db, 'rooms', 'squid_enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'squid_penalty_bb', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'squid_min_players', 'INTEGER NOT NULL DEFAULT 3');
-  ensureColumn(db, 'rooms', 'time_bank_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'time_bank_enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'time_bank_initial_secs', 'INTEGER NOT NULL DEFAULT 30');
   ensureColumn(db, 'rooms', 'time_bank_refill_every_hands', 'INTEGER NOT NULL DEFAULT 30');
   ensureColumn(db, 'rooms', 'time_bank_refill_secs', 'INTEGER NOT NULL DEFAULT 30');
   // Bumped on every time-bank config change so in-flight hands and clients can
   // tell a stale snapshot from the current configuration.
   ensureColumn(db, 'rooms', 'time_bank_epoch', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'rooms', 'bomb_pot_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'bomb_pot_enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'bomb_pot_ante_bb', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'bomb_pot_schedule_mode', "TEXT NOT NULL DEFAULT 'hands'");
   ensureColumn(db, 'rooms', 'bomb_pot_schedule_value', 'INTEGER NOT NULL DEFAULT 10');
-  ensureColumn(db, 'rooms', 'multi_run_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'rooms', 'multi_run_enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'rooms', 'multi_run_max_runs', 'INTEGER NOT NULL DEFAULT 3');
   // Per-player time bank snapshot. The epoch stamps which config the ms/hands
   // belong to; a stale epoch means the row predates the current settings.
@@ -611,6 +665,11 @@ function migrate(db: DB): void {
       ON room_feature_triggers(room_id, status);
   `);
   recoverOrphanedFeatureTriggers(db);
+  // Existing rooms predate the default-on policy and store the old `0`s (the
+  // column DEFAULTs only shape brand-new databases). Flip them once, after
+  // every feature/time-bank column exists, so applyRoomFeatures can reset the
+  // time banks correctly.
+  migrateRoomFeatureDefaults(db);
 }
 
 /**
@@ -716,7 +775,11 @@ function parseSettlementEntry(entriesJson: string): ParsedSettlement | string {
  *  1. one `settlement` entry whose entries' hash chain reproduces the stored
  *     `head`, with a non-negative integer rake;
  *  2. the only ledger kinds are hand-settlement / squid-game / commission on the
- *     head and seven-deuce on the hand id, no duplicate leg on either key;
+ *     head and seven-deuce (automatic bounty) / seven-deuce-show (voluntary
+ *     post-settlement show) on the hand id, no duplicate leg on either key. The
+ *     voluntary show is NOT reconciled against the transcript/projection: it is
+ *     a post-settlement transfer outside `net_delta`, so it is tolerated on the
+ *     hand-id ref but excluded from every leg check below;
  *  3. every hand-settlement / squid-game / seven-deuce user is a seat in the
  *     hand's `hand_players` (commission is the sole out-of-hand leg);
  *  4. rake > 0 -> exactly one commission leg, credited to a real room account;
@@ -747,7 +810,8 @@ export function reconcileTranscript(
     return failReconcile('transcript head does not match its entry chain');
 
   // (2) ref-domain isolation: the settlement-head ref may carry ONLY the three
-  // settlement kinds, and the hand-id ref may carry ONLY seven-deuce. Any other
+  // settlement kinds, and the hand-id ref may carry ONLY the bounty kinds
+  // (automatic `seven-deuce` and the voluntary `seven-deuce-show`). Any other
   // kind on either key is an unexplained money leg (or a kind smuggled under the
   // wrong ref, e.g. `commission` with `ref = hand_id`) and quarantines the hand.
   const badKind = db
@@ -759,9 +823,9 @@ export function reconcileTranscript(
   if (badKind) return failReconcile(`unexpected ledger kind '${badKind.kind}' on the settlement head`);
   const badHandRef = db
     .prepare(
-      `SELECT kind FROM ledger WHERE room_id = ? AND ref = ? AND kind <> 'seven-deuce' LIMIT 1`,
+      `SELECT kind FROM ledger WHERE room_id = ? AND ref = ? AND kind NOT IN ('seven-deuce', ?) LIMIT 1`,
     )
-    .get(t.room_id, t.hand_id) as { kind: string } | undefined;
+    .get(t.room_id, t.hand_id, SEVEN_DEUCE_SHOW_KIND) as { kind: string } | undefined;
   if (badHandRef)
     return failReconcile(`unexpected ledger kind '${badHandRef.kind}' on the hand-id ref`);
   const dup = db

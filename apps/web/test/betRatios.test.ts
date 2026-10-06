@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const updateProfile = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true }));
-vi.mock('../src/shared/api.ts', () => ({ api: { updateProfile, profile: vi.fn() } }));
+const profile = vi.hoisted(() => vi.fn());
+vi.mock('../src/shared/api.ts', () => ({ api: { updateProfile, profile } }));
 vi.mock('../src/shared/sounds.ts', () => ({}));
-const storage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+let persistedAuth: string | null = null;
+const storage = { getItem: () => persistedAuth, setItem: () => {}, removeItem: () => {} };
 vi.stubGlobal('window', { localStorage: storage });
 vi.stubGlobal('localStorage', storage);
 vi.stubGlobal('document', { documentElement: { classList: { add: vi.fn(), remove: vi.fn() } } });
@@ -18,11 +20,13 @@ const {
   useStore,
 } = await import('../src/shared/store.ts');
 const { presetLabel, presetRaiseTo } = await import('../src/features/table/betPresets.ts');
-const { saveBetRatios } = await import('../src/shared/prefs.ts');
+const { loadPrefs, saveBetRatios } = await import('../src/shared/prefs.ts');
 
 beforeEach(() => {
   useStore.getState().setPrefs({ betRatios: [...DEFAULT_BET_RATIOS] });
+  useStore.getState().setAuth({ token: null, userId: null, username: null, identity: null });
   updateProfile.mockClear();
+  profile.mockReset();
 });
 
 describe('default quick-bet ratios', () => {
@@ -51,9 +55,26 @@ describe('sanitizeBetRatios', () => {
     expect(sanitizeBetRatios(five)).toEqual(five);
   });
 
-  it('keeps a legacy four-slot list as-is for backward compatibility', () => {
+  it('migrates a legacy four-slot list to the five-slot default', () => {
     const four = [0.5, 1, 1.5, ALL_IN_RATIO];
-    expect(sanitizeBetRatios(four)).toEqual(four);
+    expect(sanitizeBetRatios(four)).toEqual(DEFAULT_BET_RATIOS);
+    expect(sanitizeBetRatios(four)).toHaveLength(BET_RATIO_SLOTS);
+  });
+
+  it('rehydrating an old persisted four-slot state yields the five-slot default', async () => {
+    persistedAuth = JSON.stringify({
+      state: {
+        prefs: { ...defaultPrefs, betRatios: [0.5, 1, 1.5, ALL_IN_RATIO] },
+      },
+      version: 0,
+    });
+    try {
+      await useStore.persist.rehydrate();
+      expect(useStore.getState().prefs.betRatios).toEqual(DEFAULT_BET_RATIOS);
+      expect(useStore.getState().prefs.betRatios).toHaveLength(BET_RATIO_SLOTS);
+    } finally {
+      persistedAuth = null;
+    }
   });
 
   it('falls back to the five-slot defaults on an invalid list', () => {
@@ -106,5 +127,52 @@ describe('saveBetRatios', () => {
     saveBetRatios([1, 2, 3]);
     expect(useStore.getState().prefs.betRatios).toEqual(DEFAULT_BET_RATIOS);
     expect(updateProfile).toHaveBeenCalledWith({ betRatios: DEFAULT_BET_RATIOS });
+  });
+});
+
+describe('loadPrefs betRatios authority', () => {
+  const profileWithout = (extra: Record<string, unknown> = {}) => ({
+    userId: 7,
+    displayName: 'u',
+    bio: '',
+    hasAvatar: false,
+    avatarVersion: 0,
+    cardBack: 'indigo',
+    fourColor: true,
+    quickPhrases: [],
+    privateMode: false,
+    autoJoinInvites: false,
+    autoReady: true,
+    ...extra,
+  });
+  const signIn = () =>
+    useStore.getState().setAuth({ token: 't', userId: 7, username: 'u', identity: null });
+
+  it('keeps a valid local five-slot list when the server omits betRatios', async () => {
+    const local = [1 / 3, 0.5, 0.75, 1, 2];
+    useStore.getState().setPrefs({ betRatios: local });
+    signIn();
+    // The server never stored the list (a failed/late PUT), so GET omits it.
+    profile.mockResolvedValueOnce(profileWithout());
+    await loadPrefs();
+    expect(useStore.getState().prefs.betRatios).toEqual(local);
+  });
+
+  it('lets the server list win when the server returns one', async () => {
+    const local = [1 / 3, 0.5, 0.75, 1, 2];
+    const server = [0.25, 0.5, 0.75, 1, 1.5];
+    useStore.getState().setPrefs({ betRatios: local });
+    signIn();
+    profile.mockResolvedValueOnce(profileWithout({ betRatios: server }));
+    await loadPrefs();
+    expect(useStore.getState().prefs.betRatios).toEqual(server);
+  });
+
+  it('migrates an old local four-slot list when the server omits betRatios', async () => {
+    useStore.getState().setPrefs({ betRatios: [0.5, 1, 1.5, ALL_IN_RATIO] });
+    signIn();
+    profile.mockResolvedValueOnce(profileWithout());
+    await loadPrefs();
+    expect(useStore.getState().prefs.betRatios).toEqual(DEFAULT_BET_RATIOS);
   });
 });

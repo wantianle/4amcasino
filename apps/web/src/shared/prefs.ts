@@ -3,14 +3,11 @@ import { api } from './api.ts';
 import { isCardBack, sanitizeBetRatios, useStore } from './store.ts';
 
 /** Quick-bet ratios (A10) live in the persisted auth store so they ride with
- *  the signed-in account across reloads. `loadPrefs` only overwrites them when
- *  the server actually returns a `betRatios` field - until the profile endpoint
- *  stores it, an unsynced server value must never clobber the local pick. */
+ *  the signed-in account across reloads. The profile endpoint is the
+ *  authoritative copy, so every local save is mirrored there too. */
 export function saveBetRatios(ratios: number[]): void {
   const clean = sanitizeBetRatios(ratios);
   useStore.getState().setPrefs({ betRatios: clean });
-  // fire a profile write too, so the day the server adopts the field the value
-  // is already on its way up; a not-yet-supported server harmlessly ignores it.
   void api.updateProfile({ betRatios: clean }).catch(() => {});
 }
 
@@ -50,10 +47,16 @@ export async function loadPrefs({
       privateMode: !!p.privateMode,
       autoJoinInvites: !!p.autoJoinInvites,
       autoReady: !!p.autoReady,
-      // A10: the server copy wins once it ships the field; until the profile
-      // GET returns betRatios the locally saved list stays authoritative.
+      // A10: when the server returns the field it is authoritative, and the
+      // sanitizer migrates an old four-slot value to the current five-slot
+      // default. When the server omits it (`bet_ratios` is still NULL because
+      // an earlier save never reached the server - a failed/late PUT), keep the
+      // local pick instead of clobbering it with the defaults; it still goes
+      // through the sanitizer, so a local legacy four-slot shape is migrated.
       betRatios:
-        p.betRatios !== undefined ? sanitizeBetRatios(p.betRatios) : useStore.getState().prefs.betRatios,
+        p.betRatios !== undefined
+          ? sanitizeBetRatios(p.betRatios)
+          : sanitizeBetRatios(useStore.getState().prefs.betRatios),
     });
   } catch {
     /* not logged in yet */

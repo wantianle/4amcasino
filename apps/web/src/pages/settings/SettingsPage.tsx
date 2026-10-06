@@ -15,7 +15,6 @@ import { loadPrefs, saveBetRatios } from '../../shared/prefs.ts';
 import {
   ALL_IN_RATIO,
   BET_RATIO_OPTIONS,
-  BET_RATIO_SLOTS,
   DEFAULT_BET_RATIOS,
   useStore,
 } from '../../shared/store.ts';
@@ -46,17 +45,12 @@ const SECTIONS = [
 
 /** A10 (docs/table-redesign-spec.md): the quick-bet buttons at the table are
  *  five configurable pot ratios. The list applies instantly and is saved to
- *  the account; the table's betting panel reads it from the store. A legacy
- *  four-slot pick is padded for display only - editing any slot writes the
- *  full five-slot shape. */
+ *  the account; the table's betting panel reads it from the store. Every list
+ *  is five slots now (a legacy four-slot pick is migrated on load), so the card
+ *  renders the stored list as-is. */
 function BetSizingSettings() {
   const ratios = useStore((s) => s.prefs.betRatios);
-  // Legacy accounts still carry four slots. Show the full set so the fifth one
-  // is editable; until the player changes a slot the stored list is untouched.
-  const slots =
-    ratios.length >= BET_RATIO_SLOTS
-      ? ratios
-      : [...ratios, ...DEFAULT_BET_RATIOS.slice(ratios.length)];
+  const slots = ratios;
   const [saved, setSaved] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
