@@ -80,6 +80,21 @@ export function requestRoomBuy(db: DB, input: RequestRoomBuyInput): RoomBuyResul
   // The banker pre-approved buys for this room; settle it like a banker click,
   // attributed to the standing banker so the ledger names who vouched.
   const apply = db.transaction(() => {
+    // Re-check the bot's lifecycle INSIDE the money transaction, not only in the
+    // route that called us. A DELETE can commit `delete_requested_at` between the
+    // route's `isBotGone` pre-read and this transaction; if we trusted the
+    // pre-read the auto-approve would still credit a bot already on its way out,
+    // and the supervisor's `finalizeBotRemoved` would then drop the seat under a
+    // funded purchase. This is the only place that moves the chips, and the whole
+    // handler is synchronous, so this first statement can never be pre-empted
+    // before the ledger/stack writes below. `bot_accounts.user_id` is UNIQUE, so
+    // the lookup is an indexed point read; a human buyer has no bot_accounts row
+    // and is entirely unaffected.
+    const bot = db
+      .prepare('SELECT status, delete_requested_at FROM bot_accounts WHERE user_id = ? AND room_id = ?')
+      .get(userId, roomId) as { status: string; delete_requested_at: number | null } | undefined;
+    if (bot && isBotGone(bot)) throw new BuyServiceError(409, botGoneMessage(bot));
+
     db.prepare("UPDATE buy_requests SET status = 'approved' WHERE id = ?").run(requestId);
     appendLedger(db, {
       roomId,

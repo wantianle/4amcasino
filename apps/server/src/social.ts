@@ -12,6 +12,7 @@ import {
   roomPlayers,
 } from './rooms.js';
 import { appendLedger } from './ledger.js';
+import { botGoneMessage, isBotGone } from './botLifecycle.js';
 import { SEVEN_DEUCE_SHOW_KIND } from './handProjection.js';
 import { activeHands } from './liveHands.js';
 import { LIMITS } from './limits.js';
@@ -374,6 +375,20 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(403).send({ error: 'both players must be at this table' });
     if (parsed.data.toUserId === req.userId)
       return reply.code(400).send({ error: 'that is your own stack' });
+    // A bot whose hard delete is pending is parked `stopping` while its runner
+    // winds down, but its seat row (and so its membership) survives until
+    // `finalizeBotRemoved`. Crediting it here would record a transfer whose seat
+    // is then deleted, so refuse before any write. `bot_accounts.user_id` is
+    // UNIQUE, making this an indexed point read on a non-hot path; a human
+    // recipient has no bot_accounts row, so peer-to-peer transfers are untouched.
+    const recipientBot = db
+      .prepare(
+        'SELECT status, delete_requested_at FROM bot_accounts WHERE user_id = ? AND room_id = ?',
+      )
+      .get(parsed.data.toUserId, id) as
+      { status: string; delete_requested_at: number | null } | undefined;
+    if (recipientBot && isBotGone(recipientBot))
+      return reply.code(409).send({ error: botGoneMessage(recipientBot) });
     if (activeHands.has(id))
       return reply.code(400).send({ error: 'wait for the hand to finish before moving chips' });
     const sender = db
