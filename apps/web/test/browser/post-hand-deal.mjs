@@ -31,7 +31,6 @@ const room = {
     minSettleHands: 0,
     sevenDeuceBonus: 0,
     voided: false,
-    meetLink: null,
     autoApproveBuys: false,
     tvReplays: false,
     commissionBps: Number(process.env.COMMISSION_BPS || 10),

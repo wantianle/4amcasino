@@ -79,7 +79,6 @@ function roomState(handActive: boolean): ServerMsg {
       commissionBps: 0,
       sevenDeuceBonus: 0,
       voided: false,
-      meetLink: null,
     },
     players: [],
     handActive,

@@ -346,8 +346,6 @@ export const api = {
     req(`/api/rooms/${roomId}/transfer`, { toUserId, amount, ...(note ? { note } : {}) }),
   roomExtras: (roomId: string, extras: Record<string, unknown>) =>
     req(`/api/rooms/${roomId}/settings`, extras, 'PUT'),
-  setMeetLink: (roomId: string, meetLink: string) =>
-    req(`/api/rooms/${roomId}/settings`, { meetLink }, 'PUT'),
   voidHand: (roomId: string, handId: string) => req(`/api/rooms/${roomId}/void-hand`, { handId }),
   ledger: (roomId: string) => req(`/api/rooms/${roomId}/ledger`),
   hands: (roomId: string, opts: { limit?: number; offset?: number } = {}) => {

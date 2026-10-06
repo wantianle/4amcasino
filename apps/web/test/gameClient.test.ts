@@ -73,7 +73,6 @@ const roomState = (handActive = true): Extract<ServerMsg, { t: 'room_state' }> =
     minSettleHands: 0,
     sevenDeuceBonus: 0,
     voided: false,
-    meetLink: null,
     autoApproveBuys: false,
     tvReplays: false,
     commissionBps: 0,

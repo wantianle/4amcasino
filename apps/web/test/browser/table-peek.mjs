@@ -33,7 +33,7 @@ function makeRoom(mode = 'primary') {
     id: 'peek-evidence', name: 'Peek evidence', joinCode: 'PEEK01', hostId: 2,
     bankerId: 2, sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 45000,
     actionSecs: 45, coBankerId: null, minSettleHands: 0, sevenDeuceBonus: 0,
-    voided: false, meetLink: null, autoApproveBuys: false, tvReplays: false,
+    voided: false, autoApproveBuys: false, tvReplays: false,
     commissionBps: 0,
   },
   players,

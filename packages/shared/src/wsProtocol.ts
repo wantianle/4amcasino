@@ -232,7 +232,6 @@ export type ServerMsg =
         minSettleHands: number;
         sevenDeuceBonus: number;
         voided: boolean;
-        meetLink: string | null;
         autoApproveBuys: boolean;
         tvReplays: boolean;
         /** Optional while clients/servers roll between releases. */

@@ -44,7 +44,6 @@ export interface RoomRow {
   archived: number;
   archived_at: number | null;
   deleted: number;
-  meet_link: string | null;
   visibility: string;
   spectate_token: string | null;
   allow_spectators: number;
@@ -82,12 +81,6 @@ const actionSecsSchema = z.union([z.literal(0), z.number().int().min(5).max(180)
 
 const minSettleSchema = z.number().int().min(0).max(MAX_QUALIFYING_HANDS);
 
-const meetLinkSchema = z
-  .string()
-  .max(300)
-  .regex(/^https:\/\//, 'must be an https link')
-  .or(z.literal(''));
-
 const createSchema = z.object({
   name: z.string().min(1).max(48),
   sb: z.number().int().positive(),
@@ -96,7 +89,6 @@ const createSchema = z.object({
   actionSecs: actionSecsSchema.optional(),
   minSettleHands: minSettleSchema.optional(),
   commissionRevision: z.number().int().positive().optional(),
-  meetLink: meetLinkSchema.optional(),
   visibility: z.enum(['private', 'public']).optional(),
   // Default-on, but `false` must still be expressible: `.default(true)` only
   // fills an omitted field, so an explicit `false` survives as `false` and the
@@ -243,7 +235,6 @@ function roomJson(db: DB, room: RoomRow) {
     voided: !!room.voided,
     archived: !!room.archived,
     archivedAt: room.archived_at,
-    meetLink: room.meet_link,
     visibility: room.visibility,
     allowSpectators: !!room.allow_spectators,
     autoApproveBuys: !!room.auto_approve_buys,
@@ -309,7 +300,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       auditMode,
       actionSecs,
       minSettleHands,
-      meetLink,
       visibility,
       autoApproveBuys,
       features,
@@ -334,8 +324,8 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     // auto_approve_buys writes the schema-resolved value: `true` (the default)
     // -> 1, an explicit `false` -> 0.
     db.prepare(
-      `INSERT INTO rooms (id, name, join_code, host_id, banker_id, sb, bb, audit_mode, action_secs, min_settle_hands, meet_link, visibility, spectate_token, auto_approve_buys, allow_spectators, tv_replays, created_at, commission_bps)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO rooms (id, name, join_code, host_id, banker_id, sb, bb, audit_mode, action_secs, min_settle_hands, visibility, spectate_token, auto_approve_buys, allow_spectators, tv_replays, created_at, commission_bps)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       name,
@@ -347,7 +337,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       auditMode ?? 'private',
       actionSecs ?? null,
       minSettleHands ?? 0,
-      meetLink || null,
       visibility ?? 'private',
       randomBytes(9).toString('hex'),
       autoApproveBuys ? 1 : 0,
@@ -397,7 +386,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/rooms/public', authed, async () => {
     const rows = db
       .prepare(
-        `SELECT r.id, r.name, r.sb, r.bb, r.meet_link as meetLink,
+        `SELECT r.id, r.name, r.sb, r.bb,
                 COALESCE(u.display_name, u.username) as hostName,
                 (SELECT COUNT(*) FROM room_players rp WHERE rp.room_id = r.id
                    AND rp.user_id NOT IN (SELECT CAST(value AS INTEGER) FROM meta WHERE key='platform_user_id')) as playerCount
@@ -578,7 +567,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         actionSecs: actionSecsSchema.optional(),
         minSettleHands: minSettleSchema.optional(),
         sevenDeuceBonus: z.number().int().min(0).max(100_000).optional(),
-        meetLink: meetLinkSchema.optional(),
         visibility: z.enum(['private', 'public']).optional(),
         autoApproveBuys: z.boolean().optional(),
         tvReplays: z.boolean().optional(),
@@ -626,11 +614,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     if (parsed.data.sevenDeuceBonus !== undefined)
       db.prepare('UPDATE rooms SET seven_deuce_bonus = ? WHERE id = ?').run(
         parsed.data.sevenDeuceBonus,
-        id,
-      );
-    if (parsed.data.meetLink !== undefined)
-      db.prepare('UPDATE rooms SET meet_link = ? WHERE id = ?').run(
-        parsed.data.meetLink || null,
         id,
       );
     if (parsed.data.visibility !== undefined)

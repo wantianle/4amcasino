@@ -25,7 +25,6 @@ import {
   Timer,
   Trophy,
   UserPlus,
-  VideoCamera,
   X,
 } from '@phosphor-icons/react';
 import NumberFlow from '@number-flow/react';
@@ -452,7 +451,6 @@ export function TablePage() {
     isBankerHere: !!isBankerHere,
     isHost: !!isHost,
     hasSeat: mySeat !== null,
-    hasMeetLink: !!room?.room.meetLink,
   });
 
   // ── table bots (Phase 1 UI) ───────────────────────────────────────────────
@@ -1050,19 +1048,6 @@ export function TablePage() {
           >
             <Eye size={18} /> {t('Watch-only link')}
           </button>
-        );
-      case 'video':
-        return (
-          <a
-            href={room.room.meetLink!}
-            target="_blank"
-            rel="noreferrer"
-            role="menuitem"
-            className={utilityItemClass}
-            onClick={closeUtilityMenu}
-          >
-            <VideoCamera size={18} /> {t('Open video call')}
-          </a>
         );
       case 'ledger':
         return (

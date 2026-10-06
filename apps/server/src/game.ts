@@ -1976,7 +1976,6 @@ export class GameRoom {
         commissionBps: this.hand?.commissionBps ?? room.commission_bps,
         sevenDeuceBonus: room.seven_deuce_bonus,
         voided: !!room.voided,
-        meetLink: room.meet_link,
         // A closed/archived table is retired: the client should leave for the
         // lobby. History and the ledger stay readable (see /api/me/rooms).
         archived: !!room.archived,

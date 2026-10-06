@@ -11,7 +11,6 @@ export type TableUtilityGroupId = 'people' | 'records' | 'table' | 'preferences'
 export type TableUtilityAction =
   | 'invite'
   | 'watch'
-  | 'video'
    | 'ledger'
   | 'hands'
   | 'sit-out'
@@ -43,18 +42,15 @@ export function tableUtilityGroups({
   isBankerHere,
   isHost,
   hasSeat,
-  hasMeetLink,
 }: {
   amSpectator: boolean;
   isBankerHere: boolean;
   isHost: boolean;
   hasSeat: boolean;
-  hasMeetLink: boolean;
 }): TableUtilityGroup[] {
   const people: TableUtilityAction[] = [];
   if (!amSpectator) people.push('invite');
   if (isBankerHere) people.push('watch');
-  if (hasMeetLink) people.push('video');
 
   const table: TableUtilityAction[] = [];
   if (!amSpectator) table.push('auto-deal');

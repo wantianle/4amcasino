@@ -45,7 +45,6 @@ export function LobbyPage() {
   const [bb, setBb] = useState(20);
   const [actionSecs, setActionSecs] = useState(45);
   const [minSettleHands, setMinSettleHands] = useState(0);
-  const [meetLink, setMeetLink] = useState('');
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
   // P2 gameplay rules (squid / time bank / bomb pot / multi-run), seeded from
   // the shared defaults and sent with the room on create.
@@ -67,7 +66,6 @@ export function LobbyPage() {
       bb: number;
       playerCount: number;
       hostName: string;
-      meetLink: string | null;
     }[]
   >([]);
   const [strictAudit, setStrictAudit] = useState(false);
@@ -114,7 +112,6 @@ export function LobbyPage() {
         enabledFeatureCount(features) > 0 ? features : undefined,
       );
       const extras: Record<string, unknown> = {};
-      if (meetLink.trim()) extras.meetLink = meetLink.trim();
       if (visibility === 'public') extras.visibility = 'public';
       if (Object.keys(extras).length) await api.roomExtras(room.id, extras);
       nav(`/room/${room.id}`);
@@ -266,16 +263,6 @@ export function LobbyPage() {
                           })}
                         </div>
                       </div>
-                      {r.meetLink && (
-                        <a
-                          href={r.meetLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
-                        >
-                          {t('Join call')}
-                        </a>
-                      )}
                       <Button
                         variant="secondary"
                         onClick={() => void api.joinPublic(r.id).then(() => nav(`/room/${r.id}`))}
@@ -329,16 +316,6 @@ export function LobbyPage() {
               ))}
               <option value={0}>{t('No limit')}</option>
             </select>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-slate-500">
-              {t('Video call link (Meet or Zoom, optional)')}
-            </span>
-            <Input
-              placeholder="https://meet.google.com/..."
-              value={meetLink}
-              onChange={(e) => setMeetLink(e.target.value)}
-            />
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-500">{t('Who can find this table')}</span>

@@ -38,7 +38,7 @@ function makeRoom() {
     t: 'room_state',
     room: { id: 'baseline', name: 'UI Baseline', joinCode: 'BASELN', hostId: MY_USER, bankerId: MY_USER,
       sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 45000, actionSecs: 45, coBankerId: null,
-      minSettleHands: 0, sevenDeuceBonus: 0, voided: false, meetLink: null, autoApproveBuys: false,
+      minSettleHands: 0, sevenDeuceBonus: 0, voided: false, autoApproveBuys: false,
       tvReplays: false, commissionBps: 50 },
     players: names.map((displayName, seat) => ({ seat, userId: seat === 0 ? MY_USER : 100 + seat,
       username: displayName.toLowerCase().replace(/[^a-z0-9]/g, '-'), displayName, stack: 2000 - seat * 137,

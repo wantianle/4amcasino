@@ -149,7 +149,7 @@ describe('banker invalidation', () => {
   });
 });
 
-describe('public tables and meet links', () => {
+describe('public tables', () => {
   it('public rooms are browsable and joinable without the code', async () => {
     const host = await user('pub_host');
     const guest = await user('pub_guest');
@@ -159,13 +159,11 @@ describe('public tables and meet links', () => {
         sb: 5,
         bb: 10,
         visibility: 'public',
-        meetLink: 'https://meet.google.com/abc-defg-hij',
       })
     ).json();
     const list = await get('/api/rooms/public', guest.token);
     const row = list.rooms.find((r: { id: string }) => r.id === created.id);
     expect(row).toBeDefined();
-    expect(row.meetLink).toBe('https://meet.google.com/abc-defg-hij');
     expect(row.joinCode).toBeUndefined(); // never leaked in the listing
     expect((await post(`/api/rooms/${created.id}/join-public`, guest.token, {})).statusCode).toBe(200);
     const state = await get(`/api/rooms/${created.id}`, guest.token);

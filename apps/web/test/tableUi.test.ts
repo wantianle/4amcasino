@@ -44,10 +44,9 @@ describe('table utility menu', () => {
         isBankerHere: true,
         isHost: true,
         hasSeat: true,
-        hasMeetLink: true,
       }),
     ).toEqual([
-      { id: 'people', actions: ['invite', 'watch', 'video'] },
+      { id: 'people', actions: ['invite', 'watch'] },
       { id: 'records', actions: ['ledger', 'hands'] },
       { id: 'table', actions: ['auto-deal', 'sit-out', 'timer', 'bots'] },
       { id: 'preferences', actions: ['preferences'] },
@@ -61,7 +60,6 @@ describe('table utility menu', () => {
         isBankerHere: false,
         isHost: false,
         hasSeat: false,
-        hasMeetLink: false,
       }),
     ).toEqual([
       { id: 'records', actions: ['ledger', 'hands'] },
@@ -75,7 +73,6 @@ describe('table utility menu', () => {
       isBankerHere: true,
       isHost: false,
       hasSeat: true,
-      hasMeetLink: false,
     });
     const menu = filterDesktopMenuGroups(groups);
     expect(menu.flatMap((group) => group.actions)).not.toEqual(
@@ -86,10 +83,10 @@ describe('table utility menu', () => {
 
   it('keeps the mobile invite/watch controls and filters the menu by permission', () => {
     const cases = [
-      { amSpectator: true, isBankerHere: false, isHost: false, hasSeat: false, hasMeetLink: false },
-      { amSpectator: false, isBankerHere: false, isHost: false, hasSeat: false, hasMeetLink: true },
-      { amSpectator: false, isBankerHere: true, isHost: false, hasSeat: true, hasMeetLink: false },
-      { amSpectator: false, isBankerHere: true, isHost: true, hasSeat: true, hasMeetLink: true },
+      { amSpectator: true, isBankerHere: false, isHost: false, hasSeat: false },
+      { amSpectator: false, isBankerHere: false, isHost: false, hasSeat: false },
+      { amSpectator: false, isBankerHere: true, isHost: false, hasSeat: true },
+      { amSpectator: false, isBankerHere: true, isHost: true, hasSeat: true },
     ];
     for (const permissions of cases) {
       const groups = tableUtilityGroups(permissions);

@@ -47,7 +47,6 @@ function roomState(archived) {
       minSettleHands: 0,
       sevenDeuceBonus: 0,
       voided: false,
-      meetLink: null,
       autoApproveBuys: true,
       tvReplays: false,
       commissionBps: 50,

@@ -27,7 +27,7 @@ try {
     const page = await context.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     let sample = 120;
-    const room = { t: 'room_state', room: { id: 'baseline', name: 'Stats evidence', joinCode: 'BASELN', hostId: 2, bankerId: 2, sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 45000, actionSecs: 45, coBankerId: null, minSettleHands: 0, sevenDeuceBonus: 0, voided: false, meetLink: null, autoApproveBuys: false, tvReplays: false, commissionBps: 50 }, players: [2, 3, 4].map((userId, seat) => ({ userId, seat, username: `player${userId}`, displayName: ['Alex', 'Hidden player', 'New player'][seat], stack: 2000, connected: true, sittingOut: false, totalBought: 2000, hasAvatar: false, avatarVersion: 0, pendingBuy: 0 })), handActive: false };
+    const room = { t: 'room_state', room: { id: 'baseline', name: 'Stats evidence', joinCode: 'BASELN', hostId: 2, bankerId: 2, sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 45000, actionSecs: 45, coBankerId: null, minSettleHands: 0, sevenDeuceBonus: 0, voided: false, autoApproveBuys: false, tvReplays: false, commissionBps: 50 }, players: [2, 3, 4].map((userId, seat) => ({ userId, seat, username: `player${userId}`, displayName: ['Alex', 'Hidden player', 'New player'][seat], stack: 2000, connected: true, sittingOut: false, totalBought: 2000, hasAvatar: false, avatarVersion: 0, pendingBuy: 0 })), handActive: false };
     await page.route('**/api/**', (route) => {
       const path = new URL(route.request().url()).pathname;
       let body = { ok: true, userId: 2, username: 'alex', displayName: 'Alex', rooms: [], requests: [], rows: [], friends: [], incoming: [], outgoing: [], hands: [], bots: [], isPlatform: false, cardBack: 'crimson', fourColor: true };

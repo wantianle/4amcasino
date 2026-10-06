@@ -129,8 +129,6 @@ const tablePage: Record<string, string> = {
   code: '房间码',
   'Watch-only link': '观战链接',
   'Watch-only share link': '观战分享链接',
-  'Open video call': '打开视频通话',
-  'Join the video call': '进入视频通话',
   Standings: '排名',
   Ledger: '账本',
   'Hand history': '出牌记录',

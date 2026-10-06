@@ -32,7 +32,6 @@ const lobby: Record<string, string> = {
   // Public tables
   'Public tables': '公开牌桌',
   'Hosted by {host} · Blinds {sb}/{bb} · {n} players': '房主 {host} · 盲注 {sb}/{bb} · {n} 名玩家',
-  'Join call': '加入通话',
 
   // Create room dialog
   'Room name': '房间名',
@@ -41,7 +40,6 @@ const lobby: Record<string, string> = {
   'Turn timer': '行动计时',
   '{s} seconds per decision': '每步 {s} 秒',
   'No limit': '不限时',
-  'Video call link (Meet or Zoom, optional)': '视频通话链接（Meet 或 Zoom，可选）',
   'Who can find this table': '可见性',
   'Private: join with the 6-letter code only': '私密：只能凭 6 位房间码加入',
   'Public: listed in every lobby, anyone can join': '公开：在所有大厅列出，任何人都能加入',

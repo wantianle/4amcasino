@@ -43,7 +43,6 @@ function makeRoom(count, mySeat) {
       minSettleHands: 0,
       sevenDeuceBonus: 0,
       voided: false,
-       meetLink: 'https://meet.example.test/baseline',
       autoApproveBuys: false,
       tvReplays: false,
       commissionBps: 50,
