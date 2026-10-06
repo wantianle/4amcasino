@@ -207,6 +207,31 @@ describe('parseServerMsg', () => {
     });
   });
 
+  it('rejects inherited Object.prototype keys as frame types, without throwing', () => {
+    // `t` is attacker-controlled (comes straight from `JSON.parse`). A plain
+    // object lookup would read inherited members: `toString`/`constructor`
+    // would resolve to functions (truthy guards), while `__proto__`/`valueOf`
+    // would be called as guards and throw. All must be rejected, none may throw.
+    for (const t of ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(() => parseServerMsg({ t }), `t=${t} must not throw`).not.toThrow();
+      const r = parseServerMsg({ t });
+      expect(r.ok, `t=${t} must be rejected`).toBe(false);
+      if (!r.ok) expect(r.reason).toBe(`unknown frame type "${t}"`);
+      expect(isServerMsg({ t })).toBe(false);
+    }
+  });
+
+  it('rejects nested/unknown prototype keys reached through a valid frame type', () => {
+    // Sanity: a real frame carrying a prototype key in its payload must still
+    // validate/reject structurally, never execute an inherited function.
+    expect(() =>
+      parseServerMsg({ t: 'chat', from: 'a', userId: 1, text: 'x', kind: 'toString', ts: 1 }),
+    ).not.toThrow();
+    expect(
+      parseServerMsg({ t: 'chat', from: 'a', userId: 1, text: 'x', kind: 'toString', ts: 1 }).ok,
+    ).toBe(false);
+  });
+
   it('rejects a missing required field', () => {
     expect(parseServerMsg({ t: 'voice_state', userId: 1 }).ok).toBe(false);
   });

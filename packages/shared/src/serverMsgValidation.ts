@@ -5,14 +5,20 @@ import type { ServerMsg } from './wsProtocol.js';
  * boundary before a frame can reach the store.
  *
  * Hand-written rather than schema-driven on purpose. This runs once per frame
- * on the live-table hot path; the shared package's zod schemas allocate a fresh
+ * on the live-table hot path; the shared package's zod schemas build a fresh
  * object graph on every parse, which is exactly the per-frame deep copy we want
- * to avoid. These guards only read the fields they check - no copies, no
- * per-frame garbage - and add no dependency.
+ * to avoid. These guards only read the fields they check: the validator itself
+ * does not construct or copy any nested payload, and adds no dependency. (The
+ * end-to-end boundary is not zero-allocation - `JSON.parse` and the parse-result
+ * object still allocate - but validation adds no per-frame garbage of its own.)
  *
  * Coverage is a compile-time obligation: `guards` is a
  * `Record<ServerMsg['t'], ...>`, so adding a frame to the union without a guard
  * fails typecheck rather than silently slipping through at runtime.
+ *
+ * The table is given a null prototype and `parseServerMsg` also looks keys up
+ * with `Object.hasOwn` - a network-supplied `t` must never reach an inherited
+ * member such as `toString`, `constructor` or `__proto__`.
  *
  * Structure and primitive types only, never business rules. A false reject
  * would silently drop a legitimate frame, so numeric bounds and cross-field
@@ -343,6 +349,10 @@ const guards: Record<ServerMsg['t'], (m: Rec) => boolean> = {
     isStr(m.handId) && isNum(m.seq) && isStr(m.type) && isStr(m.from) && isStr(m.head),
 };
 
+// Null prototype: a second line of defence so no frame type can ever resolve an
+// inherited member, even if a future lookup path forgets the own-property check.
+Object.setPrototypeOf(guards, null);
+
 export type ServerMsgParseResult = { ok: true; msg: ServerMsg } | { ok: false; reason: string };
 
 /** Validate one decoded frame. Never throws: returns the typed message on
@@ -351,7 +361,15 @@ export function parseServerMsg(raw: unknown): ServerMsgParseResult {
   if (!isObj(raw)) return { ok: false, reason: 'not a JSON object' };
   const t = raw.t;
   if (typeof t !== 'string') return { ok: false, reason: 'missing string "t" tag' };
-  const guard = (guards as Record<string, ((m: Rec) => boolean) | undefined>)[t];
+  // Own-property check, not `guards[t]` directly: `t` comes straight from the
+  // network, and a plain object would resolve inherited members such as
+  // `toString`/`constructor` (accepted as guards) or `__proto__`/`valueOf`
+  // (called and thrown). `Object.hasOwn` keeps unknown and prototype keys on
+  // the reject path so this function never throws.
+  if (!Object.hasOwn(guards, t)) {
+    return { ok: false, reason: `unknown frame type "${t}"` };
+  }
+  const guard = guards[t as ServerMsg['t']];
   if (!guard) return { ok: false, reason: `unknown frame type "${t}"` };
   if (!guard(raw)) return { ok: false, reason: `frame "${t}" failed validation` };
   return { ok: true, msg: raw as unknown as ServerMsg };
