@@ -76,8 +76,6 @@ export function canBank(room: RoomRow, userId: number): boolean {
 /** Emits ('changed', roomId) when REST mutations alter room membership or stacks. */
 export const roomEvents = new EventEmitter();
 
-const actionSecsSchema = z.union([z.literal(0), z.number().int().min(5).max(180)]); // 0 = no limit
-
 const minSettleSchema = z.number().int().min(0).max(MAX_QUALIFYING_HANDS);
 
 const createSchema = z.object({
@@ -85,7 +83,9 @@ const createSchema = z.object({
   sb: z.number().int().positive(),
   bb: z.number().int().positive(),
   auditMode: z.enum(['private', 'strict-audit']).optional(),
-  actionSecs: actionSecsSchema.optional(),
+  // `actionSecs` is deliberately NOT accepted: the turn clock is fixed at the
+  // engine default (30s) and the host can no longer set it. An old client may
+  // still send the key; a plain object strips unknown keys, so it is ignored.
   minSettleHands: minSettleSchema.optional(),
   commissionRevision: z.number().int().positive().optional(),
   visibility: z.enum(['private', 'public']).optional(),
@@ -227,7 +227,9 @@ function roomJson(db: DB, room: RoomRow) {
     sb: room.sb,
     bb: room.bb,
     auditMode: room.audit_mode,
-    actionSecs: room.action_secs,
+    // The turn clock is fixed at the engine default (30s): `action_secs` is a
+    // legacy column that is no longer written or honoured, so report null.
+    actionSecs: null,
     coBankerId: room.co_banker_id,
     minSettleHands: room.min_settle_hands,
     sevenDeuceBonus: room.seven_deuce_bonus,
@@ -316,7 +318,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       sb,
       bb,
       auditMode,
-      actionSecs,
       minSettleHands,
       visibility,
       autoApproveBuys,
@@ -353,7 +354,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       sb,
       bb,
       auditMode ?? 'private',
-      actionSecs ?? null,
+      null, // action_secs: legacy column, no longer settable (fixed 30s clock)
       minSettleHands ?? 0,
       visibility ?? 'private',
       randomBytes(9).toString('hex'),
@@ -582,7 +583,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     const { id } = req.params as { id: string };
     const parsed = z
       .object({
-        actionSecs: actionSecsSchema.optional(),
         minSettleHands: minSettleSchema.optional(),
         sevenDeuceBonus: z.number().int().min(0).max(100_000).optional(),
         visibility: z.enum(['private', 'public']).optional(),
@@ -622,8 +622,6 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       if (bombError) return reply.code(400).send({ error: bombError });
       applyRoomFeatures(db, id, next, current);
     }
-    if (parsed.data.actionSecs !== undefined)
-      db.prepare('UPDATE rooms SET action_secs = ? WHERE id = ?').run(parsed.data.actionSecs, id);
     if (parsed.data.minSettleHands !== undefined)
       db.prepare('UPDATE rooms SET min_settle_hands = ? WHERE id = ?').run(
         parsed.data.minSettleHands,

@@ -4,7 +4,7 @@ import {
   initializePlatformSettings,
   migrateRoomCommissionDefaults,
 } from '../platformSettings.js';
-import { migrateRoomFeatureDefaults } from '../gameplaySettings.js';
+import { migrateRoomFeatureDefaults, migrateTimeBankFixed } from '../gameplaySettings.js';
 import { ensureColumn } from './util.js';
 import { migrateBetRatios } from './betRatios.js';
 
@@ -473,6 +473,10 @@ export function migrate(db: DB): void {
   // every feature/time-bank column exists, so applyRoomFeatures can reset the
   // time banks correctly.
   migrateRoomFeatureDefaults(db);
+  // The time bank became a fixed product feature ("5 cards of 30s, one every 20
+  // hands"); normalize rooms that still store legacy values (and reset their
+  // players' banks onto the new epoch) exactly once.
+  migrateTimeBankFixed(db);
 }
 
 /**

@@ -71,6 +71,22 @@ async function createTable() {
   return { room, bot };
 }
 
+/** The time bank is a fixed 30s feature now; a test that wants the action clock
+ *  to fold a seat promptly must zero that seat's bank before the hand is dealt
+ *  (the balance is snapshotted at deal time). */
+function zeroBank(roomId: string, seat: number): void {
+  const epoch = (
+    ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(roomId) as {
+      e: number;
+    }
+  ).e;
+  ctx.db
+    .prepare(
+      'UPDATE room_players SET time_bank_ms = 0, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ? AND seat = ?',
+    )
+    .run(epoch, roomId, seat);
+}
+
 async function startBot(botId: string, roomId: string, botUserId: number) {
   await human.api(`/api/rooms/${roomId}/bots/${botId}/start`, {});
   await waitFor(() => {
@@ -349,6 +365,7 @@ describe('bot vs human end to end', () => {
     await startBot(bot.bot.id, room.id, bot.bot.userId);
     await startBot(second.bot.id, room.id, second.bot.userId);
 
+    zeroBank(room.id, 0); // fold the human on the 3s base clock, not 3s + 30s bank
     human.send({ t: 'start_hand' });
     await waitFor(() => human.myTurn(), 15_000);
     // The cached snapshot says it is our turn...

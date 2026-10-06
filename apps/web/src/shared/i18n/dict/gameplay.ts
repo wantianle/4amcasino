@@ -47,20 +47,16 @@ const gameplay: Record<string, string> = {
     '由房主手动触发，罚金从桌面筹码里扣；筹码不够的只付得出多少赔多少。',
 
   // ── Time bank (timer popover, TableQuickControls) ────────────────────────
-  // Moved out of the gameplay dialog: the bank is a between-hands knob, so it
-  // lives in the table's 计时 chip popover now. Keys shared with the popover:
+  // The turn clock and the time bank are FIXED product settings now: the host
+  // cannot change either one, so the popover is a read-only readout. The legacy
+  // "Starting bank / Refill every / Refill amount" editor keys are gone with
+  // the editor. 'Turn timer' / 'No limit' / '{n}s' are reused from the lobby /
+  // table-page dictionaries.
+  'Fixed at {n}s - the host cannot change it.': '固定 {n} 秒，房主无法修改。',
   'Time bank': '计时银行',
-  'Banked thinking time': '存起来的思考时间',
-  'Enable time bank': '开启计时银行',
-  'Starting bank': '初始额度',
-  'Refill every': '补秒间隔',
-  'Refill amount': '每次补给',
-  'Everyone starts with {initial} seconds, then gets {refill} seconds every {hands} hands':
-    '每人先有 {initial} 秒，每 {hands} 手补 {refill} 秒',
-  'The regular timer runs down first; an empty bank folds for you.':
-    '先把每步的常规计时走完，才开始扣银行；银行扣光就自动弃牌。',
-  'Change these numbers and every bank resets to the new start.':
-    '这几个数字一改，所有人的银行清零，按新额度重算。',
+  '{cards} × {n}s': '{cards} × {n} 秒',
+  '{cards} time cards of {n}s: one to start, one more every {hands} hands. An empty bank folds for you.':
+    '共 {cards} 张 {n} 秒时间卡：开局 1 张，每 {hands} 手补 1 张；卡用完就自动弃牌。',
 
   // ── B3 Bomb pot ──────────────────────────────────────────────────────────
   'Bomb pot': '炸弹池',
@@ -102,11 +98,6 @@ const gameplay: Record<string, string> = {
   'Queued — saves as soon as this hand ends.': '已排队：这一手一结束就自动保存。',
   'Cancel queue': '取消排队',
   'Re-queue changes': '重新排队保存',
-  'Only the host can change the timer settings.': '只有房主能改计时设置。',
-  'could not load room settings': '没读到房间设置，再开一次试试。',
-
-  // ── Timer chip popover (TableQuickControls) ──────────────────────────────
-  'Turn timer & time bank': '计时与时间银行',
 };
 
 export default gameplay;

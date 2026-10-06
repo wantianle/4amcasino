@@ -23,7 +23,9 @@ import {
 
 const PUBLIC_KEYS = [
   'stackLandMs',
+  'tableDurDealMs',
   'tableDurDimMs',
+  'tableDurFlipMs',
   'tableDurGlowMs',
   'tableDurHighlightMs',
   'tableDurPulseMs',
@@ -40,6 +42,8 @@ const ENV_KEYS = [
   'TABLE_DUR_GLOW_MS',
   'TABLE_DUR_DIM_MS',
   'TABLE_DUR_HIGHLIGHT_MS',
+  'TABLE_DUR_DEAL_MS',
+  'TABLE_DUR_FLIP_MS',
   'WIN_FX_MS',
   'STACK_LAND_MS',
 ] as const;
@@ -77,10 +81,12 @@ describe('GET /api/config', () => {
     expect(body.tunables).toMatchObject({
       tableDurPulseMs: 1600,
       tableDurGlowMs: 450,
-      tableDurDimMs: 460,
-      tableDurHighlightMs: 620,
-      winFxMs: 3000,
-      stackLandMs: 910,
+      tableDurDimMs: 550,
+      tableDurHighlightMs: 780,
+      tableDurDealMs: 820,
+      tableDurFlipMs: 900,
+      winFxMs: 3800,
+      stackLandMs: 1950,
     });
     expect(body.revision).toMatch(/^[0-9a-f]{12}$/);
   });
@@ -243,6 +249,12 @@ describe('tunables parsing', () => {
     it('is the single parse point the hub reads from', () => {
       // `hub.ts` no longer parses these itself; it delegates to `readTunable`.
       expect(defaultGameOpts({})).toMatchObject({ autoDealMs: 3_500, readyCheckMs: 1_500 });
+      // the turn clock is a fixed product value, not a tunable: the engine
+      // default is 30s and never comes from env or the room's legacy column.
+      expect(defaultGameOpts({}).actionTimeoutMs).toBe(30_000);
+      expect(defaultGameOpts({ ACTION_SECS: '90' } as NodeJS.ProcessEnv).actionTimeoutMs).toBe(
+        30_000,
+      );
       expect(defaultGameOpts({ FOURAM_AUTO_DEAL_INTERVAL_MS: '2000' })).toMatchObject({
         autoDealMs: 2_000,
       });
@@ -263,10 +275,12 @@ describe('tunables parsing', () => {
     expect(pub).toEqual({
       tableDurPulseMs: 1600,
       tableDurGlowMs: 450,
-      tableDurDimMs: 460,
-      tableDurHighlightMs: 620,
-      winFxMs: 3000,
-      stackLandMs: 910,
+      tableDurDimMs: 550,
+      tableDurHighlightMs: 780,
+      tableDurDealMs: 820,
+      tableDurFlipMs: 900,
+      winFxMs: 3800,
+      stackLandMs: 1950,
     });
     expect(tunablesRevision(pub)).toBe(tunablesRevision(publicTunables({})));
   });

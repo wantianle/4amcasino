@@ -45,6 +45,21 @@ describe('P2 hardening', () => {
     expect(res.ok).toBe(true);
   }
 
+  /** The time bank is now a fixed 30s feature, so tests that need a prompt
+   *  timeout zero a player's balance (on the room's epoch) to leave the 1.5s
+   *  base clock as the whole wait. */
+  function zeroBank(roomId: string, userIds: number[]): void {
+    const epoch = (
+      srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(roomId) as {
+        e: number;
+      }
+    ).e;
+    const stmt = srv.ctx.db.prepare(
+      'UPDATE room_players SET time_bank_ms = 0, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ? AND user_id = ?',
+    );
+    for (const userId of userIds) stmt.run(epoch, roomId, userId);
+  }
+
   function sendChoice(c: TestClient, decisionId: string, count: 1 | 2 | 3): void {
     const body = { decisionId, count };
     c.send({
@@ -221,6 +236,7 @@ describe('P2 hardening', () => {
   it('actions: rejected and duplicate actions never become transcript action entries', async () => {
     const { players, room, host } = await setupRoom(['ata', 'atb'], ['passive', 'passive']);
     const bob = players[1]!;
+    zeroBank(room.id, players.map((p) => p.userId));
     host.ignoreActions = true; // drive the host manually
     bob.ignoreActions = true; // keep bob's turn open so the duplicate lands mid-round
     host.send({ t: 'start_hand' });
@@ -273,6 +289,7 @@ describe('P2 hardening', () => {
   it('deadline: an action before the deadline is honored, the timeout fold is the only later transition', async () => {
     const { players, room, host } = await setupRoom(['dla', 'dlb'], ['passive', 'passive']);
     const bob = players[1]!;
+    zeroBank(room.id, players.map((p) => p.userId));
     bob.ignoreActions = true;
     host.thinkMs = 400; // acts ~1.1s before the 1.5s deadline
     host.send({ t: 'start_hand' });
@@ -290,6 +307,7 @@ describe('P2 hardening', () => {
   it('deadline: an action sent at the final deadline is not honored', async () => {
     const { players, room, host } = await setupRoom(['dea', 'deb'], ['passive', 'passive']);
     const bob = players[1]!;
+    zeroBank(room.id, players.map((p) => p.userId));
     host.ignoreActions = true;
     bob.ignoreActions = true;
     host.send({ t: 'start_hand' });
@@ -343,9 +361,17 @@ describe('P2 hardening', () => {
 
   it('time bank: an aborted hand discards in-memory debits', async () => {
     const { players, room, host } = await setupRoom(['tba2', 'tbb2']);
-    await enable(host, room.id, {
-      timeBank: { enabled: true, initialSeconds: 5, refillEveryHands: 30, refillSeconds: 30 },
-    });
+    // the bank is fixed now, so seed the host's balance directly, on the room epoch
+    const epoch = (
+      srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
+        e: number;
+      }
+    ).e;
+    srv.ctx.db
+      .prepare(
+        'UPDATE room_players SET time_bank_ms = 5000, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ? AND user_id = ?',
+      )
+      .run(epoch, room.id, host.userId);
     const read = () =>
       (
         srv.ctx.db
@@ -363,9 +389,6 @@ describe('P2 hardening', () => {
 
   it('time bank: a mid-hand epoch change is skipped and audited', async () => {
     const { players, room, host } = await setupRoom(['tce', 'tcf'], ['passive', 'passive']);
-    await enable(host, room.id, {
-      timeBank: { enabled: true, initialSeconds: 5, refillEveryHands: 30, refillSeconds: 30 },
-    });
     for (const p of players) p.thinkMs = 300; // slow the hand so the mid-hand change lands
     host.send({ t: 'start_hand' });
     await host.waitFor(() => host.bettingStreets.includes('preflop'), 8000);
@@ -395,9 +418,6 @@ describe('P2 hardening', () => {
 
   it('S0: a retry after a mid-hand epoch change records the mismatch audit exactly once', async () => {
     const { players, room, host } = await setupRoom(['tre', 'trf'], ['passive', 'passive']);
-    await enable(host, room.id, {
-      timeBank: { enabled: true, initialSeconds: 5, refillEveryHands: 30, refillSeconds: 30 },
-    });
     for (const p of players) p.thinkMs = 300; // slow the hand so the mid-hand change lands
     srv.fault.persistFailThrough = 1; // first durable attempt fails; the retry must reuse the seal
     host.send({ t: 'start_hand' });

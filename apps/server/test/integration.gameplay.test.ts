@@ -208,11 +208,25 @@ describe('P2 gameplay integration', () => {
     expect(shortDelta.delta).toBeGreaterThanOrEqual(-5);
   }, 30000);
 
+  /** The time bank is a fixed product setting now, so tests seed a seat's
+   *  balance directly (on the room's current epoch) instead of configuring it
+   *  through the no-longer-writable feature surface. */
+  function seedBank(roomId: string, userId: number, ms: number, hands = 0): void {
+    const epoch = (
+      srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(roomId) as {
+        e: number;
+      }
+    ).e;
+    srv.ctx.db
+      .prepare(
+        'UPDATE room_players SET time_bank_ms = ?, time_bank_hands = ?, time_bank_epoch = ? WHERE room_id = ? AND user_id = ?',
+      )
+      .run(ms, hands, epoch, roomId, userId);
+  }
+
   it('time bank: a slow-but-legal action spends bank past the base clock', async () => {
     const { players, room, host } = await setupRoom(['tba', 'tbb']);
-    await enable(host, room.id, {
-      timeBank: { enabled: true, initialSeconds: 10, refillEveryHands: 30, refillSeconds: 30 },
-    });
+    seedBank(room.id, players[0]!.userId, 2_000);
     // the host acts ~200ms past the 1,500ms base clock each turn
     players[0]!.thinkMs = 1700;
     host.send({ t: 'start_hand' });
@@ -221,7 +235,7 @@ describe('P2 gameplay integration', () => {
     const updates = players[0]!.timeBankUpdates.filter((u) => u.seat === players[0]!.seat);
     expect(updates.length).toBeGreaterThan(0);
     const last = updates[updates.length - 1]!;
-    expect(last.remainingMs).toBeLessThan(10_000);
+    expect(last.remainingMs).toBeLessThan(2_000);
     expect(last.remainingMs).toBeGreaterThan(0);
     const row = srv.ctx.db
       .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
@@ -231,10 +245,8 @@ describe('P2 gameplay integration', () => {
 
   it('time bank: a timeout burns what is left and auto-folds', async () => {
     const { players, room, host } = await setupRoom(['tca', 'tcb']);
-    await enable(host, room.id, {
-      timeBank: { enabled: true, initialSeconds: 1, refillEveryHands: 30, refillSeconds: 30 },
-    });
-    // the host never acts: base 1.5s + 1s bank = 2.5s, then auto-fold
+    seedBank(room.id, players[0]!.userId, 200);
+    // the host never acts: base 1.5s + 0.2s bank = 1.7s, then auto-fold
     players[0]!.ignoreActions = true;
     host.send({ t: 'start_hand' });
     await players[1]!.waitFor(() => players[1]!.handEnd !== null, 20000);
@@ -246,6 +258,107 @@ describe('P2 gameplay integration', () => {
       .get(room.id, players[0]!.userId) as { time_bank_ms: number };
     expect(row.time_bank_ms).toBe(0);
   }, 25000);
+
+  it('time bank: a legacy balance above the cap is clamped (no timer overflow)', async () => {
+    const { players, room, host } = await setupRoom(['capa', 'capb']);
+    // far above 2^31-1 ms: without the clamp this becomes a 1ms setTimeout and an
+    // immediate auto-fold; the balance must be capped at 5 x 30s = 150_000.
+    seedBank(room.id, players[0]!.userId, 2_200_000_000);
+    // both stay put so we can sample the deadline the server armed
+    host.ignoreActions = true;
+    players[1]!.ignoreActions = true;
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.lastState?.toAct === host.seat, 8000);
+    const remaining = host.lastDeadline! - Date.now();
+    // base 1.5s + capped 150s, nowhere near the overflow ceiling
+    expect(remaining).toBeGreaterThan(100_000);
+    expect(remaining).toBeLessThanOrEqual(151_500);
+    // still the actor's turn: not folded by a 1ms overflow timer
+    expect(host.lastState?.toAct).toBe(host.seat);
+    expect(host.handAbort).toBeNull();
+  }, 20000);
+
+  it('time bank: one card refills every 20 hands, and the 150s cap holds', async () => {
+    const { players, room, host } = await setupRoom(['rfa', 'rfb'], ['passive', 'passive']);
+    // p0 is one hand short of a refill AND already at the five-card cap; acting
+    // fast spends no bank, so this hand's refill would push the row to 180s if
+    // the cap were not applied on the write.
+    seedBank(room.id, players[0]!.userId, 150_000, 19);
+    for (const p of players) p.thinkMs = 50;
+    host.send({ t: 'start_hand' });
+    await awaitHandEnd(players, 20000);
+    expect(players[0]!.handAbort).toBeNull();
+    const row = srv.ctx.db
+      .prepare(
+        'SELECT time_bank_ms AS ms, time_bank_hands AS hands FROM room_players WHERE room_id = ? AND user_id = ?',
+      )
+      .get(room.id, players[0]!.userId) as { ms: number; hands: number };
+    // the 20th hand refilled (counter reset) but the balance stayed capped
+    expect(row).toEqual({ ms: 150_000, hands: 0 });
+  }, 20000);
+
+  it('two consecutive timeouts stand the player up, chips staying on the room row', async () => {
+    const { players, room, host } = await setupRoom(['tooa', 'toob']);
+    const bob = players[1]!;
+    seedBank(room.id, bob.userId, 0); // fold bob on the base clock
+    const row = (userId: number) =>
+      srv.ctx.db
+        .prepare('SELECT seat, stack FROM room_players WHERE room_id = ? AND user_id = ?')
+        .get(room.id, userId) as { seat: number | null; stack: number };
+    const before = row(bob.userId);
+    expect(before.seat).not.toBeNull();
+    const playHand = async () => {
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.handEnd === null, 6000); // a fresh hand dealt
+      await awaitHandEnd(players, 20000);
+    };
+
+    // hand 1: bob times out (streak 1) - still seated
+    bob.ignoreActions = true;
+    await playHand();
+    expect(row(bob.userId).seat).not.toBeNull();
+
+    // hand 2: bob times out again (streak 2) - stood up at the hand boundary
+    const bobSeat = bob.seat!;
+    await playHand();
+    const after = row(bob.userId);
+    expect(after.seat).toBeNull();
+    // same as a voluntary leave_seat: the seat is released and the stack is
+    // left exactly as the settlement wrote it (no cash-out, no refund)
+    const settled = bob.handEnd!.stacks.find((s) => s.seat === bobSeat)!.stack;
+    expect(after.stack).toBe(settled);
+  }, 40000);
+
+  it('a voluntary action resets the timeout streak (no removal)', async () => {
+    const { players, room, host } = await setupRoom(['resa', 'resb']);
+    const bob = players[1]!;
+    seedBank(room.id, bob.userId, 0);
+    const seatOf = (userId: number) =>
+      (
+        srv.ctx.db
+          .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
+          .get(room.id, userId) as { seat: number | null }
+      ).seat;
+    const playHand = async () => {
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.handEnd === null, 6000); // a fresh hand dealt
+      await awaitHandEnd(players, 20000);
+    };
+
+    // hand 1: bob times out (streak 1)
+    bob.ignoreActions = true;
+    await playHand();
+
+    // hand 2: bob acts for real - the streak is cleared
+    bob.ignoreActions = false;
+    bob.thinkMs = 100;
+    await playHand();
+
+    // hand 3: bob times out again (streak 1, not 2) - stays seated
+    bob.ignoreActions = true;
+    await playHand();
+    expect(seatOf(bob.userId)).not.toBeNull();
+  }, 55000);
 
   it('squid: the fold loser pays the penalty to the winner', async () => {
     const { players, room, host } = await setupRoom(['sqa', 'sqb'], ['fold-first', 'passive']);

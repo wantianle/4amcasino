@@ -12,10 +12,9 @@ import {
   SQUID_MIN_PLAYERS_MIN,
   SQUID_PENALTY_BB_MAX,
   SQUID_PENALTY_BB_MIN,
-  TIME_BANK_REFILL_EVERY_HANDS_MAX,
-  TIME_BANK_REFILL_EVERY_HANDS_MIN,
-  TIME_BANK_SECONDS_MAX,
-  TIME_BANK_SECONDS_MIN,
+  TIME_BANK_INITIAL_SECONDS,
+  TIME_BANK_REFILL_EVERY_HANDS,
+  TIME_BANK_REFILL_SECONDS,
   type RoomGameplaySettings,
 } from '@4am/shared';
 import type { DB } from './db.js';
@@ -77,16 +76,17 @@ export const gameplayFeaturesSchema = z
       })
       .partial()
       .optional(),
+    // Time bank: FIXED. The product is "at most 5 cards of 30s each, refilled
+    // one card every 20 hands" and a host may not change it. Pinning the schema
+    // to literals makes a hand-built PUT/POST that carries any other value fail
+    // validation (400) instead of silently writing a divergent bank; the only
+    // accepted values are the shared constants written by room creation.
     timeBank: z
       .object({
-        enabled: z.boolean(),
-        initialSeconds: z.number().int().min(TIME_BANK_SECONDS_MIN).max(TIME_BANK_SECONDS_MAX),
-        refillEveryHands: z
-          .number()
-          .int()
-          .min(TIME_BANK_REFILL_EVERY_HANDS_MIN)
-          .max(TIME_BANK_REFILL_EVERY_HANDS_MAX),
-        refillSeconds: z.number().int().min(TIME_BANK_SECONDS_MIN).max(TIME_BANK_SECONDS_MAX),
+        enabled: z.literal(true),
+        initialSeconds: z.literal(TIME_BANK_INITIAL_SECONDS),
+        refillEveryHands: z.literal(TIME_BANK_REFILL_EVERY_HANDS),
+        refillSeconds: z.literal(TIME_BANK_REFILL_SECONDS),
       })
       .partial()
       .optional(),
@@ -292,6 +292,52 @@ export function migrateRoomFeatureDefaults(db: DB): void {
         current,
       );
     }
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
+  }).immediate();
+}
+
+/**
+ * One-time normalization of every room's stored time-bank config to the fixed
+ * "5 cards of 30s, one card every 20 hands" product values, and of every
+ * player's bank to a single starting card on the new epoch.
+ *
+ * Rooms created before this change can hold any legacy values (a custom refill
+ * every 30 hands, a 600s refill, enabled=0). The HTTP surface no longer accepts
+ * a divergent value at all, so without this pass those rows would keep running
+ * the old numbers forever. Rather than masking the columns at read time, we
+ * normalize them once: the DB stays the single canonical source, and the
+ * existing epoch machinery (which already resets a seat's bank when the config
+ * changes) does the per-player reset for free.
+ *
+ * Idempotent through the `time-bank-fixed-1` marker, and one write-locked
+ * transaction so two servers opening the same file cannot double-apply.
+ */
+export function migrateTimeBankFixed(db: DB): void {
+  const MARKER = 'time-bank-fixed-1';
+  db.transaction(() => {
+    if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MARKER)) return;
+    db.prepare(
+      `UPDATE rooms SET
+         time_bank_enabled = 1,
+         time_bank_initial_secs = ?,
+         time_bank_refill_every_hands = ?,
+         time_bank_refill_secs = ?,
+         time_bank_epoch = time_bank_epoch + 1`,
+    ).run(
+      TIME_BANK_INITIAL_SECONDS,
+      TIME_BANK_REFILL_EVERY_HANDS,
+      TIME_BANK_REFILL_SECONDS,
+    );
+    // Align every player's bank to the room's new epoch and refill it to one
+    // starting card, so an old accumulated balance cannot leak into the new cap.
+    db.prepare(
+      `UPDATE room_players SET
+         time_bank_ms = ?,
+         time_bank_hands = 0,
+         time_bank_epoch = (
+           SELECT time_bank_epoch FROM rooms WHERE rooms.id = room_players.room_id
+         )`,
+    ).run(TIME_BANK_INITIAL_SECONDS * 1000);
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
   }).immediate();
 }

@@ -186,6 +186,62 @@ describe('one-time upgrade of existing rooms', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('normalizes a legacy time-bank config to the fixed 5-card package once', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-tb-fixed-'));
+    const path = join(dir, 'test.db');
+    let db = openDb(path);
+    try {
+      // A room stored under the old tunable rules: bank off, 5s start,
+      // refill-every-30-hands, 60s refill, and a player with a huge balance.
+      db.prepare(
+        `INSERT INTO rooms
+           (id, name, join_code, host_id, banker_id, sb, bb, created_at, commission_bps,
+            time_bank_enabled, time_bank_initial_secs, time_bank_refill_every_hands,
+            time_bank_refill_secs)
+         VALUES ('legacy', 'Legacy', 'LEG001', 1, 1, 10, 20, 1, 50, 0, 5, 30, 60)`,
+      ).run();
+      db.prepare(
+        `INSERT INTO room_players
+           (room_id, user_id, time_bank_ms, time_bank_hands, time_bank_epoch)
+         VALUES ('legacy', 7, 999999999, 4, 3)`,
+      ).run();
+      // Look like a pre-upgrade install: neither migration has run yet.
+      db.prepare(
+        "DELETE FROM meta WHERE key IN ('room-defaults-on-1','time-bank-fixed-1')",
+      ).run();
+      db.close();
+
+      db = openDb(path);
+      const room = db
+        .prepare(
+          `SELECT time_bank_enabled AS enabled, time_bank_initial_secs AS init,
+                  time_bank_refill_every_hands AS every, time_bank_refill_secs AS refill,
+                  time_bank_epoch AS epoch
+           FROM rooms WHERE id = ?`,
+        )
+        .get('legacy') as {
+        enabled: number;
+        init: number;
+        every: number;
+        refill: number;
+        epoch: number;
+      };
+      expect(room).toMatchObject({ enabled: 1, init: 30, every: 20, refill: 30 });
+      const player = db
+        .prepare(
+          `SELECT time_bank_ms AS ms, time_bank_hands AS hands, time_bank_epoch AS epoch
+           FROM room_players WHERE room_id = ? AND user_id = ?`,
+        )
+        .get('legacy', 7) as { ms: number; hands: number; epoch: number };
+      // reset to a single starting card, on the room's new epoch
+      expect(player).toEqual({ ms: 30_000, hands: 0, epoch: room.epoch });
+      db.close();
+    } finally {
+      if (db.open) db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 /**

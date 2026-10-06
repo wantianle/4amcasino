@@ -23,6 +23,7 @@ import {
   applyAction,
   computePots,
   commissionForPot,
+  MAX_TIME_BANK_MS,
   nextStreet,
   startBombPot,
   startHand,
@@ -251,6 +252,22 @@ export class GameRoom {
   /** Monotonic per-room hand counter used only to mint reproducible test ids. */
   private testHandSeq = 0;
   private lookup = cardLookup();
+  /**
+   * Consecutive timeout auto-folds per user, across hands. A voluntary action
+   * clears the streak; two in a row stands the player up at the hand boundary.
+   * In-memory on purpose: this is an anti-stalling nudge, not money, so a
+   * process restart resetting it is acceptable (and it keeps the money core
+   * free of a new persisted counter). Keyed by user, not seat, so a seat change
+   * cannot inherit another player's streak.
+   */
+  private consecutiveTimeouts = new Map<number, number>();
+  /**
+   * Users to stand up once the current hand ends. `leave_seat` refuses while a
+   * hand owns the seat, so a forced removal triggered by the second timeout is
+   * deferred to the hand boundary and then runs the exact same seat-release
+   * write as a voluntary `leave_seat`.
+   */
+  private pendingForcedLeaves = new Set<number>();
 
   constructor(
     private db: DB,
@@ -861,9 +878,11 @@ export class GameRoom {
         sb: room.sb,
         bb: room.bb,
         auditMode: room.audit_mode,
-        actionTimeoutMs:
-          room.action_secs !== null ? room.action_secs * 1000 : this.opts.actionTimeoutMs,
-        actionSecs: room.action_secs,
+        // Fixed 30s base clock: the timer is no longer host-tunable, so the
+        // engine default is reported (and `actionSecs` is always null rather
+        // than a stale stored value the host used to be able to set).
+        actionTimeoutMs: this.opts.actionTimeoutMs,
+        actionSecs: null,
         coBankerId: room.co_banker_id,
         minSettleHands: room.min_settle_hands,
         autoApproveBuys: !!room.auto_approve_buys,
@@ -895,6 +914,67 @@ export class GameRoom {
     const masked = JSON.stringify({ ...state, room: { ...state.room, joinCode: '' } });
     const full = JSON.stringify(state);
     for (const [uid, ws] of this.sockets) ws.send(memberIds.has(uid) ? full : masked);
+  }
+
+  /**
+   * A voluntary action clears a seat's consecutive-timeout streak. Only real
+   * player actions count: the auto-fold and the disconnect-driven folds are
+   * deliberately not routed here.
+   */
+  noteVoluntaryAction(userId: number): void {
+    this.consecutiveTimeouts.delete(userId);
+  }
+
+  /**
+   * A seat's turn timed out (auto-fold). Two timeouts in a row - in the same
+   * hand or across two hands - stand the player up at the end of the hand the
+   * second one folded them out of. Because a timeout always folds, the second
+   * timeout of a single hand is unreachable (the first removes the player from
+   * the betting), so in practice the streak runs across hands; the counter
+   * covers both readings. Returns true when this timeout triggered the leave.
+   */
+  noteTimeout(userId: number): boolean {
+    const streak = (this.consecutiveTimeouts.get(userId) ?? 0) + 1;
+    if (streak < 2) {
+      this.consecutiveTimeouts.set(userId, streak);
+      return false;
+    }
+    this.consecutiveTimeouts.delete(userId);
+    this.pendingForcedLeaves.add(userId);
+    return true;
+  }
+
+  /**
+   * Stand up every player who hit the consecutive-timeout limit, now that the
+   * hand is over. Uses the same seat-release write as the explicit `leave_seat`
+   * message: `seat = NULL`, and the stack deliberately stays on the
+   * `room_players` row exactly as it does when a player leaves their seat by
+   * hand. A system chat line tells the table why. Must be called BEFORE the
+   * `room_state` broadcast so clients see the emptied seat in that frame.
+   */
+  private applyPendingForcedLeaves(): void {
+    if (this.pendingForcedLeaves.size === 0) return;
+    const removed: string[] = [];
+    for (const userId of this.pendingForcedLeaves) {
+      const user = this.db
+        .prepare('SELECT COALESCE(display_name, username) AS name FROM users WHERE id = ?')
+        .get(userId) as { name: string } | undefined;
+      const info = this.db
+        .prepare('UPDATE room_players SET seat = NULL WHERE room_id = ? AND user_id = ?')
+        .run(this.roomId, userId);
+      if (info.changes > 0 && user) removed.push(user.name);
+    }
+    this.pendingForcedLeaves.clear();
+    if (removed.length) {
+      this.broadcast({
+        t: 'chat',
+        from: '4AM',
+        userId: 0,
+        text: `Removed from seat after two timeouts in a row: ${removed.join(', ')}.`,
+        kind: 'text',
+        ts: Date.now(),
+      });
+    }
   }
 
   /** A closed/archived (or deleted) table is retired: seats are frozen and no
@@ -944,6 +1024,8 @@ export class GameRoom {
             'UPDATE room_players SET seat = ?, sitting_out = 0 WHERE room_id = ? AND user_id = ?',
           )
           .run(msg.seat, this.roomId, userId);
+        // a fresh seat starts with a clean streak
+        this.consecutiveTimeouts.delete(userId);
         this.broadcastRoomState();
         return;
       }
@@ -964,6 +1046,7 @@ export class GameRoom {
         this.db
           .prepare('UPDATE room_players SET seat = NULL WHERE room_id = ? AND user_id = ?')
           .run(this.roomId, userId);
+        this.consecutiveTimeouts.delete(userId);
         this.broadcastRoomState();
         return;
       }
@@ -1191,7 +1274,10 @@ export class GameRoom {
         for (const s of seats) {
           const row = byUser.get(s.userId);
           const fresh = !row || row.time_bank_epoch !== room.time_bank_epoch;
-          balances.set(s.seat, fresh ? initialMs : row.time_bank_ms);
+          // The balance is carried into every hand and becomes a `setTimeout`
+          // delay, so clamp it here: a legacy or tampered row (or a balance
+          // accumulated before this cap existed) must never exceed the ceiling.
+          balances.set(s.seat, Math.min(MAX_TIME_BANK_MS, fresh ? initialMs : row.time_bank_ms));
           hands.set(s.seat, fresh ? 0 : row.time_bank_hands);
         }
         snapshot.timeBank = {
@@ -1263,11 +1349,10 @@ export class GameRoom {
       pubkey: p.publicKey,
       stack: p.stack,
     }));
-    // the host's turn-time setting is read at deal time, so edits apply from the next hand
+    // the turn clock is fixed at the engine default (30s); the host's stored
+    // `action_secs` is deliberately ignored (the timer is no longer tunable)
     const handOpts: GameOpts = {
       ...this.opts,
-      actionTimeoutMs:
-        room.action_secs !== null ? room.action_secs * 1000 : this.opts.actionTimeoutMs,
       tvReplays: !!room.tv_replays,
     };
     this.shown.clear();
@@ -1312,6 +1397,10 @@ export class GameRoom {
         this.lastHandShow = this.hand?.showSnapshot() ?? null;
         this.hand = null;
         this.autoDealPaused = false;
+        // A player who hit the consecutive-timeout limit is stood up now that
+        // the hand has released the seat, before the room_state frame so the
+        // emptied seat is visible in that same broadcast.
+        this.applyPendingForcedLeaves();
         // NOTE: the automatic showdown 7-2 bounty is paid inside the durable
         // settlement transaction (see Hand.persistSettlement) - it must not be
         // a late presentation side effect. A fold winner's *voluntary* show is
@@ -2064,7 +2153,12 @@ class Hand {
         });
         const ok = this.applyEngineAction(seat, { type: 'fold' }, true);
         hdbg('timeoutBranch', { id: this.id, branch: ok ? 'ok' : 'apply-false', seat });
-        if (!ok) rearm();
+        if (ok) {
+          // count the auto-fold; a second in a row stands the player up at the
+          // hand boundary (the removal is deferred: the hand owns the seat)
+          const uid = this.seats.find((s) => s.seat === seat)?.userId;
+          if (uid !== undefined) this.room.noteTimeout(uid);
+        } else rearm();
         return;
       }
       case 'audit': {
@@ -2990,6 +3084,11 @@ class Hand {
     }
     // the action really applied: charge the clock it used past the base deadline
     this.consumeTurnTime(seat);
+    // a real (non-timeout) action clears the consecutive-timeout streak
+    if (!auto) {
+      const uid = this.seats.find((s) => s.seat === seat)?.userId;
+      if (uid !== undefined) this.room.noteVoluntaryAction(uid);
+    }
     this.actionSeq++;
     this.publish({
       t: 'action_applied',
@@ -4181,6 +4280,11 @@ class Hand {
           ms += bank.refillMs;
           hands = 0;
         }
+        // The fixed product cap applies at the WRITE too, not only on the next
+        // read: a refill landing on a full bank must be discarded, so the row
+        // itself never carries more than five 30s cards. (The read-time clamp is
+        // still needed for legacy/tampered rows - see `startHand`.)
+        ms = Math.min(MAX_TIME_BANK_MS, ms);
         timeBanks.push({ userId: s.userId, ms, hands });
       }
     }

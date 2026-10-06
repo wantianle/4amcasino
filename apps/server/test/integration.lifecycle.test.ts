@@ -45,6 +45,22 @@ const srv = useIntegrationServer();
 const setupRoom = (names: string[], strategies: Strategy[] = []) =>
   createRoom(srv.baseUrl, names, strategies, srv.clients);
 
+/** The time bank is a fixed 30s feature now; zero a seat's balance (on the room
+ *  epoch) before the deal so a seat that drops mid-hand auto-folds on the 1.5s
+ *  base clock instead of stalling the whole bank first. */
+function zeroBank(roomId: string, userId: number): void {
+  const epoch = (
+    srv.ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(roomId) as {
+      e: number;
+    }
+  ).e;
+  srv.ctx.db
+    .prepare(
+      'UPDATE room_players SET time_bank_ms = 0, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ? AND user_id = ?',
+    )
+    .run(epoch, roomId, userId);
+}
+
 describe('full hand integration: lifecycle, showdown and abort', () => {
   it('a reconnect before the first socket opens never flushes onto the stale socket', async () => {
     const c = new TestClient(srv.baseUrl, 'racey');
@@ -159,6 +175,7 @@ describe('full hand integration: lifecycle, showdown and abort', () => {
     // Space actions out so there is a window to drop the socket with actions in
     // flight, then reconnect before the hand settles.
     for (const p of players) p.thinkMs = 250;
+    zeroBank(room.id, bob.userId); // bob drops mid-hand; fold him on the base clock
     host.send({ t: 'start_hand' });
     await a.waitFor(() => a.actionApplied.length >= 1, 12000);
 

@@ -155,50 +155,75 @@ describe('room gameplay settings', () => {
     }
   });
 
-  it('bumps the time-bank epoch and resets players on a config change', async () => {
+  it('refuses any time-bank config change (fixed "5 cards of 30s")', async () => {
     const host = await user('tb_host');
     const alice = await user('tb_alice');
     const room = await makeRoom(host.token);
     await join(room, alice.token);
 
-    const on = await setFeatures(room.id, host.token, {
-      timeBank: { enabled: true, initialSeconds: 45 },
-    });
-    expect(on.statusCode).toBe(200);
-    const epoch1 = (
-      ctx.db.prepare('SELECT time_bank_epoch as e FROM rooms WHERE id = ?').get(room.id) as {
-        e: number;
-      }
-    ).e;
-    expect(epoch1).toBe(1);
-    for (const u of [host.userId, alice.userId]) {
-      const row = ctx.db
+    const epochOf = () =>
+      (
+        ctx.db.prepare('SELECT time_bank_epoch as e FROM rooms WHERE id = ?').get(room.id) as {
+          e: number;
+        }
+      ).e;
+    const bankOf = (userId: number) =>
+      ctx.db
         .prepare(
-          'SELECT time_bank_ms as ms, time_bank_hands as hands, time_bank_epoch as epoch FROM room_players WHERE room_id = ? AND user_id = ?',
+          'SELECT time_bank_ms as ms, time_bank_hands as hands FROM room_players WHERE room_id = ? AND user_id = ?',
         )
-        .get(room.id, u) as { ms: number; hands: number; epoch: number };
-      expect(row).toEqual({ ms: 45_000, hands: 0, epoch: 1 });
+        .get(room.id, userId) as { ms: number; hands: number };
+
+    // creation seeded every player with one 30s card on a fresh epoch
+    expect(epochOf()).toBe(1);
+    expect(bankOf(host.userId)).toEqual({ ms: 30_000, hands: 0 });
+
+    // any divergent value is rejected outright: no PUT can move the bank
+    for (const patch of [
+      { enabled: false },
+      { initialSeconds: 45 },
+      { refillEveryHands: 30 },
+      { refillSeconds: 60 },
+    ]) {
+      const res = await setFeatures(room.id, host.token, { timeBank: patch });
+      expect(res.statusCode).toBe(400);
     }
+    expect(epochOf()).toBe(1);
+    expect(bankOf(host.userId)).toEqual({ ms: 30_000, hands: 0 });
 
-    // an unrelated feature change leaves the epoch alone
-    await setFeatures(room.id, host.token, { squid: { enabled: true } });
-    expect(
-      (
-        ctx.db.prepare('SELECT time_bank_epoch as e FROM rooms WHERE id = ?').get(room.id) as {
-          e: number;
-        }
-      ).e,
-    ).toBe(1);
+    // the canonical values are accepted but change nothing (idempotent)
+    const canonical = await setFeatures(room.id, host.token, {
+      timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 20, refillSeconds: 30 },
+    });
+    expect(canonical.statusCode).toBe(200);
+    expect(epochOf()).toBe(1);
+    expect(bankOf(host.userId)).toEqual({ ms: 30_000, hands: 0 });
+  });
 
-    // disabling the bank still bumps the epoch so clients drop the old config
-    await setFeatures(room.id, host.token, { timeBank: { enabled: false } });
-    expect(
-      (
-        ctx.db.prepare('SELECT time_bank_epoch as e FROM rooms WHERE id = ?').get(room.id) as {
-          e: number;
-        }
-      ).e,
-    ).toBe(2);
+  it('fixes the turn clock at 30s: a host cannot set actionSecs', async () => {
+    const host = await user('tm_host');
+    // creation still accepts the legacy key, but the room reports no override
+    const created = await makeRoom(host.token, { actionSecs: 90 });
+    expect(created.actionSecs).toBeNull();
+    // and a settings PUT cannot write it either
+    const put = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/rooms/${created.id}/settings`,
+      headers: auth(host.token),
+      payload: { actionSecs: 15 },
+    });
+    expect(put.statusCode).toBe(200); // the schema strips the unknown key
+    const state = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/rooms/${created.id}`,
+        headers: auth(host.token),
+      })
+    ).json();
+    expect(state.actionSecs).toBeNull();
+    expect(ctx.db.prepare('SELECT action_secs AS v FROM rooms WHERE id = ?').get(created.id)).toEqual(
+      { v: null },
+    );
   });
 });
 

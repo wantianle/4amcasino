@@ -64,12 +64,16 @@ export const TUNABLE_DEFAULTS = {
   // Downstream to the web client: motion durations, read from CSS custom
   // properties. Defaults mirror `apps/web/src/app/table-tokens.css` and the
   // `WIN_FX_MS` / `STACK_LAND_MS` constants in `widgets/table/WinnerFx.tsx`.
+  // The deal/flip entrances were split out of `--table-dur-highlight` (the
+  // highlight token is the WIN fade-in only now), so they carry their own keys.
   tableDurPulseMs: 1_600,
   tableDurGlowMs: 450,
-  tableDurDimMs: 460,
-  tableDurHighlightMs: 620,
-  winFxMs: 3_000,
-  stackLandMs: 910,
+  tableDurDimMs: 550,
+  tableDurHighlightMs: 780,
+  tableDurDealMs: 820,
+  tableDurFlipMs: 900,
+  winFxMs: 3_800,
+  stackLandMs: 1_950,
 } as const;
 
 export interface TunableSpec {
@@ -187,6 +191,26 @@ export const TUNABLES = [
     max: 10_000,
     public: true,
     describe: 'Winner-highlight fade-in (--table-dur-highlight).',
+  },
+  {
+    key: 'tableDurDealMs',
+    env: 'TABLE_DUR_DEAL_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.tableDurDealMs,
+    min: 0,
+    max: 10_000,
+    public: true,
+    describe: 'Card deal entrance - deck flight / flop push (--table-dur-deal).',
+  },
+  {
+    key: 'tableDurFlipMs',
+    env: 'TABLE_DUR_FLIP_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.tableDurFlipMs,
+    min: 0,
+    max: 10_000,
+    public: true,
+    describe: 'In-place flip reveal - showdown hole cards / board (--table-dur-flip).',
   },
   {
     key: 'winFxMs',

@@ -17,7 +17,13 @@ export interface RoomGameplaySettings {
     /** Minimum number of dealt-in players required to trigger the feature. */
     minPlayers: number;
   };
-  /** Per-player time bank that refills every N hands. */
+  /** Per-player time bank that refills every N hands.
+   *
+   *  FIXED product config: the server pins every field to the constants in this
+   *  file (see `TIME_BANK_INITIAL_SECONDS` / `TIME_BANK_REFILL_SECONDS` /
+   *  `TIME_BANK_REFILL_EVERY_HANDS`), so a room always runs the same "5 cards of
+   *  30s" package. The shape stays here because it is still part of the room's
+   *  settings object that clients read and render. */
   timeBank: {
     enabled: boolean;
     /** Starting bank, in seconds. */
@@ -57,6 +63,41 @@ export const TIME_BANK_SECONDS_MIN = 1;
 export const TIME_BANK_SECONDS_MAX = 600;
 export const TIME_BANK_REFILL_EVERY_HANDS_MIN = 1;
 export const TIME_BANK_REFILL_EVERY_HANDS_MAX = 1000;
+
+// ---- fixed time-bank product config --------------------------------------
+//
+// The time bank is no longer a host-tunable setting: every table gets the same
+// "time cards" package, and the values below are its single source of truth
+// (the server's zod schema pins a PUT/POST patch to exactly these values, so a
+// host cannot diverge even by constructing the request by hand). The legacy
+// bounds above are kept only for the stored row's documented range; they are no
+// longer reachable through the API.
+
+/** Starting balance: one 30s time card. */
+export const TIME_BANK_INITIAL_SECONDS = 30;
+/** Each refill adds one 30s time card. */
+export const TIME_BANK_REFILL_SECONDS = 30;
+/** A refill lands every 20 completed hands. */
+export const TIME_BANK_REFILL_EVERY_HANDS = 20;
+/** Hard cap on the number of cards a seat can hold (5 x 30s = 150s). */
+export const TIME_BANK_MAX_CARDS = 5;
+
+/**
+ * Hard ceiling on a seat's ACCUMULATED time-bank balance, in ms: five 30s
+ * cards.
+ *
+ * The balance is a persistent reserve, not a per-hand allowance: on each
+ * refill the fixed 30s is ADDED to whatever is left, so a player who
+ * consistently acts inside the base clock carries their whole bank forward and
+ * it grows every 20 hands - the cap is what makes it "at most 5 cards". The
+ * balance is persisted and later turned into the turn's `setTimeout` delay
+ * (`actionTimeoutMs + balance`), and Node cannot represent a delay above
+ * 2^31-1 ms - it fires after 1 ms with a `TimeoutOverflowWarning` instead,
+ * which would auto-fold the player the moment their turn starts. Capping the
+ * balance removes that chain at the source; 150_000 is ~0.17% of that ceiling,
+ * so the timer always stays representable.
+ */
+export const MAX_TIME_BANK_MS = TIME_BANK_MAX_CARDS * TIME_BANK_INITIAL_SECONDS * 1000;
 
 /**
  * Bomb-pot ante bounds, in big blinds. Any whole number of BBs from 1 to 10.
@@ -110,7 +151,12 @@ function deepFreeze<T extends object>(value: T): T {
  *  is affected. */
 export const DEFAULT_GAMEPLAY_SETTINGS: RoomGameplaySettings = deepFreeze<RoomGameplaySettings>({
   squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
-  timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
+  timeBank: {
+    enabled: true,
+    initialSeconds: TIME_BANK_INITIAL_SECONDS,
+    refillEveryHands: TIME_BANK_REFILL_EVERY_HANDS,
+    refillSeconds: TIME_BANK_REFILL_SECONDS,
+  },
   bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
   multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
 });

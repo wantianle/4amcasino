@@ -28,7 +28,10 @@ import { readTunable } from './tunables.js';
 export function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts {
   return {
     cryptoTimeoutMs: 10_000,
-    actionTimeoutMs: 45_000,
+    // Fixed 30s base turn clock: the host can no longer tune the timer (the
+    // time bank is now a fixed product feature), so the engine default is the
+    // only value a room ever runs. `room.action_secs` is no longer consulted.
+    actionTimeoutMs: 30_000,
     autoDealMs: readTunable('autoDealIntervalMs', env),
     readyCheckMs: readTunable('autoDealReadyCheckMs', env),
   };
