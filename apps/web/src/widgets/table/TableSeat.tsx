@@ -1,6 +1,25 @@
 import type { CSSProperties, ReactNode, Ref } from 'react';
 import { cn } from '../../shared/lib/cn.ts';
 
+export type SeatHandMode = 'hidden' | 'showdown' | 'hero';
+
+/** Keep the three visual hand states explicit at the seat boundary. */
+export function seatHandMode({
+  isHero,
+  cardsVisible,
+  revealed,
+  peekVisible,
+}: {
+  isHero: boolean;
+  cardsVisible: boolean;
+  revealed: boolean;
+  peekVisible: boolean;
+}): SeatHandMode {
+  if (isHero) return 'hero';
+  if (cardsVisible && (revealed || peekVisible)) return 'showdown';
+  return 'hidden';
+}
+
 /**
  * The one positioning boundary for a seat unit.
  *
@@ -19,6 +38,7 @@ export function TableSeat({
   lift,
   heroTop,
   podRef,
+  handMode,
   children,
 }: {
   seat: number;
@@ -29,6 +49,7 @@ export function TableSeat({
   lift?: string;
   heroTop?: boolean;
   podRef: Ref<HTMLDivElement>;
+  handMode: SeatHandMode;
   children: ReactNode;
 }) {
   const style = {
@@ -46,6 +67,7 @@ export function TableSeat({
       )}
       style={style}
       data-seat-anchor={seat}
+      data-seat-hand-mode={handMode}
     >
       {children}
     </div>

@@ -21,7 +21,7 @@ import {
   useWinnerFx,
 } from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
-import { TableSeat } from './TableSeat.tsx';
+import { seatHandMode, TableSeat } from './TableSeat.tsx';
 import { DealCard, DEAL_STAGGER_MS, SEAT_DEAL_STAGGER_MS } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
 import { useStore, type PeekResult } from '../../shared/store.ts';
@@ -635,6 +635,12 @@ export function RoundTable({
             const cardsVisible =
               (p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed)) ||
               privatePeekVisible;
+            const handMode = seatHandMode({
+              isHero: isMe,
+              cardsVisible,
+              revealed: !!p.revealed,
+              peekVisible: privatePeekVisible,
+            });
 
             const isBanker = p.userId === bankerId;
             const isHost = hostId != null && p.userId === hostId;
@@ -787,6 +793,7 @@ export function RoundTable({
                   tx={tx}
                   ty={ty}
                   heroTop={isMe && narrow}
+                  handMode={handMode}
                   podRef={(el) => {
                     podEls.current[seat] = el;
                   }}
@@ -815,7 +822,7 @@ export function RoundTable({
                         </span>
                       </button>
                     )}
-                    {isMe && myCards.length > 0 && (
+                    {handMode === 'hero' && myCards.length > 0 && (
                       <div
                         className={cn(
                           narrow
@@ -847,11 +854,11 @@ export function RoundTable({
                         dim && 'table-pod-card--dim',
                       )}
                     >
-                      {cardsVisible && !isMe && (
+                      {cardsVisible && handMode !== 'hero' && (
                         <div
                           className={cn(
                             'table-pod-holo',
-                            isMe || p.revealed || peekCards
+                            handMode === 'showdown'
                               ? 'table-pod-holo--side'
                               : 'table-pod-holo--fan',
                           )}
@@ -862,7 +869,7 @@ export function RoundTable({
                             size={holeSize}
                             narrow={narrow}
                             cards={isMe ? myCards : (peekCards ?? p.revealed)}
-                            faceDown={!isMe && !peekCards && !p.revealed}
+                            faceDown={handMode === 'hidden'}
                             handId={handId}
                             motionPrefix={
                               peekCards

@@ -113,17 +113,23 @@ const DESKTOP_VIEWS = [
 const PHONE_VIEWS = [
   { width: 390, height: 844 },
   { width: 844, height: 390 },
-  { width: 320, height: 700 },
+  { width: 320, height: 568 },
   { width: 667, height: 375 },
   { width: 568, height: 320 },
 ];
 const VIEW_MODE = process.env.VIEWS || 'phone';
-const VIEWPORTS =
+const DEFAULT_VIEWPORTS =
   VIEW_MODE === 'phone'
     ? PHONE_VIEWS
     : VIEW_MODE === 'both'
       ? [...DESKTOP_VIEWS, ...PHONE_VIEWS]
       : DESKTOP_VIEWS;
+const VIEWPORTS = process.env.VIEWPORTS
+  ? process.env.VIEWPORTS.split(',').map((value) => {
+      const [width, height] = value.split('x').map(Number);
+      return { width, height };
+    })
+  : DEFAULT_VIEWPORTS;
 
 const browser = await chromium.launch({
   headless: true,
@@ -467,18 +473,21 @@ try {
           const state = useStore.getState();
           return !!state.room && state.room.players.length > 0;
         });
-        await page.waitForFunction(async ({ mySeat }) => {
-          const storeUrl = performance
-            .getEntriesByType('resource')
-            .map((r) => r.name)
-            .find((url) => /\/src\/shared\/store\.ts(?:\?|$)/.test(url));
-          const { useStore } = await import(storeUrl);
-          const hand = useStore.getState().hand;
-          const actions = document.querySelectorAll(
-            '[data-testid="betting-panel"] button:not([disabled])',
-          ).length;
-          return hand.betting?.toAct === mySeat && actions >= 2;
-        }, { mySeat: sc.mySeat });
+        await page.waitForFunction(
+          async ({ mySeat }) => {
+            const storeUrl = performance
+              .getEntriesByType('resource')
+              .map((r) => r.name)
+              .find((url) => /\/src\/shared\/store\.ts(?:\?|$)/.test(url));
+            const { useStore } = await import(storeUrl);
+            const hand = useStore.getState().hand;
+            const actions = document.querySelectorAll(
+              '[data-testid="betting-panel"] button:not([disabled])',
+            ).length;
+            return hand.betting?.toAct === mySeat && actions >= 2;
+          },
+          { mySeat: sc.mySeat },
+        );
       } else {
         await page.waitForTimeout(400);
       }
@@ -502,7 +511,12 @@ try {
           ).length;
           if (kind === 'myturn' && (h.betting?.toAct !== mySeat || actions < 2))
             throw new Error(
-              `Missing live betting actions: toAct=${h.betting?.toAct ?? 'null'} mySeat=${mySeat} actions=${actions} actionSeq=${h.actionSeq} ws=${useStore.getState().wsConnected} auth=${useStore.getState().auth.userId} players=${useStore.getState().room?.players.map((p) => `${p.userId}:${p.seat}`).join(',')} result=${!!h.result} abort=${!!h.abort} bettingPanel=${!!document.querySelector('[data-testid="betting-panel"]')} buttons=${[...document.querySelectorAll('[data-testid="betting-panel"] button')].map((b) => `${b.textContent?.trim()}:${b.disabled}`).join('|')}`,
+              `Missing live betting actions: toAct=${h.betting?.toAct ?? 'null'} mySeat=${mySeat} actions=${actions} actionSeq=${h.actionSeq} ws=${useStore.getState().wsConnected} auth=${useStore.getState().auth.userId} players=${useStore
+                .getState()
+                .room?.players.map((p) => `${p.userId}:${p.seat}`)
+                .join(
+                  ',',
+                )} result=${!!h.result} abort=${!!h.abort} bettingPanel=${!!document.querySelector('[data-testid="betting-panel"]')} buttons=${[...document.querySelectorAll('[data-testid="betting-panel"] button')].map((b) => `${b.textContent?.trim()}:${b.disabled}`).join('|')}`,
             );
           if (kind === 'showdown' && (faces !== 5 || !h.result || !h.showdown?.reveals.length))
             throw new Error('Missing showdown faces/result');
@@ -764,13 +778,104 @@ try {
         // faces are part of this check; generic card-size selectors also catch
         // center-column run/placeholder art and made clean HEAD report a false
         // hero overlap.
-        const slots = [...(col?.querySelectorAll('[data-card-size="board"][role="img"]') ?? [])].map(R);
+        const slots = [
+          ...(col?.querySelectorAll('[data-card-size="board"][role="img"]') ?? []),
+        ].map(R);
         const heroRect = hero ? R(hero) : null;
         const boardBottom = slots.length ? Math.max(...slots.map((r) => r.y + r.h)) : null;
         // This is an intersection area, not a linear distance: units are px².
         const heroBoardOverlapPx2 = heroRect
           ? slots.reduce((sum, r) => sum + (inter(r, heroRect) ? area(inter(r, heroRect)) : 0), 0)
           : 0;
+        const rect = (el) => {
+          if (!el) return null;
+          const r = R(el);
+          return r.w > 0 && r.h > 0 ? r : null;
+        };
+        const rimRect = rect(document.querySelector('.table-rail-top'));
+        const avatarRects = [...document.querySelectorAll('.table-avatar-ring')].map(R);
+        const avatarPairPx = avatarRects.reduce(
+          (sum, a, i) =>
+            sum +
+            avatarRects
+              .slice(i + 1)
+              .reduce((inner, b) => inner + area(inter(a, b) || { w: 0, h: 0 }), 0),
+          0,
+        );
+        const textRectList = texts.map((entry) => entry.r);
+        const textRectPairPx = textRectList.reduce(
+          (sum, a, i) =>
+            sum +
+            textRectList
+              .slice(i + 1)
+              .reduce((inner, b) => inner + area(inter(a, b) || { w: 0, h: 0 }), 0),
+          0,
+        );
+        const modes = Object.fromEntries(
+          ['hidden', 'showdown', 'hero'].map((mode) => [
+            mode,
+            document.querySelectorAll(`[data-seat-hand-mode="${mode}"]`).length,
+          ]),
+        );
+        const fanOverlap = [
+          ...document.querySelectorAll(
+            '[data-seat-hand-mode="hidden"] .table-pod-fan .table-dealt-card',
+          ),
+        ]
+          .map((card) => {
+            const avatar = card.closest('[data-seat-anchor]')?.querySelector('.table-avatar-ring');
+            if (!avatar) return null;
+            const a = R(avatar);
+            const overlap = inter(R(card), a);
+            return +(overlap ? area(overlap) / area(a) : 0).toFixed(4);
+          })
+          .filter((value) => value !== null);
+        const safeZoneOverlap = [
+          ...document.querySelectorAll('[data-seat-hand-mode="showdown"] .table-pod-holo--side'),
+        ]
+          .map((cards) => {
+            const avatar = cards.closest('[data-seat-anchor]')?.querySelector('.table-avatar-ring');
+            if (!avatar) return null;
+            const a = R(avatar);
+            const safe = { x: a.x + a.w * 0.2, y: a.y + a.h * 0.2, w: a.w * 0.6, h: a.h * 0.6 };
+            return Math.round(
+              [...cards.querySelectorAll('[data-card-size]')].reduce(
+                (sum, card) => sum + area(inter(R(card), safe) || { w: 0, h: 0 }),
+                0,
+              ),
+            );
+          })
+          .filter((value) => value !== null);
+        const potRect = rect(document.querySelector('.table-pot-pill'));
+        const tableCenterY = rimRect ? rimRect.y + rimRect.h / 2 : null;
+        const potAboveByPx =
+          potRect && tableCenterY !== null ? tableCenterY - (potRect.y + potRect.h / 2) : null;
+        const deckRect = rect(document.querySelector('[data-table-deck]'));
+        const deckVisible =
+          !!deckRect &&
+          getComputedStyle(document.querySelector('[data-table-deck]')).visibility !== 'hidden';
+        const gate = {
+          seatCount: pods.length,
+          seatCountPass: pods.length === 9,
+          podPairPx: Math.round(podPair),
+          podPairPass: podPair === 0,
+          textCoverage: textDen ? +(textNum / textDen).toFixed(4) : null,
+          textCoveragePass: textDen ? textNum / textDen >= 0.85 : false,
+          boardCoverage: boardDen ? +(boardNum / boardDen).toFixed(4) : null,
+          boardCoveragePass: boardDen ? boardNum / boardDen >= 0.9 : true,
+          heroBoardOverlapPx2: Math.round(heroBoardOverlapPx2),
+          heroBoardPass: heroBoardOverlapPx2 === 0,
+          k,
+          kFloorPass: k !== null && k >= 0.55,
+          viewportVisiblePass: clusterVisible === null || clusterVisible >= 0.99,
+          avatarCollision: null,
+          textRectCollision: null,
+          fanAvatarEffectiveOverlap: null,
+          showdownSafeZone: null,
+          potPosition: null,
+          dCollision: null,
+          note: 'avatar/text/pot/D metrics require the dedicated DOM gate follow-up; null is intentional, not a pass.',
+        };
         return {
           heroTop: heroRect?.y ?? null,
           boardBottom,
@@ -796,6 +901,17 @@ try {
           worstBoard: worstBoard.slice(0, 6),
           clusterRect: clusterR,
           dockRects: dockRects.slice(0, 10),
+          gate,
+          l3Metrics: {
+            rimRatio: rimRect ? +(rimRect.h / rimRect.w).toFixed(4) : null,
+            avatarPairPx: +avatarPairPx.toFixed(2),
+            textRectPairPx: +textRectPairPx.toFixed(2),
+            modes,
+            fanAvatarOverlapRatios: fanOverlap,
+            safeZoneOverlapPx2: safeZoneOverlap,
+            potAboveByPx: potAboveByPx === null ? null : +potAboveByPx.toFixed(2),
+            preflopDeckVisible: deckVisible,
+          },
         };
       });
 
