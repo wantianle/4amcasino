@@ -102,7 +102,10 @@ const admin: Record<string, string> = {
   Actions: '操作',
   Platform: '平台',
   Disabled: '已停用',
-  Active: '已启用',
+  // NOTE: intentionally not 'Active' — that key belongs to dict/history.ts (the
+  // room filter, 「进行中」). Sharing it let history.ts silently win and this
+  // column rendered "进行中" instead of "已启用".
+  Enabled: '已启用',
   Manage: '管理',
   'Manage {user}': '管理 {user}',
   'Manage @{user}': '管理 @{user}',

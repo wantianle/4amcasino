@@ -460,24 +460,8 @@ for (const tk of templateKeys) {
 
 // (3) 重复 key（同 key 在不同模块重复定义）
 //     同值 → 冗余提示；不同值 → 后者静默覆盖前者，属必查错误。
-//     已知的跨语境碰撞（同一英文词在不同页面含义不同）无法在 i18n 层消解，
-//     需要改调用方 key；在允许的改动范围之外，故登记为 baseline 并显式告警。
-const KNOWN_DUP_COLLISIONS = [
-  {
-    key: 'Active',
-    values: ['已启用', '进行中'],
-    winner: '进行中',
-    reason:
-      "AdminPage（账号状态，期望「已启用」）与 HistoryPage（房间筛选，期望「进行中」）共用 'Active'；需在 apps/web/src/pages/** 调用方改用不同 key（超出本次允许改动范围）",
-  },
-  {
-    key: 'History',
-    values: ['战绩', '历史'],
-    winner: '历史',
-    reason:
-      "HistoryPage 标题（期望「战绩」）与 TableQuickControls 按钮（期望「历史」）共用 'History'；需在 pages/** 或 widgets/** 调用方改用不同 key（超出本次允许改动范围）",
-  },
-];
+//     若两个页面确实要用同一英文词表达不同含义，正确修法是让调用方各用各的
+//     key，而不是在这里登记白名单（白名单会随代码漂移，掩盖真回归）。
 
 for (const [key, list] of occurrences) {
   if (list.length < 2) continue;
@@ -491,25 +475,13 @@ for (const [key, list] of occurrences) {
     });
     continue;
   }
-  const known = KNOWN_DUP_COLLISIONS.find(
-    (k) =>
-      k.key === key && [...k.values].sort().join('\u0000') === [...values].sort().join('\u0000'),
-  );
-  if (known) {
-    warn.push({
-      check: 'duplicate-key(diff,已知)',
-      key,
-      detail: `不同值且后者覆盖（当前胜出：${JSON.stringify(known.winner)}）：${where}；${known.reason}`,
-    });
-  } else {
-    fatal.push({
-      check: 'duplicate-key',
-      key,
-      detail: `同 key 不同 value，后者静默覆盖：${where}（值：${values
-        .map((v) => JSON.stringify(v))
-        .join(' / ')}）`,
-    });
-  }
+  fatal.push({
+    check: 'duplicate-key',
+    key,
+    detail: `同 key 不同 value，后者静默覆盖：${where}（值：${values
+      .map((v) => JSON.stringify(v))
+      .join(' / ')}）`,
+  });
 }
 
 // (4) 大小写归一化冲突（tr() 用首字母小写表；仅提示，不致命）
@@ -714,12 +686,6 @@ if (warn.length > 0) {
   line('');
   line(`⚠ 提示 ${warn.length} 项（不阻断）：`);
   for (const w of warn) line(`  [${w.check}] ${JSON.stringify(w.key)} — ${w.detail}`);
-  if (warn.some((w) => w.check.includes('已知'))) {
-    line('');
-    line('  注：不同值重复 key 默认属必查错误；上面标「已知」的两条是跨语境共用同一');
-    line('  英文词（Active / History），消解它们需要修改 apps/web/src/pages/** 等调用方');
-    line('  的 key，超出本次允许改动范围，故登记为 baseline 显式告警而非静默放行。');
-  }
 }
 
 line('');

@@ -351,7 +351,7 @@ function UsersDirectory() {
                               ? t('Merged')
                               : u.disabled
                                 ? t('Disabled')
-                                : t('Active')}
+                                 : t('Enabled')}
                         </span>
                       </td>
                       <td>{u.rooms}</td>

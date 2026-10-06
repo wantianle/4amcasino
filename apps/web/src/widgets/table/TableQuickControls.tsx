@@ -160,7 +160,7 @@ export function TableQuickControls({
         aria-label={t('Hand history')}
       >
         <CardsThree size={15} />
-        {!compact && <span>{t('History')}</span>}
+        {!compact && <span>{t('Hand history')}</span>}
       </Link>
 
       <Link

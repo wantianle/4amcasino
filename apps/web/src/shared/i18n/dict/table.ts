@@ -14,7 +14,9 @@ const table: Record<string, string> = {
   'Sit out next deal': '下一手离座',
   'Deal me in next hand': '下一手发牌',
   Gameplay: '玩法',
-  History: '历史',
+  // NOTE: the table's History chip links to /room/:id/hands, i.e. 出牌记录 —
+  // it uses 'Hand history' (dict/table-page.ts). Do not re-add a bare 'History'
+  // key here: it silently overrode dict/history.ts's 「战绩」(HistoryPage title).
   // ── Action bar buttons (§5d) ─────────────────────────────────────────────
   'Call {n}': '跟 {n}',
   'Bet {n}': '下注 {n}',
