@@ -112,6 +112,10 @@ export {
   type SquidPayment,
   type SquidTransfer,
 } from './wsProtocol.js';
+// Runtime validation for inbound server frames, applied at the web socket
+// boundary so a malformed/unknown frame is dropped instead of reaching the
+// store (see the module header for why this is hand-written).
+export { isServerMsg, parseServerMsg, type ServerMsgParseResult } from './serverMsgValidation.js';
 // Pure HTTP response DTOs (no wire frames). The server constructs them; the
 // web API layer consumes them.
 export type {
