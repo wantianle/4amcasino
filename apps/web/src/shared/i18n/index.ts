@@ -31,6 +31,28 @@ function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * A `{placeholder}` immediately followed by a lone unit letter (`h`, `m`, `s`)
+ * is a "number + unit" template: `{m}m`, `{n}s`, `{h}h {m}m`. Its captured
+ * value is always numeric, so it compiles to a number-only pattern. With the
+ * generic `(.+?)` such a key also matched any unrelated English string that
+ * merely ends in the same letter, so `t('Close room')` was swallowed by `{m}m`
+ * and rendered `Close roo 分钟` (and `t('Platform')` → `Platfor 分钟`).
+ * A letter that merely begins a longer word (`{n} points`) is not a unit, and
+ * only the known time-unit letters count, so ordinary prose placeholders stay
+ * open-ended.
+ */
+const UNIT_LETTERS = new Set(['h', 'm', 's']);
+// Number-only capture: integer or decimal, e.g. "5", "2.5".
+const NUMERIC_CAPTURE = '(\\d+(?:\\.\\d+)?)';
+
+function isUnitPlaceholder(key: string, end: number): boolean {
+  const suffix = key[end];
+  if (suffix === undefined || !UNIT_LETTERS.has(suffix)) return false;
+  const after = key[end + 1];
+  return after === undefined || !/[A-Za-z]/.test(after);
+}
+
 /** Compile a key containing `{placeholder}` tokens into an anchored RegExp. */
 function compileTemplate(key: string): { regex: RegExp; names: string[] } {
   const cached = templateCache.get(key);
@@ -41,7 +63,7 @@ function compileTemplate(key: string): { regex: RegExp; names: string[] } {
   let last = 0;
   key.replace(PLACEHOLDER, (match: string, name: string, index: number) => {
     pattern += escapeRegExp(key.slice(last, index));
-    pattern += '(.+?)'; // non-greedy capture
+    pattern += isUnitPlaceholder(key, index + match.length) ? NUMERIC_CAPTURE : '(.+?)';
     names.push(name);
     last = index + match.length;
     return match;

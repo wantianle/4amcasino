@@ -24,6 +24,9 @@ const tablePage: Record<string, string> = {
   'That change did not go through. Try again.': '改动没生效，再试一次。',
   'Could not stand them up': '没能让这名玩家起身离座。',
   'Full screen is unavailable in this browser.': '这个浏览器不支持全屏。',
+  'Close room': '关闭房间',
+  'Closing room…': '正在关闭房间…',
+  'Close this room now?': '现在关闭这个房间？关闭后会立即清空座位并归档。',
 
   // ── Turn / status lines ───────────────────────────────────────────────
   'You are not in this hand. You will be dealt in at the next deal.':
