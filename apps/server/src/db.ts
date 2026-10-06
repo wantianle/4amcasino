@@ -1108,19 +1108,6 @@ export function firstPendingHandLifecycle(db: DB, roomId: string): string | null
   return row?.handId ?? null;
 }
 
-/** Every non-terminal hand across all rooms, for a startup recovery scan. */
-export function pendingHandLifecycles(
-  db: DB,
-): { handId: string; roomId: string; status: string }[] {
-  return db
-    .prepare(
-      `SELECT hand_id AS handId, room_id AS roomId, status FROM hand_lifecycle
-        WHERE status IN ('running','prepared','quarantined')
-        ORDER BY room_id, created_at`,
-    )
-    .all() as { handId: string; roomId: string; status: string }[];
-}
-
 /**
  * A trigger claimed by a hand that never committed its durable finalization
  * marker (the process restarted mid-hand) is stuck: neither pending nor

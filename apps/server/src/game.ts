@@ -82,9 +82,6 @@ export interface GameOpts {
    *  this only bounds a *persistent* absence. Tests use a short value to drive
    *  the abort without waiting the production 4s. */
   goneGraceMs?: number;
-  /** Offer run-it-twice at all. Off by default: the second-board unmask chains
-   *  were hanging and aborting hands. */
-  runItTwice?: boolean;
   /** TV replays: save every player's hand key post-hand so replays show all cards. */
   tvReplays?: boolean;
   /** Grace period a graceful shutdown gives a live, not-yet-settled hand to

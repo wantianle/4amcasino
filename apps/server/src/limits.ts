@@ -19,11 +19,6 @@ const buckets = new Map<string, Bucket>();
  *  other rather than the thing under test. */
 const DISABLED = !!process.env.VITEST || process.env.RATE_LIMITS === 'off';
 
-/** Drops every bucket. For tests and for a deliberate operational reset. */
-export function resetLimits(): void {
-  buckets.clear();
-}
-
 // the limiter's own memory is an attack surface: an attacker who can mint
 // unlimited distinct keys would grow this map forever, so sweep dead buckets
 const SWEEP_MS = 60_000;

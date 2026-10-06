@@ -746,7 +746,6 @@ beforeEach(async () => {
     showdownHoldMs: 400,
     settleHoldMs: 1500,
     ritVoteMs: 1500,
-    runItTwice: true,
     clock,
     faultInjection: {
       persist: (attempt) => {

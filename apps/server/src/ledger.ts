@@ -101,10 +101,3 @@ export function rechainRoom(db: DB, roomId: string): void {
   });
   tx();
 }
-
-export function stackOf(db: DB, roomId: string, userId: number): number {
-  const row = db
-    .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
-    .get(roomId, userId) as { stack: number } | undefined;
-  return row?.stack ?? 0;
-}
