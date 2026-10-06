@@ -7,6 +7,7 @@ import {
 } from '../src/db.js';
 import {
   HAND_PARSER_VERSION,
+  SEVEN_DEUCE_SHOW_KIND,
   VOIDED_HAND_EXCLUSION_SQL,
   backfillHandStats,
   deleteHandProjection,
@@ -16,6 +17,7 @@ import {
   positionAssignments,
   writeParsedHand,
 } from '../src/handProjection.js';
+import { appendLedger } from '../src/ledger.js';
 import { applyHandSettlement } from '../src/game.js';
 
 type Entry = { seq: number; type: string; from: string; payload: unknown; sig: string };
@@ -1178,6 +1180,39 @@ describe('pre-lifecycle reconciliation of a genuine seven-deuce bounty', () => {
       status: string;
     };
     expect(row.status).toBe('committed');
+    db.close();
+  });
+
+  it('tolerates a post-settlement voluntary show leg on a markerless hand', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    // A normal settlement with no automatic bounty...
+    applyHandSettlement(db, settleArgs(huEntries()));
+    // ...then a fold-winner's later VOLUNTARY show bounty (its own kind, the
+    // hand-id ref, outside the transcript/projection).
+    appendLedger(db, {
+      roomId: 'r1',
+      userId: 1,
+      delta: 7,
+      kind: SEVEN_DEUCE_SHOW_KIND,
+      ref: 'h1',
+    });
+    appendLedger(db, {
+      roomId: 'r1',
+      userId: 2,
+      delta: -7,
+      kind: SEVEN_DEUCE_SHOW_KIND,
+      ref: 'h1',
+    });
+    // Pretend it was a markerless pre-lifecycle hand.
+    db.prepare('DELETE FROM hand_settlements WHERE hand_id = ?').run('h1');
+    db.prepare('DELETE FROM hand_lifecycle WHERE hand_id = ?').run('h1');
+
+    const audit = auditMarkerlessTranscripts(db);
+    expect(audit.markerless).toBe(1);
+    // the voluntary leg is tolerated, not treated as an unexplained money leg.
+    expect(audit.reconciled).toBe(1);
+    expect(audit.quarantined).toEqual([]);
     db.close();
   });
 });

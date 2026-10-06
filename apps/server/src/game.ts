@@ -41,7 +41,12 @@ import {
   signedBody,
 } from '@4am/shared';
 import { firstPendingHandLifecycle, type DB } from './db.js';
-import { materializeHandProjection, positionAssignments, voidHandExistsSql } from './handProjection.js';
+import {
+  materializeHandProjection,
+  positionAssignments,
+  SEVEN_DEUCE_SHOW_KIND,
+  voidHandExistsSql,
+} from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
 import { readRoomFeatures } from './gameplaySettings.js';
@@ -1812,7 +1817,15 @@ export class GameRoom {
     return row?.voided === 1;
   }
 
-  /** Pays the 7-2 offsuit bounty to a verified winner, once per hand. */
+  /**
+   * Pays the 7-2 offsuit bounty to a verified VOLUNTARY show, once per hand.
+   *
+   * Post-settlement only: this runs from `recordShow` AFTER the hand settled,
+   * so the transfer is outside the immutable transcript and the projection's
+   * `net_delta`. Its ledger legs therefore use {@link SEVEN_DEUCE_SHOW_KIND}
+   * rather than the automatic bounty's `seven-deuce`, keeping every hand-only
+   * game-net read model equal to `hand_end.deltas`.
+   */
   private trySevenDeuce(handId: string, seat: number, cards: CardId[]): void {
     const snap = this.lastHandShow;
     if (!snap || snap.handId !== handId || this.sevenDeucePaid.has(handId)) return;
@@ -1853,7 +1866,7 @@ export class GameRoom {
             roomId: this.roomId,
             userId: payer.userId,
             delta: -amt,
-            kind: 'seven-deuce',
+            kind: SEVEN_DEUCE_SHOW_KIND,
             ref: handId,
             note: 'paid the 7-2 offsuit bounty',
           });
@@ -1867,7 +1880,7 @@ export class GameRoom {
             roomId: this.roomId,
             userId: winner.userId,
             delta: total,
-            kind: 'seven-deuce',
+            kind: SEVEN_DEUCE_SHOW_KIND,
             ref: handId,
             note: 'won with 7-2 offsuit',
           });
@@ -4163,7 +4176,11 @@ class Hand {
       // wait for the keys - or the timeout, which settles best-effort.
       // (requested by notpritam, docs/FEATURES.md)
       this.phase = 'audit';
-      this.room.broadcast({ t: 'need_keys', handId: this.id });
+      // Only the players dealt into THIS hand hold a per-hand key; a spectator
+      // or a seated-but-sitting-out member has none, so asking them is noise at
+      // best (and a client that never received cards has no key to answer with).
+      // The settlement still waits for exactly `this.n` keys.
+      for (const s of this.seats) this.room.send(s.userId, { t: 'need_keys', handId: this.id });
       this.armTimer(this.opts.cryptoTimeoutMs);
       if (this.revealedKeys.size === this.n) this.publishSettlement();
       return;

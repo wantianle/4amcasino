@@ -64,12 +64,12 @@ export const BOMB_POT_DURATION_SECONDS_MAX = 604800;
 
 export const MULTI_RUN_MAX_RUNS = 3;
 
-/** The default (all features off) gameplay settings for a room. Kept in
- *  lock-step with the server's `ROOM_FEATURE_DEFAULTS` and the DB column
- *  defaults. */
+/** The default gameplay settings for a room: every new-gameplay feature is ON
+ *  out of the box, and a host can switch any of them off. Kept in lock-step
+ *  with the server's `ROOM_FEATURE_DEFAULTS` and the DB column defaults. */
 export const DEFAULT_GAMEPLAY_SETTINGS: RoomGameplaySettings = {
-  squid: { enabled: false, penaltyBb: 1, minPlayers: 3 },
-  timeBank: { enabled: false, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
-  bombPot: { enabled: false, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
-  multiRun: { enabled: false, maxRuns: MULTI_RUN_MAX_RUNS },
+  squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
+  timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
+  bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
+  multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
 };

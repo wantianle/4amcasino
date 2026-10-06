@@ -10,6 +10,7 @@ import { activeHands } from './liveHands.js';
 import { platformDues } from './house.js';
 import { registerPlatformControl } from './adminControl.js';
 import { derivePlatformCredentials } from './platform-crypto.js';
+import { gameNetLedgerDeltaSql, gameNetLedgerKindSql } from './handProjection.js';
 
 const authKey = z
   .string()
@@ -47,7 +48,8 @@ interface PendingLifecycleRow {
 function balanceSummary(db: DB, userId: number): { balance: number; rooms: number } {
   const { balance } = db
     .prepare(
-      `SELECT COALESCE(SUM(delta), 0) AS balance FROM ledger WHERE user_id = ? AND kind = 'hand-settlement'`,
+      `SELECT COALESCE(SUM(${gameNetLedgerDeltaSql('l')}), 0) AS balance FROM ledger l
+        WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')}`,
     )
     .get(userId) as { balance: number };
   const { rooms } = db

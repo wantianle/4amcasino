@@ -12,6 +12,7 @@ import {
   roomPlayers,
 } from './rooms.js';
 import { appendLedger } from './ledger.js';
+import { SEVEN_DEUCE_SHOW_KIND } from './handProjection.js';
 import { activeHands } from './liveHands.js';
 import { LIMITS } from './limits.js';
 import { decodeProof, registerSettleRoutes } from './settle.js';
@@ -578,14 +579,34 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     }
     // Unify the correlation key before touching anything. A settlement ledger
     // row's ref is the transcript head; the client voids with that head, but a
-    // caller may pass the hand id. Resolve either to the canonical settlement
-    // ref so the duplicate guard, the reversed rows and the read-side exclusion
+    // caller may pass the hand id. Resolve either to BOTH canonical keys so the
+    // duplicate guard, the reversed rows and the read-side exclusion
     // (handProjection's shared helper) all agree.
+    //
+    // Resolution order mirrors `ledgerHandIdSql`/`ledgerHeadSql` in
+    // handProjection.ts: the durable `hand_settlements` marker first, then the
+    // `transcripts` projection. The fallback is load-bearing: the 7-2 bounty
+    // shipped BEFORE the marker, so a legacy hand can have a transcript + ledger
+    // but no `hand_settlements` row. Resolving from the marker alone would make
+    // a void passed as the settlement head see ONLY the head-ref legs, silently
+    // leaving the hand-id-ref bounty / voluntary show / peel un-reversed (and
+    // vice versa). The `(head = @key OR hand_id = @key)` predicate resolves from
+    // EITHER direction, so a void passed as head or as hand id finds both legs.
     const resolved = db
-      .prepare('SELECT hand_id, head FROM hand_settlements WHERE room_id = ? AND (head = ? OR hand_id = ?) LIMIT 1')
-      .get(id, parsed.data.handId, parsed.data.handId) as { hand_id: string; head: string } | undefined;
-    const ref = resolved?.head ?? parsed.data.handId;
-    const handId = resolved?.hand_id ?? parsed.data.handId;
+      .prepare(
+        `SELECT
+           COALESCE(
+             (SELECT hand_id FROM hand_settlements WHERE room_id = @room AND (head = @key OR hand_id = @key)),
+             (SELECT hand_id FROM transcripts WHERE room_id = @room AND (head = @key OR hand_id = @key))
+           ) AS hand_id,
+           COALESCE(
+             (SELECT head FROM hand_settlements WHERE room_id = @room AND (head = @key OR hand_id = @key)),
+             (SELECT head FROM transcripts WHERE room_id = @room AND (head = @key OR hand_id = @key))
+           ) AS head`,
+      )
+      .get({ room: id, key: parsed.data.handId }) as { hand_id: string | null; head: string | null };
+    const ref = resolved.head ?? parsed.data.handId;
+    const handId = resolved.hand_id ?? parsed.data.handId;
     // Duplicate guard matches BOTH historical conventions (ref = head, the live
     // client, or ref = hand_id), scoped to the room, so a legacy void written
     // with the hand id still blocks a second reversal passed as the head.
@@ -593,20 +614,21 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       .prepare("SELECT 1 FROM ledger WHERE room_id = ? AND kind = 'void-hand' AND (ref = ? OR ref = ?)")
       .get(id, ref, handId);
     if (already) return reply.code(400).send({ error: 'that hand was already voided' });
-    // A hand writes money under five ledger kinds. The commission rides the
+    // A hand writes money under six ledger kinds. The commission rides the
     // settlement ref (the transcript head), and so does the squid-game outcome;
-    // `seven-deuce` and `peek` are written while the engine still only knows the
-    // hand id, so their ref is the hand id. Voiding reverses EVERY leg - if only
-    // the settlement and rake were reversed the bounty / squid / peek transfers
-    // would survive, the hand would no longer sum to zero, and each void would
-    // quietly mint or burn chips. Match each kind on its OWN key; do not
-    // mechanically unify them (the keys are not interchangeable).
+    // `seven-deuce` (automatic bounty), `seven-deuce-show` (voluntary post-
+    // settlement show) and `peek` are written while the engine still only knows
+    // the hand id, so their ref is the hand id. Voiding reverses EVERY leg - if
+    // only the settlement and rake were reversed the bounty / squid / peek
+    // transfers would survive, the hand would no longer sum to zero, and each
+    // void would quietly mint or burn chips. Match each kind on its OWN key; do
+    // not mechanically unify them (the keys are not interchangeable).
     const entries = db
       .prepare(
         `SELECT user_id, delta, kind, ref FROM ledger
          WHERE room_id = ?
            AND ((kind IN ('hand-settlement', 'commission', 'squid-game') AND ref = ?)
-             OR (kind IN ('seven-deuce', 'peek') AND ref = ?))`,
+             OR (kind IN ('seven-deuce', '${SEVEN_DEUCE_SHOW_KIND}', 'peek') AND ref = ?))`,
       )
       .all(id, ref, handId) as { user_id: number; delta: number; kind: string; ref: string | null }[];
     if (entries.length === 0) return reply.code(404).send({ error: 'no settled hand with that id' });

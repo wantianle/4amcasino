@@ -26,10 +26,10 @@ describe('platform commission', () => {
     ).toBe(13);
   });
 
-  it('preserves the original rate and labels for legacy rooms and older servers', () => {
+  it('uses 0.5% as the default label and still names the legacy 1% rate', () => {
     expect(commissionForPot(2000, LEGACY_ROOM_COMMISSION_BPS)).toBe(20);
     expect(commissionRateLabel(NEW_ROOM_COMMISSION_BPS)).toBe('0.5%');
     expect(commissionRateLabel(LEGACY_ROOM_COMMISSION_BPS)).toBe('1%');
-    expect(commissionRateLabel()).toBe('1%');
+    expect(commissionRateLabel()).toBe('0.5%');
   });
 });

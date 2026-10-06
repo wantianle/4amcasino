@@ -57,13 +57,153 @@ export const VOIDED_HAND_EXCLUSION_SQL = voidHandExclusionSql({
 });
 
 /**
- * Exclusion for a settled `ledger` row aliased `ledgerAlias` (whose `ref` is the
- * transcript head): the `void-hand` may reference that same ref, or the
- * `hand_id` that `hand_settlements` maps the ref to. Used by `myHands` in
- * rooms.ts so it agrees with {@link VOIDED_HAND_EXCLUSION_SQL}.
+ * Exclusion for a settled `ledger` row aliased `ledgerAlias`, matching a
+ * `void-hand` row against ALL THREE keys the row can be correlated by:
+ *
+ *   1. the row's OWN `ref` - a head-ref settlement/squid/commission leg, or a
+ *      hand-id-ref bounty leg;
+ *   2. the canonical `hand_id` derived from the row (see
+ *      {@link ledgerHandIdSql}); and
+ *   3. the transcript `head` derived from the row (see {@link ledgerHeadSql}).
+ *
+ * Why all three: the void writer's convention changed over time. The CURRENT
+ * route mirrors both refs (it reverses a leg under that leg's own key), but the
+ * OLD route only reversed head-ref rows, so a bounty leg - which always carries
+ * the hand id - could survive a void that recorded only the head. A bounty row
+ * cannot see its head through its own `ref`, so `hand_settlements` / the
+ * `transcripts` projection must supply it; likewise a head-ref row cannot see
+ * the hand id without the marker/transcript. Matching the row's own ref alone
+ * therefore leaves historical head-only voids unmatched on bounty legs. Used by
+ * `myHands` in rooms.ts, the stats reads and the timeline so every caller agrees
+ * with {@link VOIDED_HAND_EXCLUSION_SQL}.
  */
 export function settlementNotVoidedSql(ledgerAlias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = ${ledgerAlias}.room_id AND v.kind = 'void-hand' AND (v.ref = ${ledgerAlias}.ref OR v.ref = (SELECT hs.hand_id FROM hand_settlements hs WHERE hs.room_id = ${ledgerAlias}.room_id AND hs.head = ${ledgerAlias}.ref)))`;
+  return (
+    `NOT EXISTS (SELECT 1 FROM ledger v WHERE v.room_id = ${ledgerAlias}.room_id ` +
+    `AND v.kind = 'void-hand' ` +
+    `AND (v.ref = ${ledgerAlias}.ref ` +
+    `OR v.ref = ${ledgerHandIdSql(ledgerAlias)} ` +
+    `OR v.ref = ${ledgerHeadSql(ledgerAlias)}))`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Authoritative per-hand, per-account "net change"
+//
+// DESIGN.md ("Commission (rake) legs and stack reconciliation") freezes the
+// domain split:
+//
+//   gameDelta(u)        = poker + squid + automatic 7-2 bounty  // = projection net_delta
+//   commissionDelta(u)  = +rake when u is the rake recipient, else 0
+//   ending - starting   = gameDelta(u) + commissionDelta(u)     // (no mid-hand buy)
+//
+// Every read model that reports "what did this account win or lose on this
+// hand" MUST use this game leg, NOT its own `kind IN (...)` whitelist and NOT
+// `ending_stack - starting_stack` (a mid-hand buy, rake credit or later
+// transfer makes those differ; DESIGN.md says "a consumer that wants the
+// hand-only result must read net_delta, not a stack difference").
+//
+// The three ledger kinds are also written under two DIFFERENT refs - the
+// head-ref kinds (`hand-settlement` / `squid-game` / `commission`) carry the
+// transcript head, while `seven-deuce` carries the hand id - so they cannot be
+// summed by `ref` alone. {@link ledgerHandIdSql} collapses every leg onto one
+// canonical hand id; {@link gameNetLedgerDeltaSql} isolates the game leg.
+// `commission` (rake credit) and `peek` (an independent post-hand transfer)
+// are deliberately excluded.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ledger kind for a fold winner's post-settlement VOLUNTARY 7-2 show (written by
+ * `GameRoom.trySevenDeuce` / `recordShow`, AFTER `applyHandSettlement`).
+ *
+ * It is deliberately NOT in {@link GAME_NET_LEDGER_KINDS}: the voluntary show is
+ * outside the immutable transcript and the `hand_players` projection, so it is
+ * not part of `hand_end.deltas` / `net_delta` and must stay out of every
+ * hand-only game-net read model (else those reads would exceed the authoritative
+ * projection). The AUTOMATIC showdown bounty keeps the plain `seven-deuce` kind
+ * because it is written inside the settlement transaction and folded into
+ * `net_delta`.
+ *
+ * Backward compatibility: historical voluntary legs were written as
+ * `seven-deuce` and are indistinguishable from automatic ones without a
+ * timestamp (forbidden) or a projection cross-check, so they keep the old
+ * classification (see the report); only newly written voluntary legs carry this
+ * kind.
+ */
+export const SEVEN_DEUCE_SHOW_KIND = 'seven-deuce-show';
+
+/** Ledger kinds that make up the game net: poker + squid + automatic 7-2 bounty. */
+export const GAME_NET_LEDGER_KINDS = ['hand-settlement', 'squid-game', 'seven-deuce'] as const;
+
+/** SQL `IN` list literal for {@link GAME_NET_LEDGER_KINDS}. */
+export const GAME_NET_LEDGER_KINDS_SQL = `(${GAME_NET_LEDGER_KINDS.map((k) => `'${k}'`).join(', ')})`;
+
+/** The two kinds whose `ref` is already the canonical hand id (not the head). */
+export const SEVEN_DEUCE_KINDS_SQL = `('seven-deuce', '${SEVEN_DEUCE_SHOW_KIND}')`;
+
+/** Predicate: the `ledger` row aliased `ledgerAlias` is part of the game net. */
+export function gameNetLedgerKindSql(ledgerAlias: string): string {
+  return `${ledgerAlias}.kind IN ${GAME_NET_LEDGER_KINDS_SQL}`;
+}
+
+/** SQL expression: the row's signed contribution to the game net (0 otherwise). */
+export function gameNetLedgerDeltaSql(ledgerAlias: string): string {
+  return `CASE WHEN ${gameNetLedgerKindSql(ledgerAlias)} THEN ${ledgerAlias}.delta ELSE 0 END`;
+}
+
+/**
+ * Canonical hand id for a `ledger` row aliased `ledgerAlias`, so every leg of one
+ * hand groups under one key despite the two ref conventions: the head-ref kinds
+ * carry the transcript head, while `seven-deuce` (automatic bounty) and
+ * `seven-deuce-show` (voluntary show) already carry the hand id.
+ *
+ * For a head-ref row the hand id is resolved in this order:
+ *   1. the `hand_settlements` marker (head -> hand_id); then
+ *   2. the `transcripts` projection ((room_id, head) -> hand_id). This is the
+ *      load-bearing fallback: the 7-2 bounty shipped BEFORE the durable marker,
+ *      so an old hand can have a transcript + ledger but no marker, and simple
+ *      `COALESCE(marker, ref)` would split it into TWO groups (head-ref
+ *      settlement vs hand-id-ref bounty). The unique `idx_transcripts_room_head`
+ *      handles the lookup.
+ *   3. finally the row's own `ref` - the explicit "cannot normalize" case.
+ *
+ * Step 3 is deliberately the bare ref rather than a fabricated key: with no
+ * marker AND no transcript there is nothing that links the head-ref legs to a
+ * hand-id-ref bounty, so the row is genuinely unnormalizable. Keeping the ref
+ * (the pre-change behaviour) means we never silently MERGE it into the wrong
+ * hand, and never break downstream lookups that expect a real id. This residual
+ * only occurs on truncated/corrupt history; a real markerless hand always has a
+ * transcript, so the (very common) legacy case is covered by step 2.
+ */
+export function ledgerHandIdSql(ledgerAlias: string): string {
+  const ref = `${ledgerAlias}.ref`;
+  const room = `${ledgerAlias}.room_id`;
+  return (
+    `CASE WHEN ${ledgerAlias}.kind IN ${SEVEN_DEUCE_KINDS_SQL} THEN ${ref} ` +
+    `ELSE COALESCE(` +
+    `(SELECT hs.hand_id FROM hand_settlements hs WHERE hs.room_id = ${room} AND hs.head = ${ref}), ` +
+    `(SELECT t.hand_id FROM transcripts t WHERE t.room_id = ${room} AND t.head = ${ref}), ` +
+    `${ref}) END`
+  );
+}
+
+/**
+ * Transcript head (the settlement correlation key) for a `ledger` row aliased
+ * `ledgerAlias`. A head-ref row carries it in `ref`; a bounty row carries the
+ * hand id in `ref`, so its head is resolved through `hand_settlements` (or the
+ * `transcripts` projection for markerless history). NULL when neither table can
+ * resolve the hand id - a bounty on a completely unknown hand has no head to
+ * correlate, so the void match simply has nothing to hit.
+ */
+export function ledgerHeadSql(ledgerAlias: string): string {
+  const ref = `${ledgerAlias}.ref`;
+  const room = `${ledgerAlias}.room_id`;
+  return (
+    `CASE WHEN ${ledgerAlias}.kind IN ${SEVEN_DEUCE_KINDS_SQL} THEN COALESCE(` +
+    `(SELECT hs.head FROM hand_settlements hs WHERE hs.room_id = ${room} AND hs.hand_id = ${ref}), ` +
+    `(SELECT t.head FROM transcripts t WHERE t.room_id = ${room} AND t.hand_id = ${ref})) ` +
+    `ELSE ${ref} END`
+  );
 }
 
 export interface ProjectHandArgs {

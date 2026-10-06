@@ -187,14 +187,20 @@ describe('watch links', () => {
     const host = await user('w_host');
     const viewer = await user('w_viewer');
     const created = (await post('/api/rooms', host.token, { name: 'Stream', sb: 5, bb: 10 })).json();
-    // off by default: the link exists but refuses viewers
+    // on by default: a fresh room's watch link already admits viewers
     const settings = (await post(`/api/rooms/${created.id}/spectate-settings`, host.token, {})).json();
-    expect(settings.allow).toBe(false);
+    expect(settings.allow).toBe(true);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/watch/${settings.token}`, headers: auth(viewer.token) }))
+        .statusCode,
+    ).toBe(200);
+    // the host can still switch watching back off...
+    await post(`/api/rooms/${created.id}/spectate-settings`, host.token, { allow: false });
     expect(
       (await ctx.app.inject({ method: 'GET', url: `/api/watch/${settings.token}`, headers: auth(viewer.token) }))
         .statusCode,
     ).toBe(403);
-    // host turns it on; the viewer gets in as a spectator
+    // ...and on again; the viewer gets in as a spectator
     await post(`/api/rooms/${created.id}/spectate-settings`, host.token, { allow: true });
     const watch = (
       await ctx.app.inject({ method: 'GET', url: `/api/watch/${settings.token}`, headers: auth(viewer.token) })

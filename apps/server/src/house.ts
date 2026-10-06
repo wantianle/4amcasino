@@ -1,7 +1,12 @@
 import type { HouseDues, HouseRoom, PlatformDuesReport, PlatformDuesUser } from '@4am/shared';
 import type { DB } from './db.js';
 import { platformUserId } from './platform.js';
-import { settlementNotVoidedSql } from './handProjection.js';
+import {
+  gameNetLedgerDeltaSql,
+  gameNetLedgerKindSql,
+  ledgerHandIdSql,
+  settlementNotVoidedSql,
+} from './handProjection.js';
 
 /** One source for personal dues and the platform's receivables. Allocation keeps
  * the established rule (net winners share each hand's commission), but assigns
@@ -13,20 +18,23 @@ export function platformDues(db: DB, onlyUserId: number | null = null): Platform
     .prepare(
       `
     WITH commissions AS (
-      SELECT l.room_id AS roomId, l.ref, SUM(l.delta) AS rake,
+      SELECT l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref, SUM(l.delta) AS rake,
              r.name AS roomName, COALESCE(h.commission_bps, r.commission_bps) AS commissionBps
       FROM ledger l JOIN rooms r ON r.id = l.room_id
       LEFT JOIN hand_commission_rates h ON h.room_id = l.room_id AND h.ref = l.ref
       WHERE l.kind = 'commission' AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
         AND ${settlementNotVoidedSql('l')}
         AND (@userId IS NULL OR EXISTS (
-          SELECT 1 FROM ledger m WHERE m.room_id = l.room_id AND m.ref = l.ref
-            AND m.kind = 'hand-settlement' AND m.user_id = @userId))
-      GROUP BY l.room_id, l.ref HAVING SUM(l.delta) > 0
+          SELECT 1 FROM ledger m WHERE m.room_id = l.room_id
+            AND ${ledgerHandIdSql('m')} = ${ledgerHandIdSql('l')}
+            AND ${gameNetLedgerKindSql('m')} AND m.user_id = @userId))
+      GROUP BY l.room_id, ${ledgerHandIdSql('l')} HAVING SUM(l.delta) > 0
     ), winners AS (
-      SELECT room_id, ref, user_id AS userId, SUM(delta) AS net
-      FROM ledger WHERE kind = 'hand-settlement' AND (@platformId IS NULL OR user_id != @platformId)
-      GROUP BY room_id, ref, user_id HAVING SUM(delta) > 0
+      SELECT l.room_id, ${ledgerHandIdSql('l')} AS ref, l.user_id AS userId,
+             SUM(${gameNetLedgerDeltaSql('l')}) AS net
+      FROM ledger l
+      WHERE ${gameNetLedgerKindSql('l')} AND (@platformId IS NULL OR l.user_id != @platformId)
+      GROUP BY l.room_id, ${ledgerHandIdSql('l')}, l.user_id HAVING SUM(${gameNetLedgerDeltaSql('l')}) > 0
     )
     SELECT c.*, w.userId, w.net FROM commissions c
     LEFT JOIN winners w ON w.room_id = c.roomId AND w.ref = c.ref

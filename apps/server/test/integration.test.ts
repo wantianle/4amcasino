@@ -2128,7 +2128,9 @@ describe('full hand integration', () => {
     expect(bob.myCards.slice().sort((a, b) => a - b)).toEqual([0, 21]);
     const bountyRows = () =>
       ctx.db
-        .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'seven-deuce'")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind IN ('seven-deuce', 'seven-deuce-show')",
+        )
         .get(room.id) as { n: number };
     expect(bountyRows().n).toBe(0);
 

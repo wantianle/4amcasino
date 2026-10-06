@@ -47,7 +47,7 @@ describe('room commission rates', () => {
     }
   });
 
-  it('preserves existing rooms at 1%, leaves their ledger intact, and survives a restart', () => {
+  it('migrates existing rooms to 0.5%, snapshots their old rate, and survives restarts', () => {
     const dir = mkdtempSync(join(tmpdir(), '4am-commission-'));
     const path = join(dir, 'test.db');
     let db = openDb(path);
@@ -82,9 +82,16 @@ describe('room commission rates', () => {
       db.close();
 
       db = openDb(path);
+      // The room is re-rated to the current 0.5%...
       expect(db.prepare('SELECT commission_bps FROM rooms WHERE id = ?').get('legacy')).toEqual({
-        commission_bps: 100,
+        commission_bps: 50,
       });
+      // ...but the historical hand keeps the 1% it was actually charged.
+      expect(
+        db
+          .prepare('SELECT commission_bps FROM hand_commission_rates WHERE room_id = ? AND ref = ?')
+          .get('legacy', 'old-hand'),
+      ).toEqual({ commission_bps: 100 });
       seed('new');
       expect(db.prepare('SELECT commission_bps FROM rooms WHERE id = ?').get('new')).toEqual({
         commission_bps: 50,
@@ -93,12 +100,14 @@ describe('room commission rates', () => {
       expect(verifyLedger(db, 'legacy').ok).toBe(true);
       db.close();
 
+      // A restart must not re-rate anything (idempotent marker) nor touch the ledger.
       db = openDb(path);
       expect(db.prepare('SELECT id, commission_bps FROM rooms ORDER BY id').all()).toEqual([
-        { id: 'legacy', commission_bps: 100 },
+        { id: 'legacy', commission_bps: 50 },
         { id: 'new', commission_bps: 50 },
       ]);
       expect(db.prepare('SELECT * FROM ledger').all()).toEqual(ledger);
+      expect(verifyLedger(db, 'legacy').ok).toBe(true);
     } finally {
       if (db.open) db.close();
       rmSync(dir, { recursive: true, force: true });

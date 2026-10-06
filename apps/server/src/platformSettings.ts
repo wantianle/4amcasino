@@ -63,6 +63,37 @@ export function initializePlatformSettings(db: DB): void {
   })();
 }
 
+/**
+ * One-time, idempotent upgrade of every existing room to the current 0.5% rate.
+ *
+ * `initializePlatformSettings` only re-rates every room the first time the
+ * `platform_settings` row is created; on a deployment that already has that row
+ * (i.e. every live install) existing rooms keep whatever rate they were created
+ * with. This migration closes that gap: it moves them all to
+ * `NEW_ROOM_COMMISSION_BPS` exactly once.
+ *
+ * Money is never rewritten. Before the UPDATE, `captureHistoricalRates` freezes
+ * the rate each unrated commission ledger entry was charged at into
+ * `hand_commission_rates`, so historical dues and the hashed ledger stay
+ * byte-for-byte unchanged - only hands settled AFTER this migration use 0.5%.
+ * The `commission-0.5-1` marker makes it idempotent; the check, updates and
+ * marker write share one immediate transaction so two starters cannot double-run
+ * it.
+ */
+export function migrateRoomCommissionDefaults(db: DB): void {
+  const MARKER = 'commission-0.5-1';
+  db.transaction(() => {
+    if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MARKER)) return;
+    // Snapshot old rates BEFORE rooms move to 0.5%.
+    captureHistoricalRates(db);
+    db.prepare('UPDATE rooms SET commission_bps = ? WHERE commission_bps != ?').run(
+      NEW_ROOM_COMMISSION_BPS,
+      NEW_ROOM_COMMISSION_BPS,
+    );
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
+  }).immediate();
+}
+
 export function commissionSettings(db: DB): Omit<CommissionSettings, 'history'> {
   return db
     .prepare(

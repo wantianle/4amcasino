@@ -11,7 +11,13 @@ import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
 import { platformUserId } from './platform.js';
-import { settlementNotVoidedSql, voidHandExistsSql } from './handProjection.js';
+import {
+  gameNetLedgerDeltaSql,
+  gameNetLedgerKindSql,
+  ledgerHandIdSql,
+  settlementNotVoidedSql,
+  voidHandExistsSql,
+} from './handProjection.js';
 import {
   applyRoomFeatures,
   bombScheduleError,
@@ -92,7 +98,11 @@ const createSchema = z.object({
   commissionRevision: z.number().int().positive().optional(),
   meetLink: meetLinkSchema.optional(),
   visibility: z.enum(['private', 'public']).optional(),
-  autoApproveBuys: z.boolean().optional(),
+  // Default-on, but `false` must still be expressible: `.default(true)` only
+  // fills an omitted field, so an explicit `false` survives as `false` and the
+  // INSERT below writes 0. Never rely on the column DEFAULT here - a database
+  // created under the old default-off policy still has `DEFAULT 0`.
+  autoApproveBuys: z.boolean().default(true),
   features: gameplayFeaturesSchema.optional(),
 });
 
@@ -313,20 +323,27 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       features,
     } = parsed.data;
     if (bb < sb) return reply.code(400).send({ error: 'big blind must be >= small blind' });
-    // Normalize against the migrated defaults up front so an invalid bomb-pot
-    // cadence is rejected before a room row exists.
-    const normalizedFeatures = features
-      ? mergeRoomFeatures(ROOM_FEATURE_DEFAULTS, features)
-      : undefined;
-    if (normalizedFeatures) {
-      const bombError = bombScheduleError(normalizedFeatures);
-      if (bombError) return reply.code(400).send({ error: bombError });
-    }
+    // The feature payload is always merged over ROOM_FEATURE_DEFAULTS and always
+    // written back, so room creation never depends on the column DEFAULTs. This
+    // matters on a database that predates the default-on policy: `ensureColumn`
+    // only installs a missing column, so those rooms columns still carry
+    // `DEFAULT 0` and a new row would inherit `0`s for the four gameplay
+    // features. `applyRoomFeatures` is the single writer for every feature
+    // column (enabled flags *and* the numeric knobs), so relying on it here
+    // avoids a second, drifting copy of that write. An explicit patch still wins
+    // field by field via the deep merge.
+    const normalizedFeatures = mergeRoomFeatures(ROOM_FEATURE_DEFAULTS, features ?? {});
+    const bombError = bombScheduleError(normalizedFeatures);
+    if (bombError) return reply.code(400).send({ error: bombError });
     const id = randomBytes(6).toString('hex');
     const joinCode = newJoinCode();
+    // allow_spectators / tv_replays are written explicitly rather than left to
+    // their column DEFAULT (which is also `1` only for a fresh schema), and
+    // auto_approve_buys writes the schema-resolved value: `true` (the default)
+    // -> 1, an explicit `false` -> 0.
     db.prepare(
-      `INSERT INTO rooms (id, name, join_code, host_id, banker_id, sb, bb, audit_mode, action_secs, min_settle_hands, meet_link, visibility, spectate_token, auto_approve_buys, created_at, commission_bps)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO rooms (id, name, join_code, host_id, banker_id, sb, bb, audit_mode, action_secs, min_settle_hands, meet_link, visibility, spectate_token, auto_approve_buys, allow_spectators, tv_replays, created_at, commission_bps)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       name,
@@ -342,14 +359,14 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
       visibility ?? 'private',
       randomBytes(9).toString('hex'),
       autoApproveBuys ? 1 : 0,
+      1,
+      1,
       Date.now(),
       commissionSettings(db).commissionBps,
     );
     db.prepare('INSERT INTO room_players (room_id, user_id) VALUES (?, ?)').run(id, req.userId);
-    if (normalizedFeatures) {
-      const stored = readRoomFeatures(getRoom(db, id)!);
-      applyRoomFeatures(db, id, normalizedFeatures, stored);
-    }
+    const stored = readRoomFeatures(getRoom(db, id)!);
+    applyRoomFeatures(db, id, normalizedFeatures, stored);
     return roomJson(db, getRoom(db, id)!);
   });
 
@@ -829,15 +846,19 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
          ORDER BY t.ts DESC, t.hand_id DESC LIMIT ? OFFSET ?`,
       )
       .all(id, limit, offset) as { handId: string; head: string; entries: string; ts: number; voided: number }[];
+    // Authoritative per-hand game net (poker + squid + 7-2 bounty), keyed by the
+    // canonical hand id so the head-ref settlement legs and the hand-id-ref
+    // bounty leg collapse together. Matches the in-game `hand_end.deltas`.
     const nets = new Map(
       (
         db
           .prepare(
-            `SELECT ref, SUM(delta) as net FROM ledger
-             WHERE room_id = ? AND user_id = ? AND kind IN ('hand-settlement', 'squid-game') GROUP BY ref`,
+            `SELECT ${ledgerHandIdSql('l')} AS handId, SUM(${gameNetLedgerDeltaSql('l')}) as net
+             FROM ledger l
+             WHERE l.room_id = ? AND l.user_id = ? AND ${gameNetLedgerKindSql('l')} GROUP BY handId`,
           )
-          .all(id, req.userId) as { ref: string; net: number }[]
-      ).map((r) => [r.ref, r.net]),
+          .all(id, req.userId) as { handId: string; net: number }[]
+      ).map((r) => [r.handId, r.net]),
     );
     const STREETS = ['preflop', 'on the flop', 'on the turn', 'on the river'];
     const hands = rows.map((row) => {
@@ -887,7 +908,7 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
         handId: row.handId,
         head: row.head,
         ts: row.ts,
-        myNet: nets.get(row.head) ?? null,
+        myNet: nets.get(row.handId) ?? null,
         outcome,
         voided: !!row.voided,
       };

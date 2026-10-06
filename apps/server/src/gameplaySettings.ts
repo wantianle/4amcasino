@@ -35,16 +35,20 @@ export interface RoomFeatureColumns {
 }
 
 /**
- * The values a freshly migrated room has before any settings are written. Kept
- * in lock-step with the `ensureColumn` defaults in db.ts; used to validate a
- * `features` payload supplied at room-creation time (there is no stored row to
- * merge against yet).
+ * The values a fresh room has before any settings are written. Kept in
+ * lock-step with the `ensureColumn` defaults in db.ts and the shared
+ * `DEFAULT_GAMEPLAY_SETTINGS`; used to validate a `features` payload supplied
+ * at room-creation time (there is no stored row to merge against yet).
+ *
+ * Every feature is ON by default: a new table is meant to have the new gameplay
+ * (squid / time bank / bomb pot / multi-run) available out of the box. A host
+ * can still switch any of them off through the settings dialog.
  */
 export const ROOM_FEATURE_DEFAULTS: RoomGameplaySettings = {
-  squid: { enabled: false, penaltyBb: 1, minPlayers: 3 },
-  timeBank: { enabled: false, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
-  bombPot: { enabled: false, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
-  multiRun: { enabled: false, maxRuns: MULTI_RUN_MAX_RUNS },
+  squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
+  timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
+  bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
+  multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
 };
 
 const bombAnteSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
@@ -225,4 +229,56 @@ export function applyRoomFeatures(
       ).run(next.timeBank.initialSeconds * 1000, epoch, roomId);
     }
   })();
+}
+
+/**
+ * The one-time upgrade of rooms that predate the default-on policy. New rooms
+ * get these values from the column DEFAULTs; rooms that already exist store the
+ * old `0`s, and `ensureColumn` never rewrites an existing column's default, so
+ * they must be flipped explicitly exactly once.
+ *
+ * Idempotent through the `meta` marker: once `room-defaults-on-1` is present the
+ * whole body is skipped, so a restart cannot re-apply it and a host who turns a
+ * feature off afterwards keeps that choice. The feature flip goes through
+ * {@link applyRoomFeatures} so enabling the time bank also bumps its epoch and
+ * resets every seated player's bank to the new initial balance, exactly like a
+ * host edit would.
+ *
+ * The marker check, the updates and the marker write share one immediate
+ * (write-locked) transaction, mirroring the `auto-ready-default-on-1` migration:
+ * without the lock, two servers opening the same file could both miss the marker
+ * and double-apply (and race on the marker's primary key).
+ */
+export function migrateRoomFeatureDefaults(db: DB): void {
+  const MARKER = 'room-defaults-on-1';
+  db.transaction(() => {
+    if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MARKER)) return;
+    db.prepare(
+      `UPDATE rooms SET allow_spectators = 1, tv_replays = 1, auto_approve_buys = 1
+       WHERE allow_spectators = 0 OR tv_replays = 0 OR auto_approve_buys = 0`,
+    ).run();
+    const rooms = db.prepare('SELECT * FROM rooms').all() as (RoomFeatureColumns & { id: string })[];
+    for (const room of rooms) {
+      const current = readRoomFeatures(room);
+      if (
+        current.squid.enabled &&
+        current.timeBank.enabled &&
+        current.bombPot.enabled &&
+        current.multiRun.enabled
+      )
+        continue;
+      applyRoomFeatures(
+        db,
+        room.id,
+        {
+          squid: { ...current.squid, enabled: true },
+          timeBank: { ...current.timeBank, enabled: true },
+          bombPot: { ...current.bombPot, enabled: true },
+          multiRun: { ...current.multiRun, enabled: true },
+        },
+        current,
+      );
+    }
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
+  }).immediate();
 }

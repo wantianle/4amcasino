@@ -230,15 +230,21 @@ describe('manual feature triggers', () => {
     expect(next.statusCode).toBe(200);
   });
 
-  it('requires the feature to be enabled and enough squid players', async () => {
+  it('gates squid triggers on the enabled flag and on the player count', async () => {
     const host = await user('ft_gate');
-    const room = await makeRoom(host.token); // all features off, one player
+    const room = await makeRoom(host.token); // defaults on, one player
+    // Squid is on by default, so turn it off first: the 400 below must come from
+    // the disabled gate, not from the player-count gate that also returns 400.
+    await setFeatures(room.id, host.token, { squid: { enabled: false } });
     const disabled = await post(room.id, host.token, { feature: 'squid', requestId: 'x' });
     expect(disabled.statusCode).toBe(400);
+    expect(disabled.json().error).toBe('squid game is not enabled for this table');
 
+    // Now enabled, but still one player short of the default minimum (3).
     await setFeatures(room.id, host.token, { squid: { enabled: true, minPlayers: 3 } });
     const tooFew = await post(room.id, host.token, { feature: 'squid', requestId: 'y' });
     expect(tooFew.statusCode).toBe(400);
+    expect(tooFew.json().error).toBe('squid game needs at least 3 players');
   });
 
   it('refuses triggers during a live hand', async () => {
