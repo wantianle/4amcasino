@@ -7,6 +7,11 @@ import { BotSupervisor } from '../src/botSupervisor.js';
 import type { RunnerActionEvent } from '../src/botRunner.js';
 import { activeHands } from '../src/liveHands.js';
 import { joinActionAttribution } from './helpers/actionAttribution.js';
+import { sleep, waitFor } from './helpers/waitFor.js';
+import {
+  installDeterministicShuffle,
+  uninstallDeterministicShuffle,
+} from './helpers/deterministicShuffle.mjs';
 
 /**
  * Phase 1b end to end: a real server on a loopback port, a real human
@@ -21,6 +26,7 @@ import { joinActionAttribution } from './helpers/actionAttribution.js';
 
 const KEY = 'ab'.repeat(32);
 const ORIGINAL_KEY = process.env.BOT_IDENTITY_KEY;
+const ORIGINAL_SHUFFLE_SEED = process.env.BOT_TEST_SHUFFLE_SEED;
 
 let ctx: ReturnType<typeof createApp>;
 let baseUrl: string;
@@ -30,16 +36,15 @@ let hub: ReturnType<typeof attachHub>;
 /** Routed decisions of every bot runner, captured via `onActionEvent`. */
 let routedActions: RunnerActionEvent[] = [];
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-async function waitFor(fn: () => boolean, timeoutMs = 20000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (fn()) return;
-    await sleep(20);
-  }
-  throw new Error('waitFor timed out');
-}
+/**
+ * Seed for the deterministic mental-poker deal used by the end-to-end hand.
+ * With `BOT_TEST_SHUFFLE_SEED` set the server also mints a reproducible handId
+ * (`testHandId` in `game.ts`), so the seeded client permutation - and therefore
+ * the whole hand - is identical run to run. Safe here because every test boots
+ * a fresh `:memory:` database, so the `transcripts.hand_id` PRIMARY KEY the flag
+ * warns about cannot collide.
+ */
+const SHUFFLE_SEED = 'bot-e2e-complete-hand-rake';
 
 function botStatus(botId: string): string | null {
   const row = ctx.db.prepare('SELECT status FROM bot_accounts WHERE id = ?').get(botId) as
@@ -125,6 +130,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  uninstallDeterministicShuffle();
+  if (ORIGINAL_SHUFFLE_SEED === undefined) delete process.env.BOT_TEST_SHUFFLE_SEED;
+  else process.env.BOT_TEST_SHUFFLE_SEED = ORIGINAL_SHUFFLE_SEED;
   await supervisor.stopAll().catch(() => {});
   human.close();
   await ctx.app.close();
@@ -142,6 +150,13 @@ describe('bot vs human end to end', () => {
     expect(seen).toBeTruthy();
     expect(seen?.seat).toBe(1);
 
+    // Freeze the deal: patch the client-side mental-poker permutation and make
+    // the server mint a reproducible handId. Without this the CSPRNG deals a
+    // different hand every run, so the pot - and whether it crosses the rake
+    // floor - varied run to run.
+    process.env.BOT_TEST_SHUFFLE_SEED = SHUFFLE_SEED;
+    installDeterministicShuffle(SHUFFLE_SEED);
+
     human.send({ t: 'start_hand' });
     const driver = driveHuman(25_000);
     await waitFor(() => human.result !== null || human.abort !== null, 25_000);
@@ -149,8 +164,14 @@ describe('bot vs human end to end', () => {
 
     expect(human.abort).toBeNull();
     const result = human.result!;
-    // chips conserved within the hand
-    expect(result.deltas.reduce((s, d) => s + d.delta, 0)).toBe(0);
+    // Chips leave the hand's seats only via the room commission: `hand_end.deltas`
+    // are the combined poker+squid+bounty game legs and the documented aggregate
+    // is `sum(deltas) === -commission` ALWAYS (wsProtocol.ts), so a raked pot
+    // legitimately nets to -rake here; the commission itself lands on the
+    // recipient's `commission` ledger row. (The old assertion expected 0 and
+    // was only correct while the randomly dealt pot stayed under the rake floor.)
+    const handNet = result.deltas.reduce((s, d) => s + d.delta, 0);
+    expect(handNet + (result.commission ?? 0)).toBe(0);
 
     // The bot took real actions, all legal and observed by the human.
     const botActions = human.actionHistory.filter((a) => a.seat === bot.bot.seat);
