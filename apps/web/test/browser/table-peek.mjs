@@ -31,8 +31,8 @@ function makeRoom(mode = 'primary') {
   t: 'room_state',
   room: {
     id: 'peek-evidence', name: 'Peek evidence', joinCode: 'PEEK01', hostId: 2,
-    bankerId: 2, sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 45000,
-    actionSecs: 45, coBankerId: null, minSettleHands: 0, sevenDeuceBonus: 0,
+    bankerId: 2, sb: 10, bb: 20, auditMode: 'private', actionTimeoutMs: 30000,
+    actionSecs: null, coBankerId: null, minSettleHands: 0, sevenDeuceBonus: 0,
     voided: false, autoApproveBuys: false, tvReplays: false,
     commissionBps: 0,
   },

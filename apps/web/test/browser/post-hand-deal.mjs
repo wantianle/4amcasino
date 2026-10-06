@@ -25,8 +25,8 @@ const room = {
     sb: 10,
     bb: 20,
     auditMode: 'strict',
-    actionTimeoutMs: 45000,
-    actionSecs: 45,
+    actionTimeoutMs: 30000,
+    actionSecs: null,
     coBankerId: null,
     minSettleHands: 0,
     sevenDeuceBonus: 0,
@@ -77,6 +77,7 @@ try {
     );
   });
   const page = await ctx.newPage();
+  // Playwright harness timeout, NOT the product's fixed 30s action clock.
   page.setDefaultTimeout(45000);
   page.on('pageerror', (e) => errors.push(e.message));
   await page.route('**/api/**', (route) =>

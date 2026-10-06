@@ -37,8 +37,8 @@ function makeRoom(count, mySeat) {
       sb: 10,
       bb: 20,
       auditMode: 'private',
-      actionTimeoutMs: 45000,
-      actionSecs: 45,
+      actionTimeoutMs: 30000,
+      actionSecs: null,
       coBankerId: null,
       minSettleHands: 0,
       sevenDeuceBonus: 0,
@@ -339,6 +339,9 @@ try {
               // value on one opponent, and the 0s quiet variant on another.
               timeBanks: {
                 [meSeat]: 60000,
+                // 45s of BANKED time (ms) for this opponent, NOT the action
+                // clock: `deadline` above is the fixed 30s base clock. Kept as
+                // an arbitrary display value for the pill, unrelated to it.
                 [others[0]]: 45000,
                 ...(others[1] !== undefined ? { [others[1]]: 0 } : {}),
               },

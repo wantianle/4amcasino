@@ -231,7 +231,7 @@ try {
 
   const room = await api('/api/rooms', {
     method: 'POST',
-    body: { name: 'Bot Live QA', sb: 10, bb: 20, actionSecs: 20 },
+    body: { name: 'Bot Live QA', sb: 10, bb: 20 },
   });
   roomId = room.id;
   log(`room ${roomId} created (host/banker = ${account.username})`);
