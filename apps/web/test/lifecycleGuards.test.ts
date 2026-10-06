@@ -189,12 +189,9 @@ describe('invariant 1 - a late replay does not revive a terminal hand', () => {
     expect(h.settlementFailed).toBeNull();
   });
 
-  // KNOWN DEFECT (reported, NOT fixed here). `hand_recovery` has no
-  // `terminalHands` guard on its aborted/committed branches, so a late durable
-  // answer can overwrite a real terminal frame. `it.fails` keeps the suite green
-  // while pinning the desired behaviour - it turns RED the day the guard lands,
-  // which is the signal to promote it back to `it`.
-  it.fails('a late hand_recovery(aborted) after hand_end does not roll the result back', () => {
+  // Fixed: `hand_recovery` now consults `terminalHands` BEFORE registering the
+  // hand, so a late durable answer can no longer overwrite a real terminal frame.
+  it('a late hand_recovery(aborted) after hand_end does not roll the result back', () => {
     useStore.getState().patchHand({ handId: HAND });
     handle(handEnd(HAND));
 
@@ -205,11 +202,25 @@ describe('invariant 1 - a late replay does not revive a terminal hand', () => {
     expect(h.abort).toBeNull();
   });
 
-  // KNOWN DEFECT (reported, NOT fixed here). The `committed` branch guards only
-  // on `!h.result`, so a real `hand_abort` (result already null) is replaced by
-  // a recovered success. A `terminalHands.has` guard would still let a
-  // synthesised room_state abort be superseded, but not a real one.
-  it.fails('a late hand_recovery(committed) after hand_abort does not overwrite the abort', () => {
+  // Same class: `unresolved` is not a terminal state, so a late answer must not
+  // mark a settled hand as unresolved either. It is still never added to
+  // `terminalHands` - it only declines to overwrite an already-terminal hand.
+  it('a late hand_recovery(unresolved) after hand_end does not mark the settled hand unresolved', () => {
+    useStore.getState().patchHand({ handId: HAND });
+    handle(handEnd(HAND));
+    const before = useStore.getState().hand.result;
+
+    handle(handRecovery(HAND, 'unresolved'));
+
+    const h = useStore.getState().hand;
+    expect(h.result).toEqual(before);
+    expect(h.handRecovery).toBeNull();
+  });
+
+  // Fixed: the same pre-registration `terminalHands` guard stops the `committed`
+  // branch. A synthesised room_state abort is NOT registered as terminal, so a
+  // durable committed answer can still supersede it; a real `hand_abort` cannot.
+  it('a late hand_recovery(committed) after hand_abort does not overwrite the abort', () => {
     useStore.getState().patchHand({ handId: HAND });
     handle(handAbort(HAND));
     expect(useStore.getState().hand.abort?.handId).toBe(HAND);

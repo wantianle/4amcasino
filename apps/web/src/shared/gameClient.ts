@@ -961,8 +961,21 @@ export function handle(msg: ServerMsg): void {
       // on instead of insisting an administrator is still needed.
       const h = useStore.getState().hand;
       const failed = h.settlementFailed;
+      // A hand that already reached a terminal outcome must not be rewritten by
+      // a late/replayed durable answer. Evaluated BEFORE the `terminalHands.add`
+      // below - reading it after would always see the just-added id and the guard
+      // could never fire. Requiring BOTH the durable registry entry AND a
+      // terminal on the current hand is deliberate: the registry alone outlives
+      // the hand (a later hand reusing the id must not be rejected), and the
+      // store alone cannot tell a real terminal from a synthesised restart abort
+      // that a durable `committed` answer is authoritative enough to supersede.
+      const alreadyTerminal =
+        terminalHands.has(msg.handId) &&
+        h.handId === msg.handId &&
+        (h.result !== null || h.abort !== null);
       if (msg.status === 'committed') {
         terminalHands.add(msg.handId);
+        if (alreadyTerminal) return;
         if (h.handId === msg.handId && !h.result) {
           // No full terminal survived the restart. Close the hand as finished
           // (chips moved) so the room_state resync neither synthesises a refund
@@ -992,6 +1005,7 @@ export function handle(msg: ServerMsg): void {
       }
       if (msg.status === 'aborted') {
         terminalHands.add(msg.handId);
+        if (alreadyTerminal) return;
         if (h.handId === msg.handId || failed?.handId === msg.handId) {
           store.patchHand({
             abort: {
@@ -1018,6 +1032,10 @@ export function handle(msg: ServerMsg): void {
       // `room_state` must not be read as a refund. Only an operator can resolve
       // it, so surface admin-only status and never offer a retry that cannot
       // succeed.
+      // A settled hand cannot become unresolved: a late durable answer must not
+      // mark it back. Declining here without adding to `terminalHands` keeps the
+      // distinction intact - `unresolved` is not a terminal state.
+      if (alreadyTerminal) return;
       if (h.handId === msg.handId || failed?.handId === msg.handId) {
         if (failed && failed.handId === msg.handId) {
           store.patchHand({
