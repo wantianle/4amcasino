@@ -60,6 +60,14 @@ const account: Record<string, string> = {
 
   // Devices row
   'Signed-in devices': '已登录的设备',
+  'Could not load signed-in devices.': '无法加载已登录设备。',
+  'Loading devices…': '正在加载设备…',
+  'No signed-in devices found.': '没有找到已登录设备。',
+  'This device': '当前设备',
+  'Device': '设备',
+  'Created {date}': '创建于 {date}',
+  'This is the session currently used by this browser.': '这是当前浏览器正在使用的会话。',
+  'Other session': '其他会话',
   'Signs out every browser except this one. Your password and keys stay the same.':
     '退出除当前浏览器以外的所有登录，密码和密钥都不变。',
   'Signed out {n} other session(s).': '已退出 {n} 个其他设备的登录。',

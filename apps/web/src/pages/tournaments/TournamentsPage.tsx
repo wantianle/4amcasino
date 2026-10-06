@@ -249,6 +249,18 @@ function TournamentDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState(false);
   const [acceptedRevision, setAcceptedRevision] = useState<number | null>(null);
+  const [audit, setAudit] = useState<Awaited<ReturnType<typeof api.tournamentAudit>> | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [auditBusy, setAuditBusy] = useState(false);
+  const loadAudit = async () => {
+    setAuditOpen(true); setAuditError(''); setAuditBusy(true);
+    try { setAudit(await api.tournamentAudit(id)); } catch (e) {
+      setAuditError(e instanceof Error && e.message.includes('complete audit')
+        ? t('The complete audit opens after the league completes.')
+        : errorText(e));
+    } finally { setAuditBusy(false); }
+  };
   const refresh = useCallback(async () => {
     const s = await api.tournament(id);
     setState(s);
@@ -1154,6 +1166,13 @@ function TournamentDetail({ id }: { id: string }) {
                 <code className="arena-code block">{state.seed}</code>
               </>
             )}
+          </section>
+          <section className="arena-panel">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h2>{t('Tournament audit')}</h2><p className="arena-muted mt-1">{t('Review every recorded action and the revealed seed after completion.')}</p></div>
+              <Button variant="secondary" onClick={() => void loadAudit()}>{t('View full audit')}</Button>
+            </div>
+            {auditOpen && (auditBusy ? <Spinner label={t('Loading audit…')} /> : auditError ? <div role="alert" className="arena-error mt-3">{auditError} <Button variant="ghost" onClick={() => void loadAudit()}>{t('Retry')}</Button></div> : audit && <div className="mt-4 space-y-3"><div className="arena-code"><div>{t('Audit version')}: {audit.version}</div><div className="mt-1 break-all">{t('Revealed seed')}: {audit.seed ?? t('Not revealed')}</div><div className="mt-1">{t('Players')}: {audit.playerIds.length}</div></div><div className="max-h-96 overflow-auto rounded-xl border border-slate-200/70 dark:border-slate-700/70"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-slate-100 dark:bg-slate-800"><tr><th className="p-2">{t('Hand')}</th><th className="p-2">{t('Player')}</th><th className="p-2">{t('Action')}</th><th className="p-2">{t('Status')}</th></tr></thead><tbody>{audit.actions.map((row) => <tr key={row.cursor} className="border-t border-slate-200/60 dark:border-slate-700/60"><td className="p-2">#{row.handNumber}.{row.actionSeq}</td><td className="p-2">{row.userId}</td><td className="max-w-[20rem] break-all p-2">{JSON.stringify(row.action)}</td><td className="p-2">{row.timedOut ? t('Timed out') : t('Recorded')}</td></tr>)}</tbody></table>{!audit.actions.length && <p className="p-4 text-slate-500">{t('No audit actions recorded.')}</p>}</div>{audit.nextCursor > 0 && audit.actions.length >= 500 && <Button variant="ghost" onClick={async () => { const page = await api.tournamentAudit(id, audit.nextCursor); setAudit({ ...page, actions: [...audit.actions, ...page.actions] }); }}>{t('Load more actions')}</Button>}</div>)}
           </section>
         </aside>
       </div>

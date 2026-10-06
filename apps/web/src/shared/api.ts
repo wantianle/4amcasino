@@ -216,6 +216,12 @@ export const api = {
   tournaments: () => req('/api/tournaments') as Promise<{ tournaments: TournamentSummary[] }>,
   tournament: (id: string) =>
     req(`/api/tournaments/${encodeURIComponent(id)}`) as Promise<TournamentState>,
+  tournamentAudit: (id: string, after = 0) =>
+    req(`/api/tournaments/${encodeURIComponent(id)}/audit?after=${after}`) as Promise<{
+      version: number; seed: string | null; playerIds: number[];
+      actions: { cursor: number; userId: number; handNumber: number; actionSeq: number; action: unknown; timedOut: number }[];
+      nextCursor: number;
+    }>,
   createTournament: (body: Record<string, unknown>) =>
     req('/api/tournaments', body) as Promise<{ id: string }>,
   enrollTournament: (
@@ -408,6 +414,8 @@ export const api = {
       pending: true;
       requestId: number;
     }>,
+  /** Immediate room close: archive the room and clear seats; distinct from archiveRoom's approval flow. */
+  closeRoom: (roomId: string) => req(`/api/rooms/${roomId}/close`, {}, 'POST'),
   deleteRoom: (roomId: string, note?: string) =>
     req(`/api/rooms/${roomId}/delete`, note ? { note } : {}) as Promise<{
       pending: true;

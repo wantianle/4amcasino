@@ -14,13 +14,14 @@ import {
 } from '@phosphor-icons/react';
 import type { CardId, HouseDues } from '@4am/shared';
 import { evaluate7 } from '@4am/shared';
-import { api } from '../../shared/api.ts';
+import { api, ApiError } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { StyleRadar } from '../../features/stats/charts.tsx';
+import { METRICS, metricValue, type HandStats, type HiddenStats } from '../../features/stats/types.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
 import { tNode } from '../../shared/i18n/trans.tsx';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
@@ -865,6 +866,70 @@ function StatRow({ label, value, tone }: { label: string; value: string; tone?: 
   );
 }
 
+function FullStats({ userId }: { userId: number }) {
+  const [data, setData] = useState<HandStats | HiddenStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setData(null); setError(null);
+    void api.userStats(userId).then(setData).catch((e) => {
+      setError(e instanceof ApiError && e.status === 404 ? t('This player could not be found.') : t('Could not load player statistics.'));
+    });
+  }, [userId]);
+  return (
+    <Panel>
+      <h2 className="mb-1 font-display font-semibold">{t('Detailed hand statistics')}</h2>
+      <p className="mb-4 text-xs text-slate-500">{t('Public hand transcripts, position splits, and postflop detail.')}</p>
+      {error ? <p role="alert" className="text-sm text-rose-600">{error}</p> : !data ? <Spinner label={t('Loading statistics…')} /> : data.hidden ? (
+        <p className="text-sm text-slate-500">{t('This player has not made detailed statistics public.')}</p>
+      ) : data.sample === 0 ? (
+        <p className="text-sm text-slate-500">{t('There is not enough public hand data yet.')}</p>
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {METRICS.map(([key, label]) => <StatRow key={key} label={label} value={metricValue(data.stats[key])} />)}
+          </div>
+          <p className="mb-2 text-xs text-slate-500">{t('{n} public hands · {exact} exact', { n: fmt(data.sample), exact: fmt(data.dataQuality.exact) })}</p>
+          <h3 className="mb-2 text-sm font-semibold">{t('By position')}</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {Object.entries(data.byPosition).map(([position, bucket]) => (
+              <div key={position} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+                <b className="text-xs uppercase">{position}</b>
+                <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                  {METRICS.slice(0, 4).map(([key, label]) => <div key={key}>{label}: {metricValue(bucket.stats[key])}</div>)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <h3 className="mb-2 mt-5 text-sm font-semibold">{t('By street')}</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {Object.entries(data.byStreet).map(([street, bucket]) => (
+              <div key={street} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+                <b className="text-xs uppercase">{street}</b>
+                <div className="mt-1 text-xs text-slate-500">{t('AF')}: {metricValue(bucket.af)} · {t('AFq')}: {metricValue(bucket.afq)}</div>
+                <div className="mt-1 text-xs text-slate-400">{t('{n} hands', { n: fmt(bucket.sample) })}</div>
+              </div>
+            ))}
+          </div>
+          <h3 className="mb-2 mt-5 text-sm font-semibold">{t('Position in the hand')}</h3>
+          <div className="grid grid-cols-2 gap-2">
+            {(['ip', 'oop'] as const).map((position) => (
+              <div key={position} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+                <b className="text-xs uppercase">{position}</b>
+                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-500">
+                  {METRICS.map(([key, label]) => <span key={key}>{label}: {metricValue(data.byIpOop[position].stats[key])}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <h3 className="mb-2 mt-5 text-sm font-semibold">{t('Trend')}</h3>
+          {data.trend.length === 0 ? <p className="text-xs text-slate-500">{t('No trend data yet.')}</p> : <div className="max-h-40 overflow-auto rounded-xl bg-slate-50 p-3 text-xs dark:bg-slate-800/60"><div className="space-y-1">{data.trend.map((point) => <div key={point.ts} className="flex justify-between gap-3"><span>{new Date(point.ts).toLocaleDateString('zh-CN')}</span><span>{t('{n} hands', { n: fmt(point.hands) })}</span><span className={point.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{point.net >= 0 ? '+' : ''}{fmt(point.net)}</span></div>)}</div></div>}
+          {data.approximations.length > 0 && <p className="mt-3 text-xs text-slate-500">{t('Notes')}: {data.approximations.map((note) => tr(note)).join(' · ')}</p>}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 export function PlayerPage() {
   const { id } = useParams<{ id: string }>();
   const myUserId = useStore((s) => s.auth.userId);
@@ -986,8 +1051,8 @@ export function PlayerPage() {
               </Link>
             </div>
           )}
-          {!p.isPlatform && <BestHandCard userId={p.userId} own={own} />}
-          {!own && <PlayerActions userId={p.userId} name={p.username} />}
+              {!p.isPlatform && <BestHandCard userId={p.userId} own={own} />}
+              {!own && <PlayerActions userId={p.userId} name={p.username} />}
         </div>
 
         {/* middle: the money and the game */}
@@ -1008,6 +1073,7 @@ export function PlayerPage() {
             </Panel>
           ) : (
             <>
+              <FullStats userId={p.userId} />
               {style && style.hands > 0 && (
                 <Panel>
                   <div className="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">

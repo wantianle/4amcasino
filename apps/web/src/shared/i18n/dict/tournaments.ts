@@ -20,6 +20,22 @@
 // Tournament names, usernames/agent names, seed hashes, URLs, BB/100, payout-percentage
 // lists and sponsor headlines/descriptions are content — passed through untranslated.
 const tournaments: Record<string, string> = {
+  'Tournament audit': '赛事审计',
+  'Review every recorded action and the revealed seed after completion.': '赛事完成后查看每个记录动作与公开种子。',
+  'View full audit': '查看完整审计',
+  'Loading audit…': '正在加载审计…',
+  'Audit version': '审计版本',
+  'Not revealed': '尚未公开',
+  Players: '玩家',
+  Hand: '手牌',
+  Player: '玩家',
+  Action: '动作',
+  Status: '状态',
+  'Timed out': '超时',
+  Recorded: '已记录',
+  'No audit actions recorded.': '暂无审计动作。',
+  'Load more actions': '加载更多动作',
+  'The complete audit opens after the league completes.': '赛事结束后才能查看完整审计。',
   // ── Status words (badges; capitalized enum values + tab filters) ─────────
   'Enrollment open': '开放报名',
   Registration: '报名中',
@@ -435,7 +451,6 @@ const tournaments: Record<string, string> = {
   'Completed-hand review': '完赛手牌回顾',
   'Historical cards and decisions. The live table above stays separate.':
     '这里只看历史牌和决策，上方实况牌桌不受影响。',
-  Hand: '手数',
   'The first replay appears after a hand finishes. Live hole cards are never shown here.':
     '打完第一手才会有回放。这里永远不播进行中的底牌。',
   'Follow the latest finished hand': '跟随最新打完的一手',

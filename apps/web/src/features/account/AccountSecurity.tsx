@@ -250,32 +250,48 @@ function RecoveryInfo() {
 }
 
 function Devices() {
+  type Session = { id: string; createdAt: number; current: boolean };
+  const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    void api.sessions().then((r) => setSessions(r.sessions)).catch(() => setError(true));
+  }, []);
+  async function revoke() {
+    setBusy(true); setMsg(null);
+    try { const r = await api.revokeOtherSessions(); setSessions((rows) => rows?.filter((s) => s.current) ?? rows); setMsg(r.revoked > 0 ? t('Signed out {n} other session(s).', { n: r.revoked }) : t('No other sessions.')); }
+    catch { setMsg(t('could not do that')); } finally { setBusy(false); }
+  }
   return (
     <Row
       title={t('Signed-in devices')}
       hint={t('Signs out every browser except this one. Your password and keys stay the same.')}
     >
+      {error ? (
+        <Note kind="bad">{t('Could not load signed-in devices.')}</Note>
+      ) : !sessions ? (
+        <Spinner label={t('Loading devices…')} />
+      ) : sessions.length === 0 ? (
+        <p className="mb-3 text-xs text-slate-500">{t('No signed-in devices found.')}</p>
+      ) : (
+        <div className="mb-3 space-y-2">
+          {sessions.map((session) => (
+            <div key={session.id} className="rounded-xl bg-slate-50 px-3 py-2 text-xs dark:bg-slate-800/60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{session.current ? <b>{t('This device')}</b> : t('Device')} · {session.id}</span>
+                <span className="text-slate-500">{t('Created {date}', { date: new Date(session.createdAt).toLocaleString() })}</span>
+              </div>
+              <div className="mt-1 text-slate-500">{session.current ? t('This is the session currently used by this browser.') : t('Other session')}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <Button
         type="button"
         variant="secondary"
         disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            const r = await api.revokeOtherSessions();
-            setMsg(
-              r.revoked > 0
-                ? t('Signed out {n} other session(s).', { n: r.revoked })
-                : t('No other sessions.'),
-            );
-          } catch {
-            setMsg(t('could not do that'));
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onClick={() => void revoke()}
       >
         {busy ? <Spinner label={t('Working…')} /> : t('Sign out everywhere else')}
       </Button>
