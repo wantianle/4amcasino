@@ -964,15 +964,10 @@ export function handle(msg: ServerMsg): void {
       // A hand that already reached a terminal outcome must not be rewritten by
       // a late/replayed durable answer. Evaluated BEFORE the `terminalHands.add`
       // below - reading it after would always see the just-added id and the guard
-      // could never fire. Requiring BOTH the durable registry entry AND a
-      // terminal on the current hand is deliberate: the registry alone outlives
-      // the hand (a later hand reusing the id must not be rejected), and the
-      // store alone cannot tell a real terminal from a synthesised restart abort
-      // that a durable `committed` answer is authoritative enough to supersede.
-      const alreadyTerminal =
-        terminalHands.has(msg.handId) &&
-        h.handId === msg.handId &&
-        (h.result !== null || h.abort !== null);
+      // could never fire. The registry is the durable record: it outlives any
+      // single hand lifecycle, so a later hand that reuses the id is still
+      // rejected, which is the correct (idempotent) behaviour.
+      const alreadyTerminal = terminalHands.has(msg.handId);
       if (msg.status === 'committed') {
         terminalHands.add(msg.handId);
         if (alreadyTerminal) return;

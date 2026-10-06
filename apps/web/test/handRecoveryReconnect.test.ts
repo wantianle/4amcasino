@@ -80,7 +80,7 @@ vi.stubGlobal('WebSocket', FakeSocket);
 
 const { useStore } = await import('../src/shared/store.ts');
 const { wsClient } = await import('../src/shared/ws.ts');
-const { bindGameClient } = await import('../src/shared/gameClient.ts');
+const { bindGameClient, __resetHandTrackingForTest } = await import('../src/shared/gameClient.ts');
 const { HandRecoveryBanner } = await import('../src/features/table/settlementFailure.tsx');
 bindGameClient();
 
@@ -89,6 +89,11 @@ const HAND = 'recovery-reconnect-hand';
 beforeEach(() => {
   vi.useFakeTimers();
   FakeSocket.instances.length = 0;
+  // The module-level hand registries are process-lifetime by design; without
+  // this each case inherits the previous case's `terminalHands` entry for the
+  // shared HAND id and a pure terminal guard would (correctly) reject every
+  // later durable answer.
+  __resetHandTrackingForTest();
   useStore.setState({
     auth: { token: 't', userId: 1, username: 'me', identity: genIdentity() },
     wsConnected: false,

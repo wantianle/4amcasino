@@ -448,4 +448,54 @@ describe('invariant 7 - resetHand does not clear the terminal registry', () => {
     expect(h.result).toBeNull();
     expect(useStore.getState().lastHand).toEqual(last);
   });
+
+  // The three `hand_recovery` branches guard their patches with
+  // `h.handId === msg.handId`; once `resetHand()` has nulled the handId that
+  // can never hold, so a late durable answer for the dropped hand must be inert.
+  // No terminal is registered beforehand, so the branch BODY runs instead of
+  // being short-circuited by the registry guard - this is the net that catches a
+  // branch that drops the handId check and patches the (now empty) hand.
+  it('a late hand_recovery(committed) after resetHand does not resurrect the hand', () => {
+    useStore.getState().patchHand({ handId: HAND });
+    useStore.getState().resetHand();
+    expect(useStore.getState().hand.handId).toBeNull();
+    const before = useStore.getState().hand;
+
+    handle(handRecovery(HAND, 'committed'));
+
+    const h = useStore.getState().hand;
+    expect(h).toEqual(before);
+    expect(h.result).toBeNull();
+    expect(h.abort).toBeNull();
+    expect(h.handRecovery).toBeNull();
+  });
+
+  it('a late hand_recovery(aborted) after resetHand does not resurrect an abort', () => {
+    useStore.getState().patchHand({ handId: HAND });
+    useStore.getState().resetHand();
+    const before = useStore.getState().hand;
+
+    handle(handRecovery(HAND, 'aborted'));
+
+    const h = useStore.getState().hand;
+    expect(h).toEqual(before);
+    expect(h.handId).toBeNull();
+    expect(h.abort).toBeNull();
+    expect(h.result).toBeNull();
+    expect(h.handRecovery).toBeNull();
+  });
+
+  it('a late hand_recovery(unresolved) after resetHand does not mark anything unresolved', () => {
+    useStore.getState().patchHand({ handId: HAND });
+    useStore.getState().resetHand();
+    const before = useStore.getState().hand;
+
+    handle(handRecovery(HAND, 'unresolved'));
+
+    const h = useStore.getState().hand;
+    expect(h).toEqual(before);
+    expect(h.handId).toBeNull();
+    expect(h.handRecovery).toBeNull();
+    expect(h.settlementFailed).toBeNull();
+  });
 });
