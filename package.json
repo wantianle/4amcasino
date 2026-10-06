@@ -21,7 +21,8 @@
     "check:links": "node scripts/check-links.mjs",
     "check:clean-tree": "node scripts/check-clean-tree.mjs",
     "check:build": "node scripts/check-build.mjs",
-    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build && npm run check:i18n",
     "format": "prettier --write ."
   },
   "devDependencies": {
