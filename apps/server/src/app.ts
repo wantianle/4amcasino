@@ -16,8 +16,7 @@ import { registerAccountRoutes, armRecoveryCode, generateRecoveryCode } from './
 import { registerAdminRoutes } from './admin.js';
 import { forgive, hitNamed, LIMITS, rateLimit } from './limits.js';
 import { isPlatform } from './platform.js';
-import { AgentError, registerAgentAccess } from './agentAccess.js';
-import { registerAgentEvents } from './agentEvents.js';
+import { AgentError } from './agentAccess.js';
 
 const registerSchema = z.object({
   username: z
@@ -59,8 +58,6 @@ export function createApp(
     if (err instanceof AgentError) return reply.code(err.statusCode).send({ error: err.message });
     return reply.send(err);
   });
-  registerAgentAccess(app, db);
-  registerAgentEvents(app, db);
   // Keep existing bookmarks and room invites working after the domain move.
   // Match the actual Host, not a caller-controlled X-Forwarded-Host. Prefixing
   // the raw path with a fixed origin also keeps // paths on our destination.

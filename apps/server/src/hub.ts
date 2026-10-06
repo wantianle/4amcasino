@@ -28,7 +28,7 @@ const DEFAULT_OPTS: GameOpts = {
 /** Same-origin only. The game socket carries a session credential, so a page on
  *  any other origin has no business opening one. */
 function originAllowed(origin: string | undefined): boolean {
-  // No Origin at all means a non-browser client (the MCP seat, a script, the
+  // No Origin at all means a non-browser client (the bot runner, a script, the
   // tests). Those still need a valid session token, and the header is only
   // meaningful as a defence against a *page* on another origin - which always
   // sends one. Denying here would lock out every non-browser client instead.

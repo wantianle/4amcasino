@@ -214,31 +214,6 @@ export const api = {
   myStats: (query: StatsQuery = {}) => req(`/api/me/stats?${statsQuery(query)}`) as Promise<HandStats>,
   userStats: (id: number, query: StatsQuery = {}) => req(`/api/users/${id}/stats?${statsQuery(query)}`) as Promise<HandStats | HiddenStats>,
   roomHud: (id: string) => req(`/api/rooms/${encodeURIComponent(id)}/hud`) as Promise<RoomHud>,
-  agentScopes: () =>
-    req('/api/me/agent-scopes') as Promise<{
-      scopes: { id: string; name: string; kind: 'room' }[];
-    }>,
-  agentGrants: () =>
-    req('/api/me/agent-grants') as Promise<{
-      grants: {
-        id: string;
-        label: string;
-        scopeKind: string;
-        scopeId: string;
-        canPlay: number;
-        expiresAt: number;
-        revokedAt: number | null;
-      }[];
-    }>,
-  createAgentGrant: (body: {
-    label: string;
-    scopeKind: 'room';
-    scopeId: string;
-    canPlay: boolean;
-    days: number;
-  }) =>
-    req('/api/me/agent-grants', body) as Promise<{ id: string; token: string; expiresAt: number }>,
-  revokeAgentGrant: (id: string) => req(`/api/me/agent-grants/${id}`, undefined, 'DELETE'),
   register: (username: string, authKey: string, publicKey: string) =>
     req('/api/register', { username, authKey, publicKey }),
   login: (username: string, authKey: string) => req('/api/login', { username, authKey }),

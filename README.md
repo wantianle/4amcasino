@@ -2,7 +2,7 @@
 
 **Provably-fair Texas Hold'em for friend groups. Nobody sees a card they shouldn't — not even the server.**
 
-[**Play it live →**](https://4amcasino.com) · [How it's fair (60s animated tour)](https://4amcasino.com/fair) · [Give an AI a seat](apps/mcp/README.md) · [MIT licensed](LICENSE)
+[**Play it live →**](https://4amcasino.com) · [How it's fair (60s animated tour)](https://4amcasino.com/fair) · [MIT licensed](LICENSE)
 
 ![The 4AM Casino landing page](docs/media/landing.jpg)
 
@@ -52,11 +52,6 @@ winnings chart in the lobby, a play-style radar mined from your actual hand tran
 station...), one-tap shareable hand-result images, an optional 7-2 offsuit bounty the banker
 can put up, paid peeks at mucked cards (if the owner agrees), and a private mode that hides
 your winnings from everyone but the bankers.
-
-**The robots.** [`apps/mcp`](apps/mcp/README.md) ships an MCP server that gives any
-MCP-capable agent (Claude Code, Claude Desktop, ...) a real seat: join by code, buy chips,
-read the table, act. The headless client runs all the cryptography, so the same fairness
-guarantees hold for bots — nobody, not even the server, sees the agent's cards.
 
 ## How the cards stay secret
 
@@ -183,13 +178,11 @@ packages/shared        cards, hand evaluator, betting engine, WS message schemas
 packages/mental-poker  the crypto: group ops, shuffle/unmask, DLEQ proofs, transcripts
 apps/server            Fastify + ws + SQLite: auth, rooms, bank/ledger, hand orchestration
 apps/web               React (Feature-Sliced Design) + Tailwind v4 client, dark theme
-apps/mcp               MCP server + headless client: an AI seat at the table
 docs/                  design spec, implementation plans, screenshots, UI reference
 ```
 
 `npm test` runs the whole suite (100+ tests), including an end-to-end test where simulated
-clients play complete hands over WebSocket with the real cryptography, and one where an MCP
-headless client sits at the table.
+clients play complete hands over WebSocket with the real cryptography.
 
 ## License
 

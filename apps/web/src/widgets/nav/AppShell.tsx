@@ -15,7 +15,6 @@ import {
   RiLogoutBoxLine,
   RiMenuLine,
   RiArrowRightSLine,
-  RiRobot2Line,
   RiHistoryLine,
 } from '@remixicon/react';
 import { api } from '../../shared/api.ts';
@@ -115,7 +114,6 @@ export function AppShell({ children, newTab = false }: { children: ReactNode; ne
   const primary: Destination[] = [
     { to: '/lobby', label: 'Lobby', icon: RiHome5Line },
     { to: '/leaderboard', label: 'Leaderboard', icon: RiTrophyLine },
-    { to: '/agents', label: 'Agent access', icon: RiRobot2Line },
     {
       to: '/settle',
       label: 'Settle up',

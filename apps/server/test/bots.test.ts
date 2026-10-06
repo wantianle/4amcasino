@@ -120,15 +120,11 @@ describe('bot create', () => {
     expect((ctx.db.prepare('SELECT COUNT(*) AS n FROM agent_grants').get() as { n: number }).n).toBe(0);
   });
 
-  it('hides the internal bot grant from the owner agent-grants list once claimed', async () => {
+  it('mints an internal bot_runner grant on claim', async () => {
     const created = (await createBot({ seat: 2, name: 'Hidden' })).json();
     await startBot(created.bot.id);
     const claim = claimStartingBot(ctx.db, created.bot.id)!;
     expect(claim.grantToken).toMatch(/^4am_agent_[0-9a-f]{64}$/);
-
-    const list = await ctx.app.inject({ url: '/api/me/agent-grants', headers: auth(hostToken) });
-    expect(list.json().grants).toEqual([]);
-    expect(list.body).not.toContain(claim.grantToken);
 
     const grant = ctx.db
       .prepare('SELECT grant_kind, bot_id, can_play, scope_id, user_id FROM agent_grants')
@@ -148,15 +144,10 @@ describe('bot create', () => {
   });
 
   it('rejects an agent token (real login required)', async () => {
-    const grant = (
-      await ctx.app.inject({
-        method: 'POST',
-        url: '/api/me/agent-grants',
-        headers: auth(hostToken),
-        payload: { scopeKind: 'room', scopeId: room, label: 'runner', canPlay: true },
-      })
-    ).json();
-    const res = await createBot({ seat: 1 }, grant.token);
+    const created = (await createBot({ seat: 1 })).json();
+    await startBot(created.bot.id);
+    const claim = claimStartingBot(ctx.db, created.bot.id)!;
+    const res = await createBot({ seat: 2 }, claim.grantToken);
     expect(res.statusCode).toBe(401);
   });
 

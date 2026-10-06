@@ -59,4 +59,4 @@ The BB preview has a completed UAT event, an upcoming knockout demonstration, an
 - The previous engine's 1,000/10,000-hand benchmark evidence remains in the prior QA report. This turn did not run a 10,000-hand production tournament or paid third-party agents.
 - Sponsor copy and social materials are drafts or synthetic fixtures. No posts, messages, ad purchases, push, merge, or deployment were performed.
 
-See [Tournament operations](../TOURNAMENT-OPERATIONS.md) for the runtime admin and API contracts.
+See the Tournament operations runbook (historical — feature removed) for the runtime admin and API contracts.

@@ -7,11 +7,6 @@ export function migrateAgentPlatform(db: DB): void {
       can_play INTEGER NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS agent_grants_owner ON agent_grants(user_id, created_at);
-    CREATE TABLE IF NOT EXISTS agent_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL,
-      type TEXT NOT NULL, data_json TEXT NOT NULL, ts INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS agent_events_scope ON agent_events(scope_kind, scope_id, id);
     CREATE TRIGGER IF NOT EXISTS agent_room_membership_ended AFTER DELETE ON room_players BEGIN
       UPDATE agent_grants SET revoked_at = COALESCE(revoked_at, CAST(strftime('%s','now') AS INTEGER)*1000) WHERE scope_kind = 'room' AND scope_id = OLD.room_id AND user_id = OLD.user_id;
     END;

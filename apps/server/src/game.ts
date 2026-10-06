@@ -54,7 +54,6 @@ import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
 import { readRoomFeatures } from './gameplaySettings.js';
 import { computeHeadsUpEquity, EquityError } from './equity.js';
 import { settleRake } from './rake.js';
-import { publishRoomEvent } from './agentEvents.js';
 import { platformUserId } from './platform.js';
 
 export interface GameOpts {
@@ -1926,7 +1925,6 @@ export class GameRoom {
   }
 
   broadcast(msg: ServerMsg): void {
-    publishRoomEvent(this.db, this.roomId, msg);
     const data = JSON.stringify(msg);
     for (const ws of this.sockets.values()) ws.send(data);
   }
@@ -2000,7 +1998,6 @@ export class GameRoom {
     const memberIds = new Set(players.map((p) => p.userId));
     const masked = JSON.stringify({ ...state, room: { ...state.room, joinCode: '' } });
     const full = JSON.stringify(state);
-    publishRoomEvent(this.db, this.roomId, state);
     for (const [uid, ws] of this.sockets) ws.send(memberIds.has(uid) ? full : masked);
   }
 

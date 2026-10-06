@@ -8,7 +8,6 @@
 const nav: Record<string, string> = {
   // Rail items
   Lobby: '大厅',
-  'Agent access': '代理访问',
   'My stats': '我的战绩',
   "How it's fair": '公平玩法',
   Admin: '后台',

@@ -14,7 +14,6 @@ import { Button, Input, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { cardFromName } from '@4am/shared';
 import { adminDestination, isAdminSite } from '../../shared/adminSite.ts';
-import { authDestination } from '../../shared/authDestination.ts';
 import { issuedRecoveryCode as recoveryCodeFrom } from './issuedRecovery.ts';
 
 type Mode = 'login' | 'register' | 'recover';
@@ -68,7 +67,7 @@ export function LoginPage() {
         return;
       }
     }
-    nav(authDestination(window.location.search) ?? '/lobby');
+    nav('/lobby');
   }
 
   function copyRecoveryCode() {

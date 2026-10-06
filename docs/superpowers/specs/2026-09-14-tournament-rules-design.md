@@ -5,7 +5,7 @@ Requested by: **notpritam**
 Status: Rules approved (§2) and implemented (§3). Surface unification (§4) remains a separate design pass.
 
 This document defines the competition rules for 4AM Casino tournaments. It supersedes the rule
-statements in [Tournament operations](../../TOURNAMENT-OPERATIONS.md) where the two disagree;
+statements in the Tournament operations runbook (historical — feature removed) where the two disagree;
 that runbook has been updated to describe these rules as implemented.
 
 ## 1. Why this exists
