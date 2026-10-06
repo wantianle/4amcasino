@@ -1,6 +1,7 @@
 // Table bots (Phase 1 UI): the shared vocabulary between the seat pod, the
 // host dialog and the ⋮ menu. The lifecycle states themselves are owned by
 // apps/server/src/botRoutes.ts - this file only maps them to display copy.
+import { DEFAULT_BOT_DIFFICULTY, RETIRED_BOT_DIFFICULTIES } from '@4am/shared';
 import type { BotDifficulty, BotStatus } from '../../shared/api.ts';
 import { t } from '../../shared/i18n/index.ts';
 
@@ -138,11 +139,11 @@ export const BOT_DIFFICULTIES: BotDifficultyOption[] = [
 ];
 
 /** Tiers the product has retired but that may still be persisted on a legacy
- *  bot row. They run as the mapped tier, so the label reads that tier, not the
- *  raw value. */
-const RETIRED_BOT_DIFFICULTIES: Record<string, BotDifficulty> = { high: 'medium' };
-
+ *  bot row. They run as the default tier, so the label reads that tier, not the
+ *  raw value. The retired set itself is owned by @4am/shared. */
 export function botDifficultyLabel(kind: string): string {
-  const effective = RETIRED_BOT_DIFFICULTIES[kind] ?? (kind as BotDifficulty);
+  const effective = (RETIRED_BOT_DIFFICULTIES as readonly string[]).includes(kind)
+    ? DEFAULT_BOT_DIFFICULTY
+    : (kind as BotDifficulty);
   return BOT_DIFFICULTIES.find((d) => d.kind === effective)?.label ?? kind;
 }

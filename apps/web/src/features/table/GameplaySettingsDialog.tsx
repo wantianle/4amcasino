@@ -30,21 +30,14 @@ import { cn } from '../../shared/lib/cn.ts';
 import { Bomb, CaretDown, Cards, Skull, Timer } from '@phosphor-icons/react';
 
 /**
- * UI starting point for a fresh form. The shared `DEFAULT_GAMEPLAY_SETTINGS`
- * still carries the pre-P2 numbers (min players 2, refill every 10 hands); the
- * server's `ROOM_FEATURE_DEFAULTS` — and both P2 docs — settled on 3 players
- * and a 30-hand refill, so the UI seeds the values the host actually sees.
- * Every field is still editable and every bound is still the shared constant.
+ * UI-only default used when a host flips the bomb-pot cadence from hands to
+ * time: the shared `DEFAULT_GAMEPLAY_SETTINGS` seeds hands at 10, but there is
+ * no shared "default duration" (the DB default is hands mode), so this is a
+ * presentation choice and deliberately not sourced from @4am/shared.
  */
-export const GAMEPLAY_UI_DEFAULTS: RoomGameplaySettings = {
-  squid: { ...DEFAULT_GAMEPLAY_SETTINGS.squid, minPlayers: 3 },
-  timeBank: { ...DEFAULT_GAMEPLAY_SETTINGS.timeBank, refillEveryHands: 30 },
-  bombPot: { ...DEFAULT_GAMEPLAY_SETTINGS.bombPot },
-  multiRun: { ...DEFAULT_GAMEPLAY_SETTINGS.multiRun },
-};
-
-const BOMB_DEFAULT_HANDS = 10;
 const BOMB_DEFAULT_DURATION_SECONDS = 600;
+/** The shared default bomb-pot interval, in hands. */
+const BOMB_DEFAULT_HANDS = DEFAULT_GAMEPLAY_SETTINGS.bombPot.schedule.value;
 
 function clampInt(value: number, min: number, max: number): number {
   const rounded = Number.isFinite(value) ? Math.round(value) : min;
@@ -68,23 +61,31 @@ export function normalizeGameplaySettings(s: RoomGameplaySettings): RoomGameplay
   return {
     squid: {
       enabled: !!s.squid?.enabled,
-      penaltyBb: clampInt(s.squid?.penaltyBb ?? 1, SQUID_PENALTY_BB_MIN, SQUID_PENALTY_BB_MAX),
-      minPlayers: clampInt(s.squid?.minPlayers ?? 3, SQUID_MIN_PLAYERS_MIN, SQUID_MIN_PLAYERS_MAX),
+      penaltyBb: clampInt(
+        s.squid?.penaltyBb ?? DEFAULT_GAMEPLAY_SETTINGS.squid.penaltyBb,
+        SQUID_PENALTY_BB_MIN,
+        SQUID_PENALTY_BB_MAX,
+      ),
+      minPlayers: clampInt(
+        s.squid?.minPlayers ?? DEFAULT_GAMEPLAY_SETTINGS.squid.minPlayers,
+        SQUID_MIN_PLAYERS_MIN,
+        SQUID_MIN_PLAYERS_MAX,
+      ),
     },
     timeBank: {
       enabled: !!s.timeBank?.enabled,
       initialSeconds: clampInt(
-        s.timeBank?.initialSeconds ?? 30,
+        s.timeBank?.initialSeconds ?? DEFAULT_GAMEPLAY_SETTINGS.timeBank.initialSeconds,
         TIME_BANK_SECONDS_MIN,
         TIME_BANK_SECONDS_MAX,
       ),
       refillEveryHands: clampInt(
-        s.timeBank?.refillEveryHands ?? 30,
+        s.timeBank?.refillEveryHands ?? DEFAULT_GAMEPLAY_SETTINGS.timeBank.refillEveryHands,
         TIME_BANK_REFILL_EVERY_HANDS_MIN,
         TIME_BANK_REFILL_EVERY_HANDS_MAX,
       ),
       refillSeconds: clampInt(
-        s.timeBank?.refillSeconds ?? 30,
+        s.timeBank?.refillSeconds ?? DEFAULT_GAMEPLAY_SETTINGS.timeBank.refillSeconds,
         TIME_BANK_SECONDS_MIN,
         TIME_BANK_SECONDS_MAX,
       ),
@@ -93,7 +94,7 @@ export function normalizeGameplaySettings(s: RoomGameplaySettings): RoomGameplay
       enabled: !!s.bombPot?.enabled,
       anteBb: (BOMB_POT_ANTE_BB_VALUES as readonly number[]).includes(s.bombPot?.anteBb)
         ? (s.bombPot.anteBb as 1 | 2 | 3)
-        : 1,
+        : DEFAULT_GAMEPLAY_SETTINGS.bombPot.anteBb,
       schedule: {
         mode,
         value:

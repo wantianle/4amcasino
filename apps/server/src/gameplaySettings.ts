@@ -5,6 +5,7 @@ import {
   BOMB_POT_DURATION_SECONDS_MIN,
   BOMB_POT_HANDS_MAX,
   BOMB_POT_HANDS_MIN,
+  DEFAULT_GAMEPLAY_SETTINGS,
   MULTI_RUN_MAX_RUNS,
   SQUID_MIN_PLAYERS_MAX,
   SQUID_MIN_PLAYERS_MIN,
@@ -35,21 +36,19 @@ export interface RoomFeatureColumns {
 }
 
 /**
- * The values a fresh room has before any settings are written. Kept in
- * lock-step with the `ensureColumn` defaults in db.ts and the shared
- * `DEFAULT_GAMEPLAY_SETTINGS`; used to validate a `features` payload supplied
- * at room-creation time (there is no stored row to merge against yet).
+ * The values a fresh room has before any settings are written. This is the
+ * shared `DEFAULT_GAMEPLAY_SETTINGS` object itself (not a copy), so there is a
+ * single source of truth for the gameplay defaults; used to validate a
+ * `features` payload supplied at room-creation time (there is no stored row to
+ * merge against yet).
  *
  * Every feature is ON by default: a new table is meant to have the new gameplay
  * (squid / time bank / bomb pot / multi-run) available out of the box. A host
- * can still switch any of them off through the settings dialog.
+ * can still switch any of them off through the settings dialog. The DB column
+ * defaults in db.ts are kept as a safety fallback only; room creation always
+ * writes the full normalized object through {@link applyRoomFeatures}.
  */
-export const ROOM_FEATURE_DEFAULTS: RoomGameplaySettings = {
-  squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
-  timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
-  bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
-  multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
-};
+export const ROOM_FEATURE_DEFAULTS: RoomGameplaySettings = DEFAULT_GAMEPLAY_SETTINGS;
 
 const bombAnteSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 

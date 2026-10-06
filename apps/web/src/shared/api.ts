@@ -1,9 +1,19 @@
 import { useStore } from './store.ts';
 import { tr } from './i18n/index.ts';
-import type { AdminOverview, CommissionScope, CommissionSettings } from '@4am/shared';
-import type { RoomGameplaySettings } from '@4am/shared';
+import type {
+  AdminOverview,
+  BotDifficulty,
+  BotStatus,
+  CommissionScope,
+  CommissionSettings,
+  RoomGameplaySettings,
+} from '@4am/shared';
 import { isAdminSite } from './adminSite.ts';
 import { statsQuery, type StatsQuery, type HandStats, type HiddenStats, type RoomHud } from '../features/stats/types.ts';
+
+/** The single shared vocabularies (values + types) live in @4am/shared; this
+ *  module re-exports them so the rest of the web app has one import site. */
+export type { BotDifficulty, BotStatus };
 
 /** The new-gameplay features a host can fire on demand (as opposed to the
  *  always-on time bank / multi-run switches). Matches the server's
@@ -69,18 +79,7 @@ export interface MyHandRef {
 /** ── Table bots (apps/server/src/botRoutes.ts) ───────────────────────────────
  * The PUBLIC, sanitized view of a bot opponent: the server never ships the
  * encrypted seed or a runner grant on these routes. Mirrors
- * `botPublicJson()` / `BOT_STATUSES` server-side. */
-export type BotStatus =
-  | 'created'
-  | 'waiting_buy_approval'
-  | 'ready'
-  | 'starting'
-  | 'running'
-  | 'stopping'
-  | 'stopped'
-  | 'error'
-  | 'removed';
-
+ * `botPublicJson()` / the shared `BOT_STATUSES`. */
 export interface BotPublic {
   id: string;
   userId: number;
@@ -103,8 +102,6 @@ export interface BotPublic {
   /** Current room_players stack, using the same source as the table. */
   stack: number;
 }
-
-export type BotDifficulty = 'low' | 'medium';
 
 /** The buy request the create/buy endpoints echo back. `approved` means the
  *  chips already landed (host is the room's banker); `pending` waits in the

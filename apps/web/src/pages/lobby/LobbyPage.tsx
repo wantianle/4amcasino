@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  DEFAULT_GAMEPLAY_SETTINGS,
   MAX_QUALIFYING_HANDS,
   commissionRateLabel,
   type RoomGameplaySettings,
@@ -15,7 +16,6 @@ import { FriendsPanel, InvitesPanel } from '../../features/friends/FriendsPanel.
 import { NetAreaChart } from '../../features/stats/charts.tsx';
 import { CopyInvite } from '../../features/share/ShareRoom.tsx';
 import {
-  GAMEPLAY_UI_DEFAULTS,
   GameplayRulesToggle,
   GameplaySettingsEditor,
   cloneGameplaySettings,
@@ -50,7 +50,7 @@ export function LobbyPage() {
   // P2 gameplay rules (squid / time bank / bomb pot / multi-run), seeded from
   // the shared defaults and sent with the room on create.
   const [features, setFeatures] = useState<RoomGameplaySettings>(() =>
-    cloneGameplaySettings(GAMEPLAY_UI_DEFAULTS),
+    cloneGameplaySettings(DEFAULT_GAMEPLAY_SETTINGS),
   );
   const [rulesOpen, setRulesOpen] = useState(false);
   const [timeline, setTimeline] = useState<{ ts: number; net: number }[]>([]);
