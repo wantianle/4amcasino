@@ -16,6 +16,14 @@ import {
   voidHandExistsSql,
 } from './handProjection.js';
 import {
+  awardForSeat,
+  foldForSeat,
+  holeCardsForSeat,
+  revealForSeat,
+  seatForUser,
+  transcriptView,
+} from './transcriptView.js';
+import {
   DEFAULT_POKER_HOTKEYS,
   ALL_IN_RATIO,
   BET_RATIO_OPTIONS,
@@ -523,21 +531,15 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     let wins = 0;
     let quietWins = 0;
     for (const row of rows) {
-      let entries: { type: string; payload: Record<string, unknown> }[];
-      try {
-        entries = JSON.parse(row.entries);
-      } catch {
-        continue;
-      }
-      const hs = entries.find((e) => e.type === 'hand_start');
-      const seats = (hs?.payload.seats ?? []) as { seat: number; userId: number }[];
-      const seat = seats.find((x) => x.userId === id)?.seat;
+      const view = transcriptView(row.entries);
+      if (!view.entries) continue;
+      const seat = seatForUser(view, id);
       if (seat === undefined) continue;
       hands++;
       let street = 0;
       let voluntary = false;
       let raisedPre = false;
-      for (const e of entries) {
+      for (const e of view.entries) {
         if (e.type === 'street') street++;
         if (e.type === 'action' && (e.payload.seat as number) === seat) {
           const a = e.payload.action as { type: string };
@@ -554,18 +556,12 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             folds++;
           }
         }
-        if (e.type === 'settlement') {
-          const p = e.payload as {
-            awards?: { seat: number; amount: number }[];
-            reveals?: { seat: number }[];
-          };
-          if ((p.reveals ?? []).some((r) => r.seat === seat)) showdowns++;
-          const award = (p.awards ?? []).find((a) => a.seat === seat)?.amount ?? 0;
-          if (award > 0) {
-            wins++;
-            if ((p.reveals ?? []).length === 0) quietWins++;
-          }
-        }
+      }
+      // Read-only settlement facts, independent of the action tallies above.
+      if (revealForSeat(view, seat)) showdowns++;
+      if (awardForSeat(view, seat) > 0) {
+        wins++;
+        if (view.reveals.length === 0) quietWins++;
       }
       if (voluntary) vpip++;
       if (raisedPre) pfr++;
@@ -704,27 +700,20 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const hands: unknown[] = [];
     for (const row of rows) {
       if (hands.length >= 30) break;
-      let entries: { type: string; payload: Record<string, unknown> }[];
-      try {
-        entries = JSON.parse(row.entries) as typeof entries;
-      } catch {
-        continue;
-      }
-      const start = entries.find((e) => e.type === 'hand_start');
-      if (!start) continue;
-      const seats = (start.payload.seats as { seat: number; userId: number }[]) ?? [];
-      const mine = seats.find((x) => x.userId === req.userId);
-      if (!mine) continue; // a hand in my room that I sat out
-      const settlement = entries.find((e) => e.type === 'settlement');
-      const board = (settlement?.payload.board as number[] | undefined) ?? [];
-      const allReveals =
-        (settlement?.payload.reveals as { seat: number; cards: number[] }[] | undefined) ?? [];
-      const reveal = allReveals.find((x) => x.seat === mine.seat);
+      const view = transcriptView(row.entries);
+      if (!view.entries) continue;
+      if (!view.start) continue;
+      const seats = view.seats;
+      const mine = seatForUser(view, req.userId);
+      if (mine === undefined) continue; // a hand in my room that I sat out
+      const board = view.board;
+      const allReveals = view.reveals;
+      const reveal = revealForSeat(view, mine);
       const labelOf = (cards: number[]): string | null =>
         board.length === 5 ? describeScore(evaluate7([...cards, ...board] as never)) : null;
       // who I beat (or lost to): every OTHER revealed hand, with what it made
       const opponents = allReveals
-        .filter((x) => x.seat !== mine.seat)
+        .filter((x) => x.seat !== mine)
         .map((x) => {
           const uid = seats.find((sx) => sx.seat === x.seat)?.userId;
           const who = uid
@@ -734,18 +723,11 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             : undefined;
           return { name: who?.name ?? `Seat ${x.seat + 1}`, cards: x.cards, label: labelOf(x.cards) };
         });
-      const decrypted = entries.find(
-        (e) => e.type === 'hole_cards' && (e.payload.seat as number) === mine.seat,
-      );
-      const folded = entries.some(
-        (e) =>
-          (e.type === 'action' &&
-            (e.payload.seat as number) === mine.seat &&
-            (e.payload.action as { type: string }).type === 'fold') ||
-          (e.type === 'timeout_fold' && (e.payload.seat as number) === mine.seat),
-      );
+      const myHoleCards = holeCardsForSeat(view, mine);
+      // Unlike the rooms list, history counts a timeout fold as a fold.
+      const folded = foldForSeat(view, mine, { timeoutFolds: true }).folded;
       const net = (netStmt.get(req.userId, row.roomId, row.handId) as { net: number }).net;
-      const outcome = !settlement
+      const outcome = !view.settlement
         ? 'aborted'
         : reveal
           ? net >= 0
@@ -756,7 +738,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             : net > 0
               ? 'won quietly'
               : 'played';
-      const myCards = reveal?.cards ?? (decrypted?.payload.cards as number[] | undefined) ?? null;
+      const myCards = reveal?.cards ?? myHoleCards ?? null;
       hands.push({
         handId: row.handId,
         roomId: row.roomId,
@@ -820,24 +802,15 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND hand_id = ?')
       .get(best.roomId, best.handId) as { handId: string; entries: string; ts: number } | undefined;
     if (!t) return { hidden: !user.showBestHand, hand: null };
-    let board: number[] = [];
+    let board: readonly number[] = [];
     let myCards: number[] | null = null;
     let label: string | null = null;
     try {
-      const entries = JSON.parse(t.entries) as { type: string; payload: Record<string, unknown> }[];
-      const start = entries.find((e) => e.type === 'hand_start');
-      const seat = (
-        (start?.payload.seats as { seat: number; userId: number }[] | undefined) ?? []
-      ).find((x) => x.userId === id)?.seat;
-      const settlement = entries.find((e) => e.type === 'settlement');
-      board = (settlement?.payload.board as number[] | undefined) ?? [];
-      const reveal = (
-        (settlement?.payload.reveals as { seat: number; cards: number[] }[] | undefined) ?? []
-      ).find((x) => x.seat === seat);
-      const decrypted = entries.find(
-        (e) => e.type === 'hole_cards' && (e.payload.seat as number) === seat,
-      );
-      myCards = reveal?.cards ?? (decrypted?.payload.cards as number[] | undefined) ?? null;
+      const view = transcriptView(t.entries);
+      const seat = seatForUser(view, id);
+      board = view.board;
+      const reveal = revealForSeat(view, seat);
+      myCards = reveal?.cards ?? holeCardsForSeat(view, seat) ?? null;
       if (myCards && board.length === 5)
         label = describeScore(evaluate7([...(myCards as [number, number]), ...board] as never));
     } catch {
