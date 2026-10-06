@@ -2264,7 +2264,6 @@ export function TablePage() {
               narrow={narrowCanvas}
               centerCompact={centerCompact}
               centerRaised={multiRunBoard}
-              heroCardsRaised={!!hand.showdown && (multiRunBoard || hand.showdown.reveals.length > 0)}
               centerBudget
               ribbon={featureRibbon}
               seats={seatViews}
