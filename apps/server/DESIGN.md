@@ -65,6 +65,26 @@ by the current connection epoch, and by hand identity (a stale previous-hand
 frame neither opens the gate nor mutates cached state). A resync that reports no
 live hand clears the stale hand snapshot and opens the gate.
 
+## Terminal-frame replay bound (8 hands) and the fresh-refresh boundary
+
+`GameRoom.terminalFrames` retains at most `MAX_TERMINAL_FRAMES` (8) recent
+`hand_end` frames per room, so a participant who missed the terminal frame
+(dropped socket, swallowed broadcast, or simply not dealt into the next hand)
+still receives it on reconnect. The bound is deliberate: an idle-but-long-lived
+room must not leak frames.
+
+**Product boundary: 8 hands.** A client that is still connected holds
+`hand.handId` in memory and announces it as `join_room.resumeHandId`; the server
+then answers from durable `hand_lifecycle` / `hand_settlements` data via
+`hand_recovery`, which does not depend on the in-memory cache. A **fresh page
+refresh**, however, does not persist `hand.handId` (the store keeps the hand in
+memory only), so it cannot name the hand it held and recovery relies entirely on
+replaying a retained terminal frame. Once that hand has aged out past the
+8-frame window, a fresh refresh is **not guaranteed** to recover the result and
+the recap may be missing. This is accepted for this round: 8 hands is the
+explicit boundary. Persisting `hand.handId` across reloads (or a durable resume
+token) would remove the bound but is out of scope here.
+
 ## `(room_id, head)` unique-index preflight runbook
 
 `migrateHandStats` (`handProjection.ts`) installs two unique indexes that the

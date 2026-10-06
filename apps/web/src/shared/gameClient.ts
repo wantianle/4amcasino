@@ -163,6 +163,23 @@ function signed(handId: string, t: string, body: unknown): string {
 const foldedByMe = new Set<string>();
 const endedHands = new Set<string>();
 
+/** Hands the client has seen reach a TERMINAL state (`hand_end` / `hand_abort`
+ *  / a durable `hand_recovery`). Unlike `endedHands` this is written only on a
+ *  terminal frame, never on `showdown`: a settlement can still fail AFTER the
+ *  reveal, so a `settlement_failed` that follows a `showdown` is legitimate and
+ *  must not be rejected. This set is what stops a late/replayed
+ *  `settlement_failed` for an already-finished hand from reviving its banner. */
+const terminalHands = new Set<string>();
+
+/** Test-only: clear the module-level hand-tracking sets so cases are isolated.
+ *  Production never calls this - the sets are process-lifetime by design and
+ *  resetting them mid-session would re-open already-finished hands. */
+export function __resetHandTrackingForTest(): void {
+  foldedByMe.clear();
+  endedHands.clear();
+  terminalHands.clear();
+}
+
 /** Send a betting action for the current hand (called from the UI). */
 export function act(action: PlayerAction): void {
   const handId = useStore.getState().hand.handId;
@@ -244,6 +261,31 @@ export function imReady(): void {
   wsClient.send({ t: 'im_ready' });
 }
 
+/** Host-only recovery from a frozen settlement. The server keeps the computed
+ *  (deterministic) result and re-runs the durable write; safe and idempotent.
+ *  The request carries no payload and the reply is a later frame - either the
+ *  terminal `hand_end` (success) or another `settlement_failed` (still failing) -
+ *  so mark the local pending timestamp to avoid a dead-looking button. */
+export function retrySettlement(): void {
+  const state = useStore.getState();
+  const failed = state.hand.settlementFailed;
+  if (!failed || failed.orphaned) return;
+  // Host-only, and only while the socket is live, checked BEFORE touching any
+  // local state. The server enforces the same rule, but rejecting here means no
+  // caller - not just the banner button - can flip the UI into 'retrying' or
+  // emit the frame on behalf of a non-host.
+  if (!state.room || state.room.room.hostId !== state.auth.userId) return;
+  if (!state.wsConnected) return;
+  useStore.getState().patchHand({
+    settlementFailed: {
+      ...failed,
+      retryRequestedAt: Date.now(),
+      manualRetry: true,
+    },
+  });
+  wsClient.send({ t: 'retry_settlement' });
+}
+
 /** Vote on running the all-in board twice (requested by notpritam, docs/FEATURES.md). */
 export function ritVote(yes: boolean): void {
   const h = useStore.getState().hand;
@@ -307,7 +349,33 @@ export function handle(msg: ServerMsg): void {
       // our hand, stop showing it as live instead of freezing the table
       if (wsClient.consumeResync() && !msg.handActive) {
         const h = useStore.getState().hand;
-        if (h.handId && !h.result && !h.abort) {
+        const failed = h.settlementFailed;
+        if (h.handId && failed && failed.handId === h.handId) {
+          // A pending durable-settlement failure is NOT resolved by the hand
+          // disappearing from the server. After a restart the `hand_lifecycle`
+          // row can still be unresolved, and a committed hand's `hand_end` may
+          // simply have been missed - absence of `handActive` is not proof the
+          // chips moved. Keep the recovery banner; a replayed `hand_end` (the
+          // server retains the terminal frame) clears it. Until then mark it
+          // orphaned: there is no live hand for the host to retry.
+          store.patchHand({
+            settlementFailed: {
+              ...failed,
+              orphaned: true,
+              retrying: false,
+              retryRequestedAt: null,
+            },
+            deadline: null,
+          });
+        } else if (h.handId && h.handRecovery === 'unresolved') {
+          // The server's durable answer for this hand is `unresolved`: it never
+          // reached a terminal transaction, so the missing live hand is NOT a
+          // restart refund. Keep the recovery state and stop the dead action
+          // timer; only an operator resolves it. Synthesising an abort here
+          // would fabricate a refund the durable state never made (and the next
+          // hand would still be refused).
+          store.patchHand({ deadline: null, baseDeadline: null });
+        } else if (h.handId && !h.result && !h.abort) {
           store.patchHand({
             abort: {
               t: 'hand_abort',
@@ -317,6 +385,7 @@ export function handle(msg: ServerMsg): void {
               blamedSeat: null,
             },
             deadline: null,
+            settlementFailed: null,
           });
           try {
             localStorage.removeItem(KEY_PREFIX + h.handId);
@@ -357,10 +426,17 @@ export function handle(msg: ServerMsg): void {
       // re-sent on reconnect: never wipe state we already have for this hand
       const fresh = useStore.getState().hand.handId !== msg.handId;
       if (fresh) {
+        // A refresh can receive this hand's `settlement_failed` BEFORE its
+        // `hand_start`: the server re-asserts the frozen settlement first, and
+        // a fresh client writes it against a null handId. An unconditional
+        // reset would erase exactly the banner the host needs. Keep it only when
+        // it names THIS hand - a previous hand's failure must never leak in.
+        const carry = useStore.getState().hand.settlementFailed;
         store.resetHand({
           handId: msg.handId,
           seats: msg.seats,
           buttonSeat: msg.buttonSeat,
+          settlementFailed: carry?.handId === msg.handId ? carry : null,
         });
         // previous hands' keys are no longer needed: the voluntary-show window
         // for the last hand closes when a new one is dealt
@@ -806,8 +882,56 @@ export function handle(msg: ServerMsg): void {
       return;
     }
 
+    case 'settlement_failed': {
+      const h = useStore.getState().hand;
+      // A hand that already reached a terminal state must never be re-opened: a
+      // late or replayed frame from a replaced connection would otherwise
+      // resurrect the banner that `hand_end`/`hand_abort` just cleared.
+      if (terminalHands.has(msg.handId)) return;
+      // A frame naming an already-superseded hand must not resurrect the banner.
+      if (h.handId && h.handId !== msg.handId) return;
+      const prev = h.settlementFailed;
+      store.patchHand({
+        settlementFailed: {
+          handId: msg.handId,
+          reason: msg.reason,
+          attempt: msg.attempt,
+          retrying: msg.retrying,
+          // any frame answers the in-flight manual retry
+          retryRequestedAt: null,
+          manualRetry: prev?.handId === msg.handId ? prev.manualRetry : false,
+          // a live frame proves the server still has the hand: not orphaned
+          since: Date.now(),
+          orphaned: false,
+        },
+      });
+      // Never silent: the durable write failed, so the chips are not yet moved.
+      store.pushError(
+        msg.retrying
+          ? t('Settlement failed - retrying automatically (attempt {n}).', { n: msg.attempt })
+          : t('Settlement failed - the host must retry.'),
+      );
+      return;
+    }
+
     case 'hand_end': {
+      // Record the terminal frame for its own hand BEFORE any guard: a retained
+      // replay of an older hand still has to stop a later `settlement_failed`
+      // for that same hand from reviving its banner.
       endedHands.add(msg.handId);
+      terminalHands.add(msg.handId);
+      const cur = useStore.getState().hand.handId;
+      if (cur && cur !== msg.handId) {
+        // A terminal frame for a hand the client already moved past (a late
+        // frame from a replaced connection, or the server's retained replay of
+        // an older hand) must not touch the CURRENT hand's live state. But it
+        // still carries ITS OWN hand's terminal outcome, so clear a settlement
+        // failure naming that hand - that is what unsticks a stale banner.
+        if (useStore.getState().hand.settlementFailed?.handId === msg.handId) {
+          store.patchHand({ settlementFailed: null });
+        }
+        return;
+      }
       const state = useStore.getState();
       const mySeat = mySeatIn(state.hand.seats);
       const myDelta = msg.deltas.find((d) => d.seat === mySeat)?.delta ?? 0;
@@ -848,14 +972,127 @@ export function handle(msg: ServerMsg): void {
         deadline: null,
         baseDeadline: null,
         multiRunOffer: null,
+        // the terminal frame can only be broadcast after the write committed
+        settlementFailed: null,
+        // A reconnect may have synthesised a refund abort before the server's
+        // retained terminal frame was replayed; a real hand_end supersedes it.
+        abort: null,
+        // A real terminal frame proves the hand committed: the durable
+        // `unresolved` answer (if any) no longer applies.
+        handRecovery: null,
       });
       // the hand key stays until the next deal so "Show cards" can still prove reveals
       return;
     }
 
     case 'hand_abort': {
+      // Same stale-frame discipline as hand_end: an old connection's abort must
+      // not wipe the current hand's recovery state, but a matching failure for
+      // its OWN hand is exactly what the abort resolves.
       endedHands.add(msg.handId);
-      store.patchHand({ abort: msg, deadline: null, baseDeadline: null, multiRunOffer: null });
+      terminalHands.add(msg.handId);
+      const cur = useStore.getState().hand.handId;
+      if (cur && cur !== msg.handId) {
+        if (useStore.getState().hand.settlementFailed?.handId === msg.handId) {
+          store.patchHand({ settlementFailed: null });
+        }
+        return;
+      }
+      store.patchHand({
+        abort: msg,
+        deadline: null,
+        baseDeadline: null,
+        multiRunOffer: null,
+        settlementFailed: null,
+        // A real abort is a terminal answer: any durable `unresolved` no longer
+        // applies.
+        handRecovery: null,
+      });
+      return;
+    }
+
+    case 'hand_recovery': {
+      // Durable answer for the hand we told the server we still hold, used when
+      // no live hand or retained frame can answer. It is the authoritative exit
+      // from an `orphaned` banner: once an operator resolves the lifecycle, the
+      // next reconnect reports `committed`/`aborted` here and the client moves
+      // on instead of insisting an administrator is still needed.
+      const h = useStore.getState().hand;
+      const failed = h.settlementFailed;
+      if (msg.status === 'committed') {
+        terminalHands.add(msg.handId);
+        if (h.handId === msg.handId && !h.result) {
+          // No full terminal survived the restart. Close the hand as finished
+          // (chips moved) so the room_state resync neither synthesises a refund
+          // abort nor leaves a phantom live table. The recap is a recovered
+          // marker: per-seat detail is genuinely unavailable in this path.
+          store.patchHand({
+            result: {
+              t: 'hand_end',
+              handId: msg.handId,
+              head: '',
+              stacks: [],
+              deltas: [],
+              recovered: true,
+            },
+            abort: null,
+            deadline: null,
+            baseDeadline: null,
+            multiRunOffer: null,
+            settlementFailed: null,
+            // The hand is terminal now: clear the admin-only recovery state.
+            handRecovery: null,
+          });
+        } else if (failed?.handId === msg.handId) {
+          store.patchHand({ settlementFailed: null, handRecovery: null });
+        }
+        return;
+      }
+      if (msg.status === 'aborted') {
+        terminalHands.add(msg.handId);
+        if (h.handId === msg.handId || failed?.handId === msg.handId) {
+          store.patchHand({
+            abort: {
+              t: 'hand_abort',
+              handId: msg.handId,
+              reason: 'The hand was aborted by the server; bets were returned.',
+              blamedSeat: null,
+            },
+            result: null,
+            deadline: null,
+            baseDeadline: null,
+            multiRunOffer: null,
+            settlementFailed: null,
+            // Bets were returned: this is the terminal abort, so the durable
+            // `unresolved` state is resolved.
+            handRecovery: null,
+          });
+        }
+        return;
+      }
+      // unresolved: the hand never reached a terminal transaction. This is
+      // recorded even when NO `settlement_failed` frame was ever seen - the
+      // client still holds the hand, and its disappearance from a later
+      // `room_state` must not be read as a refund. Only an operator can resolve
+      // it, so surface admin-only status and never offer a retry that cannot
+      // succeed.
+      if (h.handId === msg.handId || failed?.handId === msg.handId) {
+        if (failed && failed.handId === msg.handId) {
+          store.patchHand({
+            handRecovery: 'unresolved',
+            settlementFailed: {
+              ...failed,
+              orphaned: true,
+              retrying: false,
+              retryRequestedAt: null,
+            },
+            deadline: null,
+            baseDeadline: null,
+          });
+        } else {
+          store.patchHand({ handRecovery: 'unresolved', deadline: null, baseDeadline: null });
+        }
+      }
       return;
     }
 

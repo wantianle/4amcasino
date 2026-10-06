@@ -36,7 +36,18 @@ export const playerActionSchema = z.object({
 
 /** Client -> server messages. Signed ones carry `sig` = signContent(secret, handId, t, body). */
 export const clientMsgSchema = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('join_room'), roomId: z.string() }),
+  z.object({
+    t: z.literal('join_room'),
+    roomId: z.string(),
+    /**
+     * The hand this client currently holds in memory, if any. Durable recovery
+     * uses it to answer, from `hand_lifecycle`/settlement data, whether the
+     * hand actually committed after a server restart. Optional so an older
+     * client still joins (the server then falls back to replaying whatever
+     * terminal frame it still retains in memory).
+     */
+    resumeHandId: z.string().optional(),
+  }),
   z.object({ t: z.literal('sit'), seat: z.number().int().min(0).max(8) }),
   z.object({ t: z.literal('leave_seat') }),
   z.object({ t: z.literal('start_hand') }),
@@ -388,6 +399,14 @@ export type ServerMsg =
       commissionDeltas?: { seat: number; delta: number }[];
       commission?: number;
       commissionBps?: number;
+      /**
+       * Synthesised by the server (or fallback client path) when a committed
+       * hand is recovered from durable data after a restart and the full
+       * per-seat terminal could not be rebuilt. The hand is over and the chips
+       * moved; per-seat detail is simply unavailable. Clients should render a
+       * neutral "finished" recap rather than an empty winner list.
+       */
+      recovered?: boolean;
     }
   | {
       /**
@@ -401,6 +420,21 @@ export type ServerMsg =
       reason: string;
       attempt: number;
       retrying: boolean;
+    }
+  | {
+      /**
+       * Durable lifecycle answer for the hand named by `join_room.resumeHandId`
+       * when no live hand owns it any more. Lets a client that still holds old
+       * hand state distinguish "already committed" (chips moved; drop any
+       * failure and do NOT synthesise a refund) from "unresolved" (no terminal
+       * transaction; only an operator can resolve - keep the banner, no retry)
+       * and "aborted" (bets returned). `committed` normally arrives as a full
+       * reconstructed `hand_end` instead; this status-only form is the fallback
+       * when the terminal payload cannot be rebuilt.
+       */
+      t: 'hand_recovery';
+      handId: string;
+      status: 'committed' | 'aborted' | 'unresolved';
     }
   | { t: 'cards_shown'; handId: string; seat: number; cards: CardId[] }
   | {

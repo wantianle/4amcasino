@@ -138,6 +138,8 @@ class TestClient {
   transcriptHeads: string[] = [];
   /** `settlement_failed` frames observed (durable-write failures). */
   settlementFailures: { handId: string; attempt: number; retrying: boolean }[] = [];
+  /** Durable `hand_recovery` answers for a hand this client still holds. */
+  handRecoveries: { handId: string; status: string }[] = [];
   /** Set false to simulate a client that never answers the TV-replay key ask. */
   respondKeys = true;
   handAbort: Extract<ServerMsg, { t: 'hand_abort' }> | null = null;
@@ -199,7 +201,13 @@ class TestClient {
           resolve();
           return;
         }
-        this.send({ t: 'join_room', roomId });
+        this.send({
+          t: 'join_room',
+          roomId,
+          // Like the real client: tell the server which hand we still hold so a
+          // post-restart reconnect can be answered from durable lifecycle data.
+          ...(this.handId ? { resumeHandId: this.handId } : {}),
+        });
         this.flushPending();
         resolve();
       });
@@ -613,6 +621,10 @@ class TestClient {
           attempt: msg.attempt,
           retrying: msg.retrying,
         });
+        break;
+      }
+      case 'hand_recovery': {
+        this.handRecoveries.push({ handId: msg.handId, status: msg.status });
         break;
       }
       case 'hand_abort': {
@@ -2312,6 +2324,231 @@ describe('full hand integration', () => {
     await host.waitFor(() => host.handEnd !== null, 5000);
     expect(host.handEndCount).toBe(1);
   }, 25000);
+
+  it('a reconnect re-asserts a frozen settlement failure so recovery stays reachable', async () => {
+    const { room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    fault.persistFailThrough = 1000; // every durable-write attempt fails
+    clock.freeze();
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.settlementFailures.length === 1, 5000);
+    const handId = host.handId!;
+    for (let i = 0; i < 4; i++) {
+      clock.advance(250);
+      await host.waitFor(() => host.settlementFailures.length === i + 2, 3000);
+    }
+    expect(host.settlementFailures.at(-1)!.retrying).toBe(false);
+
+    // the host refreshes the page: a fresh client has no failure frame in
+    // memory. The server must re-assert it on (re)connect or the recovery
+    // button is unreachable.
+    host.disconnect();
+    host.settlementFailures = [];
+    await host.connect(room.id);
+    await host.waitFor(() => host.settlementFailures.length >= 1, 5000);
+    const replay = host.settlementFailures.at(-1)!;
+    expect(replay.handId).toBe(handId);
+    expect(replay.retrying).toBe(false);
+
+    // and the replayed state is enough to recover
+    fault.persistFailThrough = 0;
+    host.send({ t: 'retry_settlement' });
+    await host.waitFor(() => host.sawShowdown, 5000);
+    clock.advance(400);
+    await host.waitFor(() => host.handEnd !== null, 5000);
+  }, 25000);
+
+  it('replays the terminal hand_end to a participant who missed it', async () => {
+    const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
+    // no auto-deal, so the retained terminal frame is not superseded
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const bob = players[1]!;
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null, 15000);
+    // bob drops during the reveal hold, before the terminal frame
+    bob.disconnect();
+    await host.waitFor(() => host.handEnd !== null, 15000);
+    const handId = host.handEnd!.handId;
+    bob.handEnd = null;
+    bob.handEndCount = 0;
+    // the durable write committed; on reconnect the retained frame is replayed
+    await bob.connect(room.id);
+    await bob.waitFor(() => bob.handEnd !== null, 5000);
+    expect(bob.handEnd!.handId).toBe(handId);
+    expect(bob.handEndCount).toBe(1);
+    expect(bob.handAbort).toBeNull();
+  }, 25000);
+
+  it('replays the previous hand terminal to a participant not dealt into the next hand', async () => {
+    const { players, room, host } = await setupRoom(
+      ['host', 'bob', 'carol'],
+      ['passive', 'passive', 'passive'],
+    );
+    // manual dealing, so the retained terminal frame is not superseded by an
+    // auto-deal before we can start the next hand ourselves
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    const bob = players[1]!;
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null, 15000);
+    // bob drops during the reveal hold and misses hand 1's terminal frame
+    bob.disconnect();
+    await host.waitFor(() => host.handEnd !== null, 15000);
+    const hand1 = host.handEnd!.handId;
+    await host.waitIdle(room.id);
+
+    // Hand 2 is dealt WITHOUT bob (he is disconnected, so not eligible). The
+    // old single-slot cache was cleared here by startHand, which stranded bob's
+    // still-held hand-1 state with no terminal frame to ever clear it.
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.handEndCount === 2, 15000);
+    expect(host.handEnd!.handId).not.toBe(hand1);
+
+    // bob reconnects still holding hand 1 and must receive its old terminal
+    bob.handEnd = null;
+    bob.handEndCount = 0;
+    await bob.connect(room.id);
+    await bob.waitFor(() => bob.handEnd !== null, 5000);
+    expect(bob.handEnd!.handId).toBe(hand1);
+    expect(bob.handAbort).toBeNull();
+  }, 30000);
+
+  it('recovers a committed hand for a reconnecting client after a restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-recover-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub, clients };
+    let restarted: ReturnType<typeof createApp> | null = null;
+    try {
+      const app = createApp(dbPath);
+      const appHub = attachHub(app.app, app.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        showdownHoldMs: 400,
+        settleHoldMs: 0,
+        clock,
+      });
+      await app.app.listen({ port: 0 });
+      const addr = app.app.server.address() as AddressInfo;
+      ctx = app;
+      hub = appHub;
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+      const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
+      clock.freeze();
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.showdownAt !== null, 15000);
+      const handId = host.handId!;
+      // the durable write already committed at the reveal; no graceful hand_end
+      expect(host.handEnd).toBeNull();
+      for (const c of players) c.close();
+      await app.app.close();
+
+      // a fresh process on the same DB has none of the in-memory terminal frames
+      restarted = createApp(dbPath);
+      const restartHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        showdownHoldMs: 400,
+        settleHoldMs: 0,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = restartHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+
+      // the client reconnect reports the hand it still holds; the server must
+      // reconstruct the committed terminal from the persisted transcript/marker
+      host.baseUrl = baseUrl;
+      host.handEnd = null;
+      host.handEndCount = 0;
+      await host.connect(room.id);
+      await host.waitFor(() => host.handEnd !== null, 5000);
+      expect(host.handEnd!.handId).toBe(handId);
+      expect(host.handEnd!.stacks.length).toBe(2);
+      expect(host.handEnd!.deltas.reduce((s, d) => s + d.delta, 0)).toBe(0);
+      // a full reconstruction was possible, so no status-only fallback was used
+      expect(host.handRecoveries.length).toBe(0);
+    } finally {
+      if (restarted) await restarted.app.close().catch(() => {});
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+      clients = saved.clients;
+    }
+  }, 30000);
+
+  it('falls back to a status-only committed recovery when durable stacks are incomplete', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-recover-partial-'));
+    const dbPath = join(dir, 'game.db');
+    const saved = { ctx, baseUrl, hub, clients };
+    let restarted: ReturnType<typeof createApp> | null = null;
+    try {
+      const app = createApp(dbPath);
+      const appHub = attachHub(app.app, app.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        showdownHoldMs: 400,
+        settleHoldMs: 0,
+        clock,
+      });
+      await app.app.listen({ port: 0 });
+      const addr = app.app.server.address() as AddressInfo;
+      ctx = app;
+      hub = appHub;
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+      const { players, room, host } = await setupRoom(['ra', 'rb'], ['passive', 'passive']);
+      clock.freeze();
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => host.showdownAt !== null, 15000);
+      const handId = host.handId!;
+      for (const c of players) c.close();
+      await app.app.close();
+
+      restarted = createApp(dbPath);
+      // Corrupt the marker's final stacks into an incomplete participant map.
+      // Recovery must NOT substitute a hand-start stack or 0 and claim a full
+      // hand_end: the only truthful answer is the status-only `committed`.
+      restarted.db
+        .prepare('UPDATE hand_settlements SET final_stacks = ? WHERE hand_id = ?')
+        .run('[]', handId);
+      const restartHub = attachHub(restarted.app, restarted.db, {
+        cryptoTimeoutMs: 1500,
+        actionTimeoutMs: 1500,
+        autoDealMs: 3_600_000,
+        readyCheckMs: 1500,
+        showdownHoldMs: 400,
+        settleHoldMs: 0,
+        clock,
+      });
+      await restarted.app.listen({ port: 0 });
+      const addr2 = restarted.app.server.address() as AddressInfo;
+      ctx = restarted;
+      hub = restartHub;
+      baseUrl = `http://127.0.0.1:${addr2.port}`;
+
+      host.baseUrl = baseUrl;
+      host.handEnd = null;
+      host.handEndCount = 0;
+      await host.connect(room.id);
+      await host.waitFor(() => host.handRecoveries.length > 0, 5000);
+      const recovery = host.handRecoveries.at(-1)!;
+      expect(recovery.handId).toBe(handId);
+      expect(recovery.status).toBe('committed');
+      // no fabricated per-seat terminal was replayed
+      expect(host.handEnd).toBeNull();
+    } finally {
+      if (restarted) await restarted.app.close().catch(() => {});
+      ctx = saved.ctx;
+      baseUrl = saved.baseUrl;
+      hub = saved.hub;
+      clients = saved.clients;
+    }
+  }, 30000);
 
   it('a lost settlement broadcast still lets the room finish without a refund', async () => {
     const { players, room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);

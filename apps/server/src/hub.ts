@@ -254,7 +254,7 @@ export function attachHub(
           rooms.set(msg.roomId, room);
         }
         current = room;
-        room.join(userId, ws);
+        room.join(userId, ws, msg.resumeHandId);
         return;
       }
       if (!current) {

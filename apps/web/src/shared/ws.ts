@@ -27,10 +27,24 @@ class WsClient {
   joinRoom(roomId: string): void {
     this.roomId = roomId;
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.send({ t: 'join_room', roomId });
+      this.sendJoin();
     } else {
       this.connect();
     }
+  }
+
+  /** Tell the server which hand we still hold so it can answer, from durable
+   *  data, whether that hand actually committed (the terminal frames it kept in
+   *  memory are gone after a restart). Sent on every join/reconnect: after a
+   *  refresh `hand.handId` is null and the live hand's own resend covers us. */
+  private sendJoin(): void {
+    if (!this.roomId) return;
+    const handId = useStore.getState().hand.handId;
+    this.send({
+      t: 'join_room',
+      roomId: this.roomId,
+      ...(handId ? { resumeHandId: handId } : {}),
+    });
   }
 
   leaveRoom(): void {
@@ -38,6 +52,13 @@ class WsClient {
     this.closedByUs = true;
     this.ws?.close();
     this.ws = null;
+    // A leave is a session boundary. Drop the held hand too: otherwise the next
+    // `joinRoom` (a switch to another room) would read this hand's `handId` in
+    // `sendJoin()` and announce it as `resumeHandId` to the NEW room, and its
+    // durable `handRecovery` / terminal state would leak across rooms. Runs
+    // BEFORE any later sendJoin, so the previous room's hand is never resumed
+    // elsewhere. (TablePage's room effect cleanup calls this on switch/unmount.)
+    useStore.getState().resetHand();
   }
 
   send(msg: ClientMsg): void {
@@ -57,7 +78,7 @@ class WsClient {
     ws.onopen = () => {
       this.retry = 0;
       useStore.getState().setWsConnected(true);
-      if (this.roomId) this.send({ t: 'join_room', roomId: this.roomId });
+      if (this.roomId) this.sendJoin();
     };
     ws.onmessage = (ev) => {
       let msg: ServerMsg;

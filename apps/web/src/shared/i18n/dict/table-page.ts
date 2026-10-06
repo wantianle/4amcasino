@@ -227,6 +227,37 @@ const tablePage: Record<string, string> = {
   'void table': '作废牌桌',
   'The banker voided this table: results do not count anywhere':
     '账房把这张桌作废了：输赢在哪都不算数',
+
+  // ── Durable settlement failure (host recovery) ─────────────────────────
+  'This hand did not settle': '这一手没能结算',
+  'The chips are not recorded yet and the table is frozen. Retry the settlement.':
+    '筹码还没入账，牌桌已冻结。请重试结算。',
+  'Settlement failed - retrying automatically': '结算失败——正在自动重试',
+  'The server is re-attempting its own retry (attempt {n}).':
+    '服务器正在自动重试（第 {n} 次）。',
+  'Settlement failed - the host must retry.': '结算失败——需要房主重试。',
+  'Settlement failed - retrying automatically (attempt {n}).':
+    '结算失败——正在自动重试（第 {n} 次）。',
+  'Retry settlement': '重试结算',
+  'Retrying settlement…': '正在重试结算…',
+  'Waiting for the server to confirm.': '等待服务器确认结果。',
+  'Retry still failed': '重试仍失败',
+  'You can retry again, or contact an administrator.':
+    '可以再试一次，或联系管理员。',
+  'Retry got no response': '重试没有得到响应',
+  'Try again, or contact an administrator.': '可以再试一次，或联系管理员。',
+  'Waiting for the host to retry the settlement.': '等待房主重试结算。',
+  'Automatic retry stopped responding': '自动重试已停止响应',
+  'You can retry the settlement now.': '现在可以重试结算了。',
+  'Settlement recovery needs an administrator': '结算恢复需要管理员处理',
+  'This hand did not settle and the table can no longer retry it. Ask an administrator to resolve it; the table recovers automatically once it is settled.':
+    '这一手没能结算，牌桌已无法再重试。请联系管理员处理；处理完成后牌桌会自动恢复。',
+  'An administrator is handling this hand': '管理员正在处理这一手',
+  'This hand did not settle and no refund was made. The table recovers automatically once an administrator resolves it.':
+    '这一手未能结算，也未发生退款。管理员处理完成后牌桌会自动恢复。',
+  'Hand finished': '本手已结束',
+  'The result was recovered after a server restart; per-hand details are unavailable.':
+    '服务器重启后已恢复本手结果；具体逐位明细不可用。',
 };
 
 export default tablePage;

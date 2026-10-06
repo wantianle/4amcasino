@@ -41,6 +41,35 @@ export interface ChatMsg {
   ts: number;
 }
 
+/** The server's `settlement_failed` frame, plus the small amount of local state
+ *  the host-retry UI needs. The hand's chips may not have moved, so the table is
+ *  frozen (or auto-retrying) until this clears on `hand_end`. */
+export interface SettlementFailure {
+  handId: string;
+  /** Server prose (SQLITE_BUSY, projection rejection, ...); render via `tr`. */
+  reason: string;
+  /** The server's own bounded attempt counter (resets when the host retries). */
+  attempt: number;
+  /** True while the server still owns the retry budget; false once exhausted,
+   *  at which point a human - the host - must send `retry_settlement`. */
+  retrying: boolean;
+  /** Set when the host asked for a manual retry; cleared by any later frame so
+   *  the button never looks dead while a request is in flight. */
+  retryRequestedAt: number | null;
+  /** The host has already spent at least one manual retry on this settlement. */
+  manualRetry: boolean;
+  /** When this failure state was last set from a server frame. Bounds the
+   *  server-owned auto-retry: if no further frame arrives, the automatic retry
+   *  is presumed lost and the host is offered a manual retry instead of a
+   *  banner that can never act. */
+  since: number;
+  /** The hand is gone from the server (e.g. after a restart) while the durable
+   *  settlement is still uncommitted; only an administrator can resolve it, so
+   *  no manual retry is offered. Set on resync when `handActive` is false but a
+   *  failure is still pending - the frame's absence is not proof of success. */
+  orphaned: boolean;
+}
+
 /** The card-back colorways, in picker order. Single source of truth shared by
  *  the profile picker, the store shape, and the server round-trip sanitizer.
  *  Each id maps 1:1 to a `.card-back-<id>` rule in app/index.css. */
@@ -183,6 +212,18 @@ interface HandView {
   multiRunResult: MultiRunResultMsg | null;
   /** Squid-game settlement for the hand, from squid_result. */
   squidResult: SquidResultMsg | null;
+  /** Set by `settlement_failed`; non-null means the hand's durable settlement
+   *  did not commit and the table is frozen until a (host) retry succeeds. */
+  settlementFailed: SettlementFailure | null;
+  /** Independent durable-recovery answer for THIS hand, from `hand_recovery`.
+   *  `'unresolved'` means the server never reached a terminal transaction for
+   *  the hand it still held (a restart raced its settlement), so the hand must
+   *  NOT be treated as a terminal: no refund was made, only an operator can
+   *  resolve it. Kept separate from `settlementFailed` on purpose - a client
+   *  that never saw a `settlement_failed` frame must still refuse to synthesise
+   *  the restart refund abort. Cleared by a committed/aborted recovery or a new
+   *  hand. */
+  handRecovery: 'unresolved' | null;
 }
 
 /** Everything the last-hand recap needs, frozen at hand_end. */
@@ -243,6 +284,8 @@ export const emptyHand: HandView = {
   multiRunOffer: null,
   multiRunResult: null,
   squidResult: null,
+  settlementFailed: null,
+  handRecovery: null,
 };
 
 /** TEMPORARY migration shim for the `board`/`board2` split.

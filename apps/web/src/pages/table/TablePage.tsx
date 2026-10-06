@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AutoDealDialog } from '../../features/table/AutoDealDialog.tsx';
+import { HandRecoveryBanner, SettlementFailureBanner } from '../../features/table/settlementFailure.tsx';
 import { pokerOverlayOpen } from '../../features/table/pokerHotkeys.ts';
 import { motion } from 'motion/react';
 import {
@@ -577,6 +578,10 @@ export function TablePage() {
     return () => {
       alive = false;
       voice.leave();
+      // Room switch / unmount is a session boundary: leaveRoom() drops the held
+      // hand as well (handId, handRecovery, settlementFailed, result/abort), so
+      // the previous room's hand is never announced as `resumeHandId` to the
+      // next room and its recovery banner cannot leak across.
       wsClient.leaveRoom();
       useStore.getState().setRoom(null);
     };
@@ -1112,6 +1117,19 @@ export function TablePage() {
           aborted
           headline={t('Hand aborted')}
           detail={tr(hand.abort.reason)}
+          onDismiss={dismiss}
+        />
+      );
+    }
+    if (hand.result?.recovered) {
+      // A committed hand rebuilt from durable data after a restart: it is over
+      // (chips moved) but the per-seat detail did not survive. Say so instead of
+      // showing an empty winner list as though nobody won.
+      return (
+        <ResultFlash
+          dark={dark}
+          headline={t('Hand finished')}
+          detail={t('The result was recovered after a server restart; per-hand details are unavailable.')}
           onDismiss={dismiss}
         />
       );
@@ -1658,6 +1676,12 @@ export function TablePage() {
   );
   const sharedDialogs = (
     <>
+      {/* A frozen durable settlement is the one state a toast may not own: the
+          table cannot continue, so the recovery banner persists until it clears. */}
+      <SettlementFailureBanner isHost={!!isHost} />
+      {/* An `unresolved` durable hand with no local failure frame: admin-only,
+          no retry, no fabricated refund. */}
+      <HandRecoveryBanner />
       <AutoDealDialog open={autoDealOpen} onClose={() => setAutoDealOpen(false)} />
       {features && (
         <GameplaySettingsDialog

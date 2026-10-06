@@ -197,6 +197,12 @@ export const SETTLE_RETRY_MS = 250;
 /** Failed durable-write attempts before the table is frozen for a human. */
 export const SETTLE_MAX_RETRIES = 4;
 
+/** How many recent terminal `hand_end` frames a room retains for reconnect
+ *  replay. Bounded so an idle-but-long-lived room cannot leak frames; eight
+ *  covers far more than the "missed the hand that just ended" case that
+ *  matters. */
+const MAX_TERMINAL_FRAMES = 8;
+
 /** How long a graceful shutdown waits for a live, not-yet-settled hand to
  *  reach a terminal lifecycle state before it aborts the hand. Must be short:
  *  a deploy cannot block on a full action timeout. */
@@ -765,6 +771,181 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
   return write();
 }
 
+/**
+ * Strictly parse one persisted seat->delta leg (`settlement.deltas` or
+ * `settlement.commissionDeltas`).
+ *
+ * Returns null on ANY structural deviation: a malformed entry, a non-integer
+ * seat, a non-finite delta, or a duplicated seat. Recovery must never paper
+ * over a corrupt leg with a partial array - the rebuilt `hand_end` would then
+ * disagree with the durable settlement it claims to replay, which is worse than
+ * admitting the payload cannot be rebuilt.
+ */
+function parseSeatDeltas(raw: unknown): { seat: number; delta: number }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: { seat: number; delta: number }[] = [];
+  const seen = new Set<number>();
+  for (const d of raw as unknown[]) {
+    if (!d || typeof d !== 'object') return null;
+    const { seat, delta } = d as { seat?: unknown; delta?: unknown };
+    if (typeof seat !== 'number' || !Number.isSafeInteger(seat)) return null;
+    if (typeof delta !== 'number' || !Number.isFinite(delta)) return null;
+    if (seen.has(seat)) return null;
+    seen.add(seat);
+    out.push({ seat, delta });
+  }
+  return out;
+}
+
+/**
+ * Rebuild a `hand_end` frame for an already-committed hand from durable data.
+ *
+ * After a restart the in-memory terminal frame is gone, but the settlement is
+ * fully persisted: the transcript holds the `hand_start` seat map and the
+ * `settlement` entry (the exact combined/poker/commission deltas the live
+ * `hand_end` carried), and the `hand_settlements` marker holds the sealed head,
+ * rake and final stacks. Rebuilding from those gives a reconnecting client the
+ * same terminal the live broadcast would have carried.
+ *
+ * This is STRICT and never falls back. A missing/corrupt field returns null
+ * (the caller then emits a status-only `hand_recovery: committed`) rather than
+ * fabricating money: the `final_stacks` marker must cover every participant
+ * exactly once (no hand-start-stack/0 substitution), the marker's `head` and
+ * `rake` must agree with the transcript, `sum(deltas) === -rake`, and the
+ * commission legs must be structurally intact. A half-rebuilt terminal that
+ * merely claims success would tell the client a different story than the
+ * durable settlement. Also returns null when `userId` was not a seat - a recap
+ * is never replayed to someone who was not in the hand.
+ *
+ * Only ever called for a lifecycle row already read as `committed`; a
+ * transcript with a `settlement` entry but no marker (the write rolled back)
+ * must NOT be projected as a success.
+ */
+function recoverHandEnd(
+  db: DB,
+  roomId: string,
+  handId: string,
+  userId: number,
+): Extract<ServerMsg, { t: 'hand_end' }> | null {
+  const t = db
+    .prepare('SELECT head, entries FROM transcripts WHERE hand_id = ? AND room_id = ?')
+    .get(handId, roomId) as { head: string; entries: string } | undefined;
+  if (!t) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(t.entries);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const payloadOf = (type: string): Record<string, unknown> | null => {
+    for (const e of parsed as { type?: unknown; payload?: unknown }[]) {
+      if (e && typeof e === 'object' && e.type === type) {
+        return e.payload && typeof e.payload === 'object'
+          ? (e.payload as Record<string, unknown>)
+          : null;
+      }
+    }
+    return null;
+  };
+  const start = payloadOf('hand_start');
+  const settle = payloadOf('settlement');
+  if (!start || !settle || !Array.isArray(start.seats)) return null;
+  // Parse the seat map strictly. A malformed or duplicated seat means the hand's
+  // participant set is unknown, so no terminal can be reconstructed for it.
+  const seatRows: { seat: number; userId: number }[] = [];
+  const handSeats = new Set<number>();
+  const seatUsers = new Set<number>();
+  for (const s of start.seats as unknown[]) {
+    if (!s || typeof s !== 'object') return null;
+    const { seat, userId: uid } = s as { seat?: unknown; userId?: unknown };
+    if (typeof seat !== 'number' || !Number.isSafeInteger(seat)) return null;
+    if (typeof uid !== 'number' || !Number.isSafeInteger(uid)) return null;
+    if (handSeats.has(seat) || seatUsers.has(uid)) return null;
+    handSeats.add(seat);
+    seatUsers.add(uid);
+    seatRows.push({ seat, userId: uid });
+  }
+  if (seatRows.length === 0) return null;
+  if (!seatUsers.has(userId)) return null;
+  const marker = db
+    .prepare(
+      'SELECT head, rake, final_stacks FROM hand_settlements WHERE hand_id = ? AND room_id = ?',
+    )
+    .get(handId, roomId) as { head: string; rake: number; final_stacks: string } | undefined;
+  if (!marker) return null;
+  // The marker must vouch for THIS transcript chain, and its rake must be a
+  // sane value before it can anchor the money legs.
+  if (marker.head !== t.head) return null;
+  if (!Number.isSafeInteger(marker.rake) || marker.rake < 0) return null;
+
+  // `final_stacks` is the authoritative post-settlement stack per participant.
+  // It must parse and cover EVERY participant exactly once; there is deliberately
+  // no fallback to the deal-time stack, which would fabricate a chip movement
+  // that may never have happened.
+  let rawFinal: unknown;
+  try {
+    rawFinal = JSON.parse(marker.final_stacks);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rawFinal)) return null;
+  const finalByUser = new Map<number, number>();
+  for (const f of rawFinal as unknown[]) {
+    if (!f || typeof f !== 'object') return null;
+    const { userId: uid, stack } = f as { userId?: unknown; stack?: unknown };
+    if (typeof uid !== 'number' || !Number.isSafeInteger(uid)) return null;
+    if (typeof stack !== 'number' || !Number.isSafeInteger(stack) || stack < 0) return null;
+    if (finalByUser.has(uid)) return null; // duplicate participant row
+    finalByUser.set(uid, stack);
+  }
+  for (const s of seatRows) {
+    if (!finalByUser.has(s.userId)) return null; // participant without a final stack
+  }
+
+  // The game leg must be structurally intact and cover exactly the hand seats.
+  // The documented contract `sum(deltas) === -rake` then pins it to the marker;
+  // a mismatch means transcript and marker disagree, so rebuilding would lie.
+  const deltas = parseSeatDeltas(settle.deltas);
+  if (!deltas) return null;
+  if (deltas.length !== seatRows.length) return null;
+  for (const d of deltas) if (!handSeats.has(d.seat)) return null;
+  if (deltas.reduce((sum, d) => sum + d.delta, 0) !== -marker.rake) return null;
+
+  // The commission leg is seat-filtered: at most one entry, exactly the rake,
+  // only for a hand seat, and absent iff the rake is zero. (A rake recipient
+  // that is out of hand has no seat entry at all - the credit lives on the
+  // external account's ledger row - so an empty leg is valid even when rake > 0.)
+  const commissionDeltas = parseSeatDeltas(settle.commissionDeltas);
+  if (!commissionDeltas) return null;
+  if (commissionDeltas.length > 1) return null;
+  for (const c of commissionDeltas) {
+    if (c.delta !== marker.rake || !handSeats.has(c.seat)) return null;
+  }
+  if (marker.rake === 0 && commissionDeltas.length !== 0) return null;
+  // The transcript's `commission` is only written when rake > 0; when present it
+  // must equal the marker exactly. Never default a missing leg to 0.
+  const commission = settle.commission;
+  if (marker.rake === 0) {
+    if (commission !== undefined && commission !== 0) return null;
+  } else if (commission !== marker.rake) {
+    return null;
+  }
+
+  return {
+    t: 'hand_end',
+    handId,
+    head: marker.head,
+    stacks: seatRows.map((s) => ({ seat: s.seat, stack: finalByUser.get(s.userId)! })),
+    deltas,
+    commissionDeltas,
+    commission: marker.rake,
+    ...(typeof start.commissionBps === 'number' && Number.isSafeInteger(start.commissionBps)
+      ? { commissionBps: start.commissionBps }
+      : {}),
+  };
+}
+
 /** Verifies a player's DLEQ unmask shares against a finished hand's snapshot. */
 function verifySnapshotShares(
   entry: SnapshotSeat,
@@ -822,6 +1003,16 @@ export class GameRoom {
   private shown = new Map<number, CardId[]>();
   private shownHandId: string | null = null;
   private lastHandShow: ShowSnapshot | null = null;
+  /** Recent `hand_end` frames, retained ACROSS hand boundaries so a participant
+   *  who missed the terminal frame (dropped socket, swallowed broadcast, or was
+   *  simply not dealt into the next hand) still receives it on reconnect. A
+   *  single slot was cleared the moment the next hand started - exactly when a
+   *  player who was not dealt in needs it most - which left their settlement
+   *  banner stuck forever. Bounded so a long-lived room cannot leak frames. */
+  private terminalFrames: {
+    msg: Extract<ServerMsg, { t: 'hand_end' }>;
+    participantIds: number[];
+  }[] = [];
   private peekOffers = new Map<string, PeekOffer>();
   private sevenDeucePaid = new Set<string>();
   private autoDeal: NodeJS.Timeout | null = null;
@@ -875,7 +1066,7 @@ export class GameRoom {
     }
   }
 
-  join(userId: number, ws: WebSocket): void {
+  join(userId: number, ws: WebSocket, resumeHandId?: string): void {
     // Deliberately does NOT close the socket it replaces. Closing it made two
     // tabs on the same room fight: the server hangs up on tab A, tab A's client
     // reconnects and displaces tab B, B reconnects and displaces A, forever -
@@ -885,11 +1076,26 @@ export class GameRoom {
     // A player who comes back inside the pre-betting grace must not be aborted
     // out of a hand they are actively rejoining: cancel their pending timer.
     this.hand?.onPlayerReconnected(userId);
+    // Durable recovery FIRST, before room_state: a restart discards the
+    // in-memory terminal frames, so the only authoritative answer for the hand
+    // the client still holds is the persisted lifecycle/settlement data. The
+    // client's resync reconciliation reads this before it decides whether the
+    // absent live hand means "refunded", "settled", or "needs an operator".
+    this.sendDurableRecovery(userId, resumeHandId);
     this.broadcastRoomState();
     // A rejoining participant gets the whole hand context back (hand_start,
     // their private cards, the board, the reveal) BEFORE any courtesy frames,
     // so a freshly-created client never drops a frame that arrived first.
     this.hand?.resendPending(userId);
+    // A participant who missed the terminal `hand_end` - disconnected for the
+    // exact moment of settlement, a broadcast swallowed by `safeBroadcast`, or
+    // simply not dealt into the hand that is running now - has no other way to
+    // learn the hand committed. Replay every retained terminal frame they took
+    // part in, even while a newer hand is live; only participants are served,
+    // so a fresh spectator is never shown a stranger's recap.
+    for (const frame of this.terminalFrames) {
+      if (frame.participantIds.includes(userId)) this.send(userId, frame.msg);
+    }
     // late joiners and reconnects still get to see voluntarily shown cards
     if (this.shownHandId) {
       for (const [seat, cards] of this.shown) {
@@ -923,6 +1129,51 @@ export class GameRoom {
 
   isConnected(userId: number): boolean {
     return this.sockets.has(userId);
+  }
+
+  /** Retain a broadcast `hand_end` so a participant who missed it (dropped
+   *  socket, or a `safeBroadcast` delivery failure) can still be sent the
+   *  terminal frame when they reconnect. Retained across hand boundaries and
+   *  bounded: a player who is not dealt into the next hand must still get the
+   *  hand they actually played. */
+  rememberHandEnd(msg: Extract<ServerMsg, { t: 'hand_end' }>, participantIds: number[]): void {
+    this.terminalFrames.push({ msg, participantIds });
+    const overflow = this.terminalFrames.length - MAX_TERMINAL_FRAMES;
+    if (overflow > 0) this.terminalFrames.splice(0, overflow);
+  }
+
+  /** Answer, from durable data, the terminal status of the hand the client says
+   *  it still holds. A restart discards every in-memory terminal frame, so
+   *  without this a committed hand is indistinguishable from one whose
+   *  settlement never ran: the client would freeze on a false "admin needed",
+   *  or synthesise a refund that never happened. Skipped when a live hand or a
+   *  retained exact frame already owns the answer. */
+  private sendDurableRecovery(userId: number, resumeHandId: string | undefined): void {
+    if (!resumeHandId) return;
+    // A live hand owns resendPending: it re-asserts the authoritative context
+    // (and any pending settlement failure) for THIS hand. Never second-guess it.
+    if (this.hand?.id === resumeHandId) return;
+    // The exact original frame is retained and replayed just below; a
+    // reconstruction would be a duplicate.
+    if (this.terminalFrames.some((f) => f.msg.handId === resumeHandId)) return;
+    const row = this.db
+      .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ? AND room_id = ?')
+      .get(resumeHandId, this.roomId) as { status: string } | undefined;
+    if (!row) return; // unknown hand: nothing durable to assert
+    if (row.status === 'committed') {
+      const end = recoverHandEnd(this.db, this.roomId, resumeHandId, userId);
+      this.send(
+        userId,
+        end ?? { t: 'hand_recovery', handId: resumeHandId, status: 'committed' as const },
+      );
+      return;
+    }
+    if (row.status === 'aborted') {
+      this.send(userId, { t: 'hand_recovery', handId: resumeHandId, status: 'aborted' });
+      return;
+    }
+    // running / prepared / quarantined: never reached a terminal transaction.
+    this.send(userId, { t: 'hand_recovery', handId: resumeHandId, status: 'unresolved' });
   }
 
   /** The host is the only person who can deal, so a host who shuts their laptop
@@ -1708,6 +1959,11 @@ export class GameRoom {
     };
     this.shown.clear();
     this.shownHandId = null;
+    // NOTE: the previous hand's terminal `hand_end` is deliberately NOT cleared
+    // here. A player who is not dealt into this hand never receives a
+    // `hand_start`, so the previous hand's terminal frame is the only way their
+    // client can clear a stuck settlement banner; a later `hand_start` or
+    // lifecycle recovery supersedes it for the player who did move on.
     // an offer cannot outlive its hand: end it explicitly rather than silently
     this.clearPeekOffers('expired');
     // a hand is starting: any previous showdown's settle hold no longer applies
@@ -2653,6 +2909,21 @@ class Hand {
           netBySeat: [...squid.netBySeat.entries()].map(([seat, net]) => ({ seat, net })),
         } as ServerMsg);
       return;
+    }
+    // A durable settlement failure is broadcast once and can be missed; a
+    // freshly-created client (page refresh) has no other signal that the table
+    // is frozen or auto-retrying. Re-assert the current failure on every
+    // (re)connect so the host recovery control can never be unreachable.
+    // Deliberately before the `!info` return: the frame carries no private
+    // information, and a rejoining spectator should also see the table frozen.
+    if (!this.settlementApplied && this.settlementError !== null) {
+      this.room.send(userId, {
+        t: 'settlement_failed',
+        handId: this.id,
+        reason: this.settlementError,
+        attempt: this.settlementAttempts,
+        retrying: this.settlementAttempts <= SETTLE_MAX_RETRIES,
+      } as ServerMsg);
     }
     if (!info) return;
     if (this.startMsg) this.room.send(userId, this.startMsg);
@@ -4740,6 +5011,13 @@ class Hand {
       commissionBps: this.commissionBps,
     };
     this.safeBroadcast(endMsg as ServerMsg);
+    // Retain the terminal frame before teardown so a participant who missed it
+    // (dropped socket, or a swallowed delivery failure) still gets it on
+    // reconnect instead of being stuck on a settlement banner forever.
+    this.room.rememberHandEnd(
+      endMsg as Extract<ServerMsg, { t: 'hand_end' }>,
+      this.seats.map((s) => s.userId),
+    );
     // A showdown must not roll straight into the next auto-deal: hold the table
     // for SETTLE_HOLD_MS so the client's settlement animation can finish. A
     // fold-out carries no reveal and passes false (normal cadence only).
