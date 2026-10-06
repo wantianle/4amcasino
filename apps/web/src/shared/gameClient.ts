@@ -673,12 +673,15 @@ export function handle(msg: ServerMsg): void {
 
     // Pure hand-state alignment: the reducer owns the state change, this switch
     // only writes it back to the store. No side effects live in these frames.
+    // `Date.now` is passed as a thunk, not called here: only `auto_deal` consults
+    // it (inside the reducer), so the other four frames read no clock - matching
+    // the pre-extraction switch, which called `Date.now()` only on `auto_deal`.
     case 'ready_end':
     case 'feature_started':
     case 'time_bank_update':
     case 'peek_offers_snapshot':
     case 'auto_deal': {
-      const patch = handReducer(useStore.getState().hand, msg, Date.now());
+      const patch = handReducer(useStore.getState().hand, msg, Date.now);
       if (patch) store.patchHand(patch);
       return;
     }

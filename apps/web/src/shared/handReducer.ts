@@ -18,12 +18,15 @@ export type HandStateMsg = Extract<
  *  Returns the `HandView` patch to apply, or `null` when the frame leaves the
  *  hand unchanged (so the caller can skip the store write, exactly as the
  *  original early-return did). It touches no store, socket, DOM, storage or
- *  clock: `now` is passed in explicitly by the caller, which is what keeps the
- *  `auto_deal` deadline computation pure. */
+ *  clock directly: the clock is injected by the caller as a thunk and is only
+ *  consulted for `auto_deal`, so none of the other four frames reads it. This
+ *  keeps the result a pure function of `(state, msg, clock)` and keeps the
+ *  number of clock reads observable-identical to the pre-extraction switch
+ *  (which only called `Date.now()` on the `auto_deal` branch). */
 export function handReducer(
   state: HandView,
   msg: HandStateMsg,
-  now: number,
+  now: () => number,
 ): Partial<HandView> | null {
   switch (msg.t) {
     case 'ready_end':
@@ -46,6 +49,8 @@ export function handReducer(
     }
 
     case 'auto_deal':
-      return { autoDealAt: msg.inMs > 0 ? now + msg.inMs : null };
+      // the only branch that needs the clock; `now()` is called here and nowhere
+      // else, so a frame that does not set a deadline never reads the clock
+      return { autoDealAt: msg.inMs > 0 ? now() + msg.inMs : null };
   }
 }
