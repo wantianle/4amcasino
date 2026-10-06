@@ -56,6 +56,44 @@ import { computeHeadsUpEquity, EquityError } from './equity.js';
 import { settleRake } from './rake.js';
 import { platformUserId } from './platform.js';
 
+/**
+ * Durability boundaries of the settlement path, for test-only fault injection
+ * (see `GameOpts.faultInjection.phase`). Every point is a real boundary in the
+ * production flow: the `prepare_*` points bracket the frozen-input commit, the
+ * `settlement_*` points are inside the money transaction, and the `broadcast_*`
+ * points sit around the notification frames AFTER the money is durable.
+ *
+ * A throw at a `settlement_*` point rolls the whole transaction back (the
+ * prepare row stays, no marker/ledger/transcript/projection); a throw at a
+ * `broadcast_*` point is a lost notification and must never undo the committed
+ * settlement. Never wired in production.
+ */
+export type SettlementFaultPoint =
+  | 'prepare_before'
+  | 'prepare_after'
+  | 'settlement_before_transaction'
+  | 'settlement_after_marker'
+  | 'settlement_after_stack'
+  | 'settlement_after_poker_ledger'
+  | 'settlement_after_squid_ledger'
+  | 'settlement_after_commission'
+  | 'settlement_after_seven_deuce'
+  | 'settlement_after_transcript'
+  | 'settlement_after_projection'
+  | 'settlement_after_gameplay_state'
+  | 'settlement_after_final_stacks'
+  | 'settlement_after_lifecycle'
+  | 'settlement_before_commit'
+  | 'broadcast_before_showdown'
+  | 'broadcast_after_showdown'
+  | 'broadcast_before_squid'
+  | 'broadcast_before_seven_deuce'
+  | 'broadcast_before_hand_end'
+  | 'broadcast_after_hand_end';
+
+/** Called at a named `SettlementFaultPoint`. A throw is the injected fault. */
+export type SettlementPhaseHook = (phase: SettlementFaultPoint) => void;
+
 export interface GameOpts {
   cryptoTimeoutMs: number;
   actionTimeoutMs: number;
@@ -110,6 +148,12 @@ export interface GameOpts {
      *  throwing exercises the internal-error classification (a TypeError here
      *  must stay a programming error, not become a retryable one). */
     sevenDeuceInternal?: () => void;
+    /** Called at every named `SettlementFaultPoint`. Throwing injects a fault
+     *  at exactly that boundary: inside the money transaction the throw is a
+     *  rollback (a transient-coded error stays retryable; a plain error is
+     *  fail-closed); after commit it is a lost notification that must not undo
+     *  the durable settlement. */
+    phase?: SettlementPhaseHook;
   };
 }
 
@@ -886,7 +930,12 @@ function loadSettledReceipt(db: DB, w: HandSettlementWrite): HandSettlementOutco
  * whole transaction (including the marker) rolls back, so a corrupted settle
  * can never be half-applied.
  */
-export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlementOutcome {
+export function applyHandSettlement(
+  db: DB,
+  w: HandSettlementWrite,
+  /** Test-only: called at each transaction boundary; a throw rolls back. */
+  phase?: SettlementPhaseHook,
+): HandSettlementOutcome {
   if (!Number.isInteger(w.rake) || w.rake < 0)
     throw new Error(`invalid rake ${w.rake} on hand ${w.handId}`);
   const write = db.transaction((): HandSettlementOutcome => {
@@ -911,6 +960,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       ).run(w.handId, w.roomId, w.now, w.now, w.now);
       return loadSettledReceipt(db, w);
     }
+
+    phase?.('settlement_after_marker');
 
     // A participant may not appear twice: stack deltas are applied additively,
     // so a duplicate user would silently double-move chips while the
@@ -971,6 +1022,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
         `settlement not conserving on hand ${w.handId}: before=${sumBefore} after=${sumAfter} rake=${w.rake}`,
       );
 
+    phase?.('settlement_after_stack');
+
     for (const l of w.pokerLedger) {
       if (l.delta === 0) continue;
       appendLedger(db, {
@@ -981,6 +1034,7 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
         ref: w.head,
       });
     }
+    phase?.('settlement_after_poker_ledger');
     for (const l of w.squidLedger) {
       if (l.delta === 0) continue;
       appendLedger(db, {
@@ -992,6 +1046,7 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
         note: w.squidNote,
       });
     }
+    phase?.('settlement_after_squid_ledger');
     if (w.rake > 0 && w.rakeRecipientId !== null) {
       settleRake(db, {
         roomId: w.roomId,
@@ -1001,6 +1056,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
         commissionBps: w.commissionBps,
       });
     }
+
+    phase?.('settlement_after_commission');
 
     // Automatic showdown 7-2 bounty, in the SAME transaction. It is a zero-sum
     // transfer among the hand's seats, so it cannot break conservation; it is
@@ -1032,6 +1089,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       });
       sevenDeuce = { seat: w.sevenDeuce.winnerSeat, amount: w.sevenDeuce.winnerAmount };
     }
+
+    phase?.('settlement_after_seven_deuce');
 
     // `afterRows` above is the pre-rake stack and is only used for the
     // conservation check. settleRake credits the rake recipient, which may be a
@@ -1083,6 +1142,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       'INSERT INTO transcripts (hand_id, room_id, head, entries, ts) VALUES (?, ?, ?, ?, ?)',
     ).run(w.handId, w.roomId, w.head, JSON.stringify(w.entries), w.now);
 
+    phase?.('settlement_after_transcript');
+
     // Normalized stats projection, in the SAME transaction as the settlement.
     // A structurally impossible hand throws here and rolls the whole settlement
     // back (spec §2). Invariant: `applyHandSettlement` is only called for a hand
@@ -1108,6 +1169,8 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       rake: w.rake,
       finalStacks: resultStacks,
     });
+
+    phase?.('settlement_after_projection');
 
     const gs = db
       .prepare(
@@ -1136,11 +1199,14 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
          schedule_reset_at = excluded.schedule_reset_at`,
     ).run(w.roomId, completed, lastBombHands, lastBombAt, gs?.schedule_reset_at ?? null);
 
+    phase?.('settlement_after_gameplay_state');
+
     const finalStacks = resultStacks;
     db.prepare('UPDATE hand_settlements SET final_stacks = ? WHERE hand_id = ?').run(
       JSON.stringify(finalStacks),
       w.handId,
     );
+    phase?.('settlement_after_final_stacks');
     // Mark the durable lifecycle terminal in the SAME transaction. A crash
     // after this commit leaves a `committed` row and the marker; a rollback
     // leaves the `running` row written at deal time, which is exactly what the
@@ -1151,6 +1217,7 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
        ON CONFLICT(hand_id) DO UPDATE SET status = 'committed',
          updated_at = excluded.updated_at, resolved_at = excluded.resolved_at`,
     ).run(w.handId, w.roomId, w.now, w.now, w.now);
+    phase?.('settlement_after_lifecycle');
     // The explicit commission recipient leg. `stackDeltas` is the game leg
     // (poker + squid + bounty); this leg is the rake credit. Consumers must add
     // the two to reconcile a seat's stack change; neither alone is the whole
@@ -1159,6 +1226,7 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       w.rake > 0 && w.rakeRecipientId !== null
         ? [{ userId: w.rakeRecipientId, delta: w.rake }]
         : [];
+    phase?.('settlement_before_commit');
     return {
       status: 'applied',
       roomId: w.roomId,
@@ -1489,7 +1557,12 @@ export interface ApplyPreparedResult {
 export function applyPreparedHandSettlement(
   db: DB,
   handId: string,
-  opts: { resolvedBy?: number | null; resolution?: string } = {},
+  opts: {
+    resolvedBy?: number | null;
+    resolution?: string;
+    /** Test-only fault hook, forwarded to the money transaction. */
+    phase?: SettlementPhaseHook;
+  } = {},
 ): ApplyPreparedResult {
   const row = db
     .prepare('SELECT * FROM hand_settlement_prepared WHERE hand_id = ?')
@@ -1528,8 +1601,9 @@ export function applyPreparedHandSettlement(
   }
 
   try {
+    opts.phase?.('settlement_before_transaction');
     const outcome = db.transaction((): HandSettlementOutcome => {
-      const o = applyHandSettlement(db, w);
+      const o = applyHandSettlement(db, w, opts.phase);
       db.prepare(
         `UPDATE hand_settlement_prepared
            SET resolved_at = ?, resolved_by = ?, resolution = ?, last_error = NULL
@@ -5495,7 +5569,10 @@ class Hand {
     // 2. the reveal frame, now that the chips are guaranteed to have moved.
     //    A failed notification must never undo a committed settlement.
     if (showdown) {
-      this.safeBroadcast(showdown);
+      this.safeBroadcast(showdown, {
+        before: 'broadcast_before_showdown',
+        after: 'broadcast_after_showdown',
+      });
       this.showdownHoldUntil =
         this.clock.now() + (this.opts.showdownHoldMs ?? SHOWDOWN_HOLD_MS);
     }
@@ -5503,25 +5580,31 @@ class Hand {
       // `netBySeat` is the authoritative per-seat outcome: with multiple losers
       // a seat can both pay and receive, so consumers must not assume only
       // `winners` receive chips.
-      this.safeBroadcast({
-        t: 'squid_result',
-        handId: this.id,
-        winners: squid.winners,
-        transfers: squid.transfers,
-        requestedPerLoser: squid.requestedPerLoser,
-        paidBySeat: squid.paidBySeat,
-        noClaimant: squid.noClaimant,
-        netBySeat: [...squid.netBySeat.entries()].map(([seat, net]) => ({ seat, net })),
-      } as ServerMsg);
+      this.safeBroadcast(
+        {
+          t: 'squid_result',
+          handId: this.id,
+          winners: squid.winners,
+          transfers: squid.transfers,
+          requestedPerLoser: squid.requestedPerLoser,
+          paidBySeat: squid.paidBySeat,
+          noClaimant: squid.noClaimant,
+          netBySeat: [...squid.netBySeat.entries()].map(([seat, net]) => ({ seat, net })),
+        } as ServerMsg,
+        { before: 'broadcast_before_squid' },
+      );
     // The automatic 7-2 bounty already moved inside the durable transaction;
     // only its live frame is presentation and may be lost without harm.
     if (this.settlementSevenDeuce && this.settlementSevenDeuce.amount > 0) {
-      this.safeBroadcast({
-        t: 'seven_deuce',
-        handId: this.id,
-        seat: this.settlementSevenDeuce.seat,
-        amount: this.settlementSevenDeuce.amount,
-      });
+      this.safeBroadcast(
+        {
+          t: 'seven_deuce',
+          handId: this.id,
+          seat: this.settlementSevenDeuce.seat,
+          amount: this.settlementSevenDeuce.amount,
+        },
+        { before: 'broadcast_before_seven_deuce' },
+      );
       this.safeBroadcastRoomState();
     }
     // 3. terminal frame only after the reveal hold elapses
@@ -5529,11 +5612,18 @@ class Hand {
   }
 
   /** A settlement-path broadcast is notification only: swallow transport/DB
-   *  failures so a committed hand always finishes and never triggers a refund. */
-  private safeBroadcast(msg: ServerMsg): void {
+   *  failures so a committed hand always finishes and never triggers a refund.
+   *  The optional fault points bracket the frame and are swallowed with it: a
+   *  lost notification is never allowed to undo a committed settlement. */
+  private safeBroadcast(
+    msg: ServerMsg,
+    phases?: { before?: SettlementFaultPoint; after?: SettlementFaultPoint },
+  ): void {
     try {
+      if (phases?.before) this.opts.faultInjection?.phase?.(phases.before);
       this.opts.faultInjection?.broadcast?.(msg);
       this.room.broadcast(msg);
+      if (phases?.after) this.opts.faultInjection?.phase?.(phases.after);
     } catch (err) {
       const detail = {
         id: this.id,
@@ -5719,14 +5809,17 @@ class Hand {
     const write = (this.sealedWrite ??= this.buildSealedWrite());
     // Test-only commit fault injection (never wired in production).
     this.opts.faultInjection?.persist?.(this.settlementAttempts + 1);
+    const phase = this.opts.faultInjection?.phase;
 
     // 1. Freeze the complete input durably in its OWN committed transaction.
     //    A crash after this point can settle from the DB alone - nothing is
     //    rebuilt from the current room state on retry.
+    phase?.('prepare_before');
     persistPreparedInput(this.db, write);
+    phase?.('prepare_after');
     // 2. Apply the money transaction FROM THE DB INPUT and mark the prepared
     //    row resolved in that same transaction.
-    const outcome = applyPreparedHandSettlement(this.db, this.id).outcome;
+    const outcome = applyPreparedHandSettlement(this.db, this.id, { phase }).outcome;
     // B1 single authority: the committed receipt is the only source for this
     // hand's final stacks, commission leg and bounty decision. Adopt it before
     // marking the hand applied so a mapping failure is still retryable.
@@ -5981,7 +6074,10 @@ class Hand {
       commission: rake,
       commissionBps: this.commissionBps,
     };
-    this.safeBroadcast(endMsg as ServerMsg);
+    this.safeBroadcast(endMsg as ServerMsg, {
+      before: 'broadcast_before_hand_end',
+      after: 'broadcast_after_hand_end',
+    });
     // Retain the terminal frame before teardown so a participant who missed it
     // (dropped socket, or a swallowed delivery failure) still gets it on
     // reconnect instead of being stuck on a settlement banner forever.
