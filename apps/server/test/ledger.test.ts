@@ -79,7 +79,7 @@ describe('bank flow', () => {
         method: 'POST',
         url: '/api/rooms',
         headers: auth(host.token),
-        payload: { name: 'Friday', sb: 10, bb: 20 },
+        payload: { name: 'Friday', sb: 10, bb: 20, autoApproveBuys: false },
       })
     ).json();
     const alice = await user('alice');
@@ -135,7 +135,7 @@ describe('bank flow', () => {
         method: 'POST',
         url: '/api/rooms',
         headers: auth(host.token),
-        payload: { name: 'x', sb: 1, bb: 2 },
+        payload: { name: 'x', sb: 1, bb: 2, autoApproveBuys: false },
       })
     ).json();
     const req = (
@@ -287,7 +287,7 @@ describe('backup banker', () => {
         method: 'POST',
         url: '/api/rooms',
         headers: auth(host.token),
-        payload: { name: 'CoBank', sb: 10, bb: 20 },
+        payload: { name: 'CoBank', sb: 10, bb: 20, autoApproveBuys: false },
       })
     ).json();
     for (const u of [alice, bob]) {
@@ -474,37 +474,13 @@ describe('private mode', () => {
       payload: { joinCode: room.joinCode },
     });
 
-    // off by default: a buy stays pending
-    const pendingBuy = await ctx.app.inject({
-      method: 'POST',
-      url: `/api/rooms/${room.id}/buy`,
-      headers: auth(alice.token),
-      payload: { amount: 500 },
-    });
-    expect(pendingBuy.json().status).toBe('pending');
-
-    // a non-banker cannot flip the switch
-    const denied = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/rooms/${room.id}/settings`,
-      headers: auth(alice.token),
-      payload: { autoApproveBuys: true },
-    });
-    expect(denied.statusCode).toBe(403);
-
-    const enable = await ctx.app.inject({
-      method: 'PUT',
-      url: `/api/rooms/${room.id}/settings`,
-      headers: auth(host.token),
-      payload: { autoApproveBuys: true },
-    });
-    expect(enable.statusCode).toBe(200);
-
+    // The room is created with auto-approval on by default: a buy settles
+    // instantly and the ledger names the standing banker as approver.
     const instantBuy = await ctx.app.inject({
       method: 'POST',
       url: `/api/rooms/${room.id}/buy`,
       headers: auth(alice.token),
-      payload: { amount: 700, note: 'upi' },
+      payload: { amount: 500, note: 'upi' },
     });
     expect(instantBuy.json().status).toBe('approved');
 
@@ -513,24 +489,50 @@ describe('private mode', () => {
       url: `/api/rooms/${room.id}`,
       headers: auth(alice.token),
     });
-    const me = view.json().players.find((p: { userId: number }) => p.userId === alice.userId);
-    expect(me.stack).toBe(700);
     expect(view.json().autoApproveBuys).toBe(true);
+    const me = view.json().players.find((p: { userId: number }) => p.userId === alice.userId);
+    expect(me.stack).toBe(500);
 
     const entry = ctx.db
       .prepare("SELECT * FROM ledger WHERE room_id = ? AND kind = 'purchase' AND user_id = ?")
       .get(room.id, alice.userId) as { delta: number; approved_by: number };
-    expect(entry.delta).toBe(700);
+    expect(entry.delta).toBe(500);
     expect(entry.approved_by).toBe(host.userId);
     expect(verifyLedger(ctx.db, room.id).ok).toBe(true);
 
-    // the earlier pending request is untouched and still reviewable
+    // a non-banker cannot flip the switch
+    const denied = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/rooms/${room.id}/settings`,
+      headers: auth(alice.token),
+      payload: { autoApproveBuys: false },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    // the banker can turn it off; then a buy stays pending and reviewable
+    const disable = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/rooms/${room.id}/settings`,
+      headers: auth(host.token),
+      payload: { autoApproveBuys: false },
+    });
+    expect(disable.statusCode).toBe(200);
+
+    const pendingBuy = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/buy`,
+      headers: auth(alice.token),
+      payload: { amount: 700 },
+    });
+    expect(pendingBuy.json().status).toBe('pending');
+
     const inbox = await ctx.app.inject({
       method: 'GET',
       url: `/api/rooms/${room.id}/requests`,
       headers: auth(host.token),
     });
     expect(inbox.json().requests).toHaveLength(1);
+    expect(verifyLedger(ctx.db, room.id).ok).toBe(true);
   });
 });
 

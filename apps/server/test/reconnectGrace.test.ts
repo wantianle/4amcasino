@@ -70,7 +70,7 @@ async function createTable(opts: Partial<GameOpts> = {}): Promise<Table> {
   for (const c of clients) await c.login();
 
   const host = clients[0]!;
-  const room = (await host.api('/api/rooms', { name: 'Grace', sb: 10, bb: 20 }, 'POST')) as {
+  const room = (await host.api('/api/rooms', { name: 'Grace', sb: 10, bb: 20, autoApproveBuys: false }, 'POST')) as {
     id: string;
     joinCode: string;
   };

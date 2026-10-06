@@ -205,6 +205,9 @@ describe('bot initial buy-in', () => {
     const bankerId = createUser(ctx.db, 'bot_banker', 'e'.repeat(64), 'f'.repeat(64)).userId;
     const bankerToken = createSession(ctx.db, bankerId);
     ctx.db.prepare('UPDATE rooms SET banker_id = ? WHERE id = ?').run(bankerId, room);
+    // This case exercises the human approval flow, so opt this room out of the
+    // default-on auto-approval before raising the buy.
+    ctx.db.prepare('UPDATE rooms SET auto_approve_buys = 0 WHERE id = ?').run(room);
 
     const res = await createBot({ seat: 1, initialBuyIn: 500 });
     const body = res.json();
@@ -350,6 +353,9 @@ describe('bot lifecycle / claim handoff', () => {
   it('refuses start from waiting_buy_approval and from running', async () => {
     const bankerId = createUser(ctx.db, 'bot_other_banker', '5'.repeat(64), '6'.repeat(64)).userId;
     ctx.db.prepare('UPDATE rooms SET banker_id = ? WHERE id = ?').run(bankerId, room);
+    // A pending buy-in is required to produce the `waiting_buy_approval` state,
+    // so disable the default-on auto-approval for this case.
+    ctx.db.prepare('UPDATE rooms SET auto_approve_buys = 0 WHERE id = ?').run(room);
     const waiting = (await createBot({ seat: 1, initialBuyIn: 100 })).json();
     expect((await startBot(waiting.bot.id)).statusCode).toBe(409);
 
@@ -450,6 +456,8 @@ describe('remove / grant hardening', () => {
     const bankerId = createUser(ctx.db, 'bot_banker2', '7'.repeat(64), '8'.repeat(64)).userId;
     const bankerToken = createSession(ctx.db, bankerId);
     ctx.db.prepare('UPDATE rooms SET banker_id = ? WHERE id = ?').run(bankerId, room);
+    // A pending buy-in is the whole point of this case, so keep it pending.
+    ctx.db.prepare('UPDATE rooms SET auto_approve_buys = 0 WHERE id = ?').run(room);
 
     const created = (await createBot({ seat: 1, initialBuyIn: 400 })).json();
     expect(created.bot.status).toBe('waiting_buy_approval');
@@ -551,6 +559,9 @@ describe('shared buy service', () => {
   });
 
   it('keeps /buy behaviour: pending request, banker approval, ledger and stack', async () => {
+    // The shared room defaults to auto-approval; this case is about the manual
+    // request -> approval path, so turn it off first.
+    ctx.db.prepare('UPDATE rooms SET auto_approve_buys = 0 WHERE id = ?').run(room);
     const buy = await ctx.app.inject({
       method: 'POST',
       url: `/api/rooms/${room}/buy`,

@@ -55,8 +55,8 @@ async function createTable() {
   };
   await human.connect(room.id);
   human.send({ t: 'sit', seat: 0 });
-  const buy = (await human.api(`/api/rooms/${room.id}/buy`, { amount: 1000 })) as { id: number };
-  await human.api(`/api/rooms/${room.id}/approve`, { requestId: buy.id, approve: true });
+  // auto-approval is on by default, so the buy funds the sitter immediately
+  await human.api(`/api/rooms/${room.id}/buy`, { amount: 1000 });
   const bot = (await human.api(`/api/rooms/${room.id}/bots`, {
     seat: 1,
     initialBuyIn: 1000,

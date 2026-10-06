@@ -837,7 +837,7 @@ describe('close freezes seating and money movement', () => {
     const ctx = createApp(':memory:');
     const host = await register(ctx.app, 'freeze_money_host');
     const bob = await register(ctx.app, 'freeze_money_bob');
-    const room = await createRoom(ctx, host.token);
+    const room = await createRoom(ctx, host.token, 'Close Test', { autoApproveBuys: false });
     await join(ctx, bob.token, room.joinCode);
 
     // a real pending buy request raised before close
