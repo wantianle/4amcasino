@@ -1491,6 +1491,29 @@ function parsePreparedWrite(
  *  apply would corrupt accounting/counters. Returns a quarantine reason or
  *  null when the input is safe to apply. */
 function validatePreparedAgainstDb(db: DB, w: HandSettlementWrite): string | null {
+  // A `hand_settlements` marker means this hand already COMMITTED, and the
+  // marker is the authority that the money moved exactly once. Every check
+  // below validates the live state a *pending* apply needs (participant rows,
+  // feature-trigger ownership, transcript head); a room that legitimately moved
+  // on after commit must never turn a harmless duplicate retry into a
+  // quarantine, so the marker short-circuits them. The one thing still worth
+  // checking is that the marker describes the SAME hand/room/head/rake - a
+  // marker for a different settlement is corruption and stays fail-closed. A
+  // consistent marker returns null and `applyHandSettlement` loads the full
+  // validated receipt via `loadSettledReceipt` (identical identity semantics).
+  const marker = db
+    .prepare('SELECT room_id, head, rake FROM hand_settlements WHERE hand_id = ?')
+    .get(w.handId) as { room_id: string; head: string; rake: number } | undefined;
+  if (marker) {
+    if (marker.room_id !== w.roomId)
+      return `settlement identity conflict on hand ${w.handId}: room ${marker.room_id} != ${w.roomId}`;
+    if (marker.head !== w.head)
+      return `settlement identity conflict on hand ${w.handId}: head ${marker.head} != ${w.head}`;
+    if (!Number.isSafeInteger(marker.rake) || marker.rake < 0 || marker.rake !== w.rake)
+      return `settlement identity conflict on hand ${w.handId}: rake ${marker.rake} != ${w.rake}`;
+    return null;
+  }
+
   // A transcript can only exist for a hand whose settlement already committed;
   // if one exists, it must describe the same sealed head.
   const t = db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(w.handId) as
@@ -1525,17 +1548,15 @@ function validatePreparedAgainstDb(db: DB, w: HandSettlementWrite): string | nul
       return `feature trigger ${id} is not still claimed by hand ${w.handId}`;
   }
 
-  // No marker yet, but ledger legs for this hand already exist: a partially
-  // applied settlement. Never layer a full settlement over it.
-  const marker = db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(w.handId);
-  if (!marker) {
-    const partial = db
-      .prepare(
-        `SELECT 1 FROM ledger WHERE room_id = ? AND (ref = ? OR (kind = 'seven-deuce' AND ref = ?)) LIMIT 1`,
-      )
-      .get(w.roomId, w.head, w.handId);
-    if (partial) return `ledger has entries for hand ${w.handId} but no settlement marker`;
-  }
+  // No marker exists here (a present one returned above), but ledger legs for
+  // this hand already do: a partially applied settlement. Never layer a full
+  // settlement over it.
+  const partial = db
+    .prepare(
+      `SELECT 1 FROM ledger WHERE room_id = ? AND (ref = ? OR (kind = 'seven-deuce' AND ref = ?)) LIMIT 1`,
+    )
+    .get(w.roomId, w.head, w.handId);
+  if (partial) return `ledger has entries for hand ${w.handId} but no settlement marker`;
   return null;
 }
 
@@ -1574,6 +1595,15 @@ export function applyPreparedHandSettlement(
     .get(handId) as { status: string } | undefined;
   if (lifecycle?.status === 'aborted')
     throw new PreparedInputError(`hand ${handId} is aborted; settlement refused`);
+  // A quarantined hand has a proven-bad frozen input: the only way out is an
+  // explicit operator abort, never a re-apply. Refuse here (mirroring the HTTP
+  // operator-retry route and `retrySettlement`) so a direct caller cannot settle
+  // it, and classify as `PreparedInputError` so the transient retry machinery
+  // does NOT treat it as auto-retryable.
+  if (lifecycle?.status === 'quarantined')
+    throw new PreparedInputError(
+      `hand ${handId} is quarantined; settlement refused pending operator review`,
+    );
 
   db.prepare('UPDATE hand_settlement_prepared SET attempts = attempts + 1 WHERE hand_id = ?').run(
     handId,
@@ -2656,6 +2686,8 @@ export class GameRoom {
         if (room.host_id !== userId)
           return this.send(userId, { t: 'error', message: 'only the host can retry a settlement' });
         if (!this.hand) return this.send(userId, { t: 'error', message: 'no hand to retry' });
+        const refusal = this.hand.settlementRetryRefusalReason();
+        if (refusal) return this.send(userId, { t: 'error', message: refusal });
         this.hand.retrySettlement();
         return;
       }
@@ -5702,6 +5734,24 @@ class Hand {
   }
 
   /**
+   * Why an in-room settlement retry must be refused, or null when it may run.
+   * Mirrors the HTTP operator-retry gate (`/api/admin/hands/:id/retry`): a
+   * `quarantined` hand has a proven-bad frozen input whose only exit is the
+   * operator abort, and an `aborted` hand is terminal. Never treat a quarantined
+   * hand as auto-retryable - even if the underlying DB state were repaired
+   * externally, the host retry must still be refused explicitly.
+   */
+  settlementRetryRefusalReason(): string | null {
+    const lc = this.db
+      .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+      .get(this.id) as { status: string } | undefined;
+    if (lc?.status === 'quarantined')
+      return `hand ${this.id} is quarantined; settlement retry refused pending operator review`;
+    if (lc?.status === 'aborted') return `hand ${this.id} is aborted; settlement retry refused`;
+    return null;
+  }
+
+  /**
    * Host/operator recovery from a frozen settlement (retries exhausted). The
    * already-computed settlement is deterministic, and the write is idempotent
    * on the `hand_settlements` marker, so clearing the retry budget and writing
@@ -5713,6 +5763,8 @@ class Hand {
    */
   retrySettlement(): boolean {
     if (this.settlementApplied || !this.settlement) return false;
+    // Refuse exactly the states the HTTP operator retry refuses.
+    if (this.settlementRetryRefusalReason()) return false;
     this.settlementAttempts = 0;
     this.settlementError = null;
     this.clearTimer();

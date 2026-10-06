@@ -409,6 +409,91 @@ describe('P0-2: durable prepared input survives a process exit', () => {
     db.close();
   });
 
+  // The marker gate must run BEFORE the live-state checks below it. Once a hand
+  // has committed, a room that legitimately moved on (its feature trigger flipped
+  // to `applied`, or was re-claimed) must see a duplicate retry, never a spurious
+  // quarantine.
+  it('a committed hand whose feature trigger has moved on re-applies as duplicate, not quarantine', () => {
+    const db = openDb(':memory:');
+    seed(db);
+    db.prepare(
+      `INSERT INTO room_feature_triggers (room_id, request_id, kind, source, status, claimed_hand_id, created_at)
+       VALUES ('r1','req-1','squid','manual','claimed','h1',1)`,
+    ).run();
+    persistPreparedInput(db, makeWrite({ triggerIds: [1] }));
+    // First apply commits the hand and flips the trigger claimed -> applied.
+    expect(applyPreparedHandSettlement(db, 'h1').status).toBe('applied');
+    expect(lifecycle(db)).toBe('committed');
+    expect(
+      (db.prepare('SELECT status FROM room_feature_triggers WHERE id = 1').get() as {
+        status: string;
+      }).status,
+    ).toBe('applied');
+
+    // The committed marker is the authority; the trigger no longer reads
+    // `claimed`, so the OLD ordering quarantined here.
+    const again = applyPreparedHandSettlement(db, 'h1');
+    expect(again.status).toBe('duplicate');
+    expect(lifecycle(db)).toBe('committed');
+    expect(count(db, 'SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?', 'h1')).toBe(1);
+    db.close();
+  });
+
+  it('a committed hand whose trigger was re-claimed by another hand is still a duplicate', () => {
+    const db = openDb(':memory:');
+    seed(db);
+    db.prepare(
+      `INSERT INTO room_feature_triggers (room_id, request_id, kind, source, status, claimed_hand_id, created_at)
+       VALUES ('r1','req-1','squid','manual','claimed','h1',1)`,
+    ).run();
+    persistPreparedInput(db, makeWrite({ triggerIds: [1] }));
+    expect(applyPreparedHandSettlement(db, 'h1').status).toBe('applied');
+    // Inconsistent durable state: h1 is committed yet another hand now owns the
+    // trigger. The committed marker wins -> duplicate, not quarantine.
+    db.prepare(
+      "UPDATE room_feature_triggers SET status = 'claimed', claimed_hand_id = 'h2', resolved_at = NULL WHERE id = 1",
+    ).run();
+    expect(applyPreparedHandSettlement(db, 'h1').status).toBe('duplicate');
+    expect(lifecycle(db)).toBe('committed');
+    db.close();
+  });
+
+  it('a committed hand with a conflicting marker identity still fails closed', () => {
+    const db = openDb(':memory:');
+    seed(db);
+    persistPreparedInput(db, makeWrite());
+    expect(applyPreparedHandSettlement(db, 'h1').status).toBe('applied');
+    // Corrupt the marker so it describes a DIFFERENT settlement: the duplicate
+    // short-circuit must not trust it.
+    db.prepare("UPDATE hand_settlements SET head = 'deadbeef' WHERE hand_id = 'h1'").run();
+    expect(() => applyPreparedHandSettlement(db, 'h1')).toThrow(PreparedInputError);
+    // The terminal committed row is not downgraded, but no re-settlement ran.
+    expect(lifecycle(db)).toBe('committed');
+    expect(count(db, 'SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?', 'h1')).toBe(1);
+    db.close();
+  });
+
+  it('a quarantined hand refuses apply: it throws and writes no money facts', () => {
+    const db = openDb(':memory:');
+    seed(db);
+    persistPreparedInput(db, makeWrite());
+    db.prepare(
+      "UPDATE hand_lifecycle SET status = 'quarantined', last_error = 'tampered' WHERE hand_id = 'h1'",
+    ).run();
+    let thrown: unknown;
+    try {
+      applyPreparedHandSettlement(db, 'h1');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PreparedInputError);
+    expect((thrown as Error).message).toMatch(/quarantined/);
+    expect(lifecycle(db)).toBe('quarantined');
+    expect(count(db, 'SELECT COUNT(*) AS n FROM hand_settlements')).toBe(0);
+    expect(count(db, 'SELECT COUNT(*) AS n FROM ledger')).toBe(0);
+    db.close();
+  });
+
   it('quarantines when ledger entries exist for the hand but no settlement marker', () => {
     const db = openDb(':memory:');
     seed(db);
@@ -1022,6 +1107,27 @@ describe('P0-2: quarantine -> operator abort -> live room recovers', () => {
           ),
         3000,
       );
+
+      // A host retry of the quarantined hand is refused explicitly, exactly like
+      // the HTTP operator gate: it must not re-run the settlement, and the room
+      // must stay frozen with no books written.
+      host.errors = [];
+      host.send({ t: 'retry_settlement' });
+      await host.waitFor(
+        () => host.errors.some((e) => /quarantined/i.test(e) && /refused/i.test(e)),
+        3000,
+      );
+      expect(gameRoom.isUnhealthy()).toBe(true);
+      expect(
+        (app.db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId) as {
+          status: string;
+        }).status,
+      ).toBe('quarantined');
+      expect(
+        (app.db
+          .prepare('SELECT COUNT(*) AS n FROM hand_settlements WHERE hand_id = ?')
+          .get(handId) as { n: number }).n,
+      ).toBe(0);
 
       // The operator resolves it over the DB-only HTTP API (never a GameRoom).
       const platform = new TestClient(baseUrl, 'qra_platform');
