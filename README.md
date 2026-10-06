@@ -12,8 +12,10 @@ messages and enforces betting rules, but it never holds a masking key and never 
 card.
 
 Chips are play money. Players buy points from a **bank**; the room's **banker** approves each
-purchase, and every chip movement — buys, pots, bounties, transfers — lands in an append-only,
-**hash-chained ledger** the whole room can verify, so the group settles up outside the app.
+purchase by default — a room can switch on **auto-approve buys**, so purchases land without a
+manual approval — and every chip movement — buys, pots, bounties, transfers — lands in an
+append-only, **hash-chained ledger** the whole room can verify, so the group settles up outside
+the app.
 No real payments, ever.
 
 ## What's inside
@@ -23,9 +25,9 @@ live and yours is always bottom-center. A turn timer the banker picks (15s to no
 one-tap quick bets and pre-selected actions so you never stall the table, a blinking
 can't-miss-it highlight on whoever's turn it is, chip stacks that slide to the pot and sweep
 in at street end, board cards that flip over back-to-face with a cascading flop, big
-draggable hole cards, auto-deal when the banker is online, winner-reveal choreography with
+hole cards, auto-deal when the banker is online, winner-reveal choreography with
 plain-English reasoning for why the hand won, full hand replays rebuilt from the signed game
-record, sit-out, four card-back colorways and a 4-color deck option, on a permanently dark
+record, sit-out, nine card backs, five card faces and four table skins, on a permanently dark
 theme.
 
 **The people.** Friends with live presence, table invites (with an opt-in auto-join), public
@@ -33,8 +35,8 @@ tables listed in every lobby or private 6-letter codes, watch-only spectator lin
 viewers can ask to join and the banker admits them, voice chat, table chat with your own
 quick phrases, and reactions.
 
-**The money.** A banker (plus an optional co-banker) approves buy-ins; every movement is
-hash-chained. Players can send or lend chips to each other between hands. The banker can revert
+**The money.** A banker (plus an optional co-banker) approves buy-ins, unless the room turns on
+auto-approve buys; every movement is hash-chained. Players can send or lend chips to each other between hands. The banker can revert
 a purchase, void a single hand, or void a whole table — voided amounts drop out of everyone's
 totals automatically. Rooms can require a minimum number of hands before someone's winnings
 count in settle-up. The ledger page renders a full session report: time played, hands, biggest
