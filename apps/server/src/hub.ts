@@ -13,7 +13,7 @@ import {
   type GameOpts,
 } from './game.js';
 import { LIMITS } from './limits.js';
-import { agentMaySend, resolveAgentGrant } from './agentAccess.js';
+import { agentMaySend, resolveAgentGrant } from './botAccess.js';
 
 // 10s per attempt with 3 retries: a stalled player gets a fixed ~40s to rejoin.
 // The auto-deal cadence must be short or "auto deal" feels manual, so the hub

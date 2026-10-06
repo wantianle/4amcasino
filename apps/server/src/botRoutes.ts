@@ -16,7 +16,7 @@ import { LIMITS } from './limits.js';
 import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIdentity.js';
 import { pickFunBotName } from './botNames.js';
-import { resolveAgentGrant } from './agentAccess.js';
+import { resolveAgentGrant } from './botAccess.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -511,7 +511,7 @@ export function finalizeBotRemoved(db: DB, botId: string): boolean {
     cancelPendingBuys(db, bot.room_id, bot.user_id);
     // Remove the runner grants outright. `user_id` is included alongside
     // `bot_id` because a corrupted/legacy grant can carry a NULL bot_id (see
-    // agentAccess); scoping to grant_kind='bot_runner' leaves any unrelated
+    // botAccess); scoping to grant_kind='bot_runner' leaves any unrelated
     // grant on the same user untouched.
     db.prepare(
       "DELETE FROM agent_grants WHERE bot_id = ? OR (user_id = ? AND grant_kind = 'bot_runner')",

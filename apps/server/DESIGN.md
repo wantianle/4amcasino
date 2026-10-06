@@ -209,7 +209,7 @@ that just ended. The rules are server-authoritative and enforced in
   only then does the 1bb move, through two `kind: 'peek'` ledger rows that net to
   zero. Declining sends `peek_result` with `status: 'declined'` and moves nothing.
 - **Bots are players.** A bot's agent grant may send `peek_accept`/`peek_decline`
-  (`agentAccess.ts` `PLAY_MESSAGES`). `HeadlessClient` auto-accepts any offer for
+  (`botAccess.ts` `PLAY_MESSAGES`). `HeadlessClient` auto-accepts any offer for
   its recent hand, signing against the offer's own `handId`.
 - **Both sides get a terminal signal.** `peek_result` (carrying the reveal on
   acceptance) goes to the requester. The target gets a narrow

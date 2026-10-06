@@ -152,6 +152,23 @@ import { computeShowdown, computeSquidSettlement } from './showdown.js';
 
 export { isSevenDeuce } from './handShow.js';
 
+/**
+ * True for the JS error family that means "a bug in the value we handed over",
+ * not a transient transport failure. A dead socket does not throw synchronously
+ * out of `room.broadcast`; a `TypeError` / `RangeError` / `ReferenceError` /
+ * `SyntaxError` almost always means the frame itself is malformed (e.g. a
+ * circular value in `JSON.stringify`). Used only to route the failure log - the
+ * publisher never rethrows, so this classification cannot affect isolation.
+ */
+const PROGRAMMING_ERROR_NAMES = new Set([
+  'TypeError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+]);
+function isProgrammingError(err: unknown): boolean {
+  return err instanceof Error && PROGRAMMING_ERROR_NAMES.has(err.name);
+}
 
 export class GameRoom {
   private sockets = new Map<number, WebSocket>();
@@ -3754,7 +3771,8 @@ class Hand {
    * to the hub where an escaping error would mark the whole room unhealthy.
    * Settlement-path frames that carry test fault hooks go through
    * `safeBroadcast`, which brackets this publisher with its fault points.
-   * Returns whether the frame was handed to the transport.
+   * Never rethrows: the tiered logging below only changes how loudly a failure
+   * is reported. Returns whether the frame was handed to the transport.
    */
   private publish(msg: ServerMsg, label = 'hand broadcast failed'): boolean {
     try {
@@ -3767,11 +3785,20 @@ class Hand {
   }
 
   private logBroadcastFailure(label: string, t: string, err: unknown): void {
-    const detail = {
-      id: this.id,
-      t,
-      message: err instanceof Error ? err.message : String(err),
-    };
+    const message = err instanceof Error ? err.message : String(err);
+    // Tier 1: an unexpected programming error (TypeError and friends). This is
+    // not a transport hiccup - it is almost always a bug in the frame itself,
+    // e.g. a circular value breaking `JSON.stringify`. Report it distinctly,
+    // with the stack, so a real defect is not buried in the normal "one frame
+    // was dropped" noise. Still swallowed, exactly like tier 2.
+    if (isProgrammingError(err)) {
+      const detail = { id: this.id, t, kind: 'unexpected', message, stack: (err as Error).stack };
+      hdbg('broadcastProgrammingError', detail);
+      console.error(`${label} - unexpected programming error, not a delivery failure`, detail);
+      return;
+    }
+    // Tier 2: an expected delivery failure (dead/stalled transport, ...).
+    const detail = { id: this.id, t, message };
     hdbg('broadcastFailed', detail);
     // hdbg is off by default, so a lost frame would otherwise be completely
     // silent in production. Surface it on the normal error log.

@@ -393,7 +393,7 @@ function renderArmsMarkdown(r) {
   );
   L.push('');
   L.push(
-    `Cross-hand session memory: **${r.memory === true ? 'ON' : 'OFF'}**. With it on the policy sees the real opponent VPIP/PFR/aggression history (full production behaviour) and the opponent-model read can be observed; with it off every decision view carries an empty snapshot, so opponent-model switches are inert.`,
+    `Cross-hand session memory: **${r.memory === true ? 'ON' : 'OFF'}**. With it on the policy sees the real opponent VPIP/PFR/aggression history (full production behaviour), so the opponent-type read (maniac / station / nit) can fire; with it off every decision view carries an empty snapshot, so that read never fires and the range model falls back to its size/texture baseline. This is independent of the \`sizeGrid\` / \`buckets\` switches, which do not read memory and act either way.`,
   );
   L.push('');
   L.push('## Reproduce');

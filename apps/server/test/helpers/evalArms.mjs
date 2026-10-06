@@ -109,8 +109,9 @@ export function runIsClean(run) {
  * @param {number}   [opts.seed]      deterministic-shuffle seed
  * @param {number}   [opts.hands]     hands per run (each pair plays 2x)
  * @param {boolean}  [opts.memory]    inject cross-hand session memory (default
- *   `true`; arm mode is meant to measure the full production strategy, and
- *   `sizeGrid` / `buckets` need opponent history to be observable)
+ *   `true`; arm mode measures the full production strategy, so the opponent-type
+ *   read (maniac / station / nit) sees settled history. The `sizeGrid` /
+ *   `buckets` P2 switches do not read memory and act either way.)
  * @param {object}   [opts.match]     extra options forwarded to `comparePair`
  */
 export async function runArmComparison(opts = {}) {

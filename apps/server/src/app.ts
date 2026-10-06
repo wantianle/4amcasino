@@ -16,7 +16,7 @@ import { registerAccountRoutes, armRecoveryCode, generateRecoveryCode } from './
 import { registerAdminRoutes } from './admin.js';
 import { forgive, hitNamed, LIMITS, rateLimit } from './limits.js';
 import { isPlatform } from './platform.js';
-import { AgentError } from './agentAccess.js';
+import { AgentError } from './botAccess.js';
 
 const registerSchema = z.object({
   username: z

@@ -957,11 +957,14 @@ export function handPercentile(hole: readonly CardId[], board: readonly CardId[]
  *     `~2` standard errors, so a spot is only treated as "clear" when the
  *     observed edge exceeds sampling noise.
  *
- * This is intentionally a small, explainable approximation: it does NOT do
- * range propagation (that is the P2 follow-on). The weighted range is applied to
- * every still-active opponent (a multiway simplification); when a tiny range
- * cannot fill every opponent without replacement, `estimateEquity` fills the
- * overflow uniformly and reports `uniformFallbacks`.
+ * This is intentionally a small, explainable approximation: it rebuilds the
+ * weighted range from public information on every facing-a-bet decision and does
+ * not propagate a range across streets (the experimental `rangePropagation`
+ * capability was evaluated and deleted outright - see {@link P2Options}). The
+ * weighted range is applied to every still-active opponent (a multiway
+ * simplification); when a tiny range cannot fill every opponent without
+ * replacement, `estimateEquity` fills the overflow uniformly and reports
+ * `uniformFallbacks`.
  */
 export type VillainRangeModel = 'value-heavy' | 'balanced' | 'bluff-heavy';
 

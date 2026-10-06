@@ -806,10 +806,18 @@ describe('postflop P2: explicit all-off reproduces the HEAD baseline', () => {
     const views = baselineGrid();
     const def = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2
     const off = new PostflopPolicy({ params: PARAMS, seed: SEED, p2: P2_ALL_OFF });
+    const defDecisions = views.map((view) => def.decide(view));
+    const offDecisions = views.map((view) => off.decide(view));
+    // Keep the full-decision inequality (proves the two paths are not
+    // byte-identical).
     expect(
-      views.some(
-        (view) => JSON.stringify(def.decide(view)) !== JSON.stringify(off.decide(view)),
-      ),
+      defDecisions.some((d, i) => JSON.stringify(d) !== JSON.stringify(offDecisions[i])),
+    ).toBe(true);
+    // ...and pin the difference to a real ACTION change, not only a differing
+    // `reason` string. Without this, a `reason`-only diff would satisfy the
+    // assertion above while the chosen action never moved.
+    expect(
+      defDecisions.some((d, i) => d.action.type !== offDecisions[i]!.action.type),
     ).toBe(true);
     // And the default equals an explicit all-on config, byte for byte.
     const explicitOn = new PostflopPolicy({

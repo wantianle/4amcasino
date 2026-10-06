@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import { createSession, createUser } from '../src/auth.js';
-import { resolveAgentGrant, agentMaySend } from '../src/agentAccess.js';
+import { resolveAgentGrant, agentMaySend } from '../src/botAccess.js';
 import { attachHub } from '../src/hub.js';
 import WebSocket from 'ws';
 import { once } from 'node:events';

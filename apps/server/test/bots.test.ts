@@ -4,7 +4,7 @@ import { identityFromSeed } from '@4am/mental-poker';
 import { createApp } from '../src/app.js';
 import { createSession, createUser } from '../src/auth.js';
 import { migrateBots } from '../src/db.js';
-import { resolveAgentGrant } from '../src/agentAccess.js';
+import { resolveAgentGrant } from '../src/botAccess.js';
 import { BuyServiceError, requestRoomBuy } from '../src/buyService.js';
 import {
   claimStartingBot,

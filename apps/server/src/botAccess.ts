@@ -43,7 +43,8 @@ export function resolveAgentGrant(db: DB, token: string): AgentGrant | null {
   if (!grant || !enabledUser(db, grant.user_id)) return null;
   if (!scopeMember(db, grant.user_id, grant.scope_kind, grant.scope_id)) return null;
   // A bot_runner grant is only valid while it names an existing bot whose user
-  // and room still match the grant. Normal `user` grants are unchanged.
+  // and room still match the grant. Legacy `user` grants are left as-is: they
+  // are no longer minted, so the original resolution path stands.
   if (grant.grant_kind === 'bot_runner') {
     if (!grant.bot_id) return null;
     const bot = db

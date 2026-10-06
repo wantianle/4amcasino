@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
+import type { CardId } from '@4am/shared';
 import { createApp } from '../src/app.js';
 import { attachHub } from '../src/hub.js';
 import { activeHands } from '../src/liveHands.js';
@@ -168,6 +169,100 @@ describe('P1-4: notification isolation', () => {
       await host.waitFor(() => host.handId !== null && host.handId !== handId, 10000);
       expect(activeHands.has(room.id)).toBe(true);
     } finally {
+      await ctx.app.close();
+    }
+  }, 30000);
+
+  // 3b/3c: a NON-settlement frame dropped mid-hand. There is no per-frame
+  // transcript catch-up; the reconnect resync is the repair path. This test
+  // pins that the loss is (a) really lost in real time while connected and
+  // (b) fully repaired from authoritative state on reconnect, with the hand
+  // still settling. It also documents the boundary: only replayed state is
+  // recovered, not the dropped live frame itself.
+  it('a dropped non-settlement frame is repaired from authoritative state on reconnect', async () => {
+    const { ctx, hub, baseUrl } = await startLive();
+    try {
+      const { room, host, players } = await setupRoom(
+        baseUrl,
+        ['sra', 'srb'],
+        ['passive', 'passive'],
+        clients,
+      );
+      const gameRoom = hub.rooms.get(room.id)!;
+      const orig = gameRoom.broadcast.bind(gameRoom);
+      // Drop the flop's three `board_open` frames, then let the rest flow. These
+      // are ordinary (non-settlement) frames, so the isolation rule applies: the
+      // loss is logged and swallowed and the hand keeps running.
+      const dropped: CardId[] = [];
+      let flopDropped = false;
+      gameRoom.broadcast = (msg) => {
+        if (!flopDropped && msg.t === 'board_open') {
+          dropped.push(msg.card);
+          if (dropped.length === 3) flopDropped = true;
+          throw new Error(`injected non-settlement drop: board_open ${msg.card}`);
+        }
+        orig(msg);
+      };
+
+      host.send({ t: 'start_hand' });
+      await host.waitFor(() => flopDropped, 15000);
+      // Real-time gap: the live frame was lost, so the still-connected client
+      // has no flop.
+      expect(host.board).toEqual([]);
+
+      // Reconnect. `resendPending` -> `replayPublicState` replays the board via
+      // the per-socket `send`, which the broadcast patch never touches.
+      host.disconnect();
+      await host.connect(room.id);
+      await host.waitFor(() => host.board.length >= 3, 5000);
+      // The replayed board is exactly the frames the live broadcast dropped.
+      expect(host.board.slice(0, 3).sort()).toEqual([...dropped].sort());
+
+      // The hand still reaches a committed settlement, so the dropped frame
+      // neither stalled nor unwound it.
+      await awaitHandEnd(players, 15000);
+      expect(host.handEnd).not.toBeNull();
+      expect(latestLifecycle(ctx, room.id)).toBe('committed');
+      expect(gameRoom.isUnhealthy()).toBe(false);
+    } finally {
+      await ctx.app.close();
+    }
+  }, 30000);
+
+  // 3a: the publisher's tiers. A programming error (TypeError and friends) is
+  // reported distinctly from an ordinary delivery failure, yet is still
+  // swallowed - so the "a notification bug must never unwind settlement" rule
+  // holds for the unexpected tier too.
+  it('a programming error in a frame is logged distinctly and still isolated', async () => {
+    const { ctx, hub, baseUrl } = await startLive();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { room, host, players } = await setupRoom(
+        baseUrl,
+        ['tpa', 'tpb'],
+        ['passive', 'passive'],
+        clients,
+      );
+      const gameRoom = hub.rooms.get(room.id)!;
+      const orig = gameRoom.broadcast.bind(gameRoom);
+      let injected = false;
+      gameRoom.broadcast = (msg) => {
+        if (!injected && msg.t === 'board_open') {
+          injected = true;
+          throw new TypeError('injected programming error: circular frame');
+        }
+        orig(msg);
+      };
+
+      host.send({ t: 'start_hand' });
+      await awaitHandEnd(players, 15000);
+      expect(injected).toBe(true);
+      expect(latestLifecycle(ctx, room.id)).toBe('committed');
+      expect(gameRoom.isUnhealthy()).toBe(false);
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('unexpected programming error, not a delivery failure');
+    } finally {
+      errSpy.mockRestore();
       await ctx.app.close();
     }
   }, 30000);
