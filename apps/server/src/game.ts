@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws';
 import {
   Transcript,
   cardLookup,
+  computeHead,
   handKeyCommit,
   initialDeck,
   invScalar,
@@ -16,6 +17,7 @@ import {
   verifyContent,
   verifyUnmask,
   type Point,
+  type TranscriptEntry,
 } from '@4am/mental-poker';
 import {
   activeNonAllIn,
@@ -466,13 +468,34 @@ export interface HandSettlementWrite {
     /** Per-payer debits for the ledger. */
     payerAmounts: { userId: number; amount: number }[];
   } | null;
+  /**
+   * AUX/TEST ONLY. When true, a duplicate settlement is allowed to validate
+   * against the ledger + candidate write alone, without a sealed transcript
+   * (used by the synthetic idempotency fixtures that commit `entries: []`).
+   *
+   * A PRODUCTION duplicate - any retry of a marker written by `GameRoom` - must
+   * NEVER set this: the transcript is sealed in the same transaction as the
+   * marker, so its absence or inconsistency is corruption that must throw, not
+   * a silent downgrade to the candidate write's own seats.
+   */
+  transcriptlessReceipt?: boolean;
   now: number;
 }
 
 export interface HandSettlementOutcome {
   status: 'applied' | 'duplicate';
+  /** Identity of the committed hand. A duplicate returns the FIRST submission's
+   *  identity, loaded from durable state, never the candidate write's. */
+  roomId: string;
+  handId: string;
+  /** The sealed transcript head the marker vouches for. */
+  head: string;
+  /** The rake recorded in the committed marker. */
+  rake: number;
   timeBankSkipped: number[];
   finalStacks: { userId: number; stack: number }[];
+  /** Combined poker+squid+automatic-bounty game deltas, per user. */
+  gameDeltas: { userId: number; delta: number }[];
   /** What the embedded 7-2 bounty actually moved (seat + total), or null. */
   sevenDeuce: { seat: number; amount: number } | null;
   /**
@@ -493,6 +516,364 @@ export interface HandSettlementOutcome {
    * commission ledger leg, not by a hand seat.
    */
   commissionDeltas: { userId: number; delta: number }[];
+}
+
+type UserDelta = { userId: number; delta: number };
+
+/** Strictly parse `hand_settlements.final_stacks`. Returns null on any
+ *  deviation: malformed entry, non-integer/duplicate user, non-integer or
+ *  negative stack. Recovery never substitutes a fabricated 0. */
+function parseFinalStacksStrict(raw: unknown): { userId: number; stack: number }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: { userId: number; stack: number }[] = [];
+  const seen = new Set<number>();
+  for (const f of raw as unknown[]) {
+    if (!f || typeof f !== 'object') return null;
+    const { userId, stack } = f as { userId?: unknown; stack?: unknown };
+    if (typeof userId !== 'number' || !Number.isSafeInteger(userId)) return null;
+    if (typeof stack !== 'number' || !Number.isSafeInteger(stack) || stack < 0) return null;
+    if (seen.has(userId)) return null;
+    seen.add(userId);
+    out.push({ userId, stack });
+  }
+  return out;
+}
+
+function sumDeltaMap(rows: readonly UserDelta[]): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const r of rows) m.set(r.userId, (m.get(r.userId) ?? 0) + r.delta);
+  return m;
+}
+
+function deltaMapsEqual(a: Map<number, number>, b: Map<number, number>): boolean {
+  const keys = new Set([...a.keys(), ...b.keys()]);
+  for (const k of keys) if ((a.get(k) ?? 0) !== (b.get(k) ?? 0)) return false;
+  return true;
+}
+
+/**
+ * Sum the committed settlement-family ledger legs into per-user game deltas.
+ * The poker/squid legs are keyed by the sealed `head`; the automatic bounty by
+ * the hand id (a voluntarily-shown 7-2 after the hand uses a different kind and
+ * is deliberately excluded). */
+function ledgerGameDeltas(db: DB, roomId: string, head: string, handId: string): UserDelta[] {
+  const rows = db
+    .prepare(
+      `SELECT user_id, SUM(delta) AS delta FROM ledger
+        WHERE room_id = ? AND (
+          (kind IN ('hand-settlement','squid-game') AND ref = ?)
+          OR (kind = 'seven-deuce' AND ref = ?)
+        ) GROUP BY user_id`,
+    )
+    .all(roomId, head, handId) as { user_id: number; delta: number }[];
+  return rows.map((r) => ({ userId: r.user_id, delta: r.delta })).filter((d) => d.delta !== 0);
+}
+
+function ledgerCommissionDeltas(db: DB, roomId: string, head: string): UserDelta[] {
+  const rows = db
+    .prepare(
+      `SELECT user_id, SUM(delta) AS delta FROM ledger
+        WHERE room_id = ? AND kind = 'commission' AND ref = ? GROUP BY user_id`,
+    )
+    .all(roomId, head) as { user_id: number; delta: number }[];
+  return rows.map((r) => ({ userId: r.user_id, delta: r.delta })).filter((d) => d.delta !== 0);
+}
+
+function ledgerSevenDeuce(db: DB, roomId: string, handId: string): UserDelta[] {
+  const rows = db
+    .prepare(
+      `SELECT user_id, delta FROM ledger
+        WHERE room_id = ? AND kind = 'seven-deuce' AND ref = ?`,
+    )
+    .all(roomId, handId) as { user_id: number; delta: number }[];
+  return rows.map((r) => ({ userId: r.user_id, delta: r.delta }));
+}
+
+/**
+ * Locate the single payload of `type` in a sealed transcript entry list.
+ *
+ * A durable transcript carries exactly one `hand_start` and one `settlement`.
+ * Zero (missing) or duplicate occurrences are structural corruption: returning
+ * the first match would let a corrupt transcript silently pick one of two
+ * contradictory records, so this throws instead.
+ */
+function transcriptPayloadOf(
+  entries: unknown[],
+  type: string,
+  handId: string,
+): Record<string, unknown> {
+  let found: Record<string, unknown> | null = null;
+  for (const e of entries as { type?: unknown; payload?: unknown }[]) {
+    if (e && typeof e === 'object' && e.type === type) {
+      if (found !== null)
+        throw new Error(
+          `settlement identity conflict on hand ${handId}: duplicate ${type} entry`,
+        );
+      if (!e.payload || typeof e.payload !== 'object')
+        throw new Error(
+          `settlement identity conflict on hand ${handId}: malformed ${type} entry`,
+        );
+      found = e.payload as Record<string, unknown>;
+    }
+  }
+  if (found === null)
+    throw new Error(`settlement identity conflict on hand ${handId}: missing ${type} entry`);
+  return found;
+}
+
+/**
+ * Load and strictly validate the committed receipt for a hand whose marker
+ * already exists.
+ *
+ * Sources: `hand_settlements` (identity + `final_stacks`), the sealed
+ * transcript (head + seat map + seat-projected legs) and the ledger (the money
+ * legs). It NEVER derives historical final stacks from the CURRENT
+ * `room_players` balances: those may have moved on through a mid-hand buy, a
+ * peek or the next hand. Any structural deviation or identity conflict throws,
+ * so a `same handId, different hand` replay can never masquerade as a harmless
+ * duplicate.
+ */
+function loadSettledReceipt(db: DB, w: HandSettlementWrite): HandSettlementOutcome {
+  const marker = db
+    .prepare(
+      'SELECT hand_id, room_id, head, rake, final_stacks FROM hand_settlements WHERE hand_id = ?',
+    )
+    .get(w.handId) as
+    | { hand_id: string; room_id: string; head: string; rake: number; final_stacks: string }
+    | undefined;
+  if (!marker) throw new Error(`duplicate settlement has no marker on hand ${w.handId}`);
+  if (marker.room_id !== w.roomId)
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: room ${marker.room_id} != ${w.roomId}`,
+    );
+  if (marker.head !== w.head)
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: head ${marker.head} != ${w.head}`,
+    );
+  if (!Number.isSafeInteger(marker.rake) || marker.rake < 0 || marker.rake !== w.rake)
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: rake ${marker.rake} != ${w.rake}`,
+    );
+
+  let rawFinal: unknown;
+  try {
+    rawFinal = JSON.parse(marker.final_stacks);
+  } catch {
+    throw new Error(`duplicate settlement has unreadable final_stacks on hand ${w.handId}`);
+  }
+  const finalStacks = parseFinalStacksStrict(rawFinal);
+  if (!finalStacks)
+    throw new Error(`duplicate settlement has malformed final_stacks on hand ${w.handId}`);
+
+  const t = db
+    .prepare('SELECT head, entries FROM transcripts WHERE hand_id = ? AND room_id = ?')
+    .get(w.handId, w.roomId) as { head: string; entries: string } | undefined;
+
+  // The transcript is the sealed record. A PRODUCTION duplicate (a retry of a
+  // marker written by `GameRoom`) must have one: the transcript is inserted in
+  // the SAME transaction as the marker, so a marker without a transcript is
+  // corruption. Only an explicit aux/test write (`transcriptlessReceipt`, never
+  // set by GameRoom) may proceed without one.
+  const seatUser = new Map<number, number>();
+  let transcriptGame: UserDelta[] | null = null;
+  let transcriptCommission: UserDelta[] | null = null;
+  if (!w.transcriptlessReceipt) {
+    if (!t)
+      throw new Error(`duplicate settlement has no transcript on hand ${w.handId}`);
+    if (t.head !== w.head)
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: transcript head ${t.head} != ${w.head}`,
+      );
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(t.entries);
+    } catch {
+      throw new Error(`duplicate settlement has unreadable transcript on hand ${w.handId}`);
+    }
+    if (!Array.isArray(parsed))
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: transcript is not an entry list`,
+      );
+    // Replay the hash chain: `head` is the commitment. Comparing against the
+    // mutable `head` column alone would trust a value a corrupt row could
+    // rewrite in place without touching the entries.
+    if (computeHead(parsed as TranscriptEntry[]) !== t.head)
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: transcript head does not match its entry chain`,
+      );
+    // Exactly one hand_start and one settlement (duplicates throw), and the
+    // seat list must be present and non-empty: a corrupt/empty one must never
+    // shrink the participant set to the candidate write's seats.
+    const start = transcriptPayloadOf(parsed, 'hand_start', w.handId);
+    const settle = transcriptPayloadOf(parsed, 'settlement', w.handId);
+    if (!Array.isArray(start.seats) || start.seats.length === 0)
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: hand_start seats missing or empty`,
+      );
+    const seats = new Set<number>();
+    const users = new Set<number>();
+    for (const s of start.seats as unknown[]) {
+      if (!s || typeof s !== 'object')
+        throw new Error(
+          `settlement identity conflict on hand ${w.handId}: malformed hand_start seat`,
+        );
+      const { seat, userId } = s as { seat?: unknown; userId?: unknown };
+      if (typeof seat !== 'number' || !Number.isSafeInteger(seat))
+        throw new Error(
+          `settlement identity conflict on hand ${w.handId}: malformed hand_start seat`,
+        );
+      if (typeof userId !== 'number' || !Number.isSafeInteger(userId))
+        throw new Error(
+          `settlement identity conflict on hand ${w.handId}: malformed hand_start seat user`,
+        );
+      if (seats.has(seat) || users.has(userId))
+        throw new Error(
+          `settlement identity conflict on hand ${w.handId}: duplicate hand_start seat or user`,
+        );
+      seats.add(seat);
+      users.add(userId);
+      seatUser.set(seat, userId);
+    }
+    const toUsers = (seatDeltas: { seat: number; delta: number }[]): UserDelta[] =>
+      seatDeltas.map((d) => {
+        const userId = seatUser.get(d.seat);
+        if (userId === undefined)
+          throw new Error(
+            `settlement identity conflict on hand ${w.handId}: transcript delta for unknown seat ${d.seat}`,
+          );
+        return { userId, delta: d.delta };
+      });
+    const td = parseSeatDeltas(settle.deltas);
+    if (!td)
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: transcript deltas are malformed`,
+      );
+    transcriptGame = toUsers(td);
+    // The transcript only carries the SEAT-PROJECTED commission leg, so it is
+    // absent (or empty) for an out-of-hand rake recipient. Treat a missing
+    // field as "not projected" rather than an authoritative empty leg; the
+    // ledger holds the account-level truth.
+    if (settle.commissionDeltas !== undefined) {
+      const tc = parseSeatDeltas(settle.commissionDeltas);
+      if (!tc)
+        throw new Error(
+          `settlement identity conflict on hand ${w.handId}: transcript commission is malformed`,
+        );
+      transcriptCommission = toUsers(tc);
+    }
+  } else if (t && t.head !== w.head) {
+    // The aux path does not require or project a transcript, but an identity
+    // mismatch on one that happens to exist is still a conflict.
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: transcript head ${t.head} != ${w.head}`,
+    );
+  }
+
+  // Every participant must have a committed final stack. Participants come from
+  // the sealed transcript when present, else (aux-only, no transcript) the
+  // candidate write's own seats. Extra final_stacks rows beyond the participants
+  // are tolerated ONLY as the out-of-hand rake account leg (it has a stack but
+  // no seat); they are never treated as participants.
+  const participants = seatUser.size
+    ? [...new Set(seatUser.values())]
+    : [...new Set(w.stackDeltas.map((d) => d.userId))];
+  const finalByUser = new Set(finalStacks.map((f) => f.userId));
+  for (const uid of participants)
+    if (!finalByUser.has(uid))
+      throw new Error(
+        `duplicate settlement final_stacks missing participant ${uid} on hand ${w.handId}`,
+      );
+
+  const ledgerGame = ledgerGameDeltas(db, w.roomId, marker.head, w.handId);
+  const gameDeltas = transcriptGame ?? ledgerGame;
+  if (!deltaMapsEqual(sumDeltaMap(gameDeltas), sumDeltaMap(w.stackDeltas)))
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: game deltas differ from the committed receipt`,
+    );
+  if (!deltaMapsEqual(sumDeltaMap(gameDeltas), sumDeltaMap(ledgerGame)))
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: transcript and ledger disagree on game deltas`,
+    );
+  const gameSum = gameDeltas.reduce((s, d) => s + d.delta, 0);
+  if (gameSum !== -marker.rake)
+    throw new Error(
+      `duplicate settlement game deltas do not net to -rake on hand ${w.handId}`,
+    );
+
+  // The ledger is the account-level authority: it credits the recipient even
+  // when that account is not a hand seat. The transcript only carries the
+  // seat-projected view, so it is cross-checked when present but never used as
+  // the receipt's commission leg.
+  const ledgerCommission = ledgerCommissionDeltas(db, w.roomId, marker.head);
+  const commissionDeltas = ledgerCommission;
+  const expectedCommission: UserDelta[] =
+    w.rake > 0 && w.rakeRecipientId !== null
+      ? [{ userId: w.rakeRecipientId, delta: w.rake }]
+      : [];
+  if (!deltaMapsEqual(sumDeltaMap(commissionDeltas), sumDeltaMap(expectedCommission)))
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: commission differs from the committed receipt`,
+    );
+  if (transcriptCommission !== null) {
+    const inHandUsers = new Set(seatUser.values());
+    const seatFiltered = commissionDeltas.filter((c) => inHandUsers.has(c.userId));
+    if (!deltaMapsEqual(sumDeltaMap(transcriptCommission), sumDeltaMap(seatFiltered)))
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: transcript and ledger disagree on commission`,
+      );
+  }
+  const commissionSum = commissionDeltas.reduce((s, d) => s + d.delta, 0);
+  if (w.rakeRecipientId !== null && commissionSum !== marker.rake)
+    throw new Error(`duplicate settlement commission does not equal rake on hand ${w.handId}`);
+
+  // The automatic 7-2 decision is durable in the ledger. Reconstruct it rather
+  // than trusting the candidate Hand's in-memory bounty.
+  const sevenRows = ledgerSevenDeuce(db, w.roomId, w.handId);
+  let sevenDeuce: { seat: number; amount: number } | null = null;
+  if (sevenRows.length) {
+    const positives = sevenRows.filter((r) => r.delta > 0);
+    if (positives.length !== 1)
+      throw new Error(
+        `duplicate settlement seven-deuce decision is not a single winner on hand ${w.handId}`,
+      );
+    if (sevenRows.reduce((s, r) => s + r.delta, 0) !== 0)
+      throw new Error(`duplicate settlement seven-deuce is not zero-sum on hand ${w.handId}`);
+    const winner = positives[0]!;
+    let seat: number | undefined;
+    for (const [s, uid] of seatUser) if (uid === winner.userId) seat = s;
+    if (seat === undefined && w.sevenDeuce && w.sevenDeuce.winnerUserId === winner.userId)
+      seat = w.sevenDeuce.winnerSeat;
+    if (seat === undefined)
+      throw new Error(
+        `duplicate settlement cannot resolve the 7-2 winner seat on hand ${w.handId}`,
+      );
+    if (
+      !w.sevenDeuce ||
+      w.sevenDeuce.winnerUserId !== winner.userId ||
+      w.sevenDeuce.winnerAmount !== winner.delta
+    )
+      throw new Error(
+        `settlement identity conflict on hand ${w.handId}: seven-deuce decision differs from the committed receipt`,
+      );
+    sevenDeuce = { seat, amount: winner.delta };
+  } else if (w.sevenDeuce) {
+    throw new Error(
+      `settlement identity conflict on hand ${w.handId}: unexpected seven-deuce decision`,
+    );
+  }
+
+  return {
+    status: 'duplicate',
+    roomId: marker.room_id,
+    handId: marker.hand_id,
+    head: marker.head,
+    rake: marker.rake,
+    timeBankSkipped: [],
+    finalStacks,
+    gameDeltas,
+    sevenDeuce,
+    commissionDeltas,
+  };
 }
 
 /**
@@ -518,8 +899,9 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       )
       .run(w.handId, w.roomId, w.head, w.rake, w.now);
     if (claim.changes === 0) {
-      // already settled by an earlier (committed) call - apply nothing. The
-      // marker is proof the whole hand committed, so reconcile the lifecycle to
+      // already settled by an earlier (committed) call - apply nothing, but
+      // load and validate the FIRST submission's full receipt. The marker is
+      // proof the whole hand committed, so reconcile the lifecycle to
       // `committed` too (a marker without a committed row can only come from
       // pre-lifecycle history or an operator-copied DB).
       db.prepare(
@@ -528,16 +910,21 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
          ON CONFLICT(hand_id) DO UPDATE SET status = 'committed',
            updated_at = excluded.updated_at, resolved_at = excluded.resolved_at`,
       ).run(w.handId, w.roomId, w.now, w.now, w.now);
-      return {
-        status: 'duplicate',
-        timeBankSkipped: [],
-        finalStacks: [],
-        sevenDeuce: null,
-        commissionDeltas: [],
-      };
+      return loadSettledReceipt(db, w);
     }
 
-    const userIds = [...new Set(w.stackDeltas.map((d) => d.userId))];
+    // A participant may not appear twice: stack deltas are applied additively,
+    // so a duplicate user would silently double-move chips while the
+    // conservation check sums only one row.
+    const stackUsersSeen = new Set<number>();
+    for (const d of w.stackDeltas) {
+      if (!Number.isSafeInteger(d.delta))
+        throw new Error(`invalid stack delta ${d.delta} on hand ${w.handId}`);
+      if (stackUsersSeen.has(d.userId))
+        throw new Error(`settlement has duplicate participant user ${d.userId} on hand ${w.handId}`);
+      stackUsersSeen.add(d.userId);
+    }
+    const userIds = [...stackUsersSeen];
     const placeholders = userIds.map(() => '?').join(',');
     const stackRows = userIds.length
       ? (db
@@ -565,6 +952,13 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
           .all(w.roomId, ...userIds) as { user_id: number; stack: number }[])
       : [];
     const finalByUser = new Map(afterRows.map((r) => [r.user_id, r.stack]));
+    // A participant without a room_players row must fail the whole settlement:
+    // settling against a fabricated 0 balance would silently corrupt money.
+    for (const uid of userIds)
+      if (!finalByUser.has(uid))
+        throw new Error(
+          `settlement missing participant row for user ${uid} on hand ${w.handId}`,
+        );
     for (const d of w.stackDeltas) {
       const finalStack = finalByUser.get(d.userId) ?? 0;
       if (finalStack < 0)
@@ -766,7 +1160,18 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
       w.rake > 0 && w.rakeRecipientId !== null
         ? [{ userId: w.rakeRecipientId, delta: w.rake }]
         : [];
-    return { status: 'applied', timeBankSkipped, finalStacks, sevenDeuce, commissionDeltas };
+    return {
+      status: 'applied',
+      roomId: w.roomId,
+      handId: w.handId,
+      head: w.head,
+      rake: w.rake,
+      timeBankSkipped,
+      finalStacks,
+      gameDeltas: w.stackDeltas.map((d) => ({ userId: d.userId, delta: d.delta })),
+      sevenDeuce,
+      commissionDeltas,
+    };
   });
   return write();
 }
@@ -838,15 +1243,20 @@ function recoverHandEnd(
     return null;
   }
   if (!Array.isArray(parsed)) return null;
+  // Replay the hash chain: the `head` column alone is not trustworthy, and the
+  // rebuilt terminal must be anchored to the sealed chain, not a rewrite.
+  if (computeHead(parsed as TranscriptEntry[]) !== t.head) return null;
   const payloadOf = (type: string): Record<string, unknown> | null => {
+    let found: Record<string, unknown> | null = null;
     for (const e of parsed as { type?: unknown; payload?: unknown }[]) {
       if (e && typeof e === 'object' && e.type === type) {
-        return e.payload && typeof e.payload === 'object'
-          ? (e.payload as Record<string, unknown>)
-          : null;
+        // A duplicate hand_start/settlement is corruption: never pick the first.
+        if (found !== null) return null;
+        if (!e.payload || typeof e.payload !== 'object') return null;
+        found = e.payload as Record<string, unknown>;
       }
     }
-    return null;
+    return found;
   };
   const start = payloadOf('hand_start');
   const settle = payloadOf('settlement');
@@ -2514,6 +2924,11 @@ class Hand {
   private settlementAttempts = 0;
   /** Last durable-write error, kept for the manual-intervention frame. */
   private settlementError: string | null = null;
+  /** The sealed write input, frozen on the first writer attempt and reused
+   *  verbatim by every retry (see `buildSealedWrite`). */
+  private sealedWrite: HandSettlementWrite | null = null;
+  /** The committed receipt (applied or duplicate) once the write has landed. */
+  private committedOutcome: HandSettlementOutcome | null = null;
   /** The 7-2 bounty the durable settlement already paid (for the live frame). */
   private settlementSevenDeuce: { seat: number; amount: number } | null = null;
   /** The committed commission recipient leg, per seat (empty when the recipient
@@ -4575,15 +4990,16 @@ class Hand {
     // recoverable settlement-failure mark can never be true any more.
     this.room.settlementRecovered();
     if (outcome.status === 'duplicate') {
-      // a committed finalize already moved every chip for this hand: replay
-      // nothing. Re-mark the bounty (idempotent) so a later voluntary show can
-      // never pay a showdown 7-2 bounty a second time.
+      // A committed finalize already moved every chip for this hand. The full
+      // receipt was loaded from durable state and adopted by `persistSettlement`
+      // (final stacks, commission leg, bounty decision), so deliver the
+      // historical terminal instead of dropping the hand silently. Re-mark the
+      // bounty (idempotent) so a later voluntary show can never pay it twice.
       if (this.settlement.bounty && this.settlement.bounty.amount > 0)
         this.room.markSevenDeucePaid(this.id);
-      this.onDone();
+      this.broadcastHandEnd();
       return;
     }
-    this.settlementSevenDeuce = outcome.sevenDeuce;
     const { showdown, squid } = this.settlement;
     // 2. the reveal frame, now that the chips are guaranteed to have moved.
     //    A failed notification must never undo a committed settlement.
@@ -4775,19 +5191,52 @@ class Hand {
   /**
    * Durably write the settlement exactly once. Throws when the transaction
    * fails (the caller isolates and retries). A `duplicate` outcome means a
-   * committed earlier call already moved the chips.
+   * committed earlier call already moved the chips; it carries the FIRST
+   * submission's full receipt, never an empty result.
+   *
+   * The sealed transcript, identity and every computed money input are frozen
+   * on the FIRST attempt (see `buildSealedWrite`) and reused verbatim by every
+   * retry: a retry can never append a second diagnostic event, recompute the
+   * bounty, move the head or change the committed timestamp.
    */
   private persistSettlement(): HandSettlementOutcome {
-    if (this.settlementApplied)
-      return {
-        status: 'duplicate',
-        timeBankSkipped: [],
-        finalStacks: [],
-        sevenDeuce: null,
-        commissionDeltas: [],
-      };
+    if (this.settlementApplied) {
+      if (this.committedOutcome) return this.committedOutcome;
+      throw new Error(`hand ${this.id} reported applied without a committed receipt`);
+    }
     if (!this.settlement) throw new Error('settlement not computed');
     this.clearTimer();
+    const write = (this.sealedWrite ??= this.buildSealedWrite());
+    // Test-only commit fault injection (never wired in production).
+    this.opts.faultInjection?.persist?.(this.settlementAttempts + 1);
+
+    const outcome = applyHandSettlement(this.db, write);
+    // B1 single authority: the committed receipt is the only source for this
+    // hand's final stacks, commission leg and bounty decision. Adopt it before
+    // marking the hand applied so a mapping failure is still retryable.
+    this.applyFinalStacks(outcome);
+    const seatByUser = new Map(this.seats.map((s) => [s.userId, s.seat]));
+    this.settlementCommissionDeltas = outcome.commissionDeltas
+      .map((c) => ({ seat: seatByUser.get(c.userId), delta: c.delta }))
+      .filter((c): c is { seat: number; delta: number } => c.seat !== undefined);
+    this.settlementSevenDeuce = outcome.sevenDeuce;
+    // A showdown winner who held 7-2 has now been paid (once per hand): mark it
+    // so a later voluntary show can never pay the bounty a second time.
+    if (outcome.sevenDeuce) this.room.markSevenDeucePaid(this.id);
+    this.settlementApplied = true;
+    this.committedOutcome = outcome;
+    return outcome;
+  }
+
+  /**
+   * Freeze the sealed write input BEFORE the first writer attempt. Captures the
+   * sealed transcript (head + a snapshot of the entries), the resolved identity
+   * and every computed money input. The `time_bank_epoch_mismatch` diagnostic
+   * is appended to the live transcript here, exactly once, so a retry reuses
+   * the same sealed entries/head instead of appending another.
+   */
+  private buildSealedWrite(): HandSettlementWrite {
+    if (!this.settlement) throw new Error('settlement not computed');
     const { rake, squid, bounty } = this.settlement;
     const now = Date.now();
     const pokerDeltas = this.settlement.pokerDeltas;
@@ -4813,7 +5262,8 @@ class Hand {
     // Time bank: debits lived in memory for the hand (hand-atomic - an aborted
     // or crashed hand leaves the stored bank untouched), so persist the final
     // balance + counter/refill here. A config change mid-hand resets the bank
-    // and bumps the epoch; detect that explicitly instead of silently no-oping.
+    // and bumps the epoch; detect it once, here, and record it in the sealed
+    // transcript - a retry must never append a second diagnostic.
     const bank = this.features.timeBank;
     const timeBanks: { userId: number; ms: number; hands: number }[] = [];
     const mismatchedSeats: number[] = [];
@@ -4839,6 +5289,10 @@ class Hand {
     if (mismatchedSeats.length)
       this.appendServer('time_bank_epoch_mismatch', { seats: mismatchedSeats });
 
+    // Freeze AFTER the diagnostic append so the sealed head/entries include it.
+    const head = this.transcript.head;
+    const entries = [...this.transcript.entries];
+
     // The auto 7-2 bounty was already resolved against the post-pot stacks in
     // `settle()`; here we only hand the writer its exact amounts.
     const sevenDeuceWrite =
@@ -4852,15 +5306,11 @@ class Hand {
               .map((d) => ({ userId: bySeat(d.seat).userId, amount: -d.delta })),
           }
         : null;
-    // Test-only commit fault injection (never wired in production).
-    this.opts.faultInjection?.persist?.(this.settlementAttempts + 1);
-
-    const head = this.transcript.head;
-    const outcome = applyHandSettlement(this.db, {
+    return {
       handId: this.id,
       roomId: this.roomId,
       head,
-      entries: this.transcript.entries,
+      entries,
       rake,
       commissionBps: this.commissionBps,
       stackDeltas: combinedDeltas.map((d) => ({ userId: bySeat(d.seat).userId, delta: d.delta })),
@@ -4882,41 +5332,43 @@ class Hand {
       rakeRecipientId: this.settlement.rakeRecipientId,
       sevenDeuce: sevenDeuceWrite,
       now,
-    });
-    this.settlementApplied = true;
-    // B1 single authority: the writer re-reads the TRUE final stacks after every
-    // money move (pot, rake, squid, bounty). Those rows are now the only source
-    // for `this.settlement.stacks` and therefore for `hand_end.stacks`.
-    if (outcome.status === 'applied') {
-      this.applyFinalStacks(outcome);
-      // Seat-map the explicit commission leg the writer just committed.
-      const seatByUser = new Map(this.seats.map((s) => [s.userId, s.seat]));
-      this.settlementCommissionDeltas = outcome.commissionDeltas
-        .map((c) => ({ seat: seatByUser.get(c.userId), delta: c.delta }))
-        .filter((c): c is { seat: number; delta: number } => c.seat !== undefined);
-    }
-    // A showdown winner who held 7-2 has now been paid (once per hand): mark it
-    // so a later voluntary show can never pay the bounty a second time.
-    if (sevenDeuceWrite) this.room.markSevenDeucePaid(this.id);
-    return outcome;
+    };
   }
 
   /**
-   * Adopt the writer's re-read `room_players.stack` as the hand's final stacks.
-   * Called exactly once, on the `applied` outcome, after the transaction has
-   * committed. Seats only (a platform rake recipient has no seat and is
-   * ignored); the hand's own seats are always all present.
+   * Adopt the committed receipt's `finalStacks` as the hand's final stacks.
+   * Called after the transaction has committed, for BOTH `applied` and
+   * `duplicate`. Seats only (a platform rake recipient has no seat and is
+   * ignored). A receipt that does not map every participant to a valid stack is
+   * an explicit consistency error - never a silent fallback to stale stacks.
    */
   private applyFinalStacks(outcome: HandSettlementOutcome): void {
-    if (!this.settlement) return;
+    if (!this.settlement) throw new Error(`hand ${this.id} has no settlement to adopt`);
     const seatByUser = new Map(this.seats.map((s) => [s.userId, s.seat]));
     const finalBySeat = new Map<number, number>();
+    const seenUsers = new Set<number>();
     for (const f of outcome.finalStacks) {
+      if (!Number.isSafeInteger(f.userId) || seenUsers.has(f.userId))
+        throw new Error(
+          `settlement receipt has an invalid/duplicate final-stack user on hand ${this.id}`,
+        );
+      seenUsers.add(f.userId);
+      if (!Number.isSafeInteger(f.stack) || f.stack < 0)
+        throw new Error(
+          `settlement receipt has an invalid final stack for user ${f.userId} on hand ${this.id}`,
+        );
       const seat = seatByUser.get(f.userId);
-      if (seat !== undefined) finalBySeat.set(seat, f.stack);
+      if (seat === undefined) continue;
+      finalBySeat.set(seat, f.stack);
     }
-    if (finalBySeat.size !== this.seats.length) return;
-    this.settlement.stacks = this.seats.map((s) => ({ seat: s.seat, stack: finalBySeat.get(s.seat)! }));
+    if (finalBySeat.size !== this.seats.length)
+      throw new Error(
+        `settlement receipt does not map every participant to a final stack on hand ${this.id} (${finalBySeat.size}/${this.seats.length})`,
+      );
+    this.settlement.stacks = this.seats.map((s) => ({
+      seat: s.seat,
+      stack: finalBySeat.get(s.seat)!,
+    }));
   }
 
   /**
@@ -5001,7 +5453,10 @@ class Hand {
     const endMsg = {
       t: 'hand_end' as const,
       handId: this.id,
-      head: this.transcript.head,
+      // The committed receipt's head, not the live transcript's: a late key
+      // arriving during a retry gap may have appended to the live transcript,
+      // but the sealed head is the one the marker and projection vouch for.
+      head: this.committedOutcome?.head ?? this.transcript.head,
       stacks,
       deltas: combinedDeltas,
       pokerDeltas,

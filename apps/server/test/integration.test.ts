@@ -2373,6 +2373,50 @@ describe('full hand integration', () => {
     expect(host.handEndCount).toBe(1);
   }, 25000);
 
+  it('a duplicate finalize broadcasts hand_end once, adopts the receipt, and tears down once', async () => {
+    const { room, host } = await setupRoom(['dwa', 'dwb'], ['passive', 'passive']);
+    ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
+    clock.freeze(); // hold the terminal frame so we can drive the retry by hand
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.showdownAt !== null, 15000);
+    const handId = host.handId!;
+    const marker = ctx.db
+      .prepare('SELECT hand_id, head FROM hand_settlements WHERE hand_id = ?')
+      .get(handId) as { hand_id: string; head: string };
+    expect(marker.hand_id).toBe(handId);
+    expect(host.handEnd).toBeNull(); // durable, but still inside the reveal hold
+
+    const gameRoom = hub.rooms.get(room.id)! as unknown as {
+      hand: { settlementApplied: boolean; publishSettlement(): void } | null;
+      terminalFrames: { msg: { handId: string } }[];
+    };
+    expect(gameRoom.hand).not.toBeNull();
+    // Simulate a retry whose in-memory `applied` flag was lost (crash between
+    // the durable commit and the in-memory bookkeeping): `applyHandSettlement`
+    // sees the existing marker and returns a DUPLICATE, so the writer must load
+    // and adopt the first submission's receipt and broadcast the historical
+    // terminal exactly once.
+    gameRoom.hand!.settlementApplied = false;
+    gameRoom.hand!.publishSettlement();
+
+    await host.waitFor(() => host.handEnd !== null, 5000);
+    expect(host.handEndCount).toBe(1);
+    // The terminal carries the receipt's identity, not the candidate's.
+    expect(host.handEnd!.handId).toBe(marker.hand_id);
+    expect(host.handEnd!.head).toBe(marker.head);
+
+    // The still-pending reveal-hold timer must never emit a second frame.
+    clock.advance(10000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(host.handEndCount).toBe(1);
+    // Retained exactly once for a future reconnect; never re-pushed to the
+    // socket that already received it.
+    expect(gameRoom.terminalFrames.filter((f) => f.msg.handId === handId)).toHaveLength(1);
+    // `onDone` ran to completion exactly once: the room released the hand.
+    expect(gameRoom.hand).toBeNull();
+    expect(activeHands.has(room.id)).toBe(false);
+  }, 25000);
+
   it('a reconnect re-asserts a frozen settlement failure so recovery stays reachable', async () => {
     const { room, host } = await setupRoom(['host', 'bob'], ['passive', 'passive']);
     fault.persistFailThrough = 1000; // every durable-write attempt fails
@@ -3577,6 +3621,9 @@ describe('P2 hardening', () => {
       roomId: room.id,
       head: 'idem-head-1',
       entries: [],
+      // Synthetic fixture with no sealed transcript: the duplicate path may
+      // validate against the ledger/candidate alone (never set in production).
+      transcriptlessReceipt: true,
       rake: 5,
       commissionBps: 50,
       stackDeltas: [
@@ -3633,6 +3680,9 @@ describe('P2 hardening', () => {
       roomId: room.id,
       head: 'dup-head-1',
       entries: [],
+      // Synthetic fixture with no sealed transcript: the duplicate path may
+      // validate against the ledger/candidate alone (never set in production).
+      transcriptlessReceipt: true,
       rake: 0,
       commissionBps: 50,
       stackDeltas: [
@@ -3886,6 +3936,50 @@ describe('P2 hardening', () => {
     expect(
       (hand.entries as { type: string }[]).some((e) => e.type === 'time_bank_epoch_mismatch'),
     ).toBe(true);
+  }, 30000);
+
+  it('S0: a retry after a mid-hand epoch change records the mismatch audit exactly once', async () => {
+    const { players, room, host } = await setupRoom(['tre', 'trf'], ['passive', 'passive']);
+    await enable(host, room.id, {
+      timeBank: { enabled: true, initialSeconds: 5, refillEveryHands: 30, refillSeconds: 30 },
+    });
+    for (const p of players) p.thinkMs = 300; // slow the hand so the mid-hand change lands
+    fault.persistFailThrough = 1; // first durable attempt fails; the retry must reuse the seal
+    host.send({ t: 'start_hand' });
+    await host.waitFor(() => host.bettingStreets.includes('preflop'), 8000);
+    // simulate a config change that resets the bank and bumps the epoch mid-hand
+    ctx.db.prepare('UPDATE rooms SET time_bank_epoch = time_bank_epoch + 1 WHERE id = ?').run(room.id);
+    const epoch = (
+      ctx.db.prepare('SELECT time_bank_epoch AS e FROM rooms WHERE id = ?').get(room.id) as {
+        e: number;
+      }
+    ).e;
+    ctx.db
+      .prepare(
+        'UPDATE room_players SET time_bank_ms = 7000, time_bank_hands = 0, time_bank_epoch = ? WHERE room_id = ?',
+      )
+      .run(epoch, room.id);
+    await host.waitFor(() => host.settlementFailures.length === 1, 10000);
+    // the clock-driven retry must commit using the SAME sealed transcript
+    await host.waitFor(() => host.handEnd !== null, 20000);
+
+    // the stale snapshot is still not written over the reset
+    const bank = ctx.db
+      .prepare('SELECT time_bank_ms FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(room.id, host.userId) as { time_bank_ms: number };
+    expect(bank.time_bank_ms).toBe(7000);
+
+    const hand = await host.api(`/api/rooms/${room.id}/hands/${host.handEnd!.handId}`);
+    const mismatches = (hand.entries as { type: string }[]).filter(
+      (e) => e.type === 'time_bank_epoch_mismatch',
+    );
+    // One sealed diagnostic; the retry must not append a second.
+    expect(mismatches).toHaveLength(1);
+    // The terminal head is the sealed head, and the marker agrees.
+    const marker = ctx.db
+      .prepare('SELECT head FROM hand_settlements WHERE hand_id = ?')
+      .get(host.handEnd!.handId) as { head: string };
+    expect(marker.head).toBe(host.handEnd!.head);
   }, 30000);
 
   it('multi-run: stale and duplicate decision ids are ignored', async () => {
@@ -4750,8 +4844,11 @@ describe('settlement lifecycle v6', () => {
 });
 
 describe('settlement lifecycle v7', () => {
-  const playOneHand = async (names: [string, string]) => {
-    const { players, room, host } = await setupRoom(names, ['passive', 'passive']);
+  const playOneHand = async (
+    names: [string, string],
+    strategies: [Strategy, Strategy] = ['passive', 'passive'],
+  ) => {
+    const { players, room, host } = await setupRoom(names, strategies);
     ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
     host.send({ t: 'start_hand' });
     await Promise.all(players.map((p) => p.waitFor(() => p.handEnd !== null, 15000)));
@@ -4795,16 +4892,29 @@ describe('settlement lifecycle v7', () => {
   }, 25000);
 
   it('P0-2: a missing settlement leg quarantines the hand and freezes the room', async () => {
-    const { host, room } = await playOneHand(['qa', 'qb']);
+    // fold-first makes the poker outcome deterministic: the folder loses the
+    // blind and the other seat wins it, so this hand ALWAYS commits two
+    // non-zero `hand-settlement` legs. (A passive check-down hand can net a
+    // player to exactly zero - the writer skips a zero delta - which is what
+    // made the old MIN(id) fixture depend on a random deal.)
+    const { host, room } = await playOneHand(['qa', 'qb'], ['fold-first', 'passive']);
     const handId = host.handEnd!.handId;
     const head = host.handEnd!.head;
     makePreLifecycle(handId);
-    // Remove one hand-settlement leg: the per-hand sum no longer matches -rake.
-    ctx.db
+    // Pick a REAL non-zero hand-settlement leg, assert it exists, then delete
+    // exactly it: removing one non-zero leg leaves the per-hand sum
+    // `-rake - delta != -rake`, so the reconciliation must quarantine. Asserting
+    // `changes === 1` prevents a NULL subquery from turning the delete into a
+    // silent no-op (the previous flake).
+    const legs = ctx.db
       .prepare(
-        "DELETE FROM ledger WHERE id = (SELECT MIN(id) FROM ledger WHERE room_id = ? AND ref = ? AND kind = 'hand-settlement')",
+        "SELECT id, delta FROM ledger WHERE room_id = ? AND ref = ? AND kind = 'hand-settlement' ORDER BY id",
       )
-      .run(room.id, head);
+      .all(room.id, head) as { id: number; delta: number }[];
+    expect(legs.length).toBeGreaterThan(0);
+    expect(legs[0]!.delta).not.toBe(0);
+    const removed = ctx.db.prepare('DELETE FROM ledger WHERE id = ?').run(legs[0]!.id);
+    expect(removed.changes).toBe(1);
 
     const audit = auditMarkerlessTranscripts(ctx.db);
     expect(audit.reconciled).toBe(0);

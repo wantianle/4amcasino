@@ -1216,3 +1216,454 @@ describe('pre-lifecycle reconciliation of a genuine seven-deuce bounty', () => {
     db.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// S0 characterization: the complete settlement receipt
+// ---------------------------------------------------------------------------
+
+function markerOf(db: DB, handId = 'h1'): { head: string; rake: number; final_stacks: string } {
+  return db
+    .prepare('SELECT head, rake, final_stacks FROM hand_settlements WHERE hand_id = ?')
+    .get(handId) as { head: string; rake: number; final_stacks: string };
+}
+
+const stackMap = (rows: readonly { userId: number; stack: number }[]): Record<number, number> =>
+  Object.fromEntries(rows.map((r) => [r.userId, r.stack]));
+
+describe('settlement receipt (S0 characterization)', () => {
+  it('duplicate returns the committed receipt, not the current room balances', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    const first = applyHandSettlement(db, args);
+    expect(first.status).toBe('applied');
+    expect(stackMap(first.finalStacks)).toEqual({ 1: 1010, 2: 990 });
+
+    // A later buy / peek / the next hand moves the live balances on. A duplicate
+    // must NEVER rebuild historical final stacks from these.
+    db.prepare('UPDATE room_players SET stack = stack + 5000 WHERE room_id = ?').run('r1');
+
+    const dup = applyHandSettlement(db, args);
+    expect(dup.status).toBe('duplicate');
+    expect(dup.roomId).toBe('r1');
+    expect(dup.handId).toBe('h1');
+    expect(dup.head).toBe(args.head);
+    expect(dup.rake).toBe(0);
+    expect(dup.gameDeltas).toEqual([
+      { userId: 1, delta: 10 },
+      { userId: 2, delta: -10 },
+    ]);
+    expect(dup.commissionDeltas).toEqual([]);
+    expect(dup.sevenDeuce).toBeNull();
+    expect(stackMap(dup.finalStacks)).toEqual(stackMap(first.finalStacks));
+    expect(stackMap(dup.finalStacks)).toEqual({ 1: 1010, 2: 990 });
+    db.close();
+  });
+
+  it('duplicate returns the in-hand rake leg and conserves the committed deltas', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries({ rake: 5 }), { rake: 5 });
+    const first = applyHandSettlement(db, args);
+    expect(first.status).toBe('applied');
+    expect(first.commissionDeltas).toEqual([{ userId: 1, delta: 5 }]);
+
+    const dup = applyHandSettlement(db, args);
+    expect(dup.status).toBe('duplicate');
+    expect(dup.rake).toBe(5);
+    expect(dup.commissionDeltas).toEqual([{ userId: 1, delta: 5 }]);
+    expect(dup.gameDeltas.reduce((s, d) => s + d.delta, 0)).toBe(-5);
+    expect(stackMap(dup.finalStacks)['1']).toBe(1010); // +5 poker, +5 rake
+    db.close();
+  });
+
+  it('duplicate keeps an out-of-hand platform rake recipient account leg', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    db.prepare(
+      "INSERT INTO users (id, username, auth_hash, auth_salt, pubkey, created_at) VALUES (3, 'u3', 'h', 's', 'pk3', 1)",
+    ).run();
+    const args = {
+      ...settleArgs(huEntries({ rake: 5 }), { rake: 5 }),
+      rakeRecipientId: 3, // a platform account with no hand seat
+    };
+    const first = applyHandSettlement(db, args);
+    expect(first.status).toBe('applied');
+    expect(first.commissionDeltas).toEqual([{ userId: 3, delta: 5 }]);
+    // The account credit exists (its own room_players row) but it is not a hand
+    // stack; the seat-mapped stack side ignores it.
+    expect(stackMap(first.finalStacks)['3']).toBe(5);
+
+    const dup = applyHandSettlement(db, args);
+    expect(dup.status).toBe('duplicate');
+    expect(dup.commissionDeltas).toEqual([{ userId: 3, delta: 5 }]);
+    expect(stackMap(dup.finalStacks)).toEqual(stackMap(first.finalStacks));
+    db.close();
+  });
+
+  it('duplicate returns the committed automatic 7-2 bounty decision', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const entries = huEntries();
+    const settle = entries.find((e) => e.type === 'settlement')!.payload as Record<string, unknown>;
+    settle.deltas = [
+      { seat: 0, delta: 16 },
+      { seat: 1, delta: -16 },
+    ];
+    settle.pokerDeltas = [
+      { seat: 0, delta: 16 },
+      { seat: 1, delta: -16 },
+    ];
+    const args = {
+      ...settleArgs(entries),
+      stackDeltas: [
+        { userId: 1, delta: 16 },
+        { userId: 2, delta: -16 },
+      ],
+      pokerLedger: [
+        { userId: 1, delta: 10 },
+        { userId: 2, delta: -10 },
+      ],
+      projectionPokerLedger: [
+        { userId: 1, delta: 16 },
+        { userId: 2, delta: -16 },
+      ],
+      sevenDeuce: {
+        winnerUserId: 1,
+        winnerSeat: 0,
+        winnerAmount: 6,
+        payerAmounts: [{ userId: 2, amount: 6 }],
+      },
+    };
+    const first = applyHandSettlement(db, args);
+    expect(first.status).toBe('applied');
+    expect(first.sevenDeuce).toEqual({ seat: 0, amount: 6 });
+
+    const dup = applyHandSettlement(db, args);
+    expect(dup.status).toBe('duplicate');
+    expect(dup.sevenDeuce).toEqual({ seat: 0, amount: 6 });
+    expect(dup.gameDeltas).toEqual([
+      { userId: 1, delta: 16 },
+      { userId: 2, delta: -16 },
+    ]);
+    db.close();
+  });
+
+  it('duplicate returns the receipt for squid + auto bounty + rake together', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const entries: Entry[] = [
+      srv(0, 'hand_start', {
+        schemaVersion: 2,
+        gameKind: 'normal',
+        seats: [
+          { seat: 0, userId: 1, stack: 1000 },
+          { seat: 1, userId: 2, stack: 1000 },
+        ],
+        buttonSeat: 0,
+        sb: 5,
+        bb: 10,
+        commissionBps: 50,
+      }),
+      srv(1, 'settlement', {
+        board: [0, 4, 8],
+        commission: 5,
+        commissionDeltas: [{ seat: 0, delta: 5 }],
+        awards: [{ seat: 0, amount: 15 }],
+        deltas: [
+          { seat: 0, delta: 14 },
+          { seat: 1, delta: -19 },
+        ],
+        pokerDeltas: [
+          { seat: 0, delta: 11 },
+          { seat: 1, delta: -16 },
+        ],
+        squid: { netBySeat: [{ seat: 0, net: 3 }, { seat: 1, net: -3 }] },
+        runCount: 1,
+        grossPot: 20,
+        showdown: true,
+        reveals: [
+          { seat: 0, cards: [0, 4] },
+          { seat: 1, cards: [1, 5] },
+        ],
+        ts: 9,
+      }),
+    ];
+    const args = {
+      ...settleArgs(entries, { rake: 5 }),
+      stackDeltas: [
+        { userId: 1, delta: 14 },
+        { userId: 2, delta: -19 },
+      ],
+      pokerLedger: [
+        { userId: 1, delta: 5 },
+        { userId: 2, delta: -10 },
+      ],
+      projectionPokerLedger: [
+        { userId: 1, delta: 11 },
+        { userId: 2, delta: -16 },
+      ],
+      squidLedger: [
+        { userId: 1, delta: 3 },
+        { userId: 2, delta: -3 },
+      ],
+      sevenDeuce: {
+        winnerUserId: 1,
+        winnerSeat: 0,
+        winnerAmount: 6,
+        payerAmounts: [{ userId: 2, amount: 6 }],
+      },
+    };
+    const first = applyHandSettlement(db, args);
+    expect(first.status).toBe('applied');
+    expect(first.commissionDeltas).toEqual([{ userId: 1, delta: 5 }]);
+    expect(first.sevenDeuce).toEqual({ seat: 0, amount: 6 });
+
+    const dup = applyHandSettlement(db, args);
+    expect(dup.status).toBe('duplicate');
+    expect(dup.rake).toBe(5);
+    expect(dup.commissionDeltas).toEqual([{ userId: 1, delta: 5 }]);
+    expect(dup.sevenDeuce).toEqual({ seat: 0, amount: 6 });
+    expect(dup.gameDeltas).toEqual([
+      { userId: 1, delta: 14 },
+      { userId: 2, delta: -19 },
+    ]);
+    expect(stackMap(dup.finalStacks)).toEqual(stackMap(first.finalStacks));
+    db.close();
+  });
+
+  it('treats a same-handId replay with a different head/room/rake as a consistency conflict', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    applyHandSettlement(db, settleArgs(huEntries()));
+    expect(() =>
+      applyHandSettlement(db, settleArgs(huEntries(), { head: 'other-head' })),
+    ).toThrow(/identity conflict/);
+    expect(() =>
+      applyHandSettlement(db, { ...settleArgs(huEntries()), roomId: 'r2' }),
+    ).toThrow(/identity conflict/);
+    expect(() => applyHandSettlement(db, settleArgs(huEntries(), { rake: 5 }))).toThrow(
+      /identity conflict/,
+    );
+    db.close();
+  });
+
+  it('refuses a marker whose final_stacks do not cover every participant', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    applyHandSettlement(db, settleArgs(huEntries()));
+    const final = JSON.parse(markerOf(db).final_stacks) as { userId: number; stack: number }[];
+    db.prepare('UPDATE hand_settlements SET final_stacks = ? WHERE hand_id = ?').run(
+      JSON.stringify(final.filter((f) => f.userId !== 2)),
+      'h1',
+    );
+    expect(() => applyHandSettlement(db, settleArgs(huEntries()))).toThrow(/missing participant/);
+    db.close();
+  });
+
+  it('fails instead of settling with a fabricated 0 when a participant row is missing', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = 2').run('r1');
+    expect(() => applyHandSettlement(db, settleArgs(huEntries()))).toThrow(
+      /missing participant row/,
+    );
+    expect(nHands(db)).toBe(0); // the whole transaction rolled back
+    db.close();
+  });
+
+  it('marker final_stacks agree with the projection ending_stack at the commit boundary', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    applyHandSettlement(db, settleArgs(huEntries({ rake: 5 }), { rake: 5 }));
+    const final = JSON.parse(markerOf(db).final_stacks) as { userId: number; stack: number }[];
+    const proj = db
+      .prepare('SELECT user_id, ending_stack FROM hand_players WHERE hand_id = ?')
+      .all('h1') as { user_id: number; ending_stack: number }[];
+    for (const p of proj)
+      expect(final.find((f) => f.userId === p.user_id)!.stack).toBe(p.ending_stack);
+    db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable duplicate transcript strictness (blocker hardening)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rewrite a committed transcript's entries (in place), re-seal the hash chain
+ * head, and repoint the marker + settlement-head ledger legs at the new head.
+ * That leaves the transcript internally consistent and only the intended
+ * structural deviation under test - so the old implementation (no head replay,
+ * no structural checks) still returns `duplicate` while the strict one throws.
+ */
+function resealTranscript(db: DB, handId: string, mutate: (entries: Entry[]) => void): string {
+  const row = db
+    .prepare('SELECT head, entries FROM transcripts WHERE hand_id = ?')
+    .get(handId) as { head: string; entries: string };
+  const entries = JSON.parse(row.entries) as Entry[];
+  mutate(entries);
+  const newHead = headOf(entries);
+  db.prepare('UPDATE transcripts SET entries = ?, head = ? WHERE hand_id = ?').run(
+    JSON.stringify(entries),
+    newHead,
+    handId,
+  );
+  db.prepare('UPDATE hand_settlements SET head = ? WHERE hand_id = ?').run(newHead, handId);
+  db.prepare("UPDATE ledger SET ref = ? WHERE room_id = 'r1' AND ref = ?").run(newHead, row.head);
+  return newHead;
+}
+
+const committedTranscript = (db: DB, handId = 'h1'): { head: string; entries: string } =>
+  db.prepare('SELECT head, entries FROM transcripts WHERE hand_id = ?').get(handId) as {
+    head: string;
+    entries: string;
+  };
+
+describe('durable duplicate transcript strictness', () => {
+  it('Blocker 1: a malformed hand_start seat throws instead of being skipped', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    const newHead = resealTranscript(db, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      (start.payload as { seats: unknown[] }).seats.push({ seat: 2, userId: 'not-a-number' });
+    });
+    // Old code `continue`d past the malformed seat and returned a duplicate;
+    // now the whole receipt is refused.
+    expect(() => applyHandSettlement(db, { ...args, head: newHead })).toThrow(
+      /identity conflict.*malformed hand_start seat/,
+    );
+    db.close();
+  });
+
+  it('Blocker 1: a duplicate hand_start seat or user throws', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    const dupSeat = resealTranscript(db, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      (start.payload as { seats: unknown[] }).seats.push({ seat: 0, userId: 9 });
+    });
+    expect(() => applyHandSettlement(db, { ...args, head: dupSeat })).toThrow(
+      /duplicate hand_start seat or user/,
+    );
+
+    const db2 = openDb(':memory:');
+    seedRoom(db2, 2);
+    const args2 = settleArgs(huEntries());
+    applyHandSettlement(db2, args2);
+    const dupUser = resealTranscript(db2, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      (start.payload as { seats: unknown[] }).seats.push({ seat: 5, userId: 1 });
+    });
+    expect(() => applyHandSettlement(db2, { ...args2, head: dupUser })).toThrow(
+      /duplicate hand_start seat or user/,
+    );
+    db.close();
+    db2.close();
+  });
+
+  it('Blocker 1: a missing or empty hand_start seats list never shrinks the participants', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    const missing = resealTranscript(db, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      delete (start.payload as Record<string, unknown>).seats;
+    });
+    expect(() => applyHandSettlement(db, { ...args, head: missing })).toThrow(
+      /seats missing or empty/,
+    );
+
+    const db2 = openDb(':memory:');
+    seedRoom(db2, 2);
+    const args2 = settleArgs(huEntries());
+    applyHandSettlement(db2, args2);
+    const empty = resealTranscript(db2, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      (start.payload as { seats: unknown[] }).seats = [];
+    });
+    expect(() => applyHandSettlement(db2, { ...args2, head: empty })).toThrow(
+      /seats missing or empty/,
+    );
+    db.close();
+    db2.close();
+  });
+
+  it('Blocker 2: a committed marker with no transcript throws (no candidate fallback)', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    db.prepare('DELETE FROM transcripts WHERE hand_id = ?').run('h1');
+    // Old code silently fell back to `w.stackDeltas`; the production duplicate
+    // path now requires the sealed transcript.
+    expect(() => applyHandSettlement(db, args)).toThrow(/no transcript/);
+    db.close();
+  });
+
+  it('Blocker 2: an unreadable transcript throws instead of being ignored', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    db.prepare('UPDATE transcripts SET entries = ? WHERE hand_id = ?').run('{ not json', 'h1');
+    expect(() => applyHandSettlement(db, args)).toThrow(/unreadable transcript/);
+    db.close();
+  });
+
+  it('Blocker 3: a transcript whose entries do not hash to its head is refused', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    // Append a benign entry WITHOUT touching the stored head: the head column
+    // still equals the write's head, but the chain no longer commits to it.
+    const row = committedTranscript(db);
+    const entries = JSON.parse(row.entries) as Entry[];
+    entries.push(srv(entries.length, 'noop', { note: 'tampered' }));
+    db.prepare('UPDATE transcripts SET entries = ? WHERE hand_id = ?').run(
+      JSON.stringify(entries),
+      'h1',
+    );
+    // Old code only compared t.head === w.head and trusted the extra entry.
+    expect(() => applyHandSettlement(db, args)).toThrow(/entry chain/);
+    db.close();
+  });
+
+  it('Blocker 4: a transcript with a duplicate settlement entry is refused', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    const newHead = resealTranscript(db, 'h1', (entries) => {
+      const settle = entries.find((e) => e.type === 'settlement')!;
+      entries.push({ ...settle, seq: entries.length });
+    });
+    // Old code returned the first settlement and continued; now the duplicate
+    // is structural corruption.
+    expect(() => applyHandSettlement(db, { ...args, head: newHead })).toThrow(
+      /duplicate settlement entry/,
+    );
+    db.close();
+  });
+
+  it('Blocker 4: a transcript with a duplicate hand_start entry is refused', () => {
+    const db = openDb(':memory:');
+    seedRoom(db, 2);
+    const args = settleArgs(huEntries());
+    applyHandSettlement(db, args);
+    const newHead = resealTranscript(db, 'h1', (entries) => {
+      const start = entries.find((e) => e.type === 'hand_start')!;
+      entries.push({ ...start, seq: entries.length });
+    });
+    expect(() => applyHandSettlement(db, { ...args, head: newHead })).toThrow(
+      /duplicate hand_start entry/,
+    );
+    db.close();
+  });
+});
