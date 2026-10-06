@@ -1,5 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
   Transcript,
@@ -22,21 +21,15 @@ import {
 import {
   activeNonAllIn,
   applyAction,
-  awardPots,
-  bestScoreSeats,
   computePots,
   commissionForPot,
-  evaluate7,
-  intersectSeatSets,
   nextStreet,
-  splitAmountEven,
   startBombPot,
   startHand,
   streetClosed,
   type BettingState,
   type CardId,
   type ClientMsg,
-  type MultiRunReason,
   type PlayerAction,
   type RoomGameplaySettings,
   type ServerMsg,
@@ -140,135 +133,25 @@ export {
 /** Rooms with a hand in flight; REST money moves must wait for the settle. */
 import { activeHands } from './liveHands.js';
 
-/** How long a host may be offline before the table hands the role to someone
- *  still sitting at it. */
-const HOST_HANDOVER_MS = 60_000;
 export { activeHands };
+import { hdbg } from './handDiagnostics.js';
+import {
+  isSevenDeuce,
+  verifySnapshotShares,
+  type ShowSnapshot,
+  type SnapshotSeat,
+} from './handShow.js';
+import {
+  HOST_HANDOVER_MS,
+  STREET_INDEX,
+  testHandId,
+  type MultiRunResultReason,
+  type PeekOffer,
+} from './handSupport.js';
+import { computeShowdown, computeSquidSettlement } from './showdown.js';
 
+export { isSevenDeuce } from './handShow.js';
 
-/**
- * Env-gated structured diagnostics for the hand engine. Off by default; set
- * `BOT_DEBUG=1` (and optionally `BOT_DEBUG_FILE`) to capture the full timer /
- * turn / betting timeline for a hand. Never throws into the game loop.
- */
-function hdbg(event: string, data: Record<string, unknown>): void {
-  if (!process.env.BOT_DEBUG) return;
-  try {
-    appendFileSync(
-      process.env.BOT_DEBUG_FILE ?? '/tmp/opencode/hand-debug.log',
-      `${Date.now()} ${event} ${JSON.stringify(data)}\n`,
-    );
-  } catch {
-    /* diagnostics must never affect the game */
-  }
-}
-
-/** Street order used by the stats projection's `street` events. */
-const STREET_INDEX: Record<string, number> = { preflop: 0, flop: 1, turn: 2, river: 3 };
-
-/** The classic house rule: 7-2 offsuit wins collect a bounty from everyone. */
-export function isSevenDeuce(cards: CardId[]): boolean {
-  if (cards.length !== 2) return false;
-  const ranks = cards.map((c) => Math.floor(c / 4)).sort((a, b) => a - b);
-  const suits = cards.map((c) => c % 4);
-  return ranks[0] === 0 && ranks[1] === 5 && suits[0] !== suits[1]; // 2 and 7, offsuit
-}
-
-interface SnapshotSeat {
-  userId: number;
-  pubkey: string;
-  commit: Point;
-  cards: { deckIndex: number; point: Point }[];
-}
-
-interface ShowSnapshot {
-  handId: string;
-  bySeat: Map<number, SnapshotSeat>;
-  revealedSeats: Set<number>;
-  winnerSeats: number[];
-  reveals: Map<number, CardId[]>;
-  /** True when no one had to show: the hand was decided by a fold. Kept on the
-   *  snapshot for consumers; the peek gate no longer keys off it (a peek is
-   *  allowed out of any hand with still-private cards). */
-  endedByFold: boolean;
-}
-
-/** One outstanding paid-peek offer. `targetUserId` is captured so the target
- *  can be told when the offer resolves even after seats/lastHand change. */
-interface PeekOffer {
-  handId: string;
-  fromUserId: number;
-  targetSeat: number;
-  targetUserId: number;
-  amount: number;
-  /** Server-side 5s expiry; cleared when the offer is answered or swept. */
-  timer: NodeJS.Timeout;
-}
-
-type Share = { deckIndex: number; out: string; proof: { A1: string; A2: string; z: string } };
-
-/**
- * `multi_run_result.reason`. The shared `MultiRunReason` union does not yet
- * carry `equity_failed`; the engine emits it as a distinct, auditable reason
- * rather than collapsing an equity failure into `ineligible`. Required shared
- * change: add `'equity_failed'` to `MultiRunReason` in
- * `packages/shared/src/wsProtocol.ts` (web handlers treat unknown reasons
- * passively, so the cast is additive until then).
- */
-type MultiRunResultReason = MultiRunReason | 'equity_failed';
-
-
-
-
-
-/** Verifies a player's DLEQ unmask shares against a finished hand's snapshot. */
-function verifySnapshotShares(
-  entry: SnapshotSeat,
-  shares: Share[],
-  lookup: ReturnType<typeof cardLookup>,
-): CardId[] | null {
-  const points = new Map(entry.cards.map((c) => [c.deckIndex, c.point]));
-  const cards: CardId[] = [];
-  const seen = new Set<number>();
-  for (const sh of shares) {
-    const pIn = points.get(sh.deckIndex);
-    if (!pIn || seen.has(sh.deckIndex)) return null;
-    seen.add(sh.deckIndex);
-    let out: Point;
-    try {
-      out = pointFromHex(sh.out);
-    } catch {
-      return null;
-    }
-    if (!verifyUnmask(entry.commit, pIn, out, sh.proof)) return null;
-    const card = recoverCard(out, lookup);
-    if (card === null) return null;
-    cards.push(card);
-  }
-  return cards;
-}
-
-/**
- * Deterministic hand id for the bot playtest harness only.
- *
- * The deal randomness itself lives client-side (mental-poker `randomPerm`), but
- * the hand id is minted here on the server, so the harness cannot make its
- * sequence reproducible on its own. When `BOT_TEST_SHUFFLE_SEED` is set we
- * derive the id from `(seed, per-room hand ordinal)` instead of CSPRNG bytes;
- * the default path (`randomBytes`) is byte-for-byte unchanged.
- *
- * ISOLATION: because the id is a pure function of `(seed, ordinal)`,
- * `BOT_TEST_SHUFFLE_SEED` must ONLY be used against a throwaway/temp database.
- * `transcripts.hand_id` is a PRIMARY KEY, so pointing the same seed at a
- * non-empty DB (a reused room, or a restart) re-mints ids that already exist and
- * collides on insert. The eval/playtest harnesses boot a fresh `tmpdir()` DB.
- */
-function testHandId(seed: string, ordinal: number): string {
-  return createHash('sha256')
-    .update(`4am-test-hand:${seed}:${ordinal}`)
-    .digest('hex')
-    .slice(0, 16);
-}
 
 export class GameRoom {
   private sockets = new Map<number, WebSocket>();
@@ -3575,72 +3458,22 @@ class Hand {
     }
     const dealingOrder = this.seats.map((s) => s.seat);
     const runs = this.runs;
-    const awards = new Map<number, number>();
-    let showdownMsg: ServerMsg | null = null;
-    /** Per-run winner sets, used for the squid intersection. */
-    let winnerSets: number[][] = [];
-
-    if (st.winnerByFold !== null) {
-      awards.set(st.winnerByFold, pots.reduce((s, p) => s + p.amount, 0));
-      winnerSets = [[st.winnerByFold]];
-    } else {
-      const revealList: { seat: number; cards: CardId[]; score: number }[] = [];
-      for (const [seat, cards] of this.reveals) revealList.push({ seat, cards, score: 0 });
-
-      if (runs > 1) {
-        const boards: CardId[][] = [];
-        const perRun: { seat: number; amount: number }[][] = [];
-        // every pot splits across the runs; the odd chip rides on the earlier run
-        const slicesByPot = pots.map((p) => splitAmountEven(p.amount, runs));
-        const runWinnerSets: number[][] = [];
-        for (let r = 0; r < runs; r++) {
-          const runBoard = this.boardForRun(r + 1);
-          boards.push(runBoard);
-          const scores = new Map<number, number>();
-          for (const [seat, cards] of this.reveals) {
-            const score = evaluate7([...cards, ...runBoard]);
-            scores.set(seat, score);
-            if (r === 0) {
-              const entry = revealList.find((x) => x.seat === seat);
-              if (entry) entry.score = score;
-            }
-          }
-          const slicePots = pots.map((p, i) => ({
-            amount: slicesByPot[i]![r]!,
-            eligible: p.eligible,
-          }));
-          const awardsR = awardPots(slicePots, scores, dealingOrder);
-          perRun.push([...awardsR.entries()].map(([seat, amount]) => ({ seat, amount })));
-          runWinnerSets.push(bestScoreSeats([...scores.keys()], scores));
-          for (const [seat, amount] of awardsR) awards.set(seat, (awards.get(seat) ?? 0) + amount);
-        }
-        winnerSets = runWinnerSets;
-        showdownMsg = {
-          t: 'showdown',
-          handId: this.id,
-          reveals: revealList,
-          awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
-          multiRun: { boards, awards: perRun },
-        };
-      } else {
-        const scores = new Map<number, number>();
-        for (const [seat, cards] of this.reveals) {
-          const score = evaluate7([...cards, ...board]);
-          scores.set(seat, score);
-          const entry = revealList.find((x) => x.seat === seat);
-          if (entry) entry.score = score;
-        }
-        const awards1 = awardPots(pots, scores, dealingOrder);
-        for (const [seat, amount] of awards1) awards.set(seat, amount);
-        winnerSets = [bestScoreSeats([...scores.keys()], scores)];
-        showdownMsg = {
-          t: 'showdown',
-          handId: this.id,
-          reveals: revealList,
-          awards: [...awards.entries()].map(([seat, amount]) => ({ seat, amount })),
-        };
-      }
-    }
+    const runBoards =
+      runs > 1 ? Array.from({ length: runs }, (_, i) => this.boardForRun(i + 1)) : [];
+    const {
+      awards,
+      showdown: showdownMsg,
+      winnerSets,
+    } = computeShowdown({
+      handId: this.id,
+      winnerByFold: st.winnerByFold,
+      reveals: this.reveals,
+      runs,
+      runBoards,
+      board,
+      pots,
+      dealingOrder,
+    });
 
     const pokerDeltas = st.seats.map((s) => ({
       seat: s.seat,
@@ -3651,7 +3484,13 @@ class Hand {
       stack: s.stack + (awards.get(s.seat) ?? 0),
     }));
     // Squid is assessed on the stacks as they stand after the poker pot pays out.
-    const squid = this.settleSquid(winnerSets, pokerStacks);
+    const squid = computeSquidSettlement(
+      this.features.squid.settings,
+      this.seats.map((s) => s.seat),
+      this.bb,
+      winnerSets,
+      pokerStacks,
+    );
     const stacks = pokerStacks.map((s) => ({
       seat: s.seat,
       stack: s.stack + (squid?.netBySeat.get(s.seat) ?? 0),
@@ -3789,62 +3628,6 @@ class Hand {
     // No audit: settle + reveal immediately. `publishSettlement` writes the
     // durable settlement BEFORE broadcasting the reveal, then holds `hand_end`.
     this.publishSettlement();
-  }
-
-  /**
-   * B1 squid game. Only a claimed manual trigger reaches here. Every
-   * non-winner pays `penaltyBb x bb x (participants - 1)`, capped by the chips
-   * they have left after the pot, split evenly among every other participant.
-   * With multiple runs you must win every run to be a winner; if the runs have
-   * no common winner nobody collects and no chips move.
-   */
-  private settleSquid(
-    winnerSets: number[][],
-    stacks: { seat: number; stack: number }[],
-  ): SquidSettlement | null {
-    const settings = this.features.squid.settings;
-    if (!settings) return null;
-    const participants = this.seats.map((s) => s.seat);
-    const winners = intersectSeatSets(winnerSets);
-    const opponentCount = participants.length - 1;
-    const requestedPerLoser = settings.penaltyBb * this.bb * opponentCount;
-    const netBySeat = new Map<number, number>();
-    const transfers: { from: number; to: number; amount: number }[] = [];
-    const paidBySeat: { seat: number; amount: number }[] = [];
-    if (winners.length === 0 || opponentCount <= 0) {
-      return {
-        winners: [],
-        transfers: [],
-        requestedPerLoser,
-        paidBySeat: [],
-        noClaimant: true,
-        netBySeat,
-      };
-    }
-    const available = new Map(stacks.map((s) => [s.seat, Math.max(0, s.stack)]));
-    for (const loser of participants) {
-      if (winners.includes(loser)) continue;
-      const paid = Math.min(requestedPerLoser, available.get(loser) ?? 0);
-      if (paid <= 0) continue;
-      paidBySeat.push({ seat: loser, amount: paid });
-      const recipients = participants.filter((s) => s !== loser);
-      const shares = splitAmountEven(paid, recipients.length);
-      recipients.forEach((to, i) => {
-        const amount = shares[i]!;
-        if (amount <= 0) return;
-        transfers.push({ from: loser, to, amount });
-        netBySeat.set(loser, (netBySeat.get(loser) ?? 0) - amount);
-        netBySeat.set(to, (netBySeat.get(to) ?? 0) + amount);
-      });
-    }
-    return {
-      winners,
-      transfers,
-      requestedPerLoser,
-      paidBySeat,
-      noClaimant: false,
-      netBySeat,
-    };
   }
 
   private onRevealKey(info: HandSeatInfo, keyHex: string, sig: string): void {
