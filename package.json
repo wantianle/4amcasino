@@ -12,6 +12,15 @@
     "test:bench": "RUN_BENCH=1 vitest run packages/agent-core/test/postflopPolicy.test.ts",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build:all",
+    "build:web": "npm run build:web -w @4am/web",
+    "build:server": "npm run build -w @4am/server",
+    "build:all": "npm run build:web && npm run build:server",
+    "check:diff": "node scripts/check-diff.mjs",
+    "check:tracked": "node scripts/check-tracked.mjs",
+    "check:links": "node scripts/check-links.mjs",
+    "check:clean-tree": "node scripts/check-clean-tree.mjs",
+    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree",
     "format": "prettier --write ."
   },
   "devDependencies": {

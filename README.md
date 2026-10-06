@@ -100,8 +100,17 @@ npm run dev --workspace @4am/server   # API + WebSocket on :8787
 npm run dev --workspace @4am/web      # Vite dev server on :5173 (proxies to :8787)
 
 # self-host (one process serves everything)
-npm run build --workspace @4am/web    # builds the app AND a prebundled server
-npm run start --workspace @4am/server # serves the built app + API + WS on :8787
+npm run build:web                      # frontend only (vite build)
+npm run build:server                   # backend only (esbuild prebundle)
+npm run build                          # both (= build:all)
+npm run start --workspace @4am/server  # serves the built app + API + WS on :8787
+```
+
+Before committing, verify the **committed** tree, not just your working copy —
+see [docs/dev-verification.md](docs/dev-verification.md) and run:
+
+```bash
+npm run check:all
 ```
 
 State lives in a single SQLite file (`DB_PATH`, default `./4amcasino.db`). Set `PORT` to change
