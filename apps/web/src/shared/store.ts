@@ -339,12 +339,20 @@ interface Store {
   setAuth: (a: AuthState) => void;
   logout: () => void;
 
-  /** Drop every identity-scoped VIEW field, leaving `auth` alone (the caller
-   *  owns whether the identity is cleared or replaced). `logout` and the
-   *  `?switch=1` `setAuth` path both funnel through the one auth-identity
-   *  subscription in gameClient, so this is the single place account-bound
-   *  view state is reset - writing it into either action separately is how a
-   *  later field goes missing from the other path. */
+  /** Drop every identity-scoped field, leaving `auth` alone (the caller owns
+   *  whether the identity is cleared or replaced). `logout` and the `?switch=1`
+   *  `setAuth` path both funnel through the one auth-identity subscription in
+   *  gameClient, so this is the single place account-bound state is reset -
+   *  writing it into either action separately is how a later field goes missing
+   *  from the other path.
+   *
+   *  This covers the `prefs` account-level fields too, not just the view state:
+   *  they are re-fetched from `/api/profile` by the next `loadPrefs()`, which is
+   *  asynchronous, so without resetting them here account B reads account A's
+   *  `displayName` / `bio` / `quickPhrases` / appearance / ratio picks for the
+   *  whole window before that fetch lands. `stackUnit` is the one device-level
+   *  field (it is never sent to the server - see `readStackUnit`), so it is
+   *  carried over rather than reset. */
   resetSessionView: () => void;
 
   room: RoomStateMsg | null;
@@ -397,7 +405,7 @@ export const useStore = create<Store>()(
           pokerHotkeysFor: null,
         }),
       resetSessionView: () =>
-        set({
+        set((s) => ({
           // `room` is deliberately not listed: it is cleared by `logout()` and,
           // before the one cross-account `setAuth` path (?switch=1 on /login)
           // can run, TablePage's unmount cleanup has already set it to null. It
@@ -413,7 +421,18 @@ export const useStore = create<Store>()(
           errors: [],
           pokerHotkeysFor: null,
           voice: emptyVoice,
-        }),
+          // The account-level `prefs` go back to defaults in one shot, rather
+          // than a per-field list that a future field can be forgotten from.
+          // Every one of them is the server's per-account copy (displayName /
+          // bio / hasAvatar / avatarVersion / cardBack / cardFace / tableSkin /
+          // fourColor / quickPhrases / privateMode / autoJoinInvites / autoReady
+          // / betRatios / pokerHotkeys), so the next `loadPrefs()` restores the
+          // real value; until it lands B sees defaults, never A's. `stackUnit`
+          // is device-level (no server column; it comes from the `4am-stack-unit`
+          // migration key) and must survive, or switching accounts on one device
+          // would silently flip the unit every seat reads.
+          prefs: { ...defaultPrefs, stackUnit: s.prefs.stackUnit },
+        })),
 
       room: null,
       setRoom: (room) => set({ room }),
