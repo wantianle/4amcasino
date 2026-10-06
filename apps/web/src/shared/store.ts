@@ -171,6 +171,14 @@ export interface PeekResult {
   cards: CardId[];
 }
 
+/** View-layer voice state, reset whenever the signed-in identity changes. */
+export interface VoiceState {
+  joined: boolean;
+  muted: boolean;
+  mutedByUser: Record<number, boolean>;
+  speakingByUser: Record<number, boolean>;
+}
+
 export interface HandView {
   handId: string | null;
   seats: HandStartMsg['seats'];
@@ -297,6 +305,15 @@ export const emptyHand: HandView = {
   handRecovery: null,
 };
 
+/** The initial voice state, reused so the identity-boundary reset has one
+ *  definition rather than a second hand-written literal that can drift. */
+export const emptyVoice: VoiceState = {
+  joined: false,
+  muted: false,
+  mutedByUser: {},
+  speakingByUser: {},
+};
+
 /** TEMPORARY migration shim for the `board`/`board2` split.
  *
  *  `boards` is now the canonical state. Components still read the derived
@@ -321,6 +338,14 @@ interface Store {
   auth: AuthState;
   setAuth: (a: AuthState) => void;
   logout: () => void;
+
+  /** Drop every identity-scoped VIEW field, leaving `auth` alone (the caller
+   *  owns whether the identity is cleared or replaced). `logout` and the
+   *  `?switch=1` `setAuth` path both funnel through the one auth-identity
+   *  subscription in gameClient, so this is the single place account-bound
+   *  view state is reset - writing it into either action separately is how a
+   *  later field goes missing from the other path. */
+  resetSessionView: () => void;
 
   room: RoomStateMsg | null;
   setRoom: (r: RoomStateMsg | null) => void;
@@ -349,12 +374,7 @@ interface Store {
   prefs: Prefs;
   setPrefs: (p: Partial<Prefs>) => void;
 
-  voice: {
-    joined: boolean;
-    muted: boolean;
-    mutedByUser: Record<number, boolean>;
-    speakingByUser: Record<number, boolean>;
-  };
+  voice: VoiceState;
   patchVoice: (v: Partial<Store['voice']>) => void;
 }
 
@@ -375,6 +395,24 @@ export const useStore = create<Store>()(
           chat: [],
           hand: emptyHand,
           pokerHotkeysFor: null,
+        }),
+      resetSessionView: () =>
+        set({
+          // `room` is deliberately not listed: it is cleared by `logout()` and,
+          // before the one cross-account `setAuth` path (?switch=1 on /login)
+          // can run, TablePage's unmount cleanup has already set it to null. It
+          // is not a live cross-identity residual, so this reset leaves it to
+          // the code that owns the room lifecycle.
+          chat: [],
+          hand: emptyHand,
+          // `lastHand` is the previous-hand recap the table strip renders. It is
+          // frozen on `hand_end` and NOT bounded by `hand`, so without this a
+          // `?switch=1` re-login still shows the old account's boards / reveals
+          // / names until the next `hand_end` overwrites them.
+          lastHand: null,
+          errors: [],
+          pokerHotkeysFor: null,
+          voice: emptyVoice,
         }),
 
       room: null,
@@ -408,7 +446,7 @@ export const useStore = create<Store>()(
       prefs: defaultPrefs,
       setPrefs: (p) => set((s) => ({ prefs: { ...s.prefs, ...p } })),
 
-      voice: { joined: false, muted: false, mutedByUser: {}, speakingByUser: {} },
+      voice: emptyVoice,
       patchVoice: (v) => set((s) => ({ voice: { ...s.voice, ...v } })),
     }),
     {

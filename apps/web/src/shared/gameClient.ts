@@ -283,7 +283,12 @@ export function resetHandSession(reason: HandSessionResetReason): void {
  *  production `session-end` today - a 401 expiry lands here as a logout. */
 useStore.subscribe((state, prev) => {
   if (prev.auth.userId !== null && state.auth.userId !== prev.auth.userId) {
+    // One identity boundary, two kinds of state: this module's registries and
+    // the store's view fields. Both are cleared here so a fix to either cannot
+    // be applied to only one of `logout()` / `setAuth()` - the exact failure
+    // mode where a `?switch=1` re-login still saw the previous account's recap.
     resetHandSession('logout');
+    useStore.getState().resetSessionView();
   }
 });
 
