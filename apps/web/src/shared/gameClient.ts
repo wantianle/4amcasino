@@ -33,10 +33,64 @@ const KEY_PREFIX = '4am/handkey/';
 // This is deliberately client-session state, not part of the authoritative
 // hand snapshot.  A reconnect can replay frames, but it must not make cards
 // fly again; a fixture/resetHand call also cannot manufacture a deal event.
+//
+// Motion metadata is per-hand and only ever read for the hand currently on
+// screen (plus a brief recap window), but the maps used to keep every handId
+// forever - one entry per card of every hand ever dealt in a long-lived tab.
+// They are bounded below by a handId LRU: a write moves that hand to the MRU
+// end and the least-recently written hand that is NOT pinned is dropped whole
+// (all of its keys at once).
+const MOTION_HAND_CAP = 64;
 const dealEpochByHand = new Map<string, number>();
 const dealtMotionByCard = new Map<string, number>();
 const dealEpochByCard = new Map<string, number>();
 const boardDeckIndexByCard = new Map<string, number>();
+/** LRU order of handIds that have motion metadata; oldest (eviction candidate) first. */
+const motionHandOrder: string[] = [];
+
+/** HandIds whose motion metadata must survive eviction:
+ *  - the live hand (its cards are on screen right now);
+ *  - the last-hand recap (may still be rendered);
+ *  - a hand THIS browser folded but has not yet seen reach a terminal state
+ *    (the fold escrow may still need to observe its `action_applied`).
+ *  A folded-but-unsettled hand is a safety pin, not a cache entry: many of them
+ *  may legitimately outnumber the cap, and then the bound is pins + 0. */
+function pinnedMotionHands(): Set<string> {
+  const { hand, lastHand } = useStore.getState();
+  const pins = new Set<string>();
+  if (hand.handId) pins.add(hand.handId);
+  if (lastHand?.handId) pins.add(lastHand.handId);
+  for (const folded of foldedByMe) if (!terminalHands.has(folded)) pins.add(folded);
+  return pins;
+}
+
+/** Drop every map entry owned by one hand. Card maps key on `handId:...`;
+ *  `dealEpochByHand` keys on the bare handId. */
+function evictMotionHand(handId: string): void {
+  dealEpochByHand.delete(handId);
+  const prefix = `${handId}:`;
+  for (const key of dealtMotionByCard.keys()) if (key.startsWith(prefix)) dealtMotionByCard.delete(key);
+  for (const key of dealEpochByCard.keys()) if (key.startsWith(prefix)) dealEpochByCard.delete(key);
+  for (const key of boardDeckIndexByCard.keys()) if (key.startsWith(prefix)) boardDeckIndexByCard.delete(key);
+}
+
+/** Mark a hand MRU and evict the oldest unpinned hands until back within cap. */
+function touchMotionHand(handId: string): void {
+  const at = motionHandOrder.indexOf(handId);
+  if (at >= 0) motionHandOrder.splice(at, 1);
+  motionHandOrder.push(handId);
+  if (motionHandOrder.length <= MOTION_HAND_CAP) return;
+  const pins = pinnedMotionHands();
+  for (let i = 0; i < motionHandOrder.length && motionHandOrder.length > MOTION_HAND_CAP; ) {
+    const candidate = motionHandOrder[i]!;
+    if (pins.has(candidate)) {
+      i++;
+      continue;
+    }
+    motionHandOrder.splice(i, 1);
+    evictMotionHand(candidate);
+  }
+}
 
 export function dealMotionEpoch(handId: string | null, cardKey: string): number {
   return handId ? dealEpochByCard.get(`${handId}:${cardKey}`) ?? 0 : 0;
@@ -70,6 +124,7 @@ export function mergeBoardOpenForMotion(
   const next = boards.map((run) => [...run]);
   while (next.length <= runIndex) next.push([]);
   boardDeckIndexByCard.set(`${handId}:${runIndex}:${msg.card}`, msg.deckIndex);
+  touchMotionHand(handId);
   if (!next[runIndex]!.includes(msg.card)) next[runIndex]!.push(msg.card);
   next[runIndex] = orderKnownBoard(handId, runIndex, next[runIndex]!);
   return next;
@@ -93,12 +148,14 @@ export function claimDealMotion(handId: string | null, cardKey: string, epoch: n
   const key = `${handId}:${cardKey}`;
   if ((dealtMotionByCard.get(key) ?? 0) >= epoch) return false;
   dealtMotionByCard.set(key, epoch);
+  touchMotionHand(handId);
   return true;
 }
 
 function advanceDealEpoch(handId: string): number {
   const next = (dealEpochByHand.get(handId) ?? 0) + 1;
   dealEpochByHand.set(handId, next);
+  touchMotionHand(handId);
   return next;
 }
 
@@ -107,6 +164,7 @@ function advanceDealEpoch(handId: string): number {
 export function noteDealMotion(handId: string, cardKey: string): number {
   const epoch = advanceDealEpoch(handId);
   dealEpochByCard.set(`${handId}:${cardKey}`, epoch);
+  touchMotionHand(handId);
   return epoch;
 }
 
@@ -178,13 +236,56 @@ const endedHands = new Set<string>();
  *  `settlement_failed` for an already-finished hand from reviving its banner. */
 const terminalHands = new Set<string>();
 
+/** Which kind of session boundary is being crossed. `leave-room` is the one
+ *  boundary that must NOT wipe the registries (see `resetHandSession`). */
+export type HandSessionResetReason = 'logout' | 'leave-room' | 'session-end';
+
+/** Reset the module-level hand state at a session boundary.
+ *
+ *  The three boundaries are deliberately not interchangeable:
+ *  - `logout` (log out / switch account): full wipe. Nothing the old identity
+ *    saw may authorise a key reveal or suppress a terminal for the new one.
+ *  - `leave-room`: NO wipe. The same live hand can be resumed after re-joining,
+ *    and the local evidence that this browser folded it is what makes the
+ *    replayed `action_applied` send `fold_key`. `endedHands`/`terminalHands`
+ *    persistence is likewise intentional: a reconnect must not revive a
+ *    finished hand or double-escrow its key.
+ *  - `session-end` (explicit end): full wipe, same as logout. */
+export function resetHandSession(reason: HandSessionResetReason): void {
+  if (reason === 'leave-room') return;
+  foldedByMe.clear();
+  endedHands.clear();
+  terminalHands.clear();
+  dealEpochByHand.clear();
+  dealtMotionByCard.clear();
+  dealEpochByCard.clear();
+  boardDeckIndexByCard.clear();
+  motionHandOrder.length = 0;
+}
+
 /** Test-only: clear the module-level hand-tracking sets so cases are isolated.
  *  Production never calls this - the sets are process-lifetime by design and
  *  resetting them mid-session would re-open already-finished hands. */
 export function __resetHandTrackingForTest(): void {
-  foldedByMe.clear();
-  endedHands.clear();
-  terminalHands.clear();
+  resetHandSession('session-end');
+}
+
+/** Test-only: current occupancy of the bounded motion state, so a case can
+ *  assert the maps do not grow forever. `order` is the LRU order, oldest first. */
+export function __motionStateForTest(): {
+  order: string[];
+  epochByHand: number;
+  dealtByCard: number;
+  epochByCard: number;
+  boardIndexByCard: number;
+} {
+  return {
+    order: [...motionHandOrder],
+    epochByHand: dealEpochByHand.size,
+    dealtByCard: dealtMotionByCard.size,
+    epochByCard: dealEpochByCard.size,
+    boardIndexByCard: boardDeckIndexByCard.size,
+  };
 }
 
 /** Send a betting action for the current hand (called from the UI). */
@@ -374,7 +475,13 @@ function runLifecycle(msg: LifecycleMsg): void {
  *  effects is exactly the one the reducer chose. */
 function applyLifecycle(result: LifecycleResult): void {
   const { terminalHands: terminalClaim, endedHands: endedClaim } = result.claims;
-  if (terminalClaim !== undefined) terminalHands.add(terminalClaim);
+  if (terminalClaim !== undefined) {
+    terminalHands.add(terminalClaim);
+    // A terminal frame closes the fold-escrow window: the hand can no longer
+    // produce a fresh `action_applied`, so "I folded X" is no longer needed and
+    // must not keep the hand pinned in the motion LRU or leak forever.
+    foldedByMe.delete(terminalClaim);
+  }
   if (endedClaim !== undefined) endedHands.add(endedClaim);
   for (const op of result.ops) {
     if ('store' in op) {
