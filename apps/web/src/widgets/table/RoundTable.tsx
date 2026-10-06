@@ -26,6 +26,7 @@ import {
   CENTER_COLUMN,
   centerColumnBudgetPx,
   FELT,
+  PHONE_FELT,
   K_CAP_DESKTOP,
   K_CAP_PHONE,
   K_FLOOR,
@@ -255,7 +256,7 @@ export function RoundTable({
   readyCheck?: { eligible: number[]; ready: number[] } | null;
   /** Opens the share card for the settled hand; rides the top winner's badge. */
   onShareHand?: () => void;
-  /** Phone uses its own taller oval (PHONE_CANVAS 548×410) + phone anchors. */
+  /** Phone uses its own vertical oval + phone anchors. */
   narrow?: boolean;
   /** Compact center tier (audit H2): TablePage collapses the pot/board stack
    *  (smaller cards, tighter gaps) when multi-run boards or a banner/summary
@@ -455,7 +456,7 @@ export function RoundTable({
       {/* review fix #16: invisible until the first real measurement so a
         pre-fit frame can never flash; m-auto keeps it centered while still
         scrollable when it overflows */}
-      <div
+           <div
         className={cn('relative m-auto shrink-0', !measured && 'invisible')}
         style={{ width: canvas.w * k, height: canvas.h * k }}
       >
@@ -482,33 +483,36 @@ export function RoundTable({
           <div
             aria-hidden="true"
             className="table-ground absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{
-              top: `calc(50% + ${FELT.shadow.dropPx}px)`,
-              width: `${FELT.shadow.wPct}%`,
-              height: `${FELT.shadow.hPct}%`,
+             style={{
+               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).shadow.dropPx}px)`,
+               width: `${(narrow ? PHONE_FELT : FELT).shadow.wPct}%`,
+               height: `${(narrow ? PHONE_FELT : FELT).shadow.hPct}%`,
             }}
           />
           <div
             aria-hidden="true"
             className="table-rail-side absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{
-              top: `calc(50% + ${FELT.side.dropPx}px)`,
-              width: `${FELT.side.wPct}%`,
-              height: `${FELT.side.hPct}%`,
+             style={{
+               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).side.dropPx}px)`,
+               width: `${(narrow ? PHONE_FELT : FELT).side.wPct}%`,
+               height: `${(narrow ? PHONE_FELT : FELT).side.hPct}%`,
             }}
           />
           <div
             aria-hidden="true"
             className="table-rail-top absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{ width: `${FELT.rim.wPct}%`, height: `${FELT.rim.hPct}%` }}
+             style={{
+               width: `${(narrow ? PHONE_FELT : FELT).rim.wPct}%`,
+               height: `${(narrow ? PHONE_FELT : FELT).rim.hPct}%`,
+             }}
           />
           <div
             aria-hidden="true"
             className="table-felt absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{
-              top: `calc(50% + ${FELT.inset.dropPx}px)`,
-              width: `${FELT.inset.wPct}%`,
-              height: `${FELT.inset.hPct}%`,
+             style={{
+               top: `calc(50% + ${(narrow ? PHONE_FELT : FELT).inset.dropPx}px)`,
+               width: `${(narrow ? PHONE_FELT : FELT).inset.wPct}%`,
+               height: `${(narrow ? PHONE_FELT : FELT).inset.hPct}%`,
             }}
           >
             <span className="table-felt-watermark">4AM · CASINO</span>

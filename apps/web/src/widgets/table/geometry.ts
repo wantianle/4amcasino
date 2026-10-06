@@ -10,7 +10,7 @@
  *
  *  Consumers: RoundTable (positions everything from here), TablePage (center
  *  column budget + compact tier), ReplayPage (inherits via RoundTable).
- *  Phone has its own taller oval (PHONE_CANVAS, 548×410 — see below), never stretched. */
+ *  Phone has its own vertical oval, never stretched. */
 
 export const SEAT_COUNT = 9;
 
@@ -40,25 +40,16 @@ export const TABLE_CANVAS: TableCanvas = {
   podWorstPx: 150,
 };
 
-/** L6: the phone canvas is NOT the desktop one at 1/2 — a half-scale 590×330
- *  oval cannot fit a 9-seat ring, because pod CSS px do not shrink with the
- *  canvas and the bottom arc's adjacent ring points only sit ~31–78 design px
- *  apart at that height, far below any readable pod. The phone therefore gets
- *  a TALLER oval of its own: 548×410. The width is capped by the narrowest
- *  supported phone: at K_FLOOR the canvas is 548·0.55 ≈ 301.4 design px, so a
- *  320px viewport (304 CSS px of stage after the page's p-2) still fits
- *  WITHOUT scrolling, and the extra height vs the desktop half-scale spreads
- *  the bottom arc so the compact phone pods (podWorstPx=122) and the board
- *  column clear each other: the ±40° seats' ring points sit 39 design px
- *  below the hero's but ~155 design px to its side — wider than any 78px pod
- *  — so no phone pod ever has to hang. rx/ry keep the ellipse at ~44%/41%
- *  proportions of the new box. */
+/** L1a: the phone is a separate vertical design box, not the desktop canvas
+ *  scaled down. 400×560 gives a 1.40:1 height/width ratio. At K_FLOOR the
+ *  scaled width is 220px; the 9-seat near-neighbour points are about 121px
+ *  apart before pod chrome, so the compact phone pod remains readable. */
 export const PHONE_CANVAS: TableCanvas = {
-  w: 548,
-  h: 410,
-  rx: 44,
-  ryNear: 41,
-  ryFar: 33,
+  w: 400,
+  h: 560,
+  rx: 36,
+  ryNear: 39,
+  ryFar: 26,
   podWorstPx: 122,
 };
 
@@ -81,6 +72,15 @@ export const FELT = {
   inset: { wPct: 83, hPct: 56, dropPx: 1 },
 } as const;
 
+/** Phone-only surface proportions. The measured table ratio uses rim, not
+ * shadow: shadow is atmosphere, while rim is the visible rail boundary. */
+export const PHONE_FELT = {
+  shadow: { wPct: 88, hPct: 84, dropPx: 36 },
+  side: { wPct: 86, hPct: 82, dropPx: 26 },
+  rim: { wPct: 86, hPct: 82, dropPx: 0 },
+  inset: { wPct: 82, hPct: 78, dropPx: 1 },
+} as const;
+
 /** The tighter ellipse between the seats and the pot where each seat's
  *  street-bet pile + D/SB/BB discs ride. The straight-bottom seat gets a
  *  sideways nudge (feedback v2 #1): there is no vertical room left between
@@ -95,19 +95,14 @@ export const BET_RING = {
   nudgeCosAbsMax: 0.35,
 } as const;
 
-/** L6 phone bet ring. The phone oval has NO free band between the board
- *  column's bottom and the ±40° pods' tops, so the ring splits near/far radii
- *  like the seat ring does: near piles ride ry 25 — just under the board's
- *  budget floor, above the pods' top edge — while far piles tuck up to 7,
- *  the only lane left between the far pods and the pot pill. The hero nudge
- *  grows to ±42 because at phone scale every narrower offset lands the pile
- *  on a neighbour's pod; pushed wide, it sits on open felt beside the bottom
- *  seats' outer corners. */
+/** L1a phone bet ring: the vertical canvas gives a central lane for the board;
+ *  near/far radii keep bets outside that lane and the bottom nudge keeps the
+ *  hero pile off the hero pod. */
 export const BET_RING_PHONE = {
-  rxPct: 31,
-  ryPct: 25,
-  ryFarPct: 7,
-  nudgePct: 42,
+  rxPct: 24,
+  ryPct: 24,
+  ryFarPct: 9,
+  nudgePct: 28,
   nudgeSinMin: 0.9,
   nudgeCosAbsMax: 0.35,
 } as const;
@@ -143,14 +138,9 @@ export type SeatAnchor = {
   hangGapPx: number;
 };
 
-/** L6 phone anchors. On the tall 548×410 oval NO phone pod hangs and none
- *  flips: the ±40° seats clear the hero HORIZONTALLY (ring points ~80 design
- *  px apart vs an 80px pod), and a side flip would grow the ±170° pods
- *  TOWARD the board column — measured worse than their ~3px canvas-edge
- *  overhang (which lands in the scroll gutters). hangSin past 1 keeps the
- *  hero centred on its ring point so the full showdown pod cannot climb into
- *  the board's budget; only its pill row spills into the strip under the
- *  canvas, which the console layout reserves. */
+/** L1a phone anchors: no flip/hang, keeping side pods out of the board lane and
+ *  the hero centered at the bottom anchor. The budget function consumes this
+ *  explicitly, so phone clearance changes with the phone canvas. */
 export const SEAT_ANCHOR_PHONE: SeatAnchor = {
   sideFlipCos: 1.01,
   hangSin: 1.01,
