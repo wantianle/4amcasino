@@ -1,54 +1,29 @@
 import Database from 'better-sqlite3';
-import {
-  NEW_ROOM_COMMISSION_BPS,
-  MAX_QUALIFYING_HANDS,
-  DEFAULT_BET_RATIOS,
-  sanitizeBetRatios,
-} from '@4am/shared';
+import { NEW_ROOM_COMMISSION_BPS, MAX_QUALIFYING_HANDS } from '@4am/shared';
 import { computeHead } from '@4am/mental-poker';
 import {
   initializePlatformSettings,
   migrateRoomCommissionDefaults,
 } from './platformSettings.js';
 import { migrateRoomFeatureDefaults } from './gameplaySettings.js';
-import { migrateAgentPlatform } from './agentSchema.js';
-import { migrateHandStats, SEVEN_DEUCE_SHOW_KIND } from './handProjection.js';
+import { SEVEN_DEUCE_SHOW_KIND } from './handProjection.js';
 import { verifyLedger } from './ledger.js';
+import { runMigrations } from './migrations/index.js';
+import { ensureColumn, tableExists } from './migrations/util.js';
+import { migrateBetRatios } from './migrations/betRatios.js';
 
 export type DB = Database.Database;
+
+// The standalone migrations and shared migration helpers now live under
+// ./migrations/*. They are re-exported here so the long-standing
+// `from './db.js'` import surface stays unchanged for every existing caller.
+export { migrateBetRatios };
+export { migrateSettlementPrepared } from './migrations/settlementPrepared.js';
+export { migrateAdminAudit } from './migrations/adminAudit.js';
 
 /** How long a login lasts. Long enough that a weekly game never re-authenticates
  *  mid-session, short enough that a leaked token eventually dies. */
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** Rewrite every stored quick-bet-ratio list that is not the current five-slot
- *  shape to the five-slot default. The old format allowed four slots and read
- *  them back untouched forever, so accounts created before the fifth slot
- *  existed would keep a four-button action bar. Runs on every boot and is
- *  idempotent by construction: a valid five-slot save is left byte-for-byte
- *  alone (JSON round-trips unchanged), so re-running never clobbers a player's
- *  real pick. Damaged/foreign JSON also resolves to the default. */
-export function migrateBetRatios(db: DB): void {
-  const rows = db
-    .prepare('SELECT id, bet_ratios FROM users WHERE bet_ratios IS NOT NULL')
-    .all() as { id: number; bet_ratios: string }[];
-  if (rows.length === 0) return;
-  const rewrite = db.prepare('UPDATE users SET bet_ratios = ? WHERE id = ?');
-  const defaultJson = JSON.stringify(DEFAULT_BET_RATIOS);
-  for (const row of rows) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.bet_ratios);
-    } catch {
-      parsed = null;
-    }
-    // `sanitizeBetRatios` returns the input untouched when it is already the
-    // five-slot shape, so a string mismatch means this row needs migrating.
-    if (JSON.stringify(sanitizeBetRatios(parsed)) !== JSON.stringify(parsed)) {
-      rewrite.run(defaultJson, row.id);
-    }
-  }
-}
 
 export function openDb(path: string): DB {
   const db = new Database(path);
@@ -59,95 +34,18 @@ export function openDb(path: string): DB {
   // migrations below take an immediate write lock; without this wait the loser
   // of a startup race would fail outright instead of waiting its turn.
   db.pragma('busy_timeout = 10000');
-  migrate(db);
-  migrateAgentPlatform(db);
-  // Runs after `migrateAgentPlatform` (which creates the `agent_grants` table)
-  // so the bot columns can be added to it.
-  migrateBots(db);
-  // Normalized hand-stats projection tables (pure additions - never touches
-  // transcripts/ledger/hand_settlements).
-  migrateHandStats(db);
-  // Reconcile hand_lifecycle for a database that predates the lifecycle table.
-  // MUST run after migrateHandStats: the reconciliation reads `hands` /
-  // `hand_players`, which the stats migration creates.
-  reconcileMissingSettlements(db);
-  // Platform-admin audit trail (pure addition - one row per successful admin
-  // action; never touches any existing table).
-  migrateAdminAudit(db);
-  // Durable frozen settlement input (P0-2). Pure addition: a `prepared` hand
-  // can be settled after a process restart without rebuilding money inputs from
-  // mutable room state. Never touches any existing table.
-  migrateSettlementPrepared(db);
+  try {
+    runMigrations(db);
+  } catch (err) {
+    // A step that throws may have committed earlier steps, so the file can be
+    // left half-migrated; the process is about to abort, but the SQLite handle
+    // must not leak. Close it before rethrowing the original error. The chain
+    // is deliberately NOT wrapped in one transaction: the per-step DDL and the
+    // `:memory:` path both rely on the current commit semantics.
+    db.close();
+    throw err;
+  }
   return db;
-}
-
-/**
- * Durable frozen settlement input.
- *
- * A `Hand` computes a whole settlement (transcript head + entries, per-seat
- * stack/ledger deltas, squid, 7-2 bounty, time bank, trigger ids, rake
- * recipient) and freezes it here BEFORE the money transaction, in its OWN
- * committed transaction. A crash between the two therefore leaves a complete,
- * replayable input rather than a `running` row nobody can settle safely:
- * rebuilding from the current `room_players.stack` would be wrong because a
- * mid-hand buy/peek/next action may have moved it.
- *
- * `input_json` is the canonical JSON of the full `HandSettlementWrite`;
- * `input_hash` is its SHA-256, verified on every read so a tampered or
- * truncated row fails closed into `quarantined` instead of being applied.
- * `resolved_at`/`resolved_by`/`resolution` record how the row was finally
- * disposed of (a committed retry, or an operator abort), for the audit trail.
- */
-export function migrateSettlementPrepared(db: DB): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS hand_settlement_prepared (
-      hand_id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL,
-      head TEXT NOT NULL,
-      input_json TEXT NOT NULL,
-      input_hash TEXT NOT NULL,
-      prepared_at INTEGER NOT NULL,
-      attempts INTEGER NOT NULL DEFAULT 0,
-      last_error TEXT,
-      resolved_at INTEGER,
-      resolved_by INTEGER,
-      resolution TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_hand_settlement_prepared_room
-      ON hand_settlement_prepared(room_id, resolved_at);
-  `);
-}
-
-/**
- * The platform admin's own paper trail: one append-only row for every
- * successful administrative action (user disable/enable/password reset, room
- * archive/unarchive/delete, account merges). Nothing here
- * is ever updated or deleted. `detail` is a small JSON blob of the fields that
- * matter for that action (e.g. `{"mode":"initial"}`); `target_type`/`target_id`
- * say what it acted on so the log can be filtered by target. Operator is the
- * platform user id rather than a free-text name.
- */
-export function migrateAdminAudit(db: DB): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS admin_audit (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      operator_user_id INTEGER NOT NULL,
-      action TEXT NOT NULL,
-      target_type TEXT,
-      target_id TEXT,
-      detail TEXT,
-      ts INTEGER NOT NULL
-    );
-    -- Newest-first reads are the default listing; (ts DESC, id DESC) matches
-    -- the paging ORDER BY exactly. action and target_id are the two filters the
-    -- console exposes, each with an index of its own.
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_ts ON admin_audit(ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_ts_id ON admin_audit(ts DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit(action);
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_action_ts ON admin_audit(action, ts DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_target_id ON admin_audit(target_id);
-    CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit(target_type, target_id);
-  `);
 }
 
 /**
@@ -274,7 +172,7 @@ export function migrateBotDifficulty(db: DB): void {
   }).immediate();
 }
 
-function migrate(db: DB): void {
+export function migrate(db: DB): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY,
@@ -788,14 +686,6 @@ export interface MarkerlessAudit {
   alreadyClassified: number;
 }
 
-function tableExists(db: DB, name: string): boolean {
-  return (
-    db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(name) !== undefined
-  );
-}
-
 function failReconcile(reason: string): TranscriptReconcile {
   return { ok: false, reason };
 }
@@ -1202,11 +1092,4 @@ export function recoverOrphanedFeatureTriggers(db: DB): number {
     )
     .run();
   return info.changes;
-}
-
-function ensureColumn(db: DB, table: string, column: string, decl: string): void {
-  const cols = db.pragma(`table_info(${table})`) as { name: string }[];
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
-  }
 }
