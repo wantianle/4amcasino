@@ -15,6 +15,7 @@ import {
   resolveBotPolicyDetailed,
   type BotLlmOptions,
 } from './botPolicy.js';
+import { TUNABLE_DEFAULTS, readTunable } from './tunables.js';
 
 /**
  * Phase 1b: a single bot runner.
@@ -212,15 +213,9 @@ export interface ThinkConfig {
 
 export const DEFAULT_THINK_CONFIG: ThinkConfig = {
   enabled: true,
-  minMs: 150,
-  maxMs: 450,
+  minMs: TUNABLE_DEFAULTS.botThinkMinMs,
+  maxMs: TUNABLE_DEFAULTS.botThinkMaxMs,
 };
-
-function parseNonNegative(raw: string | undefined, fallback: number): number {
-  if (raw === undefined || raw === '') return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
-}
 
 /**
  * Hard upper bound on a graceful stop, in ms. Deliberately generous: it must sit
@@ -229,18 +224,17 @@ function parseNonNegative(raw: string | undefined, fallback: number): number {
  * hand is exactly what the graceful design tries to avoid (`player left during
  * the deal`), and that is the price of a bounded stop - so the bound is long.
  */
-export const DEFAULT_BOT_HARD_STOP_MS = 120_000;
+export const DEFAULT_BOT_HARD_STOP_MS = TUNABLE_DEFAULTS.botHardStopMs;
 
 /**
  * Resolve the hard-stop bound from the server env. `FOURAM_BOT_HARD_STOP_MS`
- * must be a positive integer; anything else (unset, empty, `0`, negative, NaN)
- * falls back to `DEFAULT_BOT_HARD_STOP_MS` - a zero/negative bound would turn
- * every stop into an immediate hard abort. Explicit `opts.hardStopMs` (tests)
- * still wins over this.
+ * must be a positive integer within bounds; anything else (unset, empty, `0`,
+ * negative, NaN) falls back to `DEFAULT_BOT_HARD_STOP_MS` - a zero/negative
+ * bound would turn every stop into an immediate hard abort. Explicit
+ * `opts.hardStopMs` (tests) still wins over this. Declared in `tunables.ts`.
  */
 export function botHardStopMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number(env.FOURAM_BOT_HARD_STOP_MS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_BOT_HARD_STOP_MS;
+  return readTunable('botHardStopMs', env);
 }
 
 /**
@@ -260,8 +254,8 @@ export function thinkConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ThinkC
   return {
     ...DEFAULT_THINK_CONFIG,
     enabled,
-    minMs: parseNonNegative(env.BOT_THINK_MIN_MS, DEFAULT_THINK_CONFIG.minMs),
-    maxMs: parseNonNegative(env.BOT_THINK_MAX_MS, DEFAULT_THINK_CONFIG.maxMs),
+    minMs: readTunable('botThinkMinMs', env),
+    maxMs: readTunable('botThinkMaxMs', env),
   };
 }
 

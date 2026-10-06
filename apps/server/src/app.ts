@@ -22,6 +22,7 @@ import { registerHandStatsRoutes } from './handStats.js';
 import { registerSocialRoutes } from './social.js';
 import { registerAccountRoutes, armRecoveryCode, generateRecoveryCode } from './account.js';
 import { registerAdminRoutes } from './admin.js';
+import { registerConfigRoutes } from './configRoutes.js';
 import { forgive, hitNamed, LIMITS, rateLimit } from './limits.js';
 import { isPlatform } from './platform.js';
 import { AgentError } from './botAccess.js';
@@ -207,6 +208,7 @@ export function createApp(
     };
   });
 
+  registerConfigRoutes(app);
   registerRoomRoutes(app, db);
   registerBotRoutes(app, db, botControl);
   registerProfileRoutes(app, db);
