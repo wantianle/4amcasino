@@ -41,7 +41,6 @@ const table: Record<string, string> = {
 
   // ── Table dock（A6/A9：排名·聊天浮层 + 下手牌离座）─────────────────────
   // '{n} hands' 复用 dict/leaderboard.ts 已有键。
-  'Betting options': '下注选项',
   // A8 下注区（GGPoker 样式，牌桌区右下角的紧凑下注面板）。BB 是单位缩写，
   // 按 4.5 保持原样，不进词典。
   'Betting controls': '下注控制',
@@ -69,8 +68,6 @@ const table: Record<string, string> = {
   '✓ You are ready': '✓ 已就绪',
   'Ready check': '就绪确认',
   '{a}/{b} ready · deals in {n}s, without the rest': '{a}/{b} 人就绪 · {n} 秒后发牌，不等其余',
-  '{a}/{b} — dealing without the rest shortly': '{a}/{b} — 稍后就发牌，不等其余',
-  "✋ I'm ready · {a}/{b}": '✋ 我准备好了 · {a}/{b}',
 
   // ── Action bar HUD labels ────────────────────────────────────────────────
   'Your bet': '你的下注',
@@ -106,7 +103,6 @@ const table: Record<string, string> = {
   'Host - deals the hands': '房主 · 负责发牌',
   Banker: '账房',
   'Backup banker': '副账房',
-  'Small blind (button)': '小盲（庄位）',
   muted: '已静音',
   "{name}'s profile": '{name}的主页',
   Sit: '入席',
@@ -154,14 +150,7 @@ const table: Record<string, string> = {
   'Seat {n}': '{n} 号位',
 
   // ── Mobile table extras ──────────────────────────────────────────────────
-  'You are out of chips. Buy points from the bank (menu, top right).':
-    '你的筹码打光了。打开右上角菜单，向银行买点数。',
-  'Automatic ready check soon. Menu → sit out if you need a break.':
-    '马上自动发起就绪确认。要缓口气就打开菜单 → 休息。',
-  'Waiting for two online players with chips.': '还差一位在线且有筹码的玩家才能开牌。',
-  'Waiting for the host to deal.': '等房主发牌。',
   'Waiting…': '等待中…',
-  'Waiting for friends to sit down…': '等朋友入座…',
   pot: '底池',
 
   // ── TurnProgress.tsx ─────────────────────────────────────────────────────

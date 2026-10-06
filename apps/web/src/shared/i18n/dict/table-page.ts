@@ -10,7 +10,6 @@
 // 'Turn timer' / 'No limit' (lobby), 'Try again' (landing), 'Settings'
 // (settings), 'The table' (landing), 'Copy' (account).
 const tablePage: Record<string, string> = {
-  'Peek opponent cards · {amount}': '买看对手手牌 · {amount}',
   'Peek results': '买看结果',
   '{n} people want to peek at your cards': '{n} 人想看你的牌',
   // ── Joining the room / connection states ──────────────────────────────
@@ -43,13 +42,8 @@ const tablePage: Record<string, string> = {
     '本手打完后才能离开，请继续操作——不会删除任何数据。',
 
   // ── Turn / status lines ───────────────────────────────────────────────
-  'You are not in this hand. You will be dealt in at the next deal.':
-    '这手牌没你的份。下一手会发给你。',
-  '{names} lost connection. Holding the hand for them to rejoin…':
-    '{names} 掉线了，这手牌先等着他们回来…',
   'Waiting for {name}…': '等 {name} 行动…',
   player: '玩家',
-  'Shuffling the encrypted deck…': '正在洗加密牌堆…',
   'You are watching this table.': '你在观战这张桌。',
   "You can see everything public, but not anyone's cards, the join code, or the chips.":
     '公开信息你都能看，但看不到任何人的底牌和房间码，也不会有自己的筹码。',
@@ -60,8 +54,6 @@ const tablePage: Record<string, string> = {
   // ── Seats ─────────────────────────────────────────────────────────────
   'Seat {n}': '{n} 号位',
   'Pick a seat': '挑个位置',
-  'Pick a seat.': '先挑个位置。',
-  'Pick a seat. Friends join with code {code}': '挑个位置。朋友凭房间码 {code} 加入',
   'Invite a friend to deal.': '邀请朋友来，人齐就发牌。',
   'Ready.': '就绪。',
   "You're in the next hand.": '下一手就有你的牌。',
@@ -75,11 +67,8 @@ const tablePage: Record<string, string> = {
   Decline: '拒绝',
   '{name} had': '{name} 的底牌',
   'only you can see this': '只有你能看到',
-  'Pay to peek at': '付费买看',
   'Asked {name}': '已问过 {name}',
   'Peek at {name}': '看 {name} 的牌',
-  'Peek offer amount': '买看报价金额',
-  'chips, paid only if they agree to show you': '筹码，对方同意亮牌才支付',
   '1 BB, paid only if they agree to show you': '1 BB，对方同意亮牌才支付',
   'Your peek offer expired.': '你的买看已过期。',
   'Your peek offer failed.': '你的买看没成功。',
@@ -99,18 +88,10 @@ const tablePage: Record<string, string> = {
 
   // ── Result banner ─────────────────────────────────────────────────────
   'Hand aborted:': '本手作废：',
-  // Keys keep the original `. ` lead-in so the English fallback still reads
-  // right; the zh value joins onto the abort reason, which already ends in 。.
-  '. {name} did not come back in time; all bets were returned.':
-    '{name} 超时未归，全部注金已退回。',
-  '. Seat {n}; stacks rolled back.': '{n} 号位未归；筹码已回滚。',
-  'The winning five': '致胜五张',
-  'Winning five': '致胜五张',
+  // Abort reasons are server prose (dict/server.ts) rendered through tr();
+  // this banner only supplies the fixed lead-in above.
   Table: '牌桌',
   Showdown: '摊牌',
-  'Everyone folded': '全员弃牌',
-  '{rate} table commission · {amount} to the house': '{rate} 台费 · {amount} 归平台',
-  '{rate} commission · {amount} to the house': '{rate} 台费 · {amount} 归平台',
   Share: '分享',
   'Dismiss result': '关闭结果',
   'Dismiss result (Esc)': '关闭结果（Esc）',
@@ -133,9 +114,6 @@ const tablePage: Record<string, string> = {
   Ledger: '账本',
   'Hand history': '出牌记录',
   Hands: '牌局记录',
-  'Sit out next hand': '下一手休息',
-  'Sit out next hands': '接下来几手休息',
-  'Deal me back in': '继续发牌',
   '(next hand)': '（下一手起）',
   'Applies from the next hand': '下一手起生效',
   '{n}s': '{n} 秒',
@@ -151,7 +129,6 @@ const tablePage: Record<string, string> = {
   No: '拒绝',
   'Room standings': '房间排名',
   'Counting the chips…': '正在数筹码…',
-  'Counting chips…': '正在数筹码…',
   'No completed hands yet. Deal one and check back.': '还没有打完的手牌。开一手再回来看。',
 
   // ── Run-it-twice prompt ───────────────────────────────────────────────
@@ -192,10 +169,8 @@ const tablePage: Record<string, string> = {
   'Nobody won every run - no bounty.': '没人每跑都第一，罚金没有转移。',
   'Bounty {n}': '罚金赔付给 {n}',
   'Trigger Squid Game next hand': '触发下一手鱿鱼游戏',
-  'Squid Game armed': '鱿鱼游戏已就位',
   'Tap again to cancel the armed Squid Game': '再点一次，取消鱿鱼游戏的就位状态',
   'Trigger bomb pot next hand': '下一手开炸弹池',
-  'Bomb pot armed': '炸弹池已就位',
   'Tap again to cancel the armed bomb pot': '再点一次，取消炸弹池的就位状态',
 
   // ── Multi-run 结算文案（跑 N 次牌）─────────────────────────────────────
@@ -224,13 +199,11 @@ const tablePage: Record<string, string> = {
   'Join voice': '加入语音',
   'Mute voice': '关闭麦克风',
   'Unmute voice': '开启麦克风',
-  'Join voice chat': '加入语音聊天',
   Mute: '静音',
   Unmute: '取消静音',
   'Poker board': '扑克桌面',
   POT: '底池',
   'Empty community card {n}': '空的公共牌位（第 {n} 张）',
-  'Empty run 2 card {n}': '第 2 跑的空牌位（第 {n} 张）',
   'blinds {sb}/{bb}': '盲注 {sb}/{bb}',
   "Copy or share this table's invite link": '复制或分享这张桌的邀请链接',
   'Seated players / in this hand': '已入座玩家 / 参与本手',

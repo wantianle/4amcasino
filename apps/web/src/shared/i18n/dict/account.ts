@@ -24,39 +24,19 @@ const account: Record<string, string> = {
   'You are now {name}. Other devices were signed out.': '你现在是 {name} 了，其他设备都已退出。',
   'could not rename you': '用户名没能改掉，再试一次。',
 
-  // Recovery code row
-  'Nobody can reset your password for you - your key lives only in your browser. A recovery code is the one way back in. Generate it now, store it somewhere safe, and it works exactly once.':
-    '没人能替你重设密码——密钥只存在你这个浏览器里。恢复码是唯一的回头路：现在就生成，存到安全的地方，它只能用一次。',
+  // Recovery code row (read-only: codes are minted at signup, shown once on
+  // the login page, and never downloadable or configurable from settings). The
+  // login page owns the one-time display keys below.
   'Recovery code': '恢复码',
   'Save this now — you will not see it again': '现在就存好——之后不会再显示了',
   '✓ Copied': '✓ 已复制',
   Copy: '复制',
-  Download: '下载',
-  'I saved it': '我存好了',
-  '✓ A recovery code is armed on this account.': '✓ 这个账号已经备好恢复码。',
-  '⚠ No recovery code. Forget your password and the account is gone for good.':
-    '⚠ 还没有恢复码。忘了密码，这个账号就彻底回不去了。',
   'Working…': '处理中…',
-  'Generate a new code': '生成新恢复码',
-  'Generate code': '生成恢复码',
-  'Turn off': '关闭',
-  'enter your password first': '请先输入你的密码',
-  'Recovery code turned off.': '恢复码已关闭。',
-  'could not set it up': '没能设置好，再试一次。',
-  'could not turn it off': '没能关闭，再试一次。',
-
-  // Recovery code row (read-only: codes are minted at signup)
   'Your recovery code is generated automatically when you create your account and shown exactly once. It cannot be viewed or changed here.':
     '恢复码在创建账号时自动生成，并且只显示一次。这里无法查看或修改。',
   '✓ A recovery code is on file for this account.': '✓ 这个账号已有恢复码存档。',
   '⚠ No recovery code on file. If you get locked out, ask the platform to reset your password.':
     '⚠ 这个账号还没有恢复码。如果被锁在外面，请联系平台重置密码。',
-
-  // Downloaded recovery file (the code line and the filename stay as-is)
-  '4AM Casino recovery code': '4AM Casino 恢复码',
-  'Account: {name}': '账号：{name}',
-  'Keep this somewhere safe and private. It is the only way back into your account if you forget your password, and it works exactly once.':
-    '把它存到安全可靠、别人看不到的地方。忘了密码时，这是回到你账号的唯一方式，而且只能用一次。',
 
   // Devices row
   'Signed-in devices': '已登录的设备',
