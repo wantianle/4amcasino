@@ -56,6 +56,7 @@ function claimedBot(botId = 'bot1', policyKind = 'scripted'): ClaimedBot {
     updated_at: 0,
     stopped_at: null,
     stop_requested_at: null,
+    delete_requested_at: null,
   };
   return {
     bot,

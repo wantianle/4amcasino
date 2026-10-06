@@ -52,7 +52,7 @@ export type { BotStatus };
  *   stopping             -> stopped
  *   stopped              -> starting     (restart)
  *   error                -> starting     (explicit retry, after identity check)
- *   any                  -> removed      (permanent)
+ *   any                  -> deleted      (permanent: rows are removed, not flagged)
  */
 const STARTABLE: readonly BotStatus[] = ['ready', 'stopped', 'error'];
 const STOPPABLE: readonly BotStatus[] = ['ready', 'starting', 'running'];
@@ -77,6 +77,8 @@ export interface BotRow {
   updated_at: number;
   stopped_at: number | null;
   stop_requested_at: number | null;
+  /** Set once a hard delete has been requested; see `finalizeBotRemoved`. */
+  delete_requested_at: number | null;
 }
 
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -124,8 +126,13 @@ function getBotById(db: DB, botId: string): BotRow | undefined {
 }
 
 export function listBots(db: DB, roomId: string): BotRow[] {
+  // Hard-deleted bots leave no row, but a pre-existing `removed` row (from the
+  // old soft-delete era) and a bot whose hard delete is still winding down must
+  // not be listed: the host already asked for them to go.
   return db
-    .prepare('SELECT * FROM bot_accounts WHERE room_id = ? ORDER BY created_at, id')
+    .prepare(
+      "SELECT * FROM bot_accounts WHERE room_id = ? AND status != 'removed' AND delete_requested_at IS NULL ORDER BY created_at, id",
+    )
     .all(roomId) as BotRow[];
 }
 
@@ -477,39 +484,49 @@ export function completeBotStop(db: DB, botId: string): boolean {
 }
 
 /**
- * Finalize a removal: `removed` + leave the seat + revoke + cancel pending buys
- * in one transaction (the same terminal semantics Phase 1a's DELETE route
- * performs, plus the seat release Phase 1b used to defer).
+ * Hard-delete a bot. This is the real thing the DELETE route promises: the
+ * `bot_accounts` row, every `agent_grants` row that belongs to it and its
+ * `room_players` seat row all go, in one transaction, after the runner has
+ * wound down. Pending buys are rejected first (rather than deleted), so a
+ * straggler banker approval is refused while the funding history stays.
+ *
+ * Deliberately KEPT: the bot's `users` row and its `ledger` entries. Both are
+ * needed to keep the room's money history readable - `/api/rooms/:id/ledger`
+ * INNER JOINs `users`, so deleting the account would silently drop the bot's
+ * entries from the ledger view even though the ledger table itself is intact.
+ * `buy_requests` are financial history too, so they are cancelled, not deleted.
+ *
+ * The `DELETE ... WHERE id = ?` is the single-winner lock: a concurrent delete
+ * sees zero changed rows and reports 404. Returns false when the bot is already
+ * gone.
  */
 export function finalizeBotRemoved(db: DB, botId: string): boolean {
   const bot = getBotById(db, botId);
   if (!bot) return false;
-  const now = Date.now();
   const changed = db.transaction(() => {
-    const changed =
-      db
-        .prepare(
-          "UPDATE bot_accounts SET status = 'removed', stopped_at = ?, updated_at = ? WHERE id = ? AND status != 'removed'",
-        )
-        .run(now, now, botId).changes === 1;
-    // Leave the seat exactly like the human `leave_seat` action: clear the seat
-    // and flag sitting out, but keep the `room_players` row with its stack and
-    // ledger untouched - removing a bot must not make its chips vanish. Without
-    // this the stale seat keeps rendering after the runner's socket closes.
-    db.prepare(
-      'UPDATE room_players SET seat = NULL, sitting_out = 1 WHERE room_id = ? AND user_id = ?',
-    ).run(bot.room_id, bot.user_id);
-    revokeBotGrants(db, botId);
+    const deleted = db.prepare('DELETE FROM bot_accounts WHERE id = ?').run(botId).changes === 1;
+    if (!deleted) return false;
+    // Cancel (do not delete) pending buys: the funding history stays, but a
+    // later approval cannot credit a bot that no longer exists.
     cancelPendingBuys(db, bot.room_id, bot.user_id);
-    return changed;
+    // Remove the runner grants outright. `user_id` is included alongside
+    // `bot_id` because a corrupted/legacy grant can carry a NULL bot_id (see
+    // agentAccess); scoping to grant_kind='bot_runner' leaves any unrelated
+    // grant on the same user untouched.
+    db.prepare(
+      "DELETE FROM agent_grants WHERE bot_id = ? OR (user_id = ? AND grant_kind = 'bot_runner')",
+    ).run(botId, bot.user_id);
+    // Drop the seat/membership row so the bot cannot linger as a player in the
+    // room payload after its account is gone.
+    db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?').run(
+      bot.room_id,
+      bot.user_id,
+    );
+    return true;
   })();
   // Broadcast after the transaction commits so every client refreshes the table
-  // immediately instead of only via the runner's socket-close side effect. The
-  // in-process `roomEvents` bus is what the hub already listens on, so this
-  // reaches the live `GameRoom` (and its `broadcastRoomState`) with no new global
-  // and no direct game/hub reference. Idempotent re-removes still refresh, which
-  // also heals a seat left stale before this fix.
-  roomEvents.emit('changed', bot.room_id);
+  // immediately instead of only via the runner's socket-close side effect.
+  if (changed) roomEvents.emit('changed', bot.room_id);
   return changed;
 }
 
@@ -845,29 +862,59 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     const { botId } = req.params as { id: string; botId: string };
     const bot = getBot(db, ctx.id, botId);
     if (!bot) return reply.code(404).send({ error: 'no such bot' });
+
+    // A delete already in flight (a live runner is winding down) is idempotent:
+    // report the same pending state instead of firing a second wind-down.
+    if (bot.delete_requested_at !== null) {
+      return reply.code(202).send({
+        bot: botPublicJson(db, bot),
+        runner: control.hooks ? 'supervisor' : 'detached',
+        deletion: 'pending',
+      });
+    }
+
     const hooks = control.hooks;
-    if (hooks) {
-      // Graceful removal: park as stopping (from any non-removed state), let the
-      // supervisor wind its runner down (fold / leave seat), then finalize
-      // `removed` (+ revoke + cancel pending buys). The grant stays valid for the
-      // wind-down only.
+    if (hooks?.hasRunner(bot.id)) {
+      // A live runner must fold and leave its seat before the row can go, which
+      // does not fit in one request. Park `stopping`, persist the delete intent
+      // (so a crash cannot silently cancel it) and let the supervisor hard-delete
+      // once the runner has wound down. The grant stays valid for the wind-down.
       const now = Date.now();
       const parked = db
         .prepare(
-          "UPDATE bot_accounts SET status = 'stopping', stop_requested_at = COALESCE(stop_requested_at, ?), updated_at = ? WHERE id = ? AND status != 'removed'",
+          `UPDATE bot_accounts
+              SET status = 'stopping',
+                  stop_requested_at = COALESCE(stop_requested_at, ?),
+                  delete_requested_at = COALESCE(delete_requested_at, ?),
+                  updated_at = ?
+            WHERE id = ? AND delete_requested_at IS NULL`,
         )
-        .run(now, now, bot.id);
+        .run(now, now, now, bot.id);
       if (parked.changes !== 1) {
-        // Already removed by a concurrent request; nothing left to wind down.
-        return { bot: botPublicJson(db, getBot(db, ctx.id, botId)!), runner: 'supervisor' };
+        // Lost a race with a concurrent DELETE; report the same pending state.
+        return reply.code(202).send({
+          bot: botPublicJson(db, getBot(db, ctx.id, botId)!),
+          runner: 'supervisor',
+          deletion: 'pending',
+        });
       }
       runHook(() => hooks.removeBot(bot.id));
-      return { bot: botPublicJson(db, getBot(db, ctx.id, botId)!), runner: 'supervisor' };
+      return reply.code(202).send({
+        bot: botPublicJson(db, getBot(db, ctx.id, botId)!),
+        runner: 'supervisor',
+        deletion: 'pending',
+      });
     }
-    // One transaction: mark removed, revoke the runner grant and cancel pending
-    // buys together, so a crash cannot leave a removed bot either reconnectable
-    // or still creditable by a straggler banker approval.
-    finalizeBotRemoved(db, bot.id);
-    return { bot: botPublicJson(db, getBot(db, ctx.id, botId)!), runner: 'detached' };
+
+    // No live runner: there is nothing to fold, so the wind-down is trivial and
+    // the rows are deleted in this request. `finalizeBotRemoved` is the atomic
+    // single winner - a concurrent DELETE sees zero changed rows and gets 404.
+    const snapshot = botPublicJson(db, bot);
+    if (!finalizeBotRemoved(db, bot.id)) return reply.code(404).send({ error: 'no such bot' });
+    return {
+      bot: { ...snapshot, status: 'removed' as BotStatus },
+      runner: hooks ? 'supervisor' : 'detached',
+      deletion: 'done',
+    };
   });
 }

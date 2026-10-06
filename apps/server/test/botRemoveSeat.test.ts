@@ -6,16 +6,17 @@ import { BotSupervisor } from '../src/botSupervisor.js';
 import { getBot } from '../src/botRoutes.js';
 
 /**
- * Regression: removing a bot must actually give up its `room_players` seat and
- * broadcast it, not only flip `bot_accounts.status`. Before the fix the seat row
- * kept rendering until the runner's socket closed (shown as "disconnected").
+ * Regression: DELETE must really delete the bot, not flag it `removed`. A live
+ * runner is still wound down first (fold + leave seat), but once that is done
+ * the `bot_accounts` row, every `agent_grants` row for the bot and its
+ * `room_players` seat row are removed. The bot's `users` row and its `ledger`
+ * entries stay: `/api/rooms/:id/ledger` joins `users`, so deleting the account
+ * would silently drop the bot's entries from the room's money history.
  *
  * Both finalize paths are covered:
- *   - detached (no supervisor): DELETE calls finalizeBotRemoved directly;
- *   - supervised: DELETE parks `stopping`, the supervisor winds the runner down
- *     and finalizes.
- * Chips are never cashed out: the `room_players` row and its stack stay, and the
- * ledger is conserved.
+ *   - detached (no supervisor): DELETE deletes synchronously in the request;
+ *   - supervised with a live runner: DELETE returns 202 and persists the delete
+ *     intent; the supervisor hard-deletes once the runner has wound down.
  */
 
 const KEY = 'ab'.repeat(32);
@@ -51,6 +52,14 @@ function seatRow(userId: number) {
   return ctx.db
     .prepare('SELECT seat, sitting_out AS sittingOut, stack FROM room_players WHERE room_id = ? AND user_id = ?')
     .get(room, userId) as { seat: number | null; sittingOut: number; stack: number } | undefined;
+}
+
+function agentGrantCount(botId: string): number {
+  return (
+    ctx.db.prepare('SELECT COUNT(*) AS n FROM agent_grants WHERE bot_id = ?').get(botId) as {
+      n: number;
+    }
+  ).n;
 }
 
 function ledgerSum(userId: number): number {
@@ -97,40 +106,35 @@ afterEach(async () => {
   await ctx.app.close();
 });
 
-describe('finalizeBotRemoved clears the seat (detached path)', () => {
-  it('nulls the seat, keeps the row and stack, conserves the ledger, and broadcasts', async () => {
+describe('DELETE hard-deletes the bot (detached path)', () => {
+  it('removes the bot, seat and grant rows, conserves the ledger, and broadcasts', async () => {
     const created = (await createBot({ seat: 1, initialBuyIn: 2000 })).json();
     expect(created.bot.status).toBe('ready'); // host is the banker -> inline approval
     const userId = created.bot.userId;
+    const botId = created.bot.id;
     expect(seatRow(userId)).toMatchObject({ seat: 1, stack: 2000 });
 
     const ledgerBefore = ledgerSum(userId);
-    const rowsBefore = (
-      ctx.db.prepare('SELECT COUNT(*) AS n FROM room_players WHERE room_id = ? AND user_id = ?').get(room, userId) as {
-        n: number;
-      }
-    ).n;
+    expect(ledgerBefore).not.toBe(0);
+    expect(agentGrantCount(botId)).toBe(0);
 
     const changes = collectRoomChanges();
     try {
-      const del = await removeBot(created.bot.id);
+      const del = await removeBot(botId);
       expect(del.statusCode).toBe(200);
-      expect(del.json().bot.status).toBe('removed');
+      expect(del.json().bot.status).toBe('removed'); // terminal response snapshot
+      expect(del.json().deletion).toBe('done');
     } finally {
       changes.stop();
     }
 
-    // Seat released with the same semantics as a human `leave_seat`...
-    expect(seatRow(userId)).toMatchObject({ seat: null, sittingOut: 1, stack: 2000 });
-    // ...but the row (and its accounting) is deliberately NOT deleted.
-    const rowsAfter = (
-      ctx.db.prepare('SELECT COUNT(*) AS n FROM room_players WHERE room_id = ? AND user_id = ?').get(room, userId) as {
-        n: number;
-      }
-    ).n;
-    expect(rowsAfter).toBe(rowsBefore);
-
-    expect(getBot(ctx.db, room, created.bot.id)!.status).toBe('removed');
+    // No bot row, no seat row: the bot is gone, not flagged `removed`.
+    expect(getBot(ctx.db, room, botId)).toBeUndefined();
+    expect(seatRow(userId)).toBeUndefined();
+    expect(agentGrantCount(botId)).toBe(0);
+    // The account and its ledger history stay so the room ledger still resolves
+    // who the money belonged to.
+    expect(ctx.db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)).toBeTruthy();
     expect(ledgerSum(userId)).toBe(ledgerBefore);
 
     // A room_state refresh was requested, not only implied by socket close.
@@ -138,47 +142,61 @@ describe('finalizeBotRemoved clears the seat (detached path)', () => {
   });
 });
 
-describe('finalizeBotRemoved clears the seat (supervised path)', () => {
-  it('winds the runner down, then clears the seat, keeps chips, and broadcasts', async () => {
-    let resolveDone!: () => void;
-    const done = new Promise<void>((r) => {
-      resolveDone = r;
+describe('DELETE hard-deletes the bot (supervised path)', () => {
+  it('winds the runner down first, persists the intent, then deletes and broadcasts', async () => {
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((r) => {
+      releaseStop = r;
     });
     const supervisor = new BotSupervisor(ctx.db, {
       baseUrl: 'http://127.0.0.1:1',
       runnerFactory: () => ({
         start: async () => {},
-        stop: async () => resolveDone(),
-        done,
+        stop: () => stopGate,
+        done: stopGate,
       }),
     });
     ctx.botControl.hooks = supervisor;
 
     const created = (await createBot({ seat: 2, initialBuyIn: 750 })).json();
     const userId = created.bot.userId;
+    const botId = created.bot.id;
     expect(seatRow(userId)).toMatchObject({ seat: 2, stack: 750 });
 
     const ledgerBefore = ledgerSum(userId);
     const start = await ctx.app.inject({
       method: 'POST',
-      url: `/api/rooms/${room}/bots/${created.bot.id}/start`,
+      url: `/api/rooms/${room}/bots/${botId}/start`,
       headers: auth(hostToken),
     });
     expect(start.statusCode).toBe(200);
-    expect(getBot(ctx.db, room, created.bot.id)!.status).toBe('running');
-    expect(supervisor.hasRunner(created.bot.id)).toBe(true);
+    expect(getBot(ctx.db, room, botId)!.status).toBe('running');
+    expect(supervisor.hasRunner(botId)).toBe(true);
+    expect(agentGrantCount(botId)).toBe(1);
 
     const changes = collectRoomChanges();
     try {
-      const del = await removeBot(created.bot.id);
-      expect(del.statusCode).toBe(200);
-      // Removal is async once a runner is live: wait for the finalize.
-      await waitFor(() => getBot(ctx.db, room, created.bot.id)!.status === 'removed');
+      const del = await removeBot(botId);
+      // A live runner cannot fold inside one request: 202 + a durable intent.
+      expect(del.statusCode).toBe(202);
+      expect(del.json().deletion).toBe('pending');
+
+      // While the runner is still winding down the row survives, but is parked
+      // `stopping` with the delete intent persisted so a crash cannot lose it.
+      const pending = getBot(ctx.db, room, botId)!;
+      expect(pending.status).toBe('stopping');
+      expect(pending.delete_requested_at).not.toBeNull();
+      expect(seatRow(userId)).toBeTruthy();
+
+      // Release the wind-down; the supervisor now hard-deletes.
+      releaseStop();
+      await waitFor(() => getBot(ctx.db, room, botId) === undefined);
     } finally {
       changes.stop();
     }
 
-    expect(seatRow(userId)).toMatchObject({ seat: null, sittingOut: 1, stack: 750 });
+    expect(seatRow(userId)).toBeUndefined();
+    expect(agentGrantCount(botId)).toBe(0);
     expect(ledgerSum(userId)).toBe(ledgerBefore);
     expect(changes.rooms).toContain(room);
     await supervisor.stopAll();

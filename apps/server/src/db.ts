@@ -206,7 +206,8 @@ export function migrateBots(db: DB): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       stopped_at INTEGER,
-      stop_requested_at INTEGER
+      stop_requested_at INTEGER,
+      delete_requested_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_bot_accounts_room ON bot_accounts(room_id);
     CREATE INDEX IF NOT EXISTS idx_bot_accounts_owner ON bot_accounts(owner_id);
@@ -218,6 +219,11 @@ export function migrateBots(db: DB): void {
   // row. The withdrawn `high` is no longer writable (see botRoutes.ts) but a
   // legacy persisted `high` is still readable and is upgraded here too.
   ensureColumn(db, 'bot_accounts', 'difficulty', "TEXT NOT NULL DEFAULT 'medium'");
+  // Set the moment a DELETE asks for a bot to be hard-deleted. A live runner
+  // must fold and leave its seat first, so the row is parked `stopping`; this
+  // marker is what makes the deletion durable across that async wind-down (and
+  // across a crash/restart) instead of a deletion that can silently be lost.
+  ensureColumn(db, 'bot_accounts', 'delete_requested_at', 'INTEGER');
   // Internal bot-runner grants are ordinary `agent_grants` rows distinguished by
   // grant_kind='bot_runner' and bot_id, so they reuse the whole agent-grant
   // pipeline (token hashing, scope membership, revocation). They are the only

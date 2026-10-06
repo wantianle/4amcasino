@@ -426,15 +426,98 @@ describe('bot lifecycle / claim handoff', () => {
   });
 
   it('removes a bot permanently', async () => {
-    const created = (await createBot({ seat: 1 })).json();
+    const created = (await createBot({ seat: 1, initialBuyIn: 2500 })).json();
+    const userId = created.bot.userId;
+    const botId = created.bot.id;
+    await startBot(botId);
+    claimStartingBot(ctx.db, botId);
+    expect(
+      (ctx.db.prepare('SELECT COUNT(*) AS n FROM agent_grants WHERE bot_id = ?').get(botId) as {
+        n: number;
+      }).n,
+    ).toBe(1);
+
+    const ledgerBefore = (
+      ctx.db
+        .prepare('SELECT COALESCE(SUM(delta), 0) AS s FROM ledger WHERE room_id = ? AND user_id = ?')
+        .get(room, userId) as { s: number }
+    ).s;
+    expect(ledgerBefore).not.toBe(0);
+
     const del = await ctx.app.inject({
       method: 'DELETE',
-      url: `/api/rooms/${room}/bots/${created.bot.id}`,
+      url: `/api/rooms/${room}/bots/${botId}`,
       headers: auth(hostToken),
     });
     expect(del.statusCode).toBe(200);
     expect(del.json().bot.status).toBe('removed');
-    expect((await startBot(created.bot.id)).statusCode).toBe(409);
+    expect(del.json().deletion).toBe('done');
+
+    // The database row is really gone, not flagged `removed`.
+    expect(getBot(ctx.db, room, botId)).toBeUndefined();
+    // So is every grant and the seat/membership row: the bot cannot linger as a
+    // reconnectable runner or as a player in the room.
+    expect(
+      (ctx.db.prepare('SELECT COUNT(*) AS n FROM agent_grants WHERE bot_id = ?').get(botId) as {
+        n: number;
+      }).n,
+    ).toBe(0);
+    expect(
+      ctx.db.prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?').get(room, userId),
+    ).toBeUndefined();
+
+    // Ledger history is untouched, and the account row stays so the room ledger
+    // can still resolve who the entries belonged to.
+    expect(
+      (
+        ctx.db
+          .prepare('SELECT COALESCE(SUM(delta), 0) AS s FROM ledger WHERE room_id = ? AND user_id = ?')
+          .get(room, userId) as { s: number }
+      ).s,
+    ).toBe(ledgerBefore);
+    expect(ctx.db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)).toBeTruthy();
+
+    // A repeated delete is a clean 404, never a 500.
+    const again = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/rooms/${room}/bots/${botId}`,
+      headers: auth(hostToken),
+    });
+    expect(again.statusCode).toBe(404);
+    // The bot can no longer be started.
+    expect((await startBot(botId)).statusCode).toBe(404);
+  });
+
+  it('deletes exactly once under concurrent DELETEs (winner 200, loser 404)', async () => {
+    const created = (await createBot({ seat: 5 })).json();
+    const url = `/api/rooms/${room}/bots/${created.bot.id}`;
+    const [a, b] = await Promise.all([
+      ctx.app.inject({ method: 'DELETE', url, headers: auth(hostToken) }),
+      ctx.app.inject({ method: 'DELETE', url, headers: auth(hostToken) }),
+    ]);
+    // Exactly one request deletes the row; the other finds nothing.
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 404]);
+    expect(getBot(ctx.db, room, created.bot.id)).toBeUndefined();
+  });
+
+  it('hides legacy removed rows and bots with a pending delete from the list', async () => {
+    const legacy = (await createBot({ seat: 6 })).json();
+    const pending = (await createBot({ seat: 7 })).json();
+    const live = (await createBot({ seat: 8 })).json();
+    // A zombie row from the old soft-delete era...
+    ctx.db
+      .prepare("UPDATE bot_accounts SET status = 'removed', updated_at = ? WHERE id = ?")
+      .run(Date.now(), legacy.bot.id);
+    // ...and a bot whose hard delete is still winding down.
+    ctx.db
+      .prepare("UPDATE bot_accounts SET status = 'stopping', delete_requested_at = ? WHERE id = ?")
+      .run(Date.now(), pending.bot.id);
+
+    const list = await ctx.app.inject({ url: `/api/rooms/${room}/bots`, headers: auth(hostToken) });
+    const ids = list.json().bots.map((b: { id: string }) => b.id);
+    expect(ids).toContain(live.bot.id);
+    expect(ids).not.toContain(legacy.bot.id);
+    expect(ids).not.toContain(pending.bot.id);
   });
 
   it('hides bots from non-members but allows members', async () => {
@@ -475,7 +558,16 @@ describe('remove / grant hardening', () => {
       payload: { requestId, approve: true },
     });
     expect(approve.statusCode).toBe(404);
-    expect(stackOf(created.bot.userId)).toBe(0);
+    // The bot (and its seat row) is gone, so nothing can be credited to it, and
+    // the never-approved buy left no ledger entry behind.
+    expect(
+      ctx.db.prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?').get(room, created.bot.userId),
+    ).toBeUndefined();
+    expect(
+      (ctx.db.prepare('SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND user_id = ?').get(room, created.bot.userId) as {
+        n: number;
+      }).n,
+    ).toBe(0);
   });
 
   it('rejects a bot_runner grant whose user/room or bot status no longer matches', async () => {

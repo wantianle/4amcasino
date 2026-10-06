@@ -306,16 +306,25 @@ export class BotSupervisor implements BotSupervisorHooks {
       this.log(`runner stop failed for ${botId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       this.release(botId, runner);
-      // The route already parked a graceful stop in `stopping`; beginBotStop is
-      // then a no-op. What must never be silent is a bot that fails to reach
-      // `stopped`, so record that.
-      const began = beginBotStop(this.db, botId);
-      if (!completeBotStop(this.db, botId))
-        this.log(`stopBot: bot ${botId} did not reach stopped (began=${began})`);
+      if (this.deleteRequested(botId)) {
+        // A delete was requested while this bot was winding down for a stop;
+        // finish the deletion rather than parking it stopped.
+        if (!finalizeBotRemoved(this.db, botId))
+          this.log(`stopBot: delete-requested bot ${botId} did not delete`);
+      } else {
+        // The route already parked a graceful stop in `stopping`; beginBotStop
+        // is then a no-op. What must never be silent is a bot that fails to
+        // reach `stopped`, so record that.
+        const began = beginBotStop(this.db, botId);
+        if (!completeBotStop(this.db, botId))
+          this.log(`stopBot: bot ${botId} did not reach stopped (began=${began})`);
+      }
     }
   }
 
-  /** Graceful removal: wind the runner down, then finalize `removed` (always). */
+  /** Graceful removal: wind the runner down, then hard-delete the bot's rows
+   *  (always). The route persists `delete_requested_at` before calling this, so
+   *  an interrupted wind-down is finished by `recover()`. */
   async removeBot(botId: string): Promise<void> {
     this.forgetPending(botId);
     const runner = this.runners.get(botId);
@@ -326,8 +335,16 @@ export class BotSupervisor implements BotSupervisorHooks {
     } finally {
       this.release(botId, runner);
       if (!finalizeBotRemoved(this.db, botId))
-        this.log(`removeBot: bot ${botId} did not reach removed`);
+        this.log(`removeBot: bot ${botId} did not delete`);
     }
+  }
+
+  /** Whether a hard delete has been requested for this bot. */
+  private deleteRequested(botId: string): boolean {
+    const row = this.db
+      .prepare('SELECT delete_requested_at AS at FROM bot_accounts WHERE id = ?')
+      .get(botId) as { at: number | null } | undefined;
+    return !!row && row.at !== null;
   }
 
   /**
@@ -397,6 +414,17 @@ export class BotSupervisor implements BotSupervisorHooks {
    * life as a ghost runner occupying a slot.
    */
   recover(): void {
+    // A hard delete requested before the process died is finished first, in
+    // whatever state the interrupted wind-down left the row: the host asked for
+    // the bot to be gone, so recovery must not quietly turn it back into a live
+    // `stopped` bot.
+    const pendingDeletes = this.db
+      .prepare('SELECT id FROM bot_accounts WHERE delete_requested_at IS NOT NULL')
+      .all() as { id: string }[];
+    for (const { id } of pendingDeletes) {
+      if (!finalizeBotRemoved(this.db, id))
+        this.log(`recover: delete-requested bot ${id} did not delete`);
+    }
     const rows = this.db
       .prepare(
         `SELECT b.id AS id, b.status AS status, b.room_id AS room_id,
@@ -459,6 +487,13 @@ export class BotSupervisor implements BotSupervisorHooks {
     this.shutdownPromise = (async () => {
       await Promise.allSettled(entries.map(([, runner]) => runner.stop()));
       for (const botId of [...entries.map(([id]) => id), ...queued]) {
+        if (this.deleteRequested(botId)) {
+          // Honour an in-flight hard delete across shutdown instead of parking it
+          // `stopped` and losing the deletion.
+          if (!finalizeBotRemoved(this.db, botId))
+            this.log(`stopAll: delete-requested bot ${botId} did not delete`);
+          continue;
+        }
         const began = beginBotStop(this.db, botId);
         if (!completeBotStop(this.db, botId))
           this.log(`stopAll: bot ${botId} did not reach stopped (began=${began})`);
@@ -478,12 +513,17 @@ export class BotSupervisor implements BotSupervisorHooks {
     const ids = new Set<string>([...this.runners.keys(), ...this.pending]);
     const rows = this.db
       .prepare(
-        "SELECT id FROM bot_accounts WHERE status IN ('running','starting','stopping')",
+        "SELECT id FROM bot_accounts WHERE status IN ('running','starting','stopping') OR delete_requested_at IS NOT NULL",
       )
       .all() as { id: string }[];
     for (const row of rows) ids.add(row.id);
     let finalized = 0;
     for (const botId of ids) {
+      // A pending hard delete must complete, not be parked `stopped`.
+      if (this.deleteRequested(botId)) {
+        if (finalizeBotRemoved(this.db, botId)) finalized++;
+        continue;
+      }
       if (forceStopBot(this.db, botId)) finalized++;
     }
     if (finalized > 0) this.log(`fail-safe: finalized ${finalized} bot(s) to stopped`);

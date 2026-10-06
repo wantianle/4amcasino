@@ -320,6 +320,29 @@ describe('BotSupervisor', () => {
     expect(sup.hasRunner(botId)).toBe(false);
   });
 
+  it('recover finishes a hard delete interrupted by a restart', () => {
+    const db = openDb(':memory:');
+    const { botId, userId, roomId } = seedBot(db, 'stopping');
+    insertGrant(db, 'stale', botId, userId, roomId);
+    db.prepare('UPDATE bot_accounts SET delete_requested_at = ? WHERE id = ?').run(Date.now(), botId);
+
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      maxConcurrent: 2,
+      runnerFactory: () => fakeRunner(),
+    });
+    sup.recover();
+
+    // The delete intent survived the restart and was finished, rather than the
+    // bot being turned back into a live `stopped` row.
+    expect(db.prepare('SELECT 1 FROM bot_accounts WHERE id = ?').get(botId)).toBeUndefined();
+    expect(db.prepare('SELECT 1 FROM agent_grants WHERE bot_id = ?').get(botId)).toBeUndefined();
+    expect(
+      db.prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?').get(roomId, userId),
+    ).toBeUndefined();
+    expect(sup.hasRunner(botId)).toBe(false);
+  });
+
   it('completeBotStop refuses an illegal source without revoking the grant', () => {
     const db = openDb(':memory:');
     const { botId, userId, roomId } = seedBot(db, 'running');
@@ -386,7 +409,10 @@ describe('BotSupervisor', () => {
 
     const removed = scenario('remove');
     await removed.sup.removeBot(removed.botId); // must not reject
-    expect(statusOf(db, removed.botId)).toBe('removed');
+    // Removal hard-deletes the row (the old soft-delete `removed` flag is gone).
+    expect(
+      db.prepare('SELECT 1 FROM bot_accounts WHERE id = ?').get(removed.botId),
+    ).toBeUndefined();
     expect(activeGrants(db, removed.botId)).toBe(0);
     expect(removed.sup.hasRunner(removed.botId)).toBe(false);
   });
