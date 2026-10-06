@@ -523,13 +523,16 @@ export function forceStopBot(db: DB, botId: string): boolean {
  * Phase 1a behaviour of advancing `starting`/`stopping` without a live runner.
  */
 export interface BotSupervisorHooks {
-  /** Whether another runner may be started within the concurrency budget. */
-  canStart(): boolean;
+  /**
+   * Whether another runner may be started in this room's pool (and within the
+   * server-wide safety valve).
+   */
+  canStart(roomId: string): boolean;
   /** True during shutdown: starts are refused with 503, not queued. */
   isShuttingDown(): boolean;
   /** Whether a live runner currently exists for this bot. */
   hasRunner(botId: string): boolean;
-  startBot(botId: string): void;
+  startBot(botId: string, roomId?: string): void;
   stopBot(botId: string): void | Promise<void>;
   removeBot(botId: string): void | Promise<void>;
 }
@@ -717,7 +720,7 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     if (bot.status === 'starting') {
       // A restart that crashed before the supervisor claimed it leaves a
       // `starting` bot with no runner; let the hook retry the claim.
-      if (control.hooks && !control.hooks.hasRunner(botId)) control.hooks.startBot(botId);
+      if (control.hooks && !control.hooks.hasRunner(botId)) control.hooks.startBot(botId, ctx.id);
       return {
         bot: botPublicJson(db, getBot(db, ctx.id, botId)!),
         runner: control.hooks ? 'supervisor' : 'detached',
@@ -737,10 +740,14 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
         status: 'error',
       });
     }
-    // Refuse before writing `starting` when the runner budget is full, so a
-    // refused start never leaves a bot parked in `starting` with no supervisor.
-    if (control.hooks && !control.hooks.canStart())
-      return reply.code(409).send({ error: 'bot runner capacity reached; stop a running bot first' });
+    // Refuse before writing `starting` when this room's runner pool is full (or
+    // the server-wide safety valve is tripped), so a refused start never leaves a
+    // bot parked in `starting` with no supervisor. A full room does not affect
+    // another room: `canStart` is scoped by room id.
+    if (control.hooks && !control.hooks.canStart(ctx.id))
+      return reply
+        .code(409)
+        .send({ error: 'bot runner capacity reached for this room; stop one of its running bots first' });
     // Entering `starting` is a restart: clear the previous stop bookkeeping so a
     // claimed bot is never reported as both running and stopped. A conditional
     // update guards against a concurrent stop/remove moving the row first.
@@ -751,7 +758,7 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
       .run(Date.now(), botId);
     if (started.changes !== 1)
       return reply.code(409).send({ error: 'bot state changed; retry the start' });
-    control.hooks?.startBot(botId);
+    control.hooks?.startBot(botId, ctx.id);
     return {
       bot: botPublicJson(db, getBot(db, ctx.id, botId)!),
       runner: control.hooks ? 'supervisor' : 'detached',

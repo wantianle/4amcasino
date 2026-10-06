@@ -11,6 +11,7 @@ import {
   type ClaimedBot,
 } from './botRoutes.js';
 import { BotRunner, type BotRunnerOptions } from './botRunner.js';
+import { roomEvents } from './rooms.js';
 
 /**
  * Phase 1b: the bot supervisor.
@@ -34,18 +35,34 @@ import { BotRunner, type BotRunnerOptions } from './botRunner.js';
  * (see `BotRunner.serverHandActive`). Running the supervisor out of process
  * would need a protocol signal instead.
  *
- * Capacity contract: the public HTTP `POST .../start` refuses over-budget starts
- * with 409 (`canStart()` gate in the route), while boot `recover()` and internal
- * supervision feed excess `starting` bots through a FIFO `pending` queue that
- * drains as slots free. That asymmetry is deliberate: a host gets an immediate
- * error, recovery never strands a `starting` bot forever.
+ * Capacity contract: slots are pooled PER ROOM, not shared server-wide. Each
+ * room may run up to `maxPerRoom` simultaneous runners (default 8); a wide
+ * server-wide `maxConcurrent` (default 64) is kept only as a safety valve
+ * against runaway resource use across many rooms. A runner in one room can no
+ * longer crowd out another room. The public HTTP `POST .../start` refuses a
+ * start that would exceed EITHER bound with 409 (`canStart(roomId)` gate in the
+ * route), while boot `recover()` and internal supervision feed excess
+ * `starting` bots through a `pending` queue that drains as that room's slots
+ * free. That asymmetry is deliberate: a host gets an immediate error, recovery
+ * never strands a `starting` bot forever.
  *
  * Lifetime / slot accounting:
  *   - a runner is held in `runners` from launch until `runner.done` resolves
  *     (fatal, graceful stop, socket failure, natural exit) - exactly one release
  *     per runner, identity-checked so a restart cannot lose a newer runner;
- *   - a start beyond the budget is queued (FIFO) rather than stranded in
- *     `starting`; `drainPending` retries the queue whenever a slot frees.
+ *   - `runnerRoom` maps each live runner to its room so a per-room count is a
+ *     cheap in-memory scan, never a DB query on the start path;
+ *   - a start beyond a bound is queued (ordered) rather than stranded in
+ *     `starting`; `drainPending` retries the queue whenever a slot frees,
+ *     starting only queued bots whose own room has room (a full room never
+ *     blocks another room's drained bots).
+ *
+ * Room retirement contract: the supervisor subscribes to `roomEvents`
+ * (`subscribeRoomEvents()`). Whenever a room is archived or deleted - through
+ * any entry point (`/close`, admin direct archive/delete, lifecycle approval) -
+ * every runner AND every queued bot belonging to that room is wound down to
+ * `stopped` (+ revoke). The room's runner slot is genuinely freed; clearing the
+ * seat rows alone is not enough.
  */
 
 /** The slice of `BotRunner` the supervisor needs (injectable in tests). */
@@ -61,7 +78,16 @@ export interface RunnerHandle {
 export interface BotSupervisorOptions {
   /** Loopback base URL for the runners' WS connections. */
   baseUrl: string;
-  /** Max simultaneously running bots. Default 8. */
+  /**
+   * Max simultaneously running bots PER ROOM. Default 8. This is the primary
+   * capacity bound: rooms no longer share one pool.
+   */
+  maxPerRoom?: number;
+  /**
+   * Whole-server safety valve across every room. Default 64 (deliberately wide:
+   * the per-room bound is what limits normal play; this only stops runaway
+   * resource use when very many rooms run bots at once).
+   */
   maxConcurrent?: number;
   /** Extra options forwarded to every `BotRunner`. */
   runner?: Omit<BotRunnerOptions, 'baseUrl'>;
@@ -70,10 +96,23 @@ export interface BotSupervisorOptions {
   log?: (line: string) => void;
 }
 
+/** Default per-room runner bound (the old server-wide default). */
+const DEFAULT_MAX_PER_ROOM = 8;
+/** Default server-wide safety valve; wide enough never to crowd out a room. */
+const DEFAULT_MAX_CONCURRENT = 64;
+
+/** Coerce an env/option value to a positive integer, or fall back. */
+function positiveInt(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
 export class BotSupervisor implements BotSupervisorHooks {
   private readonly runners = new Map<string, RunnerHandle>();
-  /** Bots waiting for a runner slot (recovery overflow); FIFO, deduped. */
+  /** Live runner -> room, so per-room counts need no DB round-trip. */
+  private readonly runnerRoom = new Map<string, string>();
+  /** Bots waiting for a runner slot; ordered, deduped, per-room filtered. */
   private readonly pending: string[] = [];
+  private readonly maxPerRoom: number;
   private readonly maxConcurrent: number;
   private readonly log: (line: string) => void;
   /**
@@ -88,21 +127,34 @@ export class BotSupervisor implements BotSupervisorHooks {
     private readonly db: DB,
     private readonly opts: BotSupervisorOptions,
   ) {
-    const budget = opts.maxConcurrent ?? 8;
-    this.maxConcurrent = Number.isFinite(budget) && budget > 0 ? Math.floor(budget) : 8;
+    this.maxPerRoom = positiveInt(opts.maxPerRoom, DEFAULT_MAX_PER_ROOM);
+    this.maxConcurrent = positiveInt(opts.maxConcurrent, DEFAULT_MAX_CONCURRENT);
     this.log = opts.log ?? ((line) => console.log(`[bot-supervisor] ${line}`));
   }
 
-  runningCount(): number {
-    return this.runners.size;
+  /** Live runners, server-wide or scoped to one room. */
+  runningCount(roomId?: string): number {
+    if (roomId === undefined) return this.runners.size;
+    let n = 0;
+    for (const rid of this.runnerRoom.values()) if (rid === roomId) n++;
+    return n;
   }
 
   pendingCount(): number {
     return this.pending.length;
   }
 
-  canStart(): boolean {
-    return !this.shuttingDown && this.runners.size < this.maxConcurrent;
+  /**
+   * Whether a runner may start. With a `roomId`, the room's own pool must have a
+   * free slot AND the server-wide valve must not be tripped; without one, only
+   * the server-wide valve is checked (back-compat for callers with no room
+   * context).
+   */
+  canStart(roomId?: string): boolean {
+    if (this.shuttingDown) return false;
+    if (this.runners.size >= this.maxConcurrent) return false;
+    if (roomId !== undefined && this.runningCount(roomId) >= this.maxPerRoom) return false;
+    return true;
   }
 
   isShuttingDown(): boolean {
@@ -113,24 +165,46 @@ export class BotSupervisor implements BotSupervisorHooks {
     return this.runners.has(botId);
   }
 
-  /** Claim a `starting` bot and launch a runner (queued when at capacity). */
-  startBot(botId: string): void {
+  /**
+   * Claim a `starting` bot and launch a runner (queued when its room, or the
+   * server valve, is at capacity). `roomId` is optional: when omitted it is read
+   * from the bot row, so a recovery/embedder call cannot misfile the bot.
+   */
+  startBot(botId: string, roomId?: string): void {
     if (this.shuttingDown) {
       this.log(`refused start for ${botId}: shutting down`);
       return;
     }
     if (this.runners.has(botId) || this.pending.includes(botId)) return;
-    if (this.runners.size >= this.maxConcurrent) {
-      // Explicit overflow policy: queue instead of leaving a `starting` bot with
-      // no runner forever. `drainPending` starts it as soon as a slot frees.
-      this.pending.push(botId);
-      this.log(`queued ${botId} (${this.runners.size}/${this.maxConcurrent} runners active)`);
+    const room = this.resolveRoom(botId, roomId);
+    if (room === undefined) {
+      this.log(`refused start for ${botId}: no such bot row`);
       return;
     }
-    this.launch(botId);
+    if (!this.canStart(room)) {
+      // Explicit overflow policy: queue instead of leaving a `starting` bot with
+      // no runner forever. `drainPending` starts it as soon as ITS room has a
+      // free slot - a full room never blocks another room's queued bots.
+      this.pending.push(botId);
+      this.log(
+        `queued ${botId} (room ${room}: ${this.runningCount(room)}/${this.maxPerRoom}; server ${this.runners.size}/${this.maxConcurrent})`,
+      );
+      return;
+    }
+    this.launch(botId, room);
   }
 
-  private launch(botId: string): void {
+  /** The room a bot belongs to: the caller's room when trusted, else the row. */
+  private resolveRoom(botId: string, roomId?: string): string | undefined {
+    if (roomId !== undefined) return roomId;
+    return (
+      this.db.prepare('SELECT room_id FROM bot_accounts WHERE id = ?').get(botId) as
+        | { room_id: string }
+        | undefined
+    )?.room_id;
+  }
+
+  private launch(botId: string, roomId: string): void {
     if (this.shuttingDown) {
       this.log(`refused launch for ${botId}: shutting down`);
       return;
@@ -160,6 +234,8 @@ export class BotSupervisor implements BotSupervisorHooks {
       return;
     }
     this.runners.set(botId, runner);
+    // Trust the claim's room (authoritative), not the caller's hint.
+    this.runnerRoom.set(botId, claim.roomId ?? roomId);
     // `start()` resolves after startup (it never rejects: a startup failure is
     // reported as a bot error internally). `done` resolves only when the runner
     // has fully exited, so holding until then accounts for fatals and races.
@@ -182,21 +258,33 @@ export class BotSupervisor implements BotSupervisorHooks {
     const current = this.runners.get(botId);
     if (current !== undefined && current !== runner) return;
     this.runners.delete(botId);
+    this.runnerRoom.delete(botId);
     this.drainPending();
   }
 
+  /**
+   * Drain queued starts, starting only those whose OWN room has a free slot and
+   * while the server valve allows it. Entries that cannot start now are kept in
+   * order, so one full room never blocks another room's queued bots.
+   */
   private drainPending(): void {
     // Never start a queued bot while shutting down: it would escape finalize.
-    if (this.shuttingDown) return;
-    while (this.pending.length > 0 && this.runners.size < this.maxConcurrent) {
-      const next = this.pending.shift()!;
+    if (this.shuttingDown || this.pending.length === 0) return;
+    const deferred: string[] = [];
+    for (const botId of this.pending) {
+      const bot = this.db
+        .prepare('SELECT status, room_id FROM bot_accounts WHERE id = ?')
+        .get(botId) as { status: string; room_id: string } | undefined;
       // Drop entries that were stopped/removed while queued.
-      const bot = this.db.prepare('SELECT status FROM bot_accounts WHERE id = ?').get(next) as
-        | { status: string }
-        | undefined;
       if (!bot || bot.status !== 'starting') continue;
-      this.launch(next);
+      if (!this.canStart(bot.room_id)) {
+        deferred.push(botId);
+        continue;
+      }
+      this.launch(botId, bot.room_id);
     }
+    this.pending.length = 0;
+    this.pending.push(...deferred);
   }
 
   private forgetPending(botId: string): void {
@@ -243,6 +331,59 @@ export class BotSupervisor implements BotSupervisorHooks {
   }
 
   /**
+   * Wind down every runner AND every queued bot that belongs to `roomId`, so a
+   * retired room does not keep occupying its runner slots. Each bot goes through
+   * the ordinary graceful `stopBot`: the runner folds, the grant is revoked and
+   * the persisted status reaches `stopped` (a queued `starting` bot is dequeued
+   * and finalized too). Returns once every wind-down has settled.
+   */
+  async releaseRoom(roomId: string): Promise<void> {
+    const botIds = this.roomBotIds(roomId);
+    if (botIds.length === 0) return;
+    this.log(`releasing ${botIds.length} bot runner(s) for retired room ${roomId}`);
+    await Promise.allSettled(botIds.map((botId) => this.stopBot(botId)));
+  }
+
+  /** Every bot of `roomId` the supervisor still tracks: live runners + queued. */
+  private roomBotIds(roomId: string): string[] {
+    const ids = new Set<string>();
+    for (const [botId, rid] of this.runnerRoom) if (rid === roomId) ids.add(botId);
+    for (const botId of this.pending) {
+      const row = this.db.prepare('SELECT room_id FROM bot_accounts WHERE id = ?').get(botId) as
+        | { room_id: string }
+        | undefined;
+      if (row?.room_id === roomId) ids.add(botId);
+    }
+    return [...ids];
+  }
+
+  /**
+   * React to a room lifecycle change: if the room is now archived or deleted,
+   * release its runners. Bound as an arrow property so `subscriptions` can be
+   * removed exactly. A plain settings/seat change leaves it untouched.
+   */
+  private readonly onRoomChanged = (roomId: string): void => {
+    if (this.shuttingDown) return;
+    const room = this.db.prepare('SELECT archived, deleted FROM rooms WHERE id = ?').get(roomId) as
+      | { archived: number; deleted: number }
+      | undefined;
+    if (!room || (!room.archived && !room.deleted)) return;
+    void this.releaseRoom(roomId);
+  };
+
+  /**
+   * Start releasing runners when a room is archived or deleted. Safe to call
+   * once per supervisor; `detachRoomEvents()` removes the listener (tests).
+   */
+  subscribeRoomEvents(): void {
+    roomEvents.on('changed', this.onRoomChanged);
+  }
+
+  detachRoomEvents(): void {
+    roomEvents.off('changed', this.onRoomChanged);
+  }
+
+  /**
    * Boot recovery:
    *   - `running` : lost its live runner with the old process. Return it to
    *     `starting` and revoke the stale grant in ONE transaction, then re-claim
@@ -250,17 +391,38 @@ export class BotSupervisor implements BotSupervisorHooks {
    *   - `starting`: claim it as-is;
    *   - `stopping`: a graceful stop was interrupted before finalizing. Complete
    *     it, so the process never leaves a live grant with no runner behind.
+   *
+   * A bot whose room is already archived/deleted is NEVER re-claimed: it is
+   * forced straight to `stopped` + revoke, so a retired table cannot come back to
+   * life as a ghost runner occupying a slot.
    */
   recover(): void {
     const rows = this.db
       .prepare(
-        "SELECT id, status FROM bot_accounts WHERE status IN ('running','starting','stopping') ORDER BY created_at, id",
+        `SELECT b.id AS id, b.status AS status, b.room_id AS room_id,
+                r.archived AS archived, r.deleted AS deleted
+           FROM bot_accounts b
+           JOIN rooms r ON r.id = b.room_id
+          WHERE b.status IN ('running','starting','stopping')
+          ORDER BY b.created_at, b.id`,
       )
-      .all() as { id: string; status: string }[];
+      .all() as {
+      id: string;
+      status: string;
+      room_id: string;
+      archived: number;
+      deleted: number;
+    }[];
     for (const row of rows) {
       if (row.status === 'stopping') {
         if (!completeBotStop(this.db, row.id))
           this.log(`recover: bot ${row.id} was stopping but did not reach stopped`);
+        continue;
+      }
+      if (row.archived || row.deleted) {
+        // No live game to join: never issue a grant or a runner for it.
+        if (!forceStopBot(this.db, row.id))
+          this.log(`recover: retired-room bot ${row.id} did not reach stopped`);
         continue;
       }
       if (row.status === 'running') {
@@ -275,7 +437,7 @@ export class BotSupervisor implements BotSupervisorHooks {
         if (dropped !== 1)
           this.log(`recover: bot ${row.id} changed state before it could be re-claimed`);
       }
-      this.startBot(row.id);
+      this.startBot(row.id, row.room_id);
     }
   }
 
@@ -291,6 +453,7 @@ export class BotSupervisor implements BotSupervisorHooks {
     const entries = [...this.runners.entries()];
     const queued = [...this.pending];
     this.runners.clear();
+    this.runnerRoom.clear();
     this.pending.length = 0;
     this.log(`shutdown: stopping ${entries.length} runner(s), ${queued.length} queued`);
     this.shutdownPromise = (async () => {

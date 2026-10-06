@@ -483,8 +483,8 @@ const server: Record<string, string> = {
   'server is shutting down; cannot start bots': '服务器正在关闭，暂时不能启动机器人。',
   'bot identity is not recoverable; refusing to start':
     '机器人的身份密钥无法恢复，已拒绝启动。',
-  'bot runner capacity reached; stop a running bot first':
-    '机器人运行位已满；先停下一个在跑的机器人。',
+  'bot runner capacity reached for this room; stop one of its running bots first':
+    '本桌机器人运行位已满；先停下一个在跑的机器人。',
   'bot state changed; retry the start': '机器人状态刚有变化，请重试开始。',
   'bot state changed; retry the stop': '机器人状态刚有变化，请重试停止。',
   // status-specific start refusals; the template is the catch-all

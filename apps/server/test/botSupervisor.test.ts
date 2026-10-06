@@ -9,6 +9,7 @@ import { encryptBotSeed } from '../src/botIdentity.js';
 import { completeBotStop, type BotStatus } from '../src/botRoutes.js';
 import { BotRunner } from '../src/botRunner.js';
 import { BotSupervisor } from '../src/botSupervisor.js';
+import { archiveRoom, archiveRoomTx, roomEvents } from '../src/rooms.js';
 import { FakeClient, sleep } from './helpers/fakeBotClient.js';
 
 /**
@@ -60,6 +61,48 @@ function seedBot(db: DB, status: BotStatus = 'starting') {
      VALUES (?, ?, ?, ?, ?, 'scripted', NULL, 0, ?, ?, ?, ?, ?)`,
   ).run(botId, roomId, userId, userId, status, enc.ct, enc.nonce, enc.tag, Date.now(), Date.now());
   return { botId, userId, roomId };
+}
+
+/**
+ * Add another bot to an existing room (distinct user + seat), so per-room pool
+ * tests can put several bots in one room. Returned shape matches `seedBot`.
+ */
+function addBotToRoom(db: DB, room: { roomId: string; userId: number }, seat: number, status: BotStatus = 'starting') {
+  const seed = randomBytes(32);
+  const identity = identityFromSeed(seed);
+  const enc = encryptBotSeed(seed.toString('hex'));
+  const { userId } = createUser(
+    db,
+    `bot_u_${seq++}_${randomBytes(3).toString('hex')}`,
+    randomBytes(32).toString('hex'),
+    identity.publicKey,
+  );
+  db.prepare('INSERT INTO room_players(room_id,user_id,seat,stack) VALUES(?,?,?,?)').run(
+    room.roomId,
+    userId,
+    seat,
+    1000,
+  );
+  const botId = randomBytes(6).toString('hex');
+  db.prepare(
+    `INSERT INTO bot_accounts
+       (id, room_id, owner_id, user_id, status, policy_kind, policy_json, seat,
+        identity_ct, identity_nonce, identity_tag, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'scripted', NULL, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    botId,
+    room.roomId,
+    room.userId,
+    userId,
+    status,
+    seat,
+    enc.ct,
+    enc.nonce,
+    enc.tag,
+    Date.now(),
+    Date.now(),
+  );
+  return { botId, userId, roomId: room.roomId };
 }
 
 function insertGrant(db: DB, id: string, botId: string, userId: number, roomId: string): void {
@@ -495,23 +538,159 @@ describe('BotSupervisor', () => {
     }
   });
 
-  it('defaults to 8 concurrent runners and queues the ninth', () => {
+  it('caps a single room at the default 8 runners and queues its ninth', () => {
     const db = openDb(':memory:');
-    const bots = Array.from({ length: 9 }, () => seedBot(db, 'starting'));
+    const base = seedBot(db, 'starting');
+    // Nine bots in the SAME room; the old model shared the budget across rooms.
+    const bots = [base, ...Array.from({ length: 8 }, (_, i) => addBotToRoom(db, base, i + 1))];
     const sup = new BotSupervisor(db, {
       baseUrl: 'http://127.0.0.1:1',
       runnerFactory: () => fakeRunner(),
     });
 
     for (const b of bots.slice(0, 8)) sup.startBot(b.botId);
-    expect(sup.runningCount()).toBe(8);
-    expect(sup.canStart()).toBe(false);
+    expect(sup.runningCount(base.roomId)).toBe(8);
+    expect(sup.canStart(base.roomId)).toBe(false);
 
     // The ninth start is queued, not dropped and not over-launched.
     sup.startBot(bots[8]!.botId);
     expect(sup.pendingCount()).toBe(1);
     expect(statusOf(db, bots[8]!.botId)).toBe('starting');
-    expect(sup.runningCount()).toBe(8);
+    expect(sup.runningCount(base.roomId)).toBe(8);
+  });
+
+  it('keeps room pools independent: a full room never blocks another room', async () => {
+    const db = openDb(':memory:');
+    const roomA = seedBot(db, 'starting');
+    const a2 = addBotToRoom(db, roomA, 1); // same room A
+    const roomB = seedBot(db, 'starting'); // its own room
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      maxPerRoom: 1,
+      runnerFactory: () => fakeRunner(),
+    });
+
+    sup.startBot(roomA.botId);
+    expect(sup.canStart(roomA.roomId)).toBe(false);
+    // Room B is completely unaffected by A being full.
+    expect(sup.canStart(roomB.roomId)).toBe(true);
+
+    sup.startBot(a2.botId); // room A full -> queued
+    sup.startBot(roomB.botId); // room B -> runs immediately
+    expect(statusOf(db, roomB.botId)).toBe('running');
+    expect(sup.hasRunner(roomB.botId)).toBe(true);
+    expect(sup.pendingCount()).toBe(1);
+    expect(sup.hasRunner(a2.botId)).toBe(false);
+
+    // Freeing A's slot drains A's queue only, leaving B's runner untouched.
+    await sup.stopBot(roomA.botId);
+    await waitFor(() => statusOf(db, a2.botId) === 'running');
+    expect(sup.hasRunner(roomB.botId)).toBe(true);
+    await sup.stopBot(a2.botId);
+    await sup.stopBot(roomB.botId);
+  });
+
+  it('releases a room runner + its queued bots when the room is archived (/close)', async () => {
+    const db = openDb(':memory:');
+    const base = seedBot(db, 'starting');
+    const queued = addBotToRoom(db, base, 1);
+    const runner = fakeRunner();
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      maxPerRoom: 1,
+      runnerFactory: () => runner,
+    });
+    sup.subscribeRoomEvents();
+    try {
+      sup.startBot(base.botId);
+      sup.startBot(queued.botId);
+      expect(statusOf(db, base.botId)).toBe('running');
+      expect(sup.pendingCount()).toBe(1);
+
+      archiveRoom(db, base.roomId);
+      roomEvents.emit('changed', base.roomId);
+
+      await waitFor(() => statusOf(db, base.botId) === 'stopped');
+      // The running runner was genuinely stopped (not just its seat cleared).
+      expect(runner.stop).toHaveBeenCalledTimes(1);
+      expect(sup.hasRunner(base.botId)).toBe(false);
+      expect(activeGrants(db, base.botId)).toBe(0);
+      // The queued `starting` bot is dequeued and finalized too: no dangling.
+      expect(sup.pendingCount()).toBe(0);
+      expect(statusOf(db, queued.botId)).toBe('stopped');
+      expect(activeGrants(db, queued.botId)).toBe(0);
+    } finally {
+      sup.detachRoomEvents();
+    }
+  });
+
+  it('releases the runner when archived through the lifecycle path (archiveRoomTx + event)', async () => {
+    const db = openDb(':memory:');
+    const { botId, roomId } = seedBot(db, 'starting');
+    const runner = fakeRunner();
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      runnerFactory: () => runner,
+    });
+    sup.subscribeRoomEvents();
+    try {
+      sup.startBot(botId);
+      // Mirrors admin lifecycle approval: archiveRoomTx inside the decision tx.
+      db.transaction(() => archiveRoomTx(db, roomId))();
+      roomEvents.emit('changed', roomId);
+
+      await waitFor(() => statusOf(db, botId) === 'stopped');
+      expect(sup.hasRunner(botId)).toBe(false);
+      expect(activeGrants(db, botId)).toBe(0);
+    } finally {
+      sup.detachRoomEvents();
+    }
+  });
+
+  it('releases the runner when the room is deleted', async () => {
+    const db = openDb(':memory:');
+    const { botId, roomId } = seedBot(db, 'starting');
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      runnerFactory: () => fakeRunner(),
+    });
+    sup.subscribeRoomEvents();
+    try {
+      sup.startBot(botId);
+      // Mirrors admin direct/lifecycle delete: raw UPDATE then `changed`.
+      db.prepare('UPDATE rooms SET deleted = 1, deleted_at = ? WHERE id = ?').run(Date.now(), roomId);
+      roomEvents.emit('changed', roomId);
+
+      await waitFor(() => statusOf(db, botId) === 'stopped');
+      expect(sup.hasRunner(botId)).toBe(false);
+      expect(activeGrants(db, botId)).toBe(0);
+    } finally {
+      sup.detachRoomEvents();
+    }
+  });
+
+  it('recover never resurrects runners for an archived/deleted room', () => {
+    const db = openDb(':memory:');
+    const retired = seedBot(db, 'running');
+    const live = seedBot(db, 'running');
+    db.prepare('UPDATE rooms SET archived = 1, archived_at = ? WHERE id = ?').run(
+      Date.now(),
+      retired.roomId,
+    );
+
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      runnerFactory: () => fakeRunner(),
+    });
+    sup.recover();
+
+    // The retired room's bot is finalized, not re-claimed into a ghost slot.
+    expect(statusOf(db, retired.botId)).toBe('stopped');
+    expect(activeGrants(db, retired.botId)).toBe(0);
+    expect(sup.hasRunner(retired.botId)).toBe(false);
+    // The active room still recovers normally.
+    expect(statusOf(db, live.botId)).toBe('running');
+    expect(sup.hasRunner(live.botId)).toBe(true);
   });
 
   it('honours a BOT_MAX_CONCURRENT-style override above the default', () => {
@@ -561,7 +740,7 @@ describe('BotSupervisor', () => {
   });
 
   it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
-    'falls back to the default 8 runners for an illegal maxConcurrent (%s)',
+    'falls back to a wide server valve for an illegal maxConcurrent (%s)',
     (illegal) => {
       const db = openDb(':memory:');
       const bots = Array.from({ length: 9 }, () => seedBot(db, 'starting'));
@@ -571,9 +750,26 @@ describe('BotSupervisor', () => {
         runnerFactory: () => fakeRunner(),
       });
 
+      for (const b of bots) sup.startBot(b.botId);
+      expect(sup.runningCount()).toBe(9);
+    },
+  );
+
+  it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
+    'falls back to 8 per room for an illegal maxPerRoom (%s)',
+    (illegal) => {
+      const db = openDb(':memory:');
+      const base = seedBot(db, 'starting');
+      const bots = [base, ...Array.from({ length: 8 }, (_, i) => addBotToRoom(db, base, i + 1))];
+      const sup = new BotSupervisor(db, {
+        baseUrl: 'http://127.0.0.1:1',
+        maxPerRoom: illegal,
+        runnerFactory: () => fakeRunner(),
+      });
+
       for (const b of bots.slice(0, 8)) sup.startBot(b.botId);
-      expect(sup.runningCount()).toBe(8);
-      expect(sup.canStart()).toBe(false);
+      expect(sup.runningCount(base.roomId)).toBe(8);
+      expect(sup.canStart(base.roomId)).toBe(false);
 
       sup.startBot(bots[8]!.botId);
       expect(sup.pendingCount()).toBe(1);

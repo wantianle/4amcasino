@@ -57,10 +57,17 @@ async function main(): Promise<void> {
   );
   const supervisor = new BotSupervisor(db, {
     baseUrl: botServerUrl,
-    maxConcurrent: Number(process.env.BOT_MAX_CONCURRENT ?? 8),
+    // Slots are pooled per room (BOT_MAX_PER_ROOM, default 8); BOT_MAX_CONCURRENT
+    // is now a wide server-wide safety valve (default 64), not a shared pool.
+    maxPerRoom: Number(process.env.BOT_MAX_PER_ROOM ?? 8),
+    maxConcurrent: Number(process.env.BOT_MAX_CONCURRENT ?? 64),
     runner: { llm },
   });
   botControl.hooks = supervisor;
+  // A retired room (archived via /close, admin archive or lifecycle approval, or
+  // deleted) must not keep occupying its runner pool: release its runners as soon
+  // as the room change lands.
+  supervisor.subscribeRoomEvents();
   supervisor.recover();
 
   // deploys send SIGTERM: stop the runners gracefully (so no bot is mid-hand
