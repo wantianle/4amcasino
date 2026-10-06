@@ -70,6 +70,14 @@ function ledgerSum(userId: number): number {
   ).s;
 }
 
+function buyRequestCount(userId: number): number {
+  return (
+    ctx.db
+      .prepare('SELECT COUNT(*) AS n FROM buy_requests WHERE room_id = ? AND user_id = ?')
+      .get(room, userId) as { n: number }
+  ).n;
+}
+
 function collectRoomChanges(): { rooms: string[]; stop: () => void } {
   const rooms: string[] = [];
   const handler = (roomId: string) => rooms.push(roomId);
@@ -199,6 +207,77 @@ describe('DELETE hard-deletes the bot (supervised path)', () => {
     expect(agentGrantCount(botId)).toBe(0);
     expect(ledgerSum(userId)).toBe(ledgerBefore);
     expect(changes.rooms).toContain(room);
+    await supervisor.stopAll();
+  });
+});
+
+/**
+ * Regression for the funds blocker: once a hard delete is requested the bot is
+ * only `stopping` (not `removed`), so a `/buy` that checks `status === 'removed'`
+ * alone still funds it. The supervisor then finalizes and deletes the seat row,
+ * leaving a successful ledger purchase with no seat behind it.
+ *
+ * A stop-gated runner holds the wind-down open so the "pending but not yet
+ * finalized" window is deterministic rather than a race.
+ */
+describe('DELETE pending rejects bot funding (regression)', () => {
+  it('refuses /buy while the delete is pending, moving no money', async () => {
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((r) => {
+      releaseStop = r;
+    });
+    const supervisor = new BotSupervisor(ctx.db, {
+      baseUrl: 'http://127.0.0.1:1',
+      runnerFactory: () => ({
+        start: async () => {},
+        stop: () => stopGate,
+        done: stopGate,
+      }),
+    });
+    ctx.botControl.hooks = supervisor;
+
+    const created = (await createBot({ seat: 3, initialBuyIn: 750 })).json();
+    const userId = created.bot.userId;
+    const botId = created.bot.id;
+
+    const start = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/bots/${botId}/start`,
+      headers: auth(hostToken),
+    });
+    expect(start.statusCode).toBe(200);
+    expect(getBot(ctx.db, room, botId)!.status).toBe('running');
+    expect(supervisor.hasRunner(botId)).toBe(true);
+
+    // DELETE persists the intent synchronously, then blocks winding down on the gate.
+    const del = await removeBot(botId);
+    expect(del.statusCode).toBe(202);
+    const pending = getBot(ctx.db, room, botId)!;
+    expect(pending.status).toBe('stopping');
+    expect(pending.delete_requested_at).not.toBeNull();
+
+    const requestsBefore = buyRequestCount(userId);
+    const ledgerBefore = ledgerSum(userId);
+    const stackBefore = seatRow(userId)!.stack;
+
+    // Blocker: this used to be 200/approved, crediting the ledger and the seat.
+    const buy = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/bots/${botId}/buy`,
+      headers: auth(hostToken),
+      payload: { amount: 300 },
+    });
+    expect(buy.statusCode).toBe(409);
+    expect(buy.json().error).toMatch(/deletion/i);
+
+    // No buy request, no ledger entry, no stack change: nothing to later orphan.
+    expect(buyRequestCount(userId)).toBe(requestsBefore);
+    expect(ledgerSum(userId)).toBe(ledgerBefore);
+    expect(seatRow(userId)!.stack).toBe(stackBefore);
+
+    // Release the wind-down so the deletion completes and no runner lingers.
+    releaseStop();
+    await waitFor(() => getBot(ctx.db, room, botId) === undefined);
     await supervisor.stopAll();
   });
 });

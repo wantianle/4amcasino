@@ -275,6 +275,36 @@ function sendBuyError(
 }
 
 /**
+ * A bot that is gone or on its way out: either a legacy soft-deleted `removed`
+ * row, or a hard delete already requested (`status='stopping'` +
+ * `delete_requested_at`). Once a delete is requested the row can be removed
+ * underneath us at any moment (the supervisor finalizes as soon as the runner
+ * winds down), so every money/control route must refuse such a bot rather than
+ * mutate state that is about to be deleted.
+ *
+ * Deliberately NOT consulted by `resolveAgentGrant`: a deleting runner keeps a
+ * valid grant for the duration of its wind-down so it can fold and leave its
+ * seat; only an already-`removed` legacy row invalidates the grant there.
+ */
+function isBotGone(bot: BotRow): boolean {
+  return bot.status === 'removed' || bot.delete_requested_at !== null;
+}
+
+/**
+ * Send the 409 for a gone/deleting bot, naming the actual reason. Used by every
+ * route that must reject such a bot, so the check and the status code cannot
+ * drift apart as new routes are added.
+ */
+function refuseBotGone(
+  reply: { code: (n: number) => { send: (b: unknown) => unknown } },
+  bot: BotRow,
+): void {
+  reply
+    .code(409)
+    .send({ error: bot.status === 'removed' ? 'bot has been removed' : 'bot deletion is in progress' });
+}
+
+/**
  * Fire a supervisor hook without letting a synchronous throw or an async
  * rejection escape the route. The supervisor finalizes its own persisted state
  * in a `finally`, so swallowing here is safe and avoids an unhandled rejection
@@ -732,7 +762,13 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     const { botId } = req.params as { id: string; botId: string };
     const bot = getBot(db, ctx.id, botId);
     if (!bot) return reply.code(404).send({ error: 'no such bot' });
-    if (bot.status === 'removed') return reply.code(409).send({ error: 'bot has been removed' });
+    // Refuse a bot whose hard delete is pending: approving a buy would credit the
+    // ledger and stack, then the supervisor's finalize would delete the seat row,
+    // leaving a purchase with no seat behind it.
+    if (isBotGone(bot)) {
+      refuseBotGone(reply, bot);
+      return;
+    }
     const parsed = z
       .object({
         amount: z.number().int().positive().max(LIMITS.maxChipAmount),
@@ -764,7 +800,12 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     const { botId } = req.params as { id: string; botId: string };
     const bot = getBot(db, ctx.id, botId);
     if (!bot) return reply.code(404).send({ error: 'no such bot' });
-    if (bot.status === 'removed') return reply.code(409).send({ error: 'bot has been removed' });
+    // A delete already in flight (or a legacy `removed` row) must not be started;
+    // `stopping` from a plain graceful stop is left to the STARTABLE check below.
+    if (isBotGone(bot)) {
+      refuseBotGone(reply, bot);
+      return;
+    }
     if (ctx.room.archived || ctx.room.deleted)
       return reply.code(409).send({ error: 'room is not active' });
     // Shutdown gate: once stopAll has begun, no new runner may start. 503 (not
@@ -829,7 +870,13 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     const { botId } = req.params as { id: string; botId: string };
     const bot = getBot(db, ctx.id, botId);
     if (!bot) return reply.code(404).send({ error: 'no such bot' });
-    if (bot.status === 'removed') return reply.code(409).send({ error: 'bot has been removed' });
+    // A bot being hard-deleted is not a graceful stop that can be resumed: refuse
+    // the control op. A plain `stopping`/`stopped` bot (no delete requested) still
+    // gets the idempotent 200 below.
+    if (isBotGone(bot)) {
+      refuseBotGone(reply, bot);
+      return;
+    }
     if (bot.status === 'stopping' || bot.status === 'stopped')
       return { bot: botPublicJson(db, bot), runner: control.hooks ? 'supervisor' : 'detached' };
     if (!STOPPABLE.includes(bot.status))
