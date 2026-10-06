@@ -301,8 +301,23 @@ function migrate(db: DB): void {
   // existing user's saved value are never rewritten by this migration.
   ensureColumn(db, 'users', 'card_back', "TEXT NOT NULL DEFAULT 'crimson'");
   ensureColumn(db, 'users', 'four_color', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'users', 'card_face', "TEXT NOT NULL DEFAULT 'gg-four-color'");
+  ensureColumn(db, 'users', 'table_skin', "TEXT NOT NULL DEFAULT 'gg-green'");
   ensureColumn(db, 'users', 'avatar3d', 'TEXT');
   db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  // One-time upgrade of the old boolean face preference. New writes use the
+  // explicit card_face enum; the marker prevents a later explicit `minimal`
+  // (or even `gg-four-color`) choice from being interpreted as an old row.
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM meta WHERE key = 'card-face-boolean-migration-1'").get()) return;
+    // The retired boolean's `false` is the classic two-colour deck, exactly as
+    // the pre-enum UI rendered it (`fourColor ? 'gg-four-color' : 'classic-large'`).
+    // `gg-solid` is a separate new option a user picks deliberately; it is not a
+    // migration target. A concurrent first startup would otherwise race on the
+    // write lock, so take the immediate lock like the other one-shot migrations.
+    db.prepare("UPDATE users SET card_face = 'classic-large' WHERE four_color = 0 AND card_face = 'gg-four-color'").run();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('card-face-boolean-migration-1', '1')").run();
+  }).immediate();
   // heal balances damaged by the old absolute-stack settlement write (a buy
   // approved mid-hand was erased at hand end): the hash-chained ledger is the
   // source of truth, so recompute any stack that disagrees with it, once

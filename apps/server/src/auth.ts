@@ -27,8 +27,8 @@ export function createUser(
         // column already present, so relying on it would hand new users the
         // retired indigo / two-color look and the old ready behaviour. Existing
         // rows are never touched here.
-        `INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, join_number, card_back, four_color, auto_ready)
-         VALUES (?, ?, ?, ?, ?, ?, 'crimson', 1, 1)`,
+         `INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, join_number, card_back, four_color, card_face, table_skin, auto_ready)
+          VALUES (?, ?, ?, ?, ?, ?, 'crimson', 1, 'gg-four-color', 'gg-green', 1)`,
       )
       .run(username, hashAuthKey(authKey, salt), salt, publicKey, Date.now(), n);
     return { userId: Number(info.lastInsertRowid), joinNumber: n };

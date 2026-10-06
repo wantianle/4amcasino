@@ -102,7 +102,7 @@ export function PlayingCard({
   deal = false,
   dealDelay = 0,
   podFace = false,
-  cardFace,
+  cardFace: cardFaceOverride,
   cardBackStyle,
   className,
 }: {
@@ -120,13 +120,16 @@ export function PlayingCard({
   cardBackStyle?: CardBackPreset;
   className?: string;
 }) {
-  const { cardBack, fourColor } = useStore((s) => s.prefs);
+  const { cardBack, cardFace } = useStore((s) => s.prefs);
   const reduce = useReducedMotion();
-  const facePreset: CardFacePreset = isCardFacePreset(cardFace)
-    ? cardFace
-    : fourColor
-      ? 'gg-four-color'
-      : 'classic-large';
+  // `cardFace` is already normalised where data enters the store (rehydrate
+  // `merge` and profile sync), so this only guards a foreign/absent value. The
+  // retired `fourColor` boolean is never read here again.
+  const facePreset: CardFacePreset = isCardFacePreset(cardFaceOverride)
+    ? cardFaceOverride
+    : isCardFacePreset(cardFace)
+      ? cardFace
+      : 'gg-four-color';
   const backPreset: CardBackPreset = isCardBackPreset(cardBackStyle)
     ? cardBackStyle
     : isCardBackPreset(cardBack)

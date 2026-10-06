@@ -5,33 +5,21 @@ import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { isPlatform, platformUserId } from './platform.js';
 import { canBank, getRoom, isMember } from './rooms.js';
-import {
-  gameNetLedgerDeltaSql,
-  gameNetLedgerKindSql,
-  ledgerHandIdSql,
-  settlementNotVoidedSql,
-  voidHandExclusionSql,
-  voidHandExistsSql,
-} from './handProjection.js';
+import { settlementNotVoidedSql, voidHandExclusionSql, voidHandExistsSql } from './handProjection.js';
 import {
   DEFAULT_POKER_HOTKEYS,
+  ALL_IN_RATIO,
+  BET_RATIO_OPTIONS,
+  BET_RATIO_SLOTS,
+  DEFAULT_BET_RATIOS,
+  sanitizeBetRatios,
   parsePokerHotkeys,
   describeScore,
   evaluate7,
   DISPLAY_NAME_MAX_WIDTH,
   displayNameError,
   displayNameWidth,
-  ALL_IN_RATIO,
-  BET_RATIO_OPTIONS,
-  BET_RATIO_SLOTS,
-  DEFAULT_BET_RATIOS,
-  sanitizeBetRatios,
 } from '@4am/shared';
-
-// Re-exported so the server tests (and any other server caller) keep importing
-// the quick-bet contract from this module; the definitions themselves live in
-// `@4am/shared` and are shared with the web store.
-export { ALL_IN_RATIO, BET_RATIO_OPTIONS, BET_RATIO_SLOTS, DEFAULT_BET_RATIOS };
 
 const MAX_AVATAR_BYTES = 300_000;
 const AVATAR_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
@@ -40,6 +28,11 @@ const AVATAR_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 // The login name (`username`) stays strict ASCII. The nickname rule - a real
 // allowlist plus a real East_Asian_Width W/F table - lives in
 // `@4am/shared/displayName`, so the browser settings form and this server
+// Re-exported so the server tests (and any other server caller) keep importing
+// the quick-bet contract from this module; the definitions themselves live in
+// `@4am/shared` and are shared with the web store.
+export { ALL_IN_RATIO, BET_RATIO_OPTIONS, BET_RATIO_SLOTS, DEFAULT_BET_RATIOS };
+
 // enforce exactly the same thing. Re-exported here because the server (and its
 // tests) import the rule by this module's name.
 export { DISPLAY_NAME_MAX_WIDTH, displayNameError, displayNameWidth } from '@4am/shared';
@@ -55,7 +48,12 @@ function storedPokerHotkeys(raw: string | null) {
   return { ...DEFAULT_POKER_HOTKEYS, enabled: false };
 }
 
-export const CARD_BACKS = ['indigo', 'crimson', 'emerald', 'slate'] as const;
+export const CARD_BACKS = [
+  'indigo', 'crimson', 'emerald', 'slate', 'wine-lattice', 'black-gold',
+  'classic-red-blue', 'geometry', 'deep-blue-silver',
+] as const;
+const CARD_FACES = ['gg-four-color', 'gg-solid', 'classic-large', 'jumbo-accessible', 'minimal'] as const;
+const TABLE_SKINS = ['gg-green', 'sapphire', 'burgundy', 'classic-casino'] as const;
 
 /** Quick-bet ratios (A10): five slots, each either a fraction of the pot or
  *  the ALL_IN_RATIO sentinel. Constants live in `@4am/shared` (re-exported
@@ -68,12 +66,10 @@ function isBetRatioSlots(length: number): boolean {
   return length === BET_RATIO_SLOTS;
 }
 
-/** Reads back the stored JSON array, sanitizing a damaged, foreign, or legacy
- *  four-slot value back to the five-slot defaults rather than letting a stale
- *  shape reach the action bar. Reuses the shared sanitizer so the server and
- *  the web client can never disagree about what a valid list is. (Rows are
- *  rewritten by the boot migration in `db.ts`; this is the defensive second
- *  line.) */
+/** Reads back the stored JSON array, sanitizing a damaged or foreign value back
+ *  to the defaults rather than letting it reach the action bar. A legacy
+ *  four-slot list is read back untouched so an account that saved before the
+ *  fifth slot existed keeps its buttons. */
 function storedBetRatios(raw: string | null): number[] {
   if (raw === null) return [...DEFAULT_BET_RATIOS];
   try {
@@ -107,6 +103,10 @@ const profileSchema = z.object({
     .optional(),
   bio: z.string().trim().max(280).optional(),
   cardBack: z.enum(CARD_BACKS).optional(),
+  cardFace: z.enum(CARD_FACES).optional(),
+  tableSkin: z.enum(TABLE_SKINS).optional(),
+  // Legacy clients are accepted only as a migration bridge. The web UI no
+  // longer exposes this boolean and new clients send cardFace.
   fourColor: z.boolean().optional(),
   quickPhrases: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
   privateMode: z.boolean().optional(),
@@ -126,18 +126,18 @@ const avatarSchema = z.object({
 // hand COUNT stay anchored to the settlement rows alone.
 const LEADERBOARD_SQL = `
   WITH per_hand AS (
-    SELECT l.room_id AS room_id, ${ledgerHandIdSql('l')} AS hand_key, l.user_id AS user_id,
-           SUM(${gameNetLedgerDeltaSql('l')}) AS net,
+    SELECT l.room_id AS room_id, l.ref AS ref, l.user_id AS user_id,
+           SUM(l.delta) AS net,
            MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
     FROM ledger l JOIN rooms r ON r.id = l.room_id
-    WHERE ${gameNetLedgerKindSql('l')}
+    WHERE l.kind IN ('hand-settlement', 'squid-game')
       AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
       AND ${settlementNotVoidedSql('l')} %ROOM%
-    GROUP BY l.room_id, hand_key, l.user_id
+    GROUP BY l.room_id, l.ref, l.user_id
   )
   SELECT u.id as userId, u.username, u.display_name as displayName, u.avatar_version as avatarVersion,
          SUM(ph.net) as net,
-         COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.hand_key END) as handsPlayed,
+         COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.ref END) as handsPlayed,
          MAX(ph.net) as biggestWin
   FROM per_hand ph JOIN users u ON u.id = ph.user_id
   WHERE u.private_mode = 0
@@ -160,7 +160,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/profile', authed, async (req) => {
     const row = db
       .prepare(
-        'SELECT id, username, display_name, bio, avatar_version, card_back, four_color, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, bet_ratios, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
+        'SELECT id, username, display_name, bio, avatar_version, card_back, card_face, table_skin, four_color, quick_phrases, private_mode, auto_join_invites, auto_ready, poker_hotkeys, bet_ratios, avatar IS NOT NULL as hasAvatar FROM users WHERE id = ?',
       )
       .get(req.userId) as {
       id: number;
@@ -169,6 +169,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       bio: string | null;
       avatar_version: number;
       card_back: string;
+      card_face: string;
+      table_skin: string;
       four_color: number;
       quick_phrases: string | null;
       private_mode: number;
@@ -186,6 +188,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       hasAvatar: !!row.hasAvatar,
       avatarVersion: row.avatar_version,
       cardBack: row.card_back,
+      cardFace: CARD_FACES.includes(row.card_face as (typeof CARD_FACES)[number]) ? row.card_face : 'gg-four-color',
+      tableSkin: TABLE_SKINS.includes(row.table_skin as (typeof TABLE_SKINS)[number]) ? row.table_skin : 'gg-green',
       fourColor: !!row.four_color,
       quickPhrases: row.quick_phrases ? (JSON.parse(row.quick_phrases) as string[]) : [],
       privateMode: !!row.private_mode,
@@ -206,7 +210,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.put('/api/profile', authed, async (req, reply) => {
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid profile' });
-    const { displayName, bio, cardBack, fourColor, quickPhrases, privateMode } = parsed.data;
+    const { displayName, bio, cardBack, cardFace, tableSkin, fourColor, quickPhrases, privateMode } = parsed.data;
     if (parsed.data.pokerHotkeys !== undefined)
       db.prepare('UPDATE users SET poker_hotkeys = ? WHERE id = ?').run(
         JSON.stringify(parsed.data.pokerHotkeys),
@@ -256,7 +260,19 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     if (bio !== undefined) db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, req.userId);
     if (cardBack !== undefined)
       db.prepare('UPDATE users SET card_back = ? WHERE id = ?').run(cardBack, req.userId);
-    if (fourColor !== undefined)
+    if (cardFace !== undefined)
+      db.prepare('UPDATE users SET card_face = ?, four_color = ? WHERE id = ?').run(cardFace, cardFace === 'gg-four-color' ? 1 : 0, req.userId);
+    if (tableSkin !== undefined)
+      db.prepare('UPDATE users SET table_skin = ? WHERE id = ?').run(tableSkin, req.userId);
+    // `four_color` is a compatibility column: after the one-time migration
+    // `card_face` is the single authority, so a legacy client that still sends
+    // the boolean must never rewrite it. Otherwise an old page's ordinary save
+    // (`{bio, fourColor}` - the old UI always carries the boolean) would undo a
+    // `cardFace` the player just picked. Mirroring the boolean only keeps the
+    // retired column and the GET `fourColor` echo coherent; the rendered face is
+    // never derived from it again. An explicit `cardFace` in the same request
+    // wins outright (and sets `four_color` to match), so this is skipped then.
+    if (fourColor !== undefined && cardFace === undefined)
       db.prepare('UPDATE users SET four_color = ? WHERE id = ?').run(fourColor ? 1 : 0, req.userId);
     return { ok: true };
   });
@@ -345,16 +361,16 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const stats = db
       .prepare(
         `WITH per_hand AS (
-           SELECT l.room_id AS room_id, ${ledgerHandIdSql('l')} AS hand_key, SUM(${gameNetLedgerDeltaSql('l')}) AS net,
+           SELECT l.room_id AS room_id, l.ref AS ref, SUM(l.delta) AS net,
                   MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
            FROM ledger l JOIN rooms r ON r.id = l.room_id
-           WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')}
+           WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
              AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
              AND ${settlementNotVoidedSql('l')}
-           GROUP BY l.room_id, hand_key
+           GROUP BY l.room_id, l.ref
          )
          SELECT COALESCE(SUM(net), 0) as net,
-                COUNT(DISTINCT CASE WHEN settled = 1 THEN room_id || ':' || hand_key END) as handsPlayed,
+                COUNT(DISTINCT CASE WHEN settled = 1 THEN room_id || ':' || ref END) as handsPlayed,
                 COALESCE(MAX(net), 0) as biggestWin
          FROM per_hand`,
       )
@@ -366,34 +382,34 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     // side. Both queries therefore carry the shared void exclusion.
     const mine = db
       .prepare(
-        `SELECT l.room_id AS roomId, ${ledgerHandIdSql('l')} AS handKey, SUM(${gameNetLedgerDeltaSql('l')}) AS delta
+        `SELECT l.room_id AS roomId, l.ref AS ref, SUM(l.delta) AS delta
          FROM ledger l
-         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')} AND l.ref IS NOT NULL
+         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game') AND l.ref IS NOT NULL
            AND ${settlementNotVoidedSql('l')}
-         GROUP BY l.room_id, handKey`,
+         GROUP BY l.room_id, l.ref`,
       )
-      .all(id) as { roomId: string; handKey: string; delta: number }[];
-    const rivalKey = (roomId: string, handKey: string) => `${roomId}\u0000${handKey}`;
-    const myDelta = new Map(mine.map((m) => [rivalKey(m.roomId, m.handKey), m.delta]));
+      .all(id) as { roomId: string; ref: string; delta: number }[];
+    const rivalKey = (roomId: string, ref: string) => `${roomId}\u0000${ref}`;
+    const myDelta = new Map(mine.map((m) => [rivalKey(m.roomId, m.ref), m.delta]));
     const rivalAgg = new Map<number, { handsTogether: number; netVs: number }>();
     if (mine.length > 0) {
       const others = db
         .prepare(
-          `SELECT DISTINCT l.user_id AS userId, l.room_id AS roomId, ${ledgerHandIdSql('l')} AS handKey
+          `SELECT DISTINCT l.user_id AS userId, l.room_id AS roomId, l.ref AS ref
            FROM ledger l
            JOIN (
-             SELECT m.room_id, ${ledgerHandIdSql('m')} AS hand_key FROM ledger m
-             WHERE m.user_id = ? AND ${gameNetLedgerKindSql('m')} AND m.ref IS NOT NULL
+             SELECT m.room_id, m.ref FROM ledger m
+             WHERE m.user_id = ? AND m.kind IN ('hand-settlement', 'squid-game') AND m.ref IS NOT NULL
                AND ${settlementNotVoidedSql('m')}
-           ) mine ON mine.room_id = l.room_id AND mine.hand_key = ${ledgerHandIdSql('l')}
-           WHERE ${gameNetLedgerKindSql('l')} AND l.user_id != ?
+           ) mine ON mine.room_id = l.room_id AND mine.ref = l.ref
+           WHERE l.kind IN ('hand-settlement', 'squid-game') AND l.user_id != ?
              AND ${settlementNotVoidedSql('l')}`,
         )
-        .all(id, id) as { userId: number; roomId: string; handKey: string }[];
+        .all(id, id) as { userId: number; roomId: string; ref: string }[];
       for (const o of others) {
         const agg = rivalAgg.get(o.userId) ?? { handsTogether: 0, netVs: 0 };
         agg.handsTogether++;
-        agg.netVs += myDelta.get(rivalKey(o.roomId, o.handKey)) ?? 0;
+        agg.netVs += myDelta.get(rivalKey(o.roomId, o.ref)) ?? 0;
         rivalAgg.set(o.userId, agg);
       }
     }
@@ -459,7 +475,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const rows = db
       .prepare(
         `SELECT l.ts, l.delta FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')}
+         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
            AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND ${settlementNotVoidedSql('l')}
          ORDER BY l.ts LIMIT 2000`,
@@ -604,18 +620,18 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
          ) b ON b.user_id = rp.user_id
          LEFT JOIN (
            SELECT ph.user_id,
-                  COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.hand_key END) as handsPlayed,
-                  COUNT(DISTINCT CASE WHEN ph.settled = 1 AND ph.net > 0 THEN ph.room_id || ':' || ph.hand_key END) as wins,
+                  COUNT(DISTINCT CASE WHEN ph.settled = 1 THEN ph.room_id || ':' || ph.ref END) as handsPlayed,
+                  COUNT(DISTINCT CASE WHEN ph.settled = 1 AND ph.net > 0 THEN ph.room_id || ':' || ph.ref END) as wins,
                   SUM(ph.net) as net,
                   MAX(ph.net) as biggestWin,
                   MIN(ph.net) as biggestLoss
            FROM (
-             SELECT l.room_id as room_id, ${ledgerHandIdSql('l')} as hand_key, l.user_id as user_id,
-                    SUM(${gameNetLedgerDeltaSql('l')}) as net,
+             SELECT l.room_id as room_id, l.ref as ref, l.user_id as user_id,
+                    SUM(l.delta) as net,
                     MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) as settled
-             FROM ledger l WHERE l.room_id = @roomId AND ${gameNetLedgerKindSql('l')}
+             FROM ledger l WHERE l.room_id = @roomId AND l.kind IN ('hand-settlement', 'squid-game')
                AND ${settlementNotVoidedSql('l')}
-             GROUP BY l.room_id, hand_key, l.user_id
+             GROUP BY l.room_id, l.ref, l.user_id
            ) ph
            GROUP BY ph.user_id
          ) st ON st.user_id = rp.user_id
@@ -659,15 +675,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
          ORDER BY t.ts DESC LIMIT 140`,
       )
       .all(req.userId) as { handId: string; roomId: string; roomName: string; head: string; entries: string; ts: number }[];
-    // The game net for one hand, keyed by the canonical hand id so the head-ref
-    // settlement legs and the hand-id-ref 7-2 bounty leg are both counted. The
-    // `l.ref = ?` fallback keeps markerless/legacy rows (whose key is still the
-    // head) working. No void exclusion here: this route reports the original
-    // net and flags `voided` separately.
     const netStmt = db.prepare(
-      `SELECT COALESCE(SUM(${gameNetLedgerDeltaSql('l')}), 0) as net FROM ledger l
-       WHERE l.user_id = ? AND l.room_id = ? AND ${gameNetLedgerKindSql('l')}
-         AND (l.ref = ? OR ${ledgerHandIdSql('l')} = ?)`,
+      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND room_id = ? AND ref = ? AND kind IN ('hand-settlement', 'squid-game')",
     );
     // Room-scoped and key-agnostic: a void may carry the settlement head or the
     // hand id. Reuses the shared correlation helper (never the bare ref only).
@@ -717,9 +726,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             (e.payload.action as { type: string }).type === 'fold') ||
           (e.type === 'timeout_fold' && (e.payload.seat as number) === mine.seat),
       );
-      const net = (
-        netStmt.get(req.userId, row.roomId, row.head, row.handId) as { net: number }
-      ).net;
+      const net = (netStmt.get(req.userId, row.roomId, row.head) as { net: number }).net;
       const outcome = !settlement
         ? 'aborted'
         : reveal
@@ -766,21 +773,17 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     if (!user.showBestHand && req.userId !== id) return { hidden: true, hand: null };
     const best = db
       .prepare(
-        `SELECT SUM(${gameNetLedgerDeltaSql('l')}) AS delta,
-                ${ledgerHandIdSql('l')} AS handId,
-                l.room_id as roomId, r.name as roomName
+        `SELECT l.delta, l.ref, l.room_id as roomId, r.name as roomName
          FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')} AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+         WHERE l.user_id = ? AND l.kind = 'hand-settlement' AND l.delta > 0 AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND ${settlementNotVoidedSql('l')}
-         GROUP BY l.room_id, handId
-         HAVING SUM(${gameNetLedgerDeltaSql('l')}) > 0
-         ORDER BY delta DESC LIMIT 1`,
+         ORDER BY l.delta DESC LIMIT 1`,
       )
-      .get(id) as { delta: number; handId: string; roomId: string; roomName: string } | undefined;
+      .get(id) as { delta: number; ref: string; roomId: string; roomName: string } | undefined;
     if (!best) return { hidden: !user.showBestHand, hand: null };
     const t = db
-      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND hand_id = ?')
-      .get(best.roomId, best.handId) as { handId: string; entries: string; ts: number } | undefined;
+      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND head = ?')
+      .get(best.roomId, best.ref) as { handId: string; entries: string; ts: number } | undefined;
     if (!t) return { hidden: !user.showBestHand, hand: null };
     let board: number[] = [];
     let myCards: number[] | null = null;

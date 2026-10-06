@@ -469,6 +469,7 @@ export function TablePage() {
   }, []);
   const [chatSeenCount, setChatSeenCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [closeRoomBusy, setCloseRoomBusy] = useState(false);
   const [autoDealOpen, setAutoDealOpen] = useState(false);
   // ── P2 gameplay (Lane F) ──────────────────────────────────────────────────
   // The room's stored feature rules, fetched once on join and refreshed by the
@@ -712,7 +713,11 @@ export function TablePage() {
   const amSpectator = !!room && !room.players.some((p) => p.userId === auth.userId);
   const handLive = hand.handId !== null && !hand.result && !hand.abort;
   const myRoomStack = room?.players.find((p) => p.userId === auth.userId)?.stack ?? null;
-  const amBroke = mySeat !== null && myRoomStack === 0 && !handLive;
+  const meRoomPlayer = room?.players.find((p) => p.userId === auth.userId);
+  // A fresh seat can legitimately have zero points before its first buy-in.
+  // Only show the recovery dialog after this player has bought/played here.
+  const hasPlayedOrBought = !!meRoomPlayer && (meRoomPlayer.totalBought > 0 || hand.seats.some((s) => s.seat === mySeat));
+  const amBroke = mySeat !== null && myRoomStack === 0 && !handLive && hasPlayedOrBought;
   // review fix #8: one scheduled flip per deadline, no page-wide 500ms ticker
   const urgent = useUrgentAt(hand.deadline, handLive);
   const utilityGroups = tableUtilityGroups({
@@ -1203,9 +1208,10 @@ export function TablePage() {
     'watch',
     ...(isPhone
       ? (['auto-deal', 'sit-out', 'bots'] as const)
-      : (['auto-deal', 'sit-out', 'timer', 'bots', 'preferences', 'hands', 'ledger'] as const)),
+       : (['auto-deal', 'sit-out', 'timer', 'preferences', 'hands', 'ledger'] as const)),
   ];
   const desktopMenuGroups = filterDesktopMenuGroups(utilityGroups, inlineSurfaced);
+  const canCloseRoom = !!isHost || !!auth.isPlatform;
   const utilityItemClass =
     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white';
 
@@ -1216,10 +1222,23 @@ export function TablePage() {
         error instanceof Error ? error.message : t('That change did not go through. Try again.'),
       );
   const closeUtilityMenu = () => setMenuOpen(false);
+  const closeRoomNow = async () => {
+    if (!canCloseRoom || closeRoomBusy || !window.confirm(t('Close this room now?'))) return;
+    setCloseRoomBusy(true);
+    try {
+      await api.closeRoom(roomId!);
+      window.location.assign('/lobby');
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setCloseRoomBusy(false);
+    }
+  };
   // Phone view controls (A11 + review fix #1): the ⋮ menu carries fullscreen
   // where the top bar has no room for the icon buttons.
   const fullscreenSupported =
     typeof document !== 'undefined' && 'requestFullscreen' in document.documentElement;
+  const showMoreControls = desktopMenuGroups.length > 0 || (isPhone && fullscreenSupported) || canCloseRoom;
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen().catch(() => {});
@@ -1818,6 +1837,7 @@ export function TablePage() {
         'table-app-bg flex h-[calc(100dvh-60px)] flex-col gap-2 overflow-hidden p-2 md:h-[calc(100dvh-65px)] md:gap-2.5 md:p-3',
         !narrowCanvas && 'min-h-[30rem]',
       )}
+      data-table-skin={prefs.tableSkin}
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
     >
       {/* ── compact top bar (A11) ─────────────────────────────────────────── */}
@@ -2024,7 +2044,7 @@ export function TablePage() {
             </DesktopIconButton>
           )}
 
-          <div className="relative">
+          {showMoreControls && <div className="relative">
             <DesktopIconButton
               label={t('More table controls')}
               onClick={() => setMenuOpen((open) => !open)}
@@ -2037,7 +2057,7 @@ export function TablePage() {
             >
               <DotsThreeVertical size={20} weight="bold" />
             </DesktopIconButton>
-            {menuOpen && (
+             {menuOpen && (desktopMenuGroups.length > 0 || (isPhone && fullscreenSupported) || canCloseRoom) && (
               <>
                 <button
                   className="fixed inset-0 z-20 cursor-default"
@@ -2134,10 +2154,22 @@ export function TablePage() {
                       </button>
                     </div>
                   )}
+                  {canCloseRoom && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={closeRoomBusy}
+                      className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 disabled:opacity-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                      onClick={() => void closeRoomNow()}
+                    >
+                      <X size={18} weight="bold" />
+                      {closeRoomBusy ? t('Closing room…') : t('Close room')}
+                    </button>
+                  )}
                 </div>
               </>
             )}
-          </div>
+          </div>}
         </div>
       </header>
 
@@ -2232,6 +2264,7 @@ export function TablePage() {
               narrow={narrowCanvas}
               centerCompact={centerCompact}
               centerRaised={multiRunBoard}
+              heroCardsRaised={!!hand.showdown && (multiRunBoard || hand.showdown.reveals.length > 0)}
               centerBudget
               ribbon={featureRibbon}
               seats={seatViews}

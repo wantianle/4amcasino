@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/app.js';
-import { createUser } from '../src/auth.js';
+import { createSession, createUser } from '../src/auth.js';
 import { openDb, migrateBetRatios } from '../src/db.js';
 import { appendLedger } from '../src/ledger.js';
 import {
@@ -67,7 +67,125 @@ describe('profile', () => {
       await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
     ).json();
     expect(me.cardBack).toBe('crimson');
+    expect(me.cardFace).toBe('gg-four-color');
+    expect(me.tableSkin).toBe('gg-green');
     expect(me.fourColor).toBe(true);
+  });
+
+  it('round-trips all three appearance axes and rejects foreign values', async () => {
+    const alice = await user('threeaxes');
+    const selected = {
+      cardBack: 'black-gold',
+      cardFace: 'minimal',
+      tableSkin: 'sapphire',
+    };
+    const put = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: selected,
+    });
+    expect(put.statusCode).toBe(200);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json(),
+    ).toMatchObject(selected);
+
+    const badBack = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { cardBack: 'not-a-back' },
+    });
+    const badFace = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { cardFace: 'not-a-face' },
+    });
+    const badSkin = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { tableSkin: 'not-a-skin' },
+    });
+    expect(badBack.statusCode).toBe(400);
+    expect(badFace.statusCode).toBe(400);
+    expect(badSkin.statusCode).toBe(400);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json(),
+    ).toMatchObject(selected);
+  });
+
+  it('does not let a legacy fourColor save overwrite an explicit cardFace', async () => {
+    const alice = await user('legacyface');
+    // New client picks an explicit face.
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { cardFace: 'minimal' },
+    });
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json()
+        .cardFace,
+    ).toBe('minimal');
+
+    // The baseline old UI persists every ordinary profile save with the retired
+    // boolean (its normal save always carries `fourColor`). It must not undo the
+    // pick the player just made.
+    const legacy = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { bio: 'legacy save', fourColor: false },
+    });
+    expect(legacy.statusCode).toBe(200);
+    const after = (
+      await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })
+    ).json();
+    expect(after.cardFace).toBe('minimal');
+    expect(after.bio).toBe('legacy save');
+
+    // A separate later boolean-only save still cannot flip it.
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { fourColor: false },
+    });
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json()
+        .cardFace,
+    ).toBe('minimal');
+  });
+
+  it('lets an explicit cardFace win when both fields arrive in one request', async () => {
+    const alice = await user('doubleface');
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { cardFace: 'minimal', fourColor: true },
+    });
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json()
+        .cardFace,
+    ).toBe('minimal');
+    // The mirror column follows the explicit face, not the stale boolean.
+    expect(
+      ctx.db.prepare('SELECT card_face, four_color FROM users WHERE id = ?').get(alice.userId),
+    ).toEqual({ card_face: 'minimal', four_color: 0 });
+
+    // Reversed pairing: an explicit four-colour face still wins over false.
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: auth(alice.token),
+      payload: { cardFace: 'gg-four-color', fourColor: false },
+    });
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/profile', headers: auth(alice.token) })).json(),
+    ).toMatchObject({ cardFace: 'gg-four-color', fourColor: true });
   });
 
   it('defaults autoReady to true for a new account and keeps an explicit opt-out', async () => {
@@ -331,6 +449,78 @@ describe('profile', () => {
       } finally {
         db.close();
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds missing appearance columns with defaults when reading an old profile', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-appearance-legacy-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        card_back TEXT NOT NULL DEFAULT 'indigo', four_color INTEGER NOT NULL DEFAULT 1)`);
+      old.close();
+
+      const legacy = openDb(path);
+      const { userId } = createUser(legacy, 'legacyappearance', 'a'.repeat(64), 'p');
+      legacy.close();
+      const app = createApp(path);
+      try {
+        const session = createSession(app.db, userId);
+        const profile = (
+          await app.app.inject({ method: 'GET', url: '/api/profile', headers: auth(session) })
+        ).json();
+        expect(profile.cardBack).toBe('crimson');
+        expect(profile.cardFace).toBe('gg-four-color');
+        expect(profile.tableSkin).toBe('gg-green');
+      } finally {
+        await app.app.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates four_color once and keeps later cardFace choices across restarts', () => {
+    const dir = mkdtempSync(join(tmpdir(), '4am-appearance-once-'));
+    const path = join(dir, 'old.sqlite');
+    try {
+      const old = new Database(path);
+      old.exec(`CREATE TABLE users (
+        id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, auth_hash TEXT NOT NULL,
+        auth_salt TEXT NOT NULL, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
+        card_back TEXT NOT NULL DEFAULT 'indigo', four_color INTEGER NOT NULL DEFAULT 1,
+        card_face TEXT NOT NULL DEFAULT 'gg-four-color', table_skin TEXT NOT NULL DEFAULT 'gg-green')`);
+      old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, card_back, four_color) VALUES (?,?,?,?,?,?,?)',
+      ).run('legacy-four', 'h', 's', 'p', 1, 'indigo', 1);
+      old.prepare(
+        'INSERT INTO users (username, auth_hash, auth_salt, pubkey, created_at, card_back, four_color) VALUES (?,?,?,?,?,?,?)',
+      ).run('legacy-two', 'h', 's', 'p', 2, 'slate', 0);
+      old.close();
+
+      const first = openDb(path);
+      expect(first.prepare('SELECT username, card_face FROM users ORDER BY id').all()).toEqual([
+        { username: 'legacy-four', card_face: 'gg-four-color' },
+        { username: 'legacy-two', card_face: 'classic-large' },
+      ]);
+      first.prepare("UPDATE users SET card_face = 'minimal' WHERE username = 'legacy-two'").run();
+      const firstSnapshot = first.prepare('SELECT card_back, four_color, card_face, table_skin FROM users ORDER BY id').all();
+      first.close();
+
+      const second = openDb(path);
+      expect(second.prepare('SELECT card_back, four_color, card_face, table_skin FROM users ORDER BY id').all()).toEqual(firstSnapshot);
+      expect(second.prepare("SELECT value FROM meta WHERE key = 'card-face-boolean-migration-1'").get()).toEqual({ value: '1' });
+      expect(second.prepare("SELECT card_face FROM users WHERE username = 'legacy-two'").get()).toEqual({ card_face: 'minimal' });
+      for (const back of ['indigo', 'crimson', 'emerald', 'slate']) {
+        second.prepare('UPDATE users SET card_back = ? WHERE username = ?').run(back, 'legacy-two');
+        expect(second.prepare('SELECT card_back FROM users WHERE username = ?').get('legacy-two')).toEqual({ card_back: back });
+      }
+      second.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

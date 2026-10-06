@@ -8,7 +8,7 @@ import {
   soundVolume,
   soundsEnabled,
 } from '../../shared/sounds.ts';
-import { CARD_BACKS, useStore, type Prefs } from '../../shared/store.ts';
+import { CARD_BACKS, CARD_FACES, TABLE_SKINS, useStore, type Prefs } from '../../shared/store.ts';
 import { cn } from '../../shared/lib/cn.ts';
 import { Button, Input } from '../../shared/ui/index.tsx';
 import { Avatar } from '../../entities/user/Avatar.tsx';
@@ -19,6 +19,8 @@ import { cardFromName } from '@4am/shared';
 import { t } from '../../shared/i18n/index.ts';
 
 const BACKS = CARD_BACKS;
+const FACES = CARD_FACES;
+const SKINS = TABLE_SKINS;
 
 /** Downscale + center-crop the chosen file to a 256px JPEG data URL. */
 async function toAvatarDataUrl(file: File): Promise<string> {
@@ -101,7 +103,8 @@ export function ProfileEditor({
         displayName,
         bio,
         cardBack: prefs.cardBack,
-        fourColor: prefs.fourColor,
+        cardFace: prefs.cardFace,
+        tableSkin: prefs.tableSkin,
         privateMode: prefs.privateMode,
         autoJoinInvites: prefs.autoJoinInvites,
         autoReady: prefs.autoReady,
@@ -213,8 +216,8 @@ export function ProfileEditor({
   const tableStyle = (
     <>
       <div className="text-sm">
-        <span className="mb-2 block text-slate-500">{t('Deck style')}</span>
-        <div className="flex flex-wrap items-center gap-3">
+        <span className="mb-2 block text-slate-500">{t('Card back')}</span>
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
           {BACKS.map((b) => (
             <button
               key={b}
@@ -228,11 +231,11 @@ export function ProfileEditor({
                 // compiled CSS emits transparent after indigo — with both on
                 // the button the selection ring was always invisible and the
                 // picker looked dead no matter what you clicked.
-                'relative rounded-lg p-0.5 ring-2 transition-shadow',
+                'relative rounded-lg p-1 text-center ring-2 transition-shadow hover:bg-slate-100 dark:hover:bg-slate-800',
                 prefs.cardBack === b ? 'ring-indigo-500' : 'ring-transparent',
               )}
             >
-              <div className={cn('card-back h-14 w-10 rounded-lg', `card-back-${b}`)} />
+              <PlayingCard faceDown cardBackStyle={b} size="sm" className="mx-auto" />
               {prefs.cardBack === b && (
                 // locale-proof confirmation: a check badge on the chosen swatch
                 <span
@@ -242,20 +245,33 @@ export function ProfileEditor({
                   <RiCheckLine className="size-3" />
                 </span>
               )}
+              </button>
+          ))}
+        </div>
+        <span className="mb-2 mt-4 block text-slate-500">{t('Card face')}</span>
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+          {FACES.map((face) => (
+            <button key={face} type="button" onClick={() => applyDeckStyle({ cardFace: face })}
+              aria-label={t(`${face} card face`)} aria-pressed={prefs.cardFace === face}
+              className={cn('relative rounded-lg p-1 text-center ring-2 transition-shadow hover:bg-slate-100 dark:hover:bg-slate-800', prefs.cardFace === face ? 'ring-indigo-500' : 'ring-transparent')}>
+              <PlayingCard card={cardFromName('Td')} cardFace={face} size="sm" className="mx-auto" />
+              {prefs.cardFace === face && <RiCheckLine className="absolute right-0 top-0 size-4 rounded-full bg-indigo-500 text-white" aria-hidden />}
             </button>
           ))}
-          <label className="ml-2 flex items-center gap-2 text-slate-600 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={prefs.fourColor}
-              onChange={(e) => applyDeckStyle({ fourColor: e.target.checked })}
-            />
-            {t('4-color deck')}
-          </label>
-          {/* live feedback for both deck toggles: the back follows the swatch
-              pick, the face-up card follows the 4-color checkbox */}
-          <PlayingCard faceDown size="sm" />
-          <PlayingCard card={cardFromName('Td')} size="sm" />
+        </div>
+        <span className="mb-2 mt-4 block text-slate-500">{t('Table skin')}</span>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {SKINS.map((skin) => (
+            <button key={skin} type="button" onClick={() => applyDeckStyle({ tableSkin: skin })}
+              aria-label={t(`${skin} table skin`)} aria-pressed={prefs.tableSkin === skin}
+              className={cn('relative overflow-hidden rounded-xl p-2 text-left ring-2 transition-shadow hover:scale-[1.02]', prefs.tableSkin === skin ? 'ring-indigo-500' : 'ring-transparent')}>
+              <div data-table-skin={skin} className="table-app-bg h-16 rounded-lg p-2">
+                <div className="h-full rounded-[50%] border border-white/20 bg-[var(--table-felt-core)] shadow-inner" />
+              </div>
+              <span className="mt-1 block text-xs font-medium">{t(`${skin} table skin`)}</span>
+              {prefs.tableSkin === skin && <RiCheckLine className="absolute right-2 top-2 size-4 rounded-full bg-indigo-500 text-white" aria-hidden />}
+            </button>
+          ))}
         </div>
       </div>
 

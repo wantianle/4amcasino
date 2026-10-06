@@ -1,6 +1,6 @@
 import { parsePokerHotkeys, type PokerHotkeys } from '@4am/shared';
 import { api } from './api.ts';
-import { isCardBack, sanitizeBetRatios, useStore } from './store.ts';
+import { isCardBack, isCardFace, isTableSkin, sanitizeBetRatios, useStore } from './store.ts';
 
 /** Quick-bet ratios (A10) live in the persisted auth store so they ride with
  *  the signed-in account across reloads. The profile endpoint is the
@@ -42,7 +42,13 @@ export async function loadPrefs({
       // `undefined` — that class template (`card-back-${value}`) would render a
       // dead picker and invisible backs until the next rehydrate.
       cardBack: isCardBack(p.cardBack) ? p.cardBack : useStore.getState().prefs.cardBack,
-      fourColor: p.fourColor,
+      cardFace: isCardFace(p.cardFace)
+        ? p.cardFace
+        : p.fourColor === false
+          ? 'classic-large'
+          : useStore.getState().prefs.cardFace,
+      tableSkin: isTableSkin(p.tableSkin) ? p.tableSkin : useStore.getState().prefs.tableSkin,
+      fourColor: isCardFace(p.cardFace) ? p.cardFace === 'gg-four-color' : p.fourColor !== false,
       quickPhrases: p.quickPhrases ?? [],
       privateMode: !!p.privateMode,
       autoJoinInvites: !!p.autoJoinInvites,

@@ -44,14 +44,25 @@ export interface ChatMsg {
 /** The card-back colorways, in picker order. Single source of truth shared by
  *  the profile picker, the store shape, and the server round-trip sanitizer.
  *  Each id maps 1:1 to a `.card-back-<id>` rule in app/index.css. */
-export const CARD_BACKS = ['indigo', 'crimson', 'emerald', 'slate'] as const;
+export const CARD_BACKS = [
+  'indigo', 'crimson', 'emerald', 'slate', 'wine-lattice', 'black-gold',
+  'classic-red-blue', 'geometry', 'deep-blue-silver',
+] as const;
 export type CardBack = (typeof CARD_BACKS)[number];
+export const CARD_FACES = ['gg-four-color', 'gg-solid', 'classic-large', 'jumbo-accessible', 'minimal'] as const;
+export type CardFace = (typeof CARD_FACES)[number];
+export const TABLE_SKINS = ['gg-green', 'sapphire', 'burgundy', 'classic-casino'] as const;
+export type TableSkin = (typeof TABLE_SKINS)[number];
 
 /** Guards server/persisted payloads: a foreign value must never reach the
  *  `card-back-${value}` class template or the picker's selected-state compare. */
 export function isCardBack(value: unknown): value is CardBack {
   return typeof value === 'string' && (CARD_BACKS as readonly string[]).includes(value);
 }
+export const isCardFace = (value: unknown): value is CardFace =>
+  typeof value === 'string' && (CARD_FACES as readonly string[]).includes(value);
+export const isTableSkin = (value: unknown): value is TableSkin =>
+  typeof value === 'string' && (TABLE_SKINS as readonly string[]).includes(value);
 
 // Quick-bet ratios (A10, docs/table-redesign-spec.md): the constants and the
 // `sanitizeBetRatios` guard live in `@4am/shared` so the action bar, the
@@ -67,6 +78,9 @@ export interface Prefs {
   hasAvatar: boolean;
   avatarVersion: number;
   cardBack: CardBack;
+  cardFace: CardFace;
+  tableSkin: TableSkin;
+  /** @deprecated Migrated to cardFace on profile sync; retained for old snapshots. */
   fourColor: boolean;
   quickPhrases: string[];
   /** Hide my winnings from other players (leaderboards, session report, crown). */
@@ -88,6 +102,8 @@ export const defaultPrefs: Prefs = {
   hasAvatar: false,
   avatarVersion: 0,
   cardBack: 'crimson',
+  cardFace: 'gg-four-color',
+  tableSkin: 'gg-green',
   fourColor: true,
   quickPhrases: [],
   privateMode: false,
@@ -348,6 +364,7 @@ export const useStore = create<Store>()(
       partialize: (s) => ({ auth: s.auth, prefs: s.prefs }),
       merge: (persisted, current) => {
         const p = persisted as Partial<Store> | undefined;
+        const stored = p?.prefs;
         return {
           ...current,
           ...(p ?? {}),
@@ -357,10 +374,25 @@ export const useStore = create<Store>()(
             Object.entries(defaultPrefs).map(([key, fallback]) => [
               key,
               key === 'pokerHotkeys'
-                ? (parsePokerHotkeys(p?.prefs?.pokerHotkeys) ?? fallback)
+                ? (parsePokerHotkeys(stored?.pokerHotkeys) ?? fallback)
                 : key === 'betRatios'
-                  ? sanitizeBetRatios(p?.prefs?.betRatios)
-                  : (p?.prefs?.[key as keyof Prefs] ?? fallback),
+                  ? sanitizeBetRatios(stored?.betRatios)
+                  : key === 'cardFace'
+                    ? // An old snapshot predates `cardFace`: derive it from the
+                      // retired boolean, otherwise a `fourColor:false` pick would
+                      // briefly render the default four-colour deck (and stay
+                      // wrong for the whole session if the profile sync fails).
+                      isCardFace(stored?.cardFace)
+                      ? stored.cardFace
+                      : stored?.fourColor === false
+                        ? 'classic-large'
+                        : fallback
+                    : key === 'fourColor'
+                      ? // Keep the deprecated mirror coherent with the authority.
+                        isCardFace(stored?.cardFace)
+                        ? stored.cardFace === 'gg-four-color'
+                        : stored?.fourColor !== false
+                      : (stored?.[key as keyof Prefs] ?? fallback),
             ]),
           ) as unknown as Prefs,
         };

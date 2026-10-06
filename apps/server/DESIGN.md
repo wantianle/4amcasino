@@ -27,6 +27,28 @@ game engine and shares its process, SQLite DB and in-memory hand set.
   the grant is revoked only after `done`), then restart. Do not rolling-restart
   while hands are live.
 
+## Profile appearance contract
+
+The profile API stores three explicit, independent appearance axes:
+
+- `cardBack`: `indigo`, `crimson`, `emerald`, `slate`, `wine-lattice`,
+  `black-gold`, `classic-red-blue`, `geometry`, or `deep-blue-silver`;
+- `cardFace`: `gg-four-color`, `gg-solid`, `classic-large`,
+  `jumbo-accessible`, or `minimal`;
+- `tableSkin`: `gg-green`, `sapphire`, `burgundy`, or `classic-casino`.
+
+Defaults are `crimson`, `gg-four-color`, and `gg-green`, respectively. The
+original four-value card-back set remains valid for old profiles. The old
+`four_color` column is retained as a compatibility bridge only: the one-time
+migration maps a legacy row whose `card_face` still holds its migration default
+(`four_color = 0`) to `classic-large` — the retired boolean's real two-colour
+look — and leaves every other row alone. After the migration `card_face` is the
+single authority: a later `PUT /api/profile` that still sends the old boolean
+only mirrors `four_color` and never rewrites `card_face`, so an explicit
+`cardFace` choice (including one made in the same request, where it wins) can
+never be undone by an old client's ordinary save. New clients write `cardFace`,
+not the boolean.
+
 ## Reconnect / resync semantics (client)
 
 `HeadlessClient.isResynced` is the single decision gate. It requires:
