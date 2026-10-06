@@ -193,17 +193,14 @@ export class HeadlessClient {
     this.userId = info.userId;
     this.username = info.username;
     if (info.scopeKind !== 'room') throw new Error('This token is not scoped to a room.');
-    if (!info.canPlay)
-      throw new Error('This token is read-only. Use room_details and subscribe_events instead.');
+    if (!info.canPlay) throw new Error('This grant does not allow playing.');
     if (!signingSeed || !/^[a-f0-9]{64}$/.test(signingSeed))
-      throw new Error(
-        'A room player needs FOURAM_SIGNING_KEY from the owner’s local agent configuration.',
-      );
+      throw new Error('The bot runner claim is missing a valid 32-byte signing seed.');
     this.identity = identityFromSeed(
       Uint8Array.from(signingSeed.match(/../g)!, (byte) => parseInt(byte, 16)),
     );
     if (this.identity.publicKey !== info.publicKey)
-      throw new Error('Signing key does not match this account. Export a fresh configuration.');
+      throw new Error('The bot runner signing seed does not match this account.');
     await this.connect(info.scopeId);
   }
 
