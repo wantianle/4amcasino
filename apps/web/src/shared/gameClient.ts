@@ -263,6 +263,30 @@ export function resetHandSession(reason: HandSessionResetReason): void {
   motionHandOrder.length = 0;
 }
 
+/** The production trigger for the full wipe: the auth IDENTITY going away or
+ *  becoming a different one. Both `logout()` call sites (the nav/Settings/admin
+ *  buttons) and `api.ts`'s 401 "session expired" path funnel through the store's
+ *  `logout` action, and `?switch=1` re-login replaces the identity through
+ *  `setAuth` WITHOUT ever calling `logout()` - so watching the identity is the
+ *  one place that covers every account boundary, including the one no explicit
+ *  call site owns.
+ *
+ *  It lives here, not in `store.logout()`, because the registries are this
+ *  module's state and the store importing this module would close an import
+ *  cycle (store <- gameClient <- ws/voice <- store). A fresh sign-in
+ *  (null -> identity) is deliberately NOT a wipe: there is no previous
+ *  identity's evidence to drop, and a hard reload starts with empty registries
+ *  anyway.
+ *
+ *  `leave-room` is the room boundary (see `wsClient.leaveRoom` / TablePage's
+ *  room-effect cleanup) and must preserve the registries; there is no separate
+ *  production `session-end` today - a 401 expiry lands here as a logout. */
+useStore.subscribe((state, prev) => {
+  if (prev.auth.userId !== null && state.auth.userId !== prev.auth.userId) {
+    resetHandSession('logout');
+  }
+});
+
 /** Test-only: clear the module-level hand-tracking sets so cases are isolated.
  *  Production never calls this - the sets are process-lifetime by design and
  *  resetting them mid-session would re-open already-finished hands. */

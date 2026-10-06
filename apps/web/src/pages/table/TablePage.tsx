@@ -39,6 +39,7 @@ import {
   bindGameClient,
   imReady,
   offerPeek,
+  resetHandSession,
   setSitOut,
   sit,
   startHand,
@@ -261,6 +262,15 @@ export function TablePage() {
       // the previous room's hand is never announced as `resumeHandId` to the
       // next room and its recovery banner cannot leak across.
       wsClient.leaveRoom();
+      // ...but a leave is NOT a full session end. The same live hand can be
+      // resumed after rejoining (a room switch is often just a page move), so
+      // the module-level fold/terminal evidence must survive:
+      // `resetHandSession('leave-room')` is a deliberate no-op that states the
+      // boundary here rather than silently omitting it. A full wipe is owned by
+      // gameClient's auth-identity subscription (logout / account switch), and
+      // room archiving funnels through this same cleanup once its hand is
+      // terminal, so it rightfully keeps the registries too.
+      resetHandSession('leave-room');
       useStore.getState().setRoom(null);
     };
   }, [roomId]);

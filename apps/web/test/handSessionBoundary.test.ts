@@ -121,6 +121,16 @@ function reestablish(handId: string): void {
   useStore.getState().patchHand({ handId, seats: mySeats, betting: THREE_WAY });
 }
 
+/** Re-establish under a DIFFERENT account (account-switch cases), so the fold
+ *  gate's seat match cannot pass for the wrong reason. */
+function reestablishAs(handId: string, userId: number): void {
+  useStore.getState().patchHand({
+    handId,
+    seats: [{ seat: 0, userId, username: 'me', publicKey: '', stack: 1000 }],
+    betting: THREE_WAY,
+  });
+}
+
 const actionApplied = (handId: string, seat = 0): ServerMsg => ({
   t: 'action_applied',
   handId,
@@ -272,5 +282,79 @@ describe('resetHandSession: terminal registry persistence', () => {
     handle(failed(HAND));
 
     expect(useStore.getState().hand.settlementFailed?.handId).toBe(HAND);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. PRODUCTION WIRING: the account boundary is driven by the real store
+//    actions (not a direct resetHandSession call), and the room boundary is a
+//    no-op. These assert the CONSEQUENCE (whether fold_key is sent / whether a
+//    replayed failure is accepted), never merely that a function ran.
+// ---------------------------------------------------------------------------
+describe('production session wiring', () => {
+  it('logout() clears the fold → re-login cannot escrow the same hand id', () => {
+    armFold(HAND);
+
+    // The store action every sign-out button calls. gameClient's auth
+    // subscription turns the identity loss into resetHandSession('logout').
+    useStore.getState().logout();
+    signIn(); // the account signs back in; null -> identity is NOT a wipe
+
+    reestablish(HAND);
+    handle(actionApplied(HAND));
+
+    // If the subscription were missing, foldedByMe would still hold HAND and
+    // the replayed action_applied would send fold_key.
+    expect(sentOf('fold_key')).toHaveLength(0);
+  });
+
+  it('logout() clears the terminal registry → a later failure for that hand is accepted', () => {
+    useStore.getState().patchHand({ handId: HAND });
+    handle(handEnd(HAND)); // claims terminalHands = HAND
+    socket.send.mockClear();
+
+    useStore.getState().logout();
+    reestablish(HAND);
+    handle(failed(HAND));
+
+    // Cleared registry: the failure is no longer rejected as a replay. If the
+    // subscription were missing, terminalHands would still block it and this
+    // would be null.
+    expect(useStore.getState().hand.settlementFailed?.handId).toBe(HAND);
+  });
+
+  it('switching account through setAuth clears the fold without logout()', () => {
+    armFold(HAND);
+
+    // LoginPage?switch=1 replaces the identity directly - no logout() call.
+    useStore.getState().setAuth({
+      token: 't2',
+      userId: 2,
+      username: 'other',
+      identity: genIdentity(),
+    });
+    reestablishAs(HAND, 2);
+
+    handle(actionApplied(HAND));
+
+    expect(sentOf('fold_key')).toHaveLength(0);
+  });
+
+  it('the room boundary (leave + leave-room policy) keeps the fold → re-entry escrows', () => {
+    armFold(HAND);
+
+    // Exactly TablePage's room-effect cleanup / ws.leaveRoom(): drop the
+    // view-layer hand, then state the leave boundary. `leave-room` must NOT
+    // clear the registries, or a rejoin of the SAME live hand could never
+    // escrow its key.
+    useStore.getState().resetHand();
+    resetHandSession('leave-room');
+
+    reestablish(HAND);
+    handle(actionApplied(HAND));
+
+    const keys = sentOf('fold_key');
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatchObject({ handId: HAND, key: 'a1b2' });
   });
 });
