@@ -2,17 +2,17 @@
 
 > 本文是**从实拍/官方截图逐张看图得出**的结构结论，不是推测，也不是旧结论转述。
 > 实现牌桌 UI 时**以本文为准**；与 `table-redesign-spec.md` 冲突处，以本文 + 用户裁决为准。
-> 参照图在 `/tmp/gg-ref/`（如果被清理，需重新下载）。
+> 参照图在 `docs/media/gg-reference/`（如果被清理，需重新下载）。
 
 ## 一、真正能当布局参照的图
 
 | 文件 | 内容 | 分辨率/清晰度 |
 |---|---|---|
-| `/tmp/gg-ref/gg-desktop-2026-pokerfuse-table.png` | GG 桌面 6 人 ANTE 桌（红 felt） | ★★★ 最清晰，桌面首选 |
-| `/tmp/gg-ref/gg-desktop-2026-pokerfuse-cashgame.png` | GG 桌面 6 人现金桌（绿 felt） | ★★★ |
-| `/tmp/gg-ref/gg-mobile-2026-appstore-02.jpg` | GG 手机竖屏 6 人（WSOP 主题） | ★★★ 手机首选 |
-| `/tmp/gg-ref/gg-mobile-2026-appstore-01.jpg` | GG 手机锦标赛 all-in 摊牌 | ★★ 摊牌态参照 |
-| `/tmp/gg-ref/clubgg-mobile-2026-appstore-02.png` | ClubGG 手机 6 人（紫桌，hero 大牌 + 公共牌） | ★★ hero 手牌放大参照 |
+| `docs/media/gg-reference/gg-desktop-2026-pokerfuse-table.png` | GG 桌面 6 人 ANTE 桌（红 felt） | ★★★ 最清晰，桌面首选 |
+| `docs/media/gg-reference/gg-desktop-2026-pokerfuse-cashgame.png` | GG 桌面 6 人现金桌（绿 felt） | ★★★ |
+| `docs/media/gg-reference/gg-mobile-2026-appstore-02.jpg` | GG 手机竖屏 6 人（WSOP 主题） | ★★★ 手机首选 |
+| `docs/media/gg-reference/gg-mobile-2026-appstore-01.jpg` | GG 手机锦标赛 all-in 摊牌 | ★★ 摊牌态参照 |
+| `docs/media/gg-reference/clubgg-mobile-2026-appstore-02.png` | ClubGG 手机 6 人（紫桌，hero 大牌 + 公共牌） | ★★ hero 手牌放大参照 |
 
 **不能当参照的**（已看，确认不是牌桌）：`gg-mobile-2025-cardplayer.png`（下载页）、`gg-desktop-2025-cardplayer.png`（大厅）、`clubgg-mobile-2026-appstore-01.png` / `clubgg-desktoppad-2026-appstore-01.png`（赛事营销拼图）。
 
