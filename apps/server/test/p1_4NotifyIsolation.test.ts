@@ -5,6 +5,7 @@ import { createApp } from '../src/app.js';
 import { attachHub } from '../src/hub.js';
 import { activeHands } from '../src/liveHands.js';
 import { realClock, type GameOpts } from '../src/game.js';
+import { SEVEN_DEUCE_SHOW_KIND } from '../src/handProjection.js';
 import { TestClient } from './helpers/testClient.js';
 import { setupRoom, awaitHandEnd } from './helpers/testRoom.js';
 
@@ -56,6 +57,24 @@ function settlementMarkers(ctx: ReturnType<typeof createApp>, handId: string): n
       n: number;
     }
   ).n;
+}
+
+/** The number of committed fold-winner 7-2 bounty legs for a hand. The
+ *  automatic/voluntary show bounty writes two legs under the hand id. */
+function sevenDeuceShowLegs(ctx: ReturnType<typeof createApp>, handId: string): number {
+  return (
+    ctx.db
+      .prepare('SELECT COUNT(*) AS n FROM ledger WHERE ref = ? AND kind = ?')
+      .get(handId, SEVEN_DEUCE_SHOW_KIND) as { n: number }
+  ).n;
+}
+
+function stackOf(ctx: ReturnType<typeof createApp>, roomId: string, userId: number): number {
+  return (
+    ctx.db
+      .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(roomId, userId) as { stack: number }
+  ).stack;
 }
 
 const SETTLEMENT_FRAMES = new Set(['showdown', 'squid_result', 'seven_deuce', 'hand_end']);
@@ -260,6 +279,125 @@ describe('P1-4: notification isolation', () => {
       expect(latestLifecycle(ctx, room.id)).toBe('committed');
       expect(gameRoom.isUnhealthy()).toBe(false);
       const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('unexpected programming error, not a delivery failure');
+    } finally {
+      errSpy.mockRestore();
+      await ctx.app.close();
+    }
+  }, 30000);
+
+  // ---------------------------------------------------------------------------
+  // P1-4 follow-up: the two `GameRoom` broadcasts that happen AFTER a committed
+  // money move. `recordShow()` credits the fold-winner 7-2 bounty and only then
+  // announces `cards_shown`; the voluntary 7-2 path announces `seven_deuce` +
+  // `room_state`. Both frames are presentation, but they used to be a bare
+  // `this.broadcast()` / `this.broadcastRoomState()`, so a throwing frame (a
+  // TypeError from a malformed frame) bubbled to the hub and marked the whole
+  // room unhealthy - an availability incident, not a money one. These tests pin
+  // the best-effort publisher on both: the frame is lost, the money stays, the
+  // room stays healthy, and the failure is Tier-1 logged.
+  // ---------------------------------------------------------------------------
+
+  /** Deal a fold-win where seat 1 holds 7-2 offsuit, so their voluntary show
+   *  pays the 25-chip fold-winner bounty through `recordShow`/`trySevenDeuce`. */
+  async function setupSevenDeuceFoldWin() {
+    const live = await startLive();
+    const { room, host, players } = await setupRoom(
+      live.baseUrl,
+      ['vol_a', 'vol_b'],
+      ['fold-first', 'passive'],
+      clients,
+    );
+    live.ctx.db
+      .prepare('UPDATE rooms SET auto_deal = 0, seven_deuce_bonus = 25 WHERE id = ?')
+      .run(room.id);
+    const identity = Array.from({ length: 52 }, (_, i) => i);
+    const wanted = [9, 0, 10, 21, 11, 12, 13, 14, 15];
+    const seen = new Set(wanted);
+    const shuffled = [...wanted, ...identity.filter((i) => !seen.has(i))];
+    host.forcedShufflePerm = identity;
+    players[1]!.forcedShufflePerm = shuffled;
+    host.send({ t: 'start_hand' });
+    await awaitHandEnd(players, 15000);
+    return { ...live, room, host, players, handId: host.handEnd!.handId };
+  }
+
+  it('a TypeError in the cards_shown frame cannot escape recordShow or mark the room unhealthy', async () => {
+    const { ctx, hub, room, host, players, handId } = await setupSevenDeuceFoldWin();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const bob = players[1]!;
+      const hostBefore = stackOf(ctx, room.id, host.userId);
+      const bobBefore = stackOf(ctx, room.id, bob.userId);
+      expect(sevenDeuceShowLegs(ctx, handId)).toBe(0);
+
+      const gameRoom = hub.rooms.get(room.id)!;
+      const orig = gameRoom.broadcast.bind(gameRoom);
+      let injected = false;
+      gameRoom.broadcast = (msg) => {
+        if (msg.t === 'cards_shown') {
+          injected = true;
+          throw new TypeError('injected cards_shown frame bug');
+        }
+        orig(msg);
+      };
+
+      bob.showCards();
+      await host.waitFor(() => sevenDeuceShowLegs(ctx, handId) === 2, 5000);
+
+      // The frame really was the failure point...
+      expect(injected).toBe(true);
+      // ...recordShow never threw, so the hub never saw an error: the room is
+      // NOT unhealthy (the availability incident the bare broadcast would cause).
+      expect(gameRoom.isUnhealthy()).toBe(false);
+      // The 7-2 transfer is already durable even though its announcement is lost.
+      expect(stackOf(ctx, room.id, host.userId)).toBe(hostBefore - 25);
+      expect(stackOf(ctx, room.id, bob.userId)).toBe(bobBefore + 25);
+      expect(sevenDeuceShowLegs(ctx, handId)).toBe(2);
+      // The lost frame is really lost, not silently reordered onto the wire.
+      expect(bob.cardsShown).toHaveLength(0);
+      expect(host.cardsShown).toHaveLength(0);
+      // Tier 1: routed through the SAME shared tiered logger as Hand.publish.
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('cards_shown broadcast failed');
+      expect(logged).toContain('unexpected programming error, not a delivery failure');
+    } finally {
+      errSpy.mockRestore();
+      await ctx.app.close();
+    }
+  }, 30000);
+
+  it('a TypeError in the voluntary 7-2 seven_deuce frame is swallowed with Tier 1 logging', async () => {
+    const { ctx, hub, room, host, players, handId } = await setupSevenDeuceFoldWin();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const bob = players[1]!;
+      const hostBefore = stackOf(ctx, room.id, host.userId);
+      const bobBefore = stackOf(ctx, room.id, bob.userId);
+
+      const gameRoom = hub.rooms.get(room.id)!;
+      const orig = gameRoom.broadcast.bind(gameRoom);
+      let injected = false;
+      gameRoom.broadcast = (msg) => {
+        if (msg.t === 'seven_deuce') {
+          injected = true;
+          throw new TypeError('injected seven_deuce frame bug');
+        }
+        orig(msg);
+      };
+
+      bob.showCards();
+      // Execution continued past the lost announcement frame: the show then
+      // reached its normal `cards_shown` delivery.
+      await host.waitFor(() => host.cardsShown.length === 1, 5000);
+
+      expect(injected).toBe(true);
+      expect(gameRoom.isUnhealthy()).toBe(false);
+      expect(stackOf(ctx, room.id, host.userId)).toBe(hostBefore - 25);
+      expect(stackOf(ctx, room.id, bob.userId)).toBe(bobBefore + 25);
+      expect(sevenDeuceShowLegs(ctx, handId)).toBe(2);
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('7-2 bounty broadcast failed');
       expect(logged).toContain('unexpected programming error, not a delivery failure');
     } finally {
       errSpy.mockRestore();

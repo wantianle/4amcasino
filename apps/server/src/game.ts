@@ -170,6 +170,36 @@ function isProgrammingError(err: unknown): boolean {
   return err instanceof Error && PROGRAMMING_ERROR_NAMES.has(err.name);
 }
 
+/**
+ * The ONE tiered logger for a swallowed best-effort broadcast failure. Shared
+ * by `Hand.publish` and `GameRoom.publish`/`publishRoomState` so the two
+ * publishers can never drift:
+ *
+ *   * Tier 1 - an unexpected programming error (TypeError and friends). Not a
+ *     transport hiccup but almost always a bug in the frame itself (e.g. a
+ *     circular value breaking `JSON.stringify`); reported distinctly with its
+ *     stack so a real defect is not buried in delivery noise.
+ *   * Tier 2 - an expected delivery failure (dead/stalled transport).
+ *
+ * Neither tier rethrows; the classification only changes how loudly the loss is
+ * reported. `id` is the hand id for `Hand.publish`, the room id for the room
+ * publisher.
+ */
+function logBroadcastFailure(id: string, label: string, t: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (isProgrammingError(err)) {
+    const detail = { id, t, kind: 'unexpected', message, stack: (err as Error).stack };
+    hdbg('broadcastProgrammingError', detail);
+    console.error(`${label} - unexpected programming error, not a delivery failure`, detail);
+    return;
+  }
+  const detail = { id, t, message };
+  hdbg('broadcastFailed', detail);
+  // hdbg is off by default, so a lost frame would otherwise be completely
+  // silent in production. Surface it on the normal error log.
+  console.error(label, detail);
+}
+
 export class GameRoom {
   private sockets = new Map<number, WebSocket>();
   private hand: Hand | null = null;
@@ -741,6 +771,39 @@ export class GameRoom {
     for (const ws of this.sockets.values()) ws.send(data);
   }
 
+  /**
+   * Best-effort room publisher - the `GameRoom` counterpart of `Hand.publish`.
+   * A broadcast failure is notification-only: it is logged and swallowed, so a
+   * money move that already committed (a voluntary 7-2 show, an accepted peek)
+   * can never unwind through the caller and bubble to the hub, where an
+   * escaping error would mark the whole room unhealthy. Never rethrows; returns
+   * whether the frame was handed to the transport.
+   */
+  publish(msg: ServerMsg, label = 'room broadcast failed'): boolean {
+    try {
+      this.broadcast(msg);
+      return true;
+    } catch (err) {
+      logBroadcastFailure(this.roomId, label, msg.t, err);
+      return false;
+    }
+  }
+
+  /**
+   * Best-effort `broadcastRoomState`, the room-state half of {@link publish}.
+   * Routed through the same tiered logger so a committed money move whose
+   * follow-up `room_state` fails still cannot mark the room unhealthy.
+   */
+  publishRoomState(label = 'room_state broadcast failed'): boolean {
+    try {
+      this.broadcastRoomState();
+      return true;
+    } catch (err) {
+      logBroadcastFailure(this.roomId, label, 'room_state', err);
+      return false;
+    }
+  }
+
   settingsChanged(restartAutoDeal = false): void {
     if (restartAutoDeal) this.autoDealPaused = false;
     this.broadcastRoomState();
@@ -1262,7 +1325,7 @@ export class GameRoom {
       this.shown.delete(seat);
       throw err;
     }
-    this.broadcast({ t: 'cards_shown', handId, seat, cards });
+    this.publish({ t: 'cards_shown', handId, seat, cards }, 'cards_shown broadcast failed');
     return true;
   }
 
@@ -1391,14 +1454,15 @@ export class GameRoom {
     // transaction leaves it unpaid and retryable (see `recordShow`/`onShowCards`).
     this.sevenDeucePaid.add(handId);
     if (total > 0) {
-      try {
-        this.broadcast({ t: 'seven_deuce', handId, seat, amount: total });
-        this.broadcastRoomState();
-      } catch (err) {
-        // Notification only: the money already moved. A lost frame must never
-        // escape into the hub and mark the room unhealthy.
-        console.error('7-2 bounty broadcast failed', err);
-      }
+      // Notification only: the money already moved above. Both frames go
+      // through the shared best-effort publisher, so a TypeError in either the
+      // `seven_deuce` frame or the follow-up `room_state` can never escape into
+      // the hub and mark the room unhealthy. Order is unchanged.
+      this.publish(
+        { t: 'seven_deuce', handId, seat, amount: total },
+        '7-2 bounty broadcast failed',
+      );
+      this.publishRoomState('7-2 bounty room_state broadcast failed');
     }
   }
 
@@ -1651,7 +1715,11 @@ export class GameRoom {
     });
     apply();
     finish('accepted', cards);
-    this.broadcastRoomState();
+    // The peek transfer is committed: the follow-up room_state is presentation
+    // only, so it goes through the best-effort publisher. A throwing
+    // `room_state` frame must not bubble to the hub and freeze the table after
+    // an irreversible chip move (same class as `recordShow`'s `cards_shown`).
+    this.publishRoomState('peek room_state broadcast failed');
   }
 }
 
@@ -3771,7 +3839,7 @@ class Hand {
    * to the hub where an escaping error would mark the whole room unhealthy.
    * Settlement-path frames that carry test fault hooks go through
    * `safeBroadcast`, which brackets this publisher with its fault points.
-   * Never rethrows: the tiered logging below only changes how loudly a failure
+   * Never rethrows: the shared tiered logger only changes how loudly a failure
    * is reported. Returns whether the frame was handed to the transport.
    */
   private publish(msg: ServerMsg, label = 'hand broadcast failed'): boolean {
@@ -3779,30 +3847,9 @@ class Hand {
       this.room.broadcast(msg);
       return true;
     } catch (err) {
-      this.logBroadcastFailure(label, msg.t, err);
+      logBroadcastFailure(this.id, label, msg.t, err);
       return false;
     }
-  }
-
-  private logBroadcastFailure(label: string, t: string, err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
-    // Tier 1: an unexpected programming error (TypeError and friends). This is
-    // not a transport hiccup - it is almost always a bug in the frame itself,
-    // e.g. a circular value breaking `JSON.stringify`. Report it distinctly,
-    // with the stack, so a real defect is not buried in the normal "one frame
-    // was dropped" noise. Still swallowed, exactly like tier 2.
-    if (isProgrammingError(err)) {
-      const detail = { id: this.id, t, kind: 'unexpected', message, stack: (err as Error).stack };
-      hdbg('broadcastProgrammingError', detail);
-      console.error(`${label} - unexpected programming error, not a delivery failure`, detail);
-      return;
-    }
-    // Tier 2: an expected delivery failure (dead/stalled transport, ...).
-    const detail = { id: this.id, t, message };
-    hdbg('broadcastFailed', detail);
-    // hdbg is off by default, so a lost frame would otherwise be completely
-    // silent in production. Surface it on the normal error log.
-    console.error(label, detail);
   }
 
   /** A settlement-path broadcast is notification only: swallow transport/DB
@@ -3819,7 +3866,7 @@ class Hand {
       const delivered = this.publish(msg, 'hand settlement broadcast failed');
       if (delivered && phases?.after) this.opts.faultInjection?.phase?.(phases.after);
     } catch (err) {
-      this.logBroadcastFailure('hand settlement broadcast failed', msg.t, err);
+      logBroadcastFailure(this.id, 'hand settlement broadcast failed', msg.t, err);
     }
   }
 
