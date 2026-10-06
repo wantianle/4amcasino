@@ -24,7 +24,7 @@ import {
   RulePolicy,
   PostflopPolicy,
   RULE_PRESETS,
-  DEFAULT_P2,
+  P2_ALL_OFF,
 } from '@4am/agent-core';
 
 /**
@@ -39,26 +39,32 @@ import {
  * `runEvalMatch` path that seats a baseline can seat any arm.
  *
  * Name grammar (`+`-joined segments, order-independent):
- *   - `rules-v1` / `baseline` / `default`  -> shipped default (all P2 off)
- *   - `p2:shrinkage`                       -> one switch on
- *   - `p2:shrinkage+sizeGrid`              -> several switches on
+ *   - `rules-v1` / `baseline` / `default`  -> explicit all-off P2 baseline
+ *   - `p2:shrinkage`                       -> all-off + one switch on
+ *   - `p2:shrinkage+sizeGrid`              -> all-off + several switches on
  *   - `p2:all`                             -> all four switches on
  *   - `adaptive-preflop`                   -> `params.adaptivePreflop = true`
  *   - `p2:all+adaptive-preflop`            -> combined arm
+ * Every arm starts from the explicit all-off `defaultP2()`, never the product
+ * `DEFAULT_P2` (all-on), so `rules-v1` is always the A/B control.
  * An unknown segment (e.g. `p2:banana`, bare `sizeGrid`) resolves to `null`,
  * and `runEvalMatch` turns that into a hard error rather than silently seating
  * the wrong policy.
  */
 export const P2_FLAGS = ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets'];
 
-/** All-off P2 snapshot, safe to hand to `PostflopPolicy` (frozen source). */
+/**
+ * Explicit all-off P2 snapshot: the harness baseline, **decoupled from the
+ * shipped `DEFAULT_P2` product default** (which is all-on). The baseline arm
+ * `rules-v1` must be the pre-P2 decision path regardless of how the product
+ * flips its defaults, otherwise every `p2:*` arm would start from an all-on
+ * config and a "one switch on" arm could be byte-identical to the baseline
+ * (the A/B treatment and control would collapse to the same policy). Anchored
+ * to the shipped, frozen `P2_ALL_OFF` constant so the shape can never drift
+ * from `P2Options`.
+ */
 export function defaultP2() {
-  return {
-    shrinkage: DEFAULT_P2.shrinkage,
-    sizeGrid: DEFAULT_P2.sizeGrid,
-    rangePropagation: DEFAULT_P2.rangePropagation,
-    buckets: DEFAULT_P2.buckets,
-  };
+  return { ...P2_ALL_OFF };
 }
 
 /**
@@ -145,7 +151,10 @@ export function makeArmPolicy(name, opts = {}) {
   // `RulePolicy` accepts a `postflop` policy, so the full preflop+postflop
   // engine is injectable with an explicit P2 config (not just a bare
   // PostflopPolicy). The baseline (`rules-v1`, all off, adaptive off) is
-  // byte-for-byte the shipped `new RulePolicy({ kind: 'tight-aggressive' })`.
+  // decision-for-decision the pre-P2 engine; it is NOT the same object as the
+  // shipped `new RulePolicy({ kind: 'tight-aggressive' })`, whose postflop
+  // engine now defaults to all-on `DEFAULT_P2`. The harness deliberately
+  // isolates its baseline from that product default.
   const postflop = new PostflopPolicy({ params, seed, p2: parsed.p2 });
   return new RulePolicy({ kind: 'tight-aggressive', params, seed, postflop });
 }

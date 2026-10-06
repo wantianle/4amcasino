@@ -27,6 +27,7 @@ import { HeadlessClient, buildDecisionView } from '@4am/agent-core';
 import {
   createPolicyStats,
   fallbackDecision,
+  guardPolicy,
   isLegalDecision,
   resolveEvalStrategy,
 } from './evalStrategies.mjs';
@@ -105,12 +106,24 @@ function extractCardFingerprint(tRow, participantSeats) {
 }
 
 /**
- * Resolve a policy name through the harness registry. `resolveEvalStrategy`
+ * Resolve a strategy name through the harness registry. `resolveEvalStrategy`
  * covers baselines AND arms (`rules-v1` / `p2:*` / `adaptive-preflop`) and
  * throws on an unknown name.
+ *
+ * A pre-built `Policy` object (anything with a `.decide`) is also accepted and
+ * legality-guarded here. This is the injection seam the experiment design uses
+ * to seat custom opponents (multi-style / non-grid bet sizers built in
+ * `evalDesign.mjs`) without registering them in the shared strategy registry.
+ * A zero-argument factory function is accepted too, so a duplicate pair gets a
+ * FRESH policy object for each run (a stateful policy must not carry RNG state
+ * from run 1 into run 2, or the seat-swap symmetry is lost). String callers are
+ * unaffected.
  */
-function resolveStrategy(name, stats) {
-  return resolveEvalStrategy(name, stats);
+function resolveStrategy(nameOrPolicy, stats) {
+  const target = typeof nameOrPolicy === 'function' ? nameOrPolicy() : nameOrPolicy;
+  if (target && typeof target === 'object' && typeof target.decide === 'function')
+    return guardPolicy(target, stats);
+  return resolveEvalStrategy(target, stats);
 }
 
 const ACTION_TYPES = ['fold', 'call', 'check', 'bet', 'raise'];
@@ -130,8 +143,12 @@ function emptyActionCounts() {
  * @param {string} [opts.shuffleSalt] harness-only perm label prefix (negative
  *                                    test: same hand ids, different cards)
  * @param {number} opts.hands
- * @param {Record<number,string>} opts.seatPolicies  seat -> policy name (seats >= 1)
- * @param {string} [opts.anchor]      seat-0 policy name
+ * @param {Record<number,string|object|Function>} opts.seatPolicies  seat ->
+ *   policy name, pre-built `Policy` object (anything with `.decide`), or a
+ *   zero-arg factory returning one (seats >= 1). Object/factory values are
+ *   legality-guarded by the harness (`resolveStrategy`).
+ * @param {string|object|Function} [opts.anchor]  seat-0 policy name, pre-built
+ *   policy object, or zero-arg factory (same duck-typing as `seatPolicies`)
  * @param {number} [opts.sb] @param {number} [opts.bb] @param {number} [opts.buyIn]
  * @param {boolean} [opts.memory]     inject cross-hand `sessionMemory` into the
  *   bot decision views (default `false` = legacy empty-memory behaviour). Arm
@@ -376,7 +393,16 @@ export async function runEvalMatch({
 
   try {
     await human.login();
-    const room = await human.api('/api/rooms', { name: 'Eval', sb, bb }, 'POST');
+    // `autoApproveBuys: false` is explicit harness isolation: the room default
+    // is now product default-on, and this rig needs the banker-click path
+    // (request -> approve) to exercise the ledger. Depending on the column
+    // DEFAULT here would auto-settle the buy and make the explicit `/approve`
+    // below fail with "no such pending request".
+    const room = await human.api(
+      '/api/rooms',
+      { name: 'Eval', sb, bb, autoApproveBuys: false },
+      'POST',
+    );
     await human.connect(room.id);
     human.send({ t: 'sit', seat: 0 });
     const buy = await human.api(`/api/rooms/${room.id}/buy`, { amount: buyIn });

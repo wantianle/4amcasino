@@ -9,7 +9,7 @@
  * These spin up the real server in-process, so the timeouts are generous.
  */
 import { describe, it, expect } from 'vitest';
-import { RulePolicy, opponentModelStats } from '@4am/agent-core';
+import { RulePolicy, P2_ALL_OFF, opponentModelStats } from '@4am/agent-core';
 import {
   deterministicPerm,
   hashSeed,
@@ -383,15 +383,20 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
     expect(resolveEvalStrategy('p2:all').name).toBe('rules-v1');
   });
 
-  it('default arm is decision-for-decision identical to a fresh shipped rules-v1', () => {
-    const shipped = new RulePolicy('tight-aggressive');
+  it('default arm is the explicit all-off baseline, isolated from the product all-on default', () => {
+    // The harness baseline must NOT track the shipped `DEFAULT_P2` (all-on):
+    // it is the pre-P2 engine, built by passing `P2_ALL_OFF` explicitly. That
+    // makes `rules-v1` a real A/B control for every `p2:*` arm.
+    const allOff = new RulePolicy({ kind: 'tight-aggressive', p2: P2_ALL_OFF });
     const arm = makeStrategy('rules-v1');
     const alias = makeStrategy('default');
     for (const view of RULE_GRID) {
-      const expected = shipped.decide(view);
+      const expected = allOff.decide(view);
       expect(arm.decide(view)).toEqual(expected);
       expect(alias.decide(view)).toEqual(expected);
     }
+    // ...and the alias really is the all-off arm, not the all-on product default.
+    expect(armConfig('default').p2).toEqual(armConfig('rules-v1').p2);
   });
 
   it('every p2 arm emits only legal actions on the grid', () => {

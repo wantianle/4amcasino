@@ -157,6 +157,11 @@ export async function comparePair(a, b, opts = {}) {
     handMs = 30_000,
     bootstrapIters = 10_000,
     memory = false,
+    // Opt-in: also return the RAW per-hand paired-delta samples (in hand order,
+    // bb/100). Additive and off by default, so existing callers/tests see the
+    // exact same result object as before. `evalDesign.mjs` consumes them to run
+    // block / cluster bootstraps that the iid CI cannot express.
+    includeSamples = false,
   } = opts;
 
   const runOpts = { seed, hands, anchor, sb, bb, buyIn, actionMs, cryptoMs, handMs, memory };
@@ -218,6 +223,12 @@ export async function comparePair(a, b, opts = {}) {
      */
     clean,
     cardsReplayed,
+    // Raw per-hand samples in hand order (bb/100), only with `includeSamples`.
+    // `duplicate` is the seat-swap-averaged paired delta; `plain` is the
+    // no-swap like-for-like delta. Order matches `runs[0].hands` / hand ids.
+    ...(includeSamples
+      ? { samples: { duplicate: dupSamples.map(toBb100), plain: plainSamples.map(toBb100) } }
+      : {}),
     cards: {
       handIdsMatch,
       fingerprintsComplete,
