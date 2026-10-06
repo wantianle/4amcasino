@@ -751,3 +751,95 @@ describe('BotRunner decision loop', () => {
     await runner.stop();
   });
 });
+
+/**
+ * Hard-stop bound: `stop()` must be bounded even when the graceful wind-down
+ * cannot finish - the two unbounded cases are a policy await that never returns
+ * (the loop never reaches `gracefulWindDown`) and a server hand the engine never
+ * clears. A normal stop must NOT trip the bound.
+ */
+describe('BotRunner hard stop', () => {
+  it('returns from stop() when the policy await is wedged, and forces finish', async () => {
+    const db = openDb(':memory:');
+    const client = new FakeClient();
+    const logs: string[] = [];
+    let releasePolicy!: () => void;
+    const blocked = new Promise<{ action: { type: 'fold' }; reason: string }>((resolve) => {
+      releasePolicy = () => resolve({ action: { type: 'fold' }, reason: 'released' });
+    });
+    const decide = vi.fn(() => blocked);
+    const runner = new BotRunner(db, claimedBot('bot1'), {
+      baseUrl: 'http://127.0.0.1:1',
+      clientFactory: () => client as unknown as HeadlessClient,
+      policy: { name: 'wedged', decide },
+      pollMs: 1,
+      settleMs: 25,
+      hardStopMs: 60,
+      log: (l) => logs.push(l),
+    });
+
+    await runner.start();
+    // The loop is now parked inside `policy.decide`; it never reaches the
+    // wind-down loop, so only `stop()`'s own deadline can bound this.
+    await waitFor(() => decide.mock.calls.length === 1);
+
+    const began = Date.now();
+    await runner.stop();
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect(client.closed).toBe(true);
+    expect(logs.join('\n')).toMatch(/hard stop deadline exceeded \(\d+ms\), forcing finish/);
+
+    // Release the wedged policy so the resumed loop can drain cleanly.
+    releasePolicy();
+    await sleep(20);
+  });
+
+  it('bounds the wind-down loop when the server never clears the active hand', async () => {
+    const db = openDb(':memory:');
+    const client = new FakeClient();
+    client.turn = false; // isolate the wind-down; no decision is involved
+    const logs: string[] = [];
+    const runner = new BotRunner(db, claimedBot('bot1'), {
+      baseUrl: 'http://127.0.0.1:1',
+      clientFactory: () => client as unknown as HeadlessClient,
+      policy: { name: 't', decide: async () => ({ action: { type: 'fold' } as const, reason: 'x' }) },
+      pollMs: 1,
+      settleMs: 25,
+      hardStopMs: 60,
+      log: (l) => logs.push(l),
+    });
+    activeHands.add('room1'); // the engine "hand" never ends
+    try {
+      await runner.start();
+      const began = Date.now();
+      await runner.stop();
+      expect(Date.now() - began).toBeLessThan(1_000);
+      expect(client.closed).toBe(true);
+      expect(logs.join('\n')).toMatch(/hard stop deadline exceeded/);
+    } finally {
+      activeHands.delete('room1');
+    }
+  });
+
+  it('does not trip the hard stop on a normal stop', async () => {
+    const db = openDb(':memory:');
+    const client = new FakeClient();
+    client.turn = false;
+    client.live = false;
+    const logs: string[] = [];
+    const runner = new BotRunner(db, claimedBot('bot1'), {
+      baseUrl: 'http://127.0.0.1:1',
+      clientFactory: () => client as unknown as HeadlessClient,
+      policy: { name: 't', decide: async () => ({ action: { type: 'fold' } as const, reason: 'x' }) },
+      pollMs: 1,
+      settleMs: 25,
+      hardStopMs: 200,
+      log: (l) => logs.push(l),
+    });
+    await runner.start();
+    await runner.stop();
+    expect(client.closed).toBe(true);
+    expect(client.sent).toContainEqual({ t: 'sit_out', sittingOut: true });
+    expect(logs.join('\n')).not.toMatch(/hard stop deadline exceeded/);
+  });
+});

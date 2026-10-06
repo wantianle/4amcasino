@@ -10,7 +10,7 @@ import {
   type BotSupervisorHooks,
   type ClaimedBot,
 } from './botRoutes.js';
-import { BotRunner, type BotRunnerOptions } from './botRunner.js';
+import { BotRunner, botHardStopMsFromEnv, type BotRunnerOptions } from './botRunner.js';
 import { roomEvents } from './rooms.js';
 
 /**
@@ -91,6 +91,14 @@ export interface BotSupervisorOptions {
   maxConcurrent?: number;
   /** Extra options forwarded to every `BotRunner`. */
   runner?: Omit<BotRunnerOptions, 'baseUrl'>;
+  /**
+   * Second safety net around `runner.stop()` in `stopBot`/`removeBot`. The
+   * runner already caps itself (`runner.hardStopMs`), but a runner whose `stop()`
+   * is itself wedged must not stall the supervisor's finalize (which is what
+   * actually removes the row the DELETE route parked in `202`). Defaults to the
+   * runner's own hard stop plus `STOP_TIMEOUT_MARGIN_MS`.
+   */
+  stopTimeoutMs?: number;
   /** Injection seam for tests; production constructs a real `BotRunner`. */
   runnerFactory?: (db: DB, claim: ClaimedBot, opts: BotRunnerOptions) => RunnerHandle;
   log?: (line: string) => void;
@@ -100,6 +108,12 @@ export interface BotSupervisorOptions {
 const DEFAULT_MAX_PER_ROOM = 8;
 /** Default server-wide safety valve; wide enough never to crowd out a room. */
 const DEFAULT_MAX_CONCURRENT = 64;
+/**
+ * Slack the supervisor's own stop bound keeps beyond the runner's hard stop, so
+ * the runner's normal forced-finish path wins the race and this net only catches
+ * a `stop()` that is itself wedged.
+ */
+const STOP_TIMEOUT_MARGIN_MS = 15_000;
 
 /** Coerce an env/option value to a positive integer, or fall back. */
 function positiveInt(value: number | undefined, fallback: number): number {
@@ -114,6 +128,7 @@ export class BotSupervisor implements BotSupervisorHooks {
   private readonly pending: string[] = [];
   private readonly maxPerRoom: number;
   private readonly maxConcurrent: number;
+  private readonly stopTimeoutMs: number;
   private readonly log: (line: string) => void;
   /**
    * Set at the start of `stopAll()`. Once set, no new runner may be claimed or
@@ -129,6 +144,10 @@ export class BotSupervisor implements BotSupervisorHooks {
   ) {
     this.maxPerRoom = positiveInt(opts.maxPerRoom, DEFAULT_MAX_PER_ROOM);
     this.maxConcurrent = positiveInt(opts.maxConcurrent, DEFAULT_MAX_CONCURRENT);
+    // Keep the net just beyond the runner's own hard stop so the runner normally
+    // finalizes itself and this only fires for a `stop()` that is itself wedged.
+    const runnerHardStop = opts.runner?.hardStopMs ?? botHardStopMsFromEnv();
+    this.stopTimeoutMs = positiveInt(opts.stopTimeoutMs, runnerHardStop + STOP_TIMEOUT_MARGIN_MS);
     this.log = opts.log ?? ((line) => console.log(`[bot-supervisor] ${line}`));
   }
 
@@ -293,6 +312,36 @@ export class BotSupervisor implements BotSupervisorHooks {
   }
 
   /**
+   * Bound `runner.stop()` by `stopTimeoutMs`. The runner caps itself, but this is
+   * the layer that owns the persisted finalize, so it must never be stalled by a
+   * runner that cannot stop. On timeout it logs and returns, letting the caller's
+   * `finally` run `finalizeBotRemoved`/`completeBotStop` as normal. A late `done`
+   * is harmless: it only reaches the idempotent `release`, and the finalize it
+   * would have raced is the atomic single-winner DELETE/CAS.
+   *
+   * A rejection from `runner.stop()` propagates (the caller logs it), exactly as
+   * it did before; only a hang is converted into a bounded return.
+   */
+  private async stopRunner(botId: string, runner: RunnerHandle): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        runner.stop().then(() => 'settled' as const),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), this.stopTimeoutMs);
+        }),
+      ]);
+      if (outcome === 'timeout') {
+        this.log(
+          `runner stop for ${botId} exceeded ${this.stopTimeoutMs}ms; finalizing without waiting`,
+        );
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  /**
    * Graceful stop: wind the runner down, then revoke + mark stopped. The
    * finalize runs in `finally`, so even a throwing `runner.stop()` cannot leave
    * the bot `stopping` with a live grant and no runner.
@@ -301,7 +350,7 @@ export class BotSupervisor implements BotSupervisorHooks {
     this.forgetPending(botId);
     const runner = this.runners.get(botId);
     try {
-      if (runner) await runner.stop();
+      if (runner) await this.stopRunner(botId, runner);
     } catch (err) {
       this.log(`runner stop failed for ${botId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -329,7 +378,7 @@ export class BotSupervisor implements BotSupervisorHooks {
     this.forgetPending(botId);
     const runner = this.runners.get(botId);
     try {
-      if (runner) await runner.stop();
+      if (runner) await this.stopRunner(botId, runner);
     } catch (err) {
       this.log(`runner stop failed for ${botId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {

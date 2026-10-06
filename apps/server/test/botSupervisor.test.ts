@@ -801,4 +801,52 @@ describe('BotSupervisor', () => {
       expect(sup.pendingCount()).toBe(1);
     },
   );
+
+  it('finalizes a wedged removeBot within the supervisor stop timeout', async () => {
+    const db = openDb(':memory:');
+    const { botId } = seedBot(db, 'starting');
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      maxConcurrent: 2,
+      stopTimeoutMs: 40,
+      runnerFactory: () => ({
+        start: vi.fn(async () => {}),
+        stop: vi.fn(() => new Promise<void>(() => {})), // a stop() that never settles
+        done: new Promise<void>(() => {}),
+      }),
+    });
+    sup.startBot(botId);
+    expect(activeGrants(db, botId)).toBe(1);
+
+    const began = Date.now();
+    await sup.removeBot(botId); // must not hang on the wedged runner
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect(db.prepare('SELECT 1 FROM bot_accounts WHERE id = ?').get(botId)).toBeUndefined();
+    expect(activeGrants(db, botId)).toBe(0);
+    expect(sup.hasRunner(botId)).toBe(false);
+  });
+
+  it('finalizes a wedged stopBot to stopped within the supervisor stop timeout', async () => {
+    const db = openDb(':memory:');
+    const { botId } = seedBot(db, 'starting');
+    const sup = new BotSupervisor(db, {
+      baseUrl: 'http://127.0.0.1:1',
+      maxConcurrent: 2,
+      stopTimeoutMs: 40,
+      runnerFactory: () => ({
+        start: vi.fn(async () => {}),
+        stop: vi.fn(() => new Promise<void>(() => {})),
+        done: new Promise<void>(() => {}),
+      }),
+    });
+    sup.startBot(botId);
+    expect(statusOf(db, botId)).toBe('running');
+
+    const began = Date.now();
+    await sup.stopBot(botId); // must not hang on the wedged runner
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect(statusOf(db, botId)).toBe('stopped');
+    expect(activeGrants(db, botId)).toBe(0);
+    expect(sup.hasRunner(botId)).toBe(false);
+  });
 });

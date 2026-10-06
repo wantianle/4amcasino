@@ -405,3 +405,44 @@ describe('banker approval refuses a deleting bot (regression)', () => {
     await supervisor.stopAll();
   });
 });
+
+/**
+ * Bounded wind-down: a runner whose `stop()` never settles must not park the
+ * DELETE in `202` forever. The supervisor's stop timeout finalizes regardless,
+ * so the persisted rows really go and the seat is freed.
+ */
+describe('DELETE hard-deletes the bot (supervised, wedged runner)', () => {
+  it('deletes the row within the supervisor stop timeout instead of staying 202', async () => {
+    const supervisor = new BotSupervisor(ctx.db, {
+      baseUrl: 'http://127.0.0.1:1',
+      stopTimeoutMs: 40,
+      runnerFactory: () => ({
+        start: async () => {},
+        stop: () => new Promise<void>(() => {}), // never settles
+        done: new Promise<void>(() => {}),
+      }),
+    });
+    ctx.botControl.hooks = supervisor;
+
+    const created = (await createBot({ seat: 4, initialBuyIn: 500 })).json();
+    const userId = created.bot.userId;
+    const botId = created.bot.id;
+
+    const start = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room}/bots/${botId}/start`,
+      headers: auth(hostToken),
+    });
+    expect(start.statusCode).toBe(200);
+    expect(supervisor.hasRunner(botId)).toBe(true);
+
+    const del = await removeBot(botId);
+    expect(del.statusCode).toBe(202);
+    expect(getBot(ctx.db, room, botId)!.delete_requested_at).not.toBeNull();
+
+    // The wedged runner must not hold the delete open: the row and seat go.
+    await waitFor(() => getBot(ctx.db, room, botId) === undefined);
+    expect(seatRow(userId)).toBeUndefined();
+    expect(agentGrantCount(botId)).toBe(0);
+  });
+});

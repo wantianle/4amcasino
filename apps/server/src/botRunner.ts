@@ -48,7 +48,9 @@ import {
  *    (`markBotError`) and stops this runner instead of wedging the table;
  *  - graceful stop folds on the bot's turn and waits for the current hand to
  *    end before sitting out and disconnecting - it never hard-drops the socket
- *    during the crypto phases.
+ *    during the crypto phases. That wait is bounded by `hardStopMs`: a wind-down
+ *    that cannot finish in time forces `finish()` rather than wedging `stop()`
+ *    forever (a pathological hand, or a policy await that never returns).
  */
 
 /**
@@ -104,6 +106,15 @@ export interface BotRunnerOptions {
    * server reports an active hand.
    */
   graceMs?: number;
+  /**
+   * Hard upper bound (ms) on a graceful stop. If the wind-down has not finished
+   * inside this window the runner forces `finish()`, which closes the socket even
+   * if that aborts an in-flight hand. It exists only for pathological wedges (a
+   * hand the engine never settles, or a policy await that never resolves) and
+   * MUST stay well above a normal hand: it is an escape hatch, not a game clock.
+   * Defaults to `FOURAM_BOT_HARD_STOP_MS` (`DEFAULT_BOT_HARD_STOP_MS` = 2 min).
+   */
+  hardStopMs?: number;
   /** Confirmation window (ms) for the "no active hand" case before disconnecting. */
   settleMs?: number;
   /** Decision-loop poll interval. */
@@ -212,6 +223,27 @@ function parseNonNegative(raw: string | undefined, fallback: number): number {
 }
 
 /**
+ * Hard upper bound on a graceful stop, in ms. Deliberately generous: it must sit
+ * well beyond a normal hand (a stallion can legitimately run a slow table for
+ * tens of seconds), so it only ever trips on a genuine wedge. Aborting a live
+ * hand is exactly what the graceful design tries to avoid (`player left during
+ * the deal`), and that is the price of a bounded stop - so the bound is long.
+ */
+export const DEFAULT_BOT_HARD_STOP_MS = 120_000;
+
+/**
+ * Resolve the hard-stop bound from the server env. `FOURAM_BOT_HARD_STOP_MS`
+ * must be a positive integer; anything else (unset, empty, `0`, negative, NaN)
+ * falls back to `DEFAULT_BOT_HARD_STOP_MS` - a zero/negative bound would turn
+ * every stop into an immediate hard abort. Explicit `opts.hardStopMs` (tests)
+ * still wins over this.
+ */
+export function botHardStopMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.FOURAM_BOT_HARD_STOP_MS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_BOT_HARD_STOP_MS;
+}
+
+/**
  * Read the think-delay configuration from env only.
  *
  * `BOT_THINK_ENABLED` wins when set (`0`/`false`/`off`/`no` disables). When it
@@ -290,6 +322,7 @@ export class BotRunner {
   private readonly client: HeadlessClient;
   private readonly policy: Policy;
   private readonly graceMs: number;
+  private readonly hardStopMs: number;
   private readonly settleMs: number;
   private readonly pollMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -368,6 +401,7 @@ export class BotRunner {
     }
     this.memoryEnabled = opts.memory !== false;
     this.graceMs = opts.graceMs ?? 60_000;
+    this.hardStopMs = opts.hardStopMs ?? botHardStopMsFromEnv();
     this.settleMs = opts.settleMs ?? 1_000;
     this.pollMs = opts.pollMs ?? 100;
     this.sleep = opts.sleep ?? defaultSleep;
@@ -797,6 +831,7 @@ export class BotRunner {
    */
   private async gracefulWindDown(): Promise<void> {
     const startedAt = Date.now();
+    const deadline = startedAt + this.hardStopMs;
     let sawHand = this.client.handLive();
     let warned = false;
     let noHandSince: number | null = null;
@@ -804,6 +839,22 @@ export class BotRunner {
       `graceful stop requested (localHand=${sawHand} serverHandActive=${this.serverHandActive()} handId=${this.client.handId} result=${!!this.client.result} abort=${!!this.client.abort})`,
     );
     while (true) {
+      // A forced `finish()` from `stop()`'s hard deadline (or any other exit)
+      // already owns the socket; never keep a second candidate alive.
+      if (this.closed) return;
+      // The loop's own hard deadline. `stop()` also bounds itself, because a
+      // wedged policy await never reaches this loop at all.
+      if (Date.now() >= deadline) {
+        this.log(
+          `graceful stop: hard stop deadline exceeded after ${this.hardStopMs}ms (serverHandActive=${this.serverHandActive()} localHand=${this.client.handLive()}); folding and disconnecting`,
+        );
+        // Same fail-open choice as `fail()`: a bot must not hold the table
+        // hostage. Both calls are best-effort synchronous frame sends - safe to
+        // issue even if a different IO await is in flight (they only enqueue).
+        if (!this.fatal) this.foldIfMyTurn();
+        this.sitOut();
+        return;
+      }
       if (!this.fatal && this.client.myTurn()) this.foldIfMyTurn();
       if (this.client.handLive()) sawHand = true;
       const serverActive = this.serverHandActive();
@@ -842,12 +893,16 @@ export class BotRunner {
       }
       await this.sleep(this.pollMs);
     }
-    if (this.started) {
-      try {
-        this.client.send({ t: 'sit_out', sittingOut: true });
-      } catch {
-        // already disconnected
-      }
+    this.sitOut();
+  }
+
+  /** Sit the bot out on the way down; best-effort and only once started. */
+  private sitOut(): void {
+    if (!this.started) return;
+    try {
+      this.client.send({ t: 'sit_out', sittingOut: true });
+    } catch {
+      // already disconnected
     }
   }
 
@@ -855,6 +910,12 @@ export class BotRunner {
    * Graceful shutdown. Sets cancellation and waits for the runner to fully
    * exit (`done`): during startup this waits for the in-flight await to observe
    * the flag, so `stop()` never returns while the socket is still connecting.
+   *
+   * Bounded by `hardStopMs`. The bound lives HERE, not only inside the wind-down
+   * loop, because a wedged `policy.decide` await can stall `loop()` before it
+   * ever reaches `gracefulWindDown()` - the runner would then await a `done` that
+   * never resolves. On expiry the single idempotent `finish()` is forced, which
+   * closes the socket and resolves `done`.
    */
   async stop(): Promise<void> {
     this.stopping = true;
@@ -862,6 +923,31 @@ export class BotRunner {
       this.finish();
       return;
     }
-    await this.done;
+    const settled = await this.settlesWithin(this.done, this.hardStopMs);
+    if (!settled) {
+      this.log(
+        `bot ${this.botId} hard stop deadline exceeded (${this.hardStopMs}ms), forcing finish`,
+      );
+      this.finish();
+    }
+  }
+
+  /**
+   * Await `p`, returning false if it has not settled within `ms`. A raw timer is
+   * used deliberately (not the injectable `sleep`): test/sandbox `sleep` stubs
+   * resolve immediately, which would make every stop look like a hard timeout.
+   */
+  private async settlesWithin(p: Promise<void>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        p.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), ms);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 }
