@@ -65,8 +65,12 @@ export const BOMB_POT_DURATION_SECONDS_MAX = 604800;
 export const MULTI_RUN_MAX_RUNS = 3;
 
 /** The default gameplay settings for a room: every new-gameplay feature is ON
- *  out of the box, and a host can switch any of them off. Kept in lock-step
- *  with the server's `ROOM_FEATURE_DEFAULTS` and the DB column defaults. */
+ *  out of the box, and a host can switch any of them off.
+ *
+ *  This is the single TypeScript source of truth: the server's
+ *  `ROOM_FEATURE_DEFAULTS` re-exports this exact object (no copy), and the DB
+ *  column defaults are a safety fallback that room creation never relies on.
+ *  The web UI also derives its fresh-form seed and field fallbacks from here. */
 export const DEFAULT_GAMEPLAY_SETTINGS: RoomGameplaySettings = {
   squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
   timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
