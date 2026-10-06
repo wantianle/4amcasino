@@ -7,9 +7,10 @@ import { openDb } from '../src/db.js';
 import { createUser } from '../src/auth.js';
 import { encryptBotSeed } from '../src/botIdentity.js';
 import { completeBotStop, type BotStatus } from '../src/botRoutes.js';
-import { BotRunner } from '../src/botRunner.js';
-import { BotSupervisor } from '../src/botSupervisor.js';
+import { BotRunner, botHardStopMsFromEnv } from '../src/botRunner.js';
+import { BotSupervisor, resolveStopTimeoutMs } from '../src/botSupervisor.js';
 import { archiveRoom, archiveRoomTx, roomEvents } from '../src/rooms.js';
+import { MAX_TIMER_MS } from '../src/tunables.js';
 import { FakeClient, sleep } from './helpers/fakeBotClient.js';
 
 /**
@@ -848,5 +849,66 @@ describe('BotSupervisor', () => {
     expect(statusOf(db, botId)).toBe('stopped');
     expect(activeGrants(db, botId)).toBe(0);
     expect(sup.hasRunner(botId)).toBe(false);
+  });
+
+  // The supervisor adds `STOP_TIMEOUT_MARGIN_MS` on top of the runner's hard
+  // stop, so a hard stop at the timer ceiling would make the final delay exceed
+  // what `setTimeout` can represent - Node then fires it at 1ms and emits a
+  // `TimeoutOverflowWarning`, finalizing immediately instead of waiting.
+  describe('stop timeout clamp (timer ceiling)', () => {
+    it('keeps the margin inside the ceiling for a huge env hard stop', () => {
+      // `FOURAM_BOT_HARD_STOP_MS` at its table max is legal on its own; the
+      // supervisor's +15s would overflow, so the resolved bound is clamped.
+      const runnerHardStop = botHardStopMsFromEnv({
+        FOURAM_BOT_HARD_STOP_MS: String(MAX_TIMER_MS),
+      });
+      expect(runnerHardStop).toBe(MAX_TIMER_MS);
+
+      const resolved = resolveStopTimeoutMs(undefined, runnerHardStop);
+      expect(resolved.requested).toBe(MAX_TIMER_MS + 15_000);
+      expect(resolved.ms).toBe(MAX_TIMER_MS);
+      expect(resolved.clamped).toBe(true);
+      // `setTimeout` only overflows strictly ABOVE the ceiling.
+      expect(resolved.ms).toBeLessThanOrEqual(MAX_TIMER_MS);
+    });
+
+    it('clamps an explicit oversized stopTimeoutMs too', () => {
+      const resolved = resolveStopTimeoutMs(MAX_TIMER_MS + 999_999, 120_000);
+      expect(resolved.requested).toBe(MAX_TIMER_MS + 999_999);
+      expect(resolved.ms).toBe(MAX_TIMER_MS);
+      expect(resolved.clamped).toBe(true);
+    });
+
+    it('leaves ordinary values untouched (margin is still added)', () => {
+      expect(resolveStopTimeoutMs(undefined, 120_000)).toEqual({
+        ms: 135_000,
+        requested: 135_000,
+        clamped: false,
+      });
+      // An explicit valid value wins over the runner-derived default.
+      expect(resolveStopTimeoutMs(500, 120_000)).toEqual({
+        ms: 500,
+        requested: 500,
+        clamped: false,
+      });
+    });
+
+    it('wires the clamp into the constructor and logs it once', () => {
+      const db = openDb(':memory:');
+      const lines: string[] = [];
+      const prev = process.env.FOURAM_BOT_HARD_STOP_MS;
+      process.env.FOURAM_BOT_HARD_STOP_MS = String(MAX_TIMER_MS);
+      try {
+        new BotSupervisor(db, {
+          baseUrl: 'http://127.0.0.1:1',
+          log: (line) => lines.push(line),
+        });
+      } finally {
+        if (prev === undefined) delete process.env.FOURAM_BOT_HARD_STOP_MS;
+        else process.env.FOURAM_BOT_HARD_STOP_MS = prev;
+      }
+      expect(lines.filter((l) => l.includes('clamped to')).length).toBe(1);
+      expect(lines.some((l) => l.includes(`clamped to ${MAX_TIMER_MS}ms`))).toBe(true);
+    });
   });
 });

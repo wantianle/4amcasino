@@ -12,6 +12,7 @@ import {
 } from './botRoutes.js';
 import { BotRunner, botHardStopMsFromEnv, type BotRunnerOptions } from './botRunner.js';
 import { roomEvents } from './rooms.js';
+import { MAX_TIMER_MS } from './tunables.js';
 
 /**
  * Phase 1b: the bot supervisor.
@@ -120,6 +121,31 @@ function positiveInt(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
+/**
+ * Resolve the supervisor's own stop bound from an explicit option (or the
+ * runner's hard stop + `STOP_TIMEOUT_MARGIN_MS`) and keep the result inside what
+ * a real `setTimeout` can represent.
+ *
+ * This is the ONLY place that knows the margin is added on top of the runner's
+ * hard stop, so it is the only place that can see the final delay may exceed the
+ * timer ceiling. Handing a larger delay to `setTimeout` makes Node fire it
+ * almost immediately (1ms) and emit `TimeoutOverflowWarning` - the exact
+ * opposite of "wait this long before finalizing". Clamping HERE (rather than
+ * lowering the table's max) keeps `tunables.ts`, which knows nothing about this
+ * consumer's margin, from silently coupling the operator-facing hard-stop limit
+ * to a supervisor implementation detail. The explicit `opts.stopTimeoutMs` path
+ * goes through the same function, so it is bounded too.
+ */
+export function resolveStopTimeoutMs(
+  explicit: number | undefined,
+  runnerHardStop: number,
+): { ms: number; requested: number; clamped: boolean } {
+  const requested = positiveInt(explicit, runnerHardStop + STOP_TIMEOUT_MARGIN_MS);
+  return requested > MAX_TIMER_MS
+    ? { ms: MAX_TIMER_MS, requested, clamped: true }
+    : { ms: requested, requested, clamped: false };
+}
+
 export class BotSupervisor implements BotSupervisorHooks {
   private readonly runners = new Map<string, RunnerHandle>();
   /** Live runner -> room, so per-room counts need no DB round-trip. */
@@ -144,11 +170,19 @@ export class BotSupervisor implements BotSupervisorHooks {
   ) {
     this.maxPerRoom = positiveInt(opts.maxPerRoom, DEFAULT_MAX_PER_ROOM);
     this.maxConcurrent = positiveInt(opts.maxConcurrent, DEFAULT_MAX_CONCURRENT);
+    this.log = opts.log ?? ((line) => console.log(`[bot-supervisor] ${line}`));
     // Keep the net just beyond the runner's own hard stop so the runner normally
     // finalizes itself and this only fires for a `stop()` that is itself wedged.
+    // The derived value is clamped to the timer ceiling because this layer is
+    // the one adding the margin (see `resolveStopTimeoutMs`).
     const runnerHardStop = opts.runner?.hardStopMs ?? botHardStopMsFromEnv();
-    this.stopTimeoutMs = positiveInt(opts.stopTimeoutMs, runnerHardStop + STOP_TIMEOUT_MARGIN_MS);
-    this.log = opts.log ?? ((line) => console.log(`[bot-supervisor] ${line}`));
+    const stopTimeout = resolveStopTimeoutMs(opts.stopTimeoutMs, runnerHardStop);
+    this.stopTimeoutMs = stopTimeout.ms;
+    if (stopTimeout.clamped) {
+      this.log(
+        `stopTimeoutMs ${stopTimeout.requested}ms exceeds the setTimeout ceiling; clamped to ${MAX_TIMER_MS}ms`,
+      );
+    }
   }
 
   /** Live runners, server-wide or scoped to one room. */

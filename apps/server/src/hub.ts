@@ -17,6 +17,14 @@ import { readTunable } from './tunables.js';
 // rebuild); they are declared - and parsed - only in `tunables.ts`
 // (`FOURAM_AUTO_DEAL_INTERVAL_MS` / `FOURAM_AUTO_DEAL_READY_CHECK_MS`), so the
 // `/api/config` table and the room's game options can never drift apart.
+//
+// Behavior change vs. the old hub-local parser (documented, tested in
+// `config.test.ts`): the table's `min: 1` and `max: MAX_TIMER_MS` now send two
+// cases to the declared default that the old `positiveInt` accepted -
+//   - `0 < n < 1`: `Math.floor` made it `0`, i.e. deal as fast as the event loop
+//     allows; it now falls back to the default cadence;
+//   - `n > MAX_TIMER_MS`: accepted before, but such a delay makes `setTimeout`
+//     fire at 1ms with a `TimeoutOverflowWarning`, so it now falls back too.
 export function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts {
   return {
     cryptoTimeoutMs: 10_000,

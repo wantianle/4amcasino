@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
 import { defaultGameOpts } from '../src/hub.js';
-import { publicTunables, readTunable, resolveTunables, tunablesRevision } from '../src/tunables.js';
+import {
+  MAX_TIMER_MS,
+  publicTunables,
+  readTunable,
+  resolveTunables,
+  tunablesRevision,
+} from '../src/tunables.js';
 
 // ---------------------------------------------------------------------------
 // `GET /api/config` wire contract.
@@ -192,6 +198,40 @@ describe('tunables parsing', () => {
           readTunable('autoDealReadyCheckMs', { FOURAM_AUTO_DEAL_READY_CHECK_MS: raw }),
         ).toBe(1_500);
       }
+    });
+
+    it('treats a positive sub-1 value as invalid (documented behavior change)', () => {
+      // Old hub `positiveInt`: `Number.isFinite && > 0` then `Math.floor`, so
+      // `0.5` became `0` - a cadence that deals as fast as the event loop allows.
+      // The table's `min: 1` sends it to the default instead. Deliberate; pinned.
+      expect(
+        readTunable('autoDealIntervalMs', { FOURAM_AUTO_DEAL_INTERVAL_MS: '0.5' }),
+      ).toBe(3_500);
+      expect(
+        readTunable('autoDealReadyCheckMs', { FOURAM_AUTO_DEAL_READY_CHECK_MS: '0.5' }),
+      ).toBe(1_500);
+    });
+
+    it('falls back past the setTimeout ceiling (documented behavior change)', () => {
+      // Old hub `positiveInt` accepted any finite positive number. The cadence is
+      // scheduled with `setTimeout`, so a delay above 2^31-1 fires at 1ms with a
+      // `TimeoutOverflowWarning`; the table's `max` rejects it. The ceiling value
+      // itself is still legal.
+      expect(
+        readTunable('autoDealIntervalMs', {
+          FOURAM_AUTO_DEAL_INTERVAL_MS: String(MAX_TIMER_MS + 1),
+        }),
+      ).toBe(3_500);
+      expect(
+        readTunable('autoDealReadyCheckMs', {
+          FOURAM_AUTO_DEAL_READY_CHECK_MS: String(MAX_TIMER_MS + 1),
+        }),
+      ).toBe(1_500);
+      expect(
+        readTunable('autoDealIntervalMs', {
+          FOURAM_AUTO_DEAL_INTERVAL_MS: String(MAX_TIMER_MS),
+        }),
+      ).toBe(MAX_TIMER_MS);
     });
 
     it('stays server-only (never published by /api/config)', () => {

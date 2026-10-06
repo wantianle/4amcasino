@@ -1,11 +1,14 @@
 /**
  * Shared domain types, tuning constants and expected-failure error classes for
  * the hand engine. Extracted mechanically from `game.ts` (P1-5) - no semantic
- * change. Depends only on the shared protocol/domain packages; it never depends
- * on `GameRoom` or `Hand`, so the dependency direction stays one-way.
+ * change. Depends on the shared protocol/domain packages plus the server's
+ * `tunables.ts` default table; it never depends on `GameRoom` or `Hand`, so the
+ * dependency direction stays one-way. `tunables.ts` imports only `node:crypto`
+ * (no server module), so this cannot form a cycle.
  */
 import type { Point } from '@4am/mental-poker';
 import type { RoomGameplaySettings, ServerMsg } from '@4am/shared';
+import { TUNABLE_DEFAULTS } from './tunables.js';
 
 /**
  * Durability boundaries of the settlement path, for test-only fault injection
@@ -158,8 +161,12 @@ export interface Chain {
  *  before `hand_end` and the next cadence begins, so the result-to-next-deal
  *  beat a player actually perceives is 1.5 + 3.5 = 5s (the product's ask; the
  *  old 1.5s here made a showdown feel like it dealt before the result was read).
- *  A fold-out carries no reveal hold and waits this cadence alone. */
-export const AUTO_DEAL_INTERVAL_MS = 3_500;
+ *  A fold-out carries no reveal hold and waits this cadence alone.
+ *
+ *  The value itself is sourced from `TUNABLE_DEFAULTS.autoDealIntervalMs` (the
+ *  one declared default an unset `FOURAM_AUTO_DEAL_INTERVAL_MS` resolves to), so
+ *  the engine fallback and the env table can never drift apart. */
+export const AUTO_DEAL_INTERVAL_MS = TUNABLE_DEFAULTS.autoDealIntervalMs;
 
 /**
  * How long the showdown reveal frame is held before `hand_end` is broadcast, so
@@ -295,8 +302,10 @@ export function isTransientTransferError(err: unknown): boolean {
 /** How long the ready check waits when auto-deal is on. The check resolves the
  *  instant every player is in, so this only bounds a straggler - it must not be
  *  the old 20s or auto-deal would feel manual. Overridable via
- *  `GameOpts.readyCheckMs`. Kept short (1.5s). */
-export const AUTO_DEAL_READY_CHECK_MS = 1_500;
+ *  `GameOpts.readyCheckMs`. Kept short (1.5s). Sourced from
+ *  `TUNABLE_DEFAULTS.autoDealReadyCheckMs` so the fallback and the env table
+ *  share one source of truth. */
+export const AUTO_DEAL_READY_CHECK_MS = TUNABLE_DEFAULTS.autoDealReadyCheckMs;
 /** Which feature trigger a hand claimed, and the settings/balances it must
  *  settle against. Snapshot at claim time so a mid-hand settings write (blocked
  *  anyway) or a later config change can never move the goalposts. */
