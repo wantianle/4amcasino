@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { genIdentity } from '@4am/mental-poker';
 import { isServerMsg, parseServerMsg, type ServerMsg } from '@4am/shared';
+import { WsTransport } from '../src/shared/wsTransport.ts';
 import { handStart, roomState } from './helpers/fixtures.ts';
 
 // ---- valid samples: one per ServerMsg variant ------------------------------
@@ -258,6 +259,190 @@ describe('parseServerMsg', () => {
   });
 });
 
+// ---- WsTransport lifecycle: close-once semantics ----------------------------
+
+/** Direct transport tests, without the session/store layer in the way. */
+function makeTransport() {
+  const onOpen = vi.fn();
+  const onFrame = vi.fn();
+  const onClose = vi.fn();
+  return { transport: new WsTransport({ onOpen, onFrame, onClose }), onOpen, onFrame, onClose };
+}
+
+describe('WsTransport close-once semantics', () => {
+  beforeEach(() => {
+    FakeSocket.instances.length = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('a socket closing on its own notifies onClose exactly once', () => {
+    const { transport, onClose } = makeTransport();
+    transport.open('t');
+    FakeSocket.instances.at(-1)!.serverOpen();
+
+    // Server drops the connection: the socket's own close event.
+    FakeSocket.instances.at(-1)!.close();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('an explicit close() notifies onClose exactly once', () => {
+    const { transport, onClose } = makeTransport();
+    transport.open('t');
+    FakeSocket.instances.at(-1)!.serverOpen();
+
+    transport.close();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a late close from a replaced socket does not notify onClose or clear the new socket', () => {
+    const { transport, onClose } = makeTransport();
+    transport.open('t1');
+    const oldSock = FakeSocket.instances.at(-1)!;
+    oldSock.serverOpen();
+
+    transport.close(); // detaches oldSock; reports onClose once
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    transport.open('t2'); // a replacement session
+    const newSock = FakeSocket.instances.at(-1)!;
+    newSock.serverOpen();
+
+    // The old socket's close event finally lands while `this.ws` points at
+    // `newSock`. The stale event must be ignored: no extra onClose, and the
+    // live socket reference survives.
+    oldSock.onclose?.();
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    transport.send('ping');
+    expect(newSock.sent).toEqual(['ping']);
+    expect(oldSock.sent).toEqual([]);
+  });
+
+  it('close() called twice still notifies onClose exactly once', () => {
+    const { transport, onClose } = makeTransport();
+    transport.open('t');
+    FakeSocket.instances.at(-1)!.serverOpen();
+
+    transport.close();
+    transport.close();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---- WsTransport bad-frame logging: fixed window, per-reason cap ------------
+
+describe('WsTransport bad-frame logging rate limit', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeSocket.instances.length = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /** First argument of every warn call, as a string. */
+  const warnText = (warn: { mock: { calls: unknown[][] } }): string[] =>
+    warn.mock.calls.map((c) => String(c[0]));
+
+  function openSock(transport: WsTransport): FakeSocket {
+    transport.open('t');
+    const sock = FakeSocket.instances.at(-1)!;
+    sock.serverOpen();
+    return sock;
+  }
+
+  it('logs the first 3 frames of a reason verbatim and summarizes the rest at window end', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { transport } = makeTransport();
+    const sock = openSock(transport);
+
+    for (let i = 0; i < 10; i++) sock.serverSendRaw('{not json');
+
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warnText(warn)).toEqual([
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: malformed JSON',
+    ]);
+
+    // Window closes: one summary carrying the 7 suppressed frames.
+    vi.advanceTimersByTime(10_000);
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warnText(warn)[3]).toBe('[ws] dropped 10 frames: malformed JSON (+7 more)');
+
+    transport.close();
+  });
+
+  it('gives each reason its own budget and still prints the first of every reason', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { transport } = makeTransport();
+    const sock = openSock(transport);
+
+    for (let i = 0; i < 5; i++) sock.serverSendRaw('{not json'); // 3 verbatim, 2 counted
+    sock.serverSendRaw('{"t":"x"}'); // unknown frame type "x"
+    sock.serverSendRaw('{"t":"x"}');
+    (sock.onmessage as unknown as (ev: { data: unknown }) => void)?.({ data: 42 }); // non-text
+
+    expect(warnText(warn)).toEqual([
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: unknown frame type "x"',
+      '[ws] dropped frame: unknown frame type "x"',
+      '[ws] dropped frame: non-text payload',
+    ]);
+
+    vi.advanceTimersByTime(10_000);
+    expect(warnText(warn).at(-1)).toBe('[ws] dropped 5 frames: malformed JSON (+2 more)');
+
+    transport.close();
+  });
+
+  it('prints the first frame of a reason again in the next window', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { transport } = makeTransport();
+    const sock = openSock(transport);
+
+    for (let i = 0; i < 10; i++) sock.serverSendRaw('{not json');
+    vi.advanceTimersByTime(10_000);
+
+    // New window: the first drop of the reason is verbatim again, so a failure
+    // that starts later is never lost behind the previous window's cap.
+    sock.serverSendRaw('{not json');
+    expect(warnText(warn).at(-1)).toBe('[ws] dropped frame: malformed JSON');
+
+    transport.close();
+  });
+
+  it('clears the window timer on close() and flushes what it owed', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { transport } = makeTransport();
+    const sock = openSock(transport);
+
+    for (let i = 0; i < 10; i++) sock.serverSendRaw('{not json');
+    expect(vi.getTimerCount()).toBe(1);
+
+    transport.close();
+
+    // Timer gone, and the suppressed frames were reported rather than dropped.
+    expect(vi.getTimerCount()).toBe(0);
+    expect(warnText(warn).at(-1)).toBe('[ws] dropped 10 frames: malformed JSON (+7 more)');
+
+    // Nothing can fire after the transport is gone.
+    const before = warn.mock.calls.length;
+    vi.advanceTimersByTime(60_000);
+    expect(warn.mock.calls.length).toBe(before);
+  });
+});
+
 // ---- boundary over the real wsClient ---------------------------------------
 
 /** Minimal WebSocket double: the real client drives it, the test pushes frames. */
@@ -349,13 +534,27 @@ describe('ws boundary (real wsClient + fake socket)', () => {
     sock.serverSendRaw('{"t":"auto_deal","inMs":"soon"}'); // wrong type
     sock.serverSendRaw('{"t":"hello"}'); // missing `serverPublicKey`
     sock.serverSendRaw('{"t":"chat","from":"a","userId":1,"text":"x","kind":"shout","ts":1}'); // bad enum
+    // ...then a burst of the same frame. The logger must cap that reason at
+    // three verbatim lines per window instead of echoing all five.
+    for (let i = 0; i < 4; i++) sock.serverSendRaw('{not json');
 
     // Nothing reached the listener, nothing threw, the socket is still live.
     expect(received).toHaveLength(0);
     expect(sock.readyState).toBe(FakeSocket.OPEN);
     expect(useStore.getState().wsConnected).toBe(true);
-    expect(warn).toHaveBeenCalledTimes(6);
-    expect(warn.mock.calls.every((c) => String(c[0]).includes('dropped frame'))).toBe(true);
+    // 3 verbatim for the repeated reason + 1 first-of-reason line for the other
+    // five distinct reasons: the cap does not hide a failure class.
+    expect(warn).toHaveBeenCalledTimes(8);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: unknown frame type "brand_new_frame"',
+      '[ws] dropped frame: frame "voice_state" failed validation',
+      '[ws] dropped frame: frame "auto_deal" failed validation',
+      '[ws] dropped frame: frame "hello" failed validation',
+      '[ws] dropped frame: frame "chat" failed validation',
+      '[ws] dropped frame: malformed JSON',
+      '[ws] dropped frame: malformed JSON',
+    ]);
 
     // ...and a valid frame still gets through.
     sock.serverSend({ t: 'ready_end' });
