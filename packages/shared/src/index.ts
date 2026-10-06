@@ -62,6 +62,8 @@ export {
   commissionRateLabel,
 } from './commission.js';
 export {
+  BOMB_POT_ANTE_BB_MAX,
+  BOMB_POT_ANTE_BB_MIN,
   BOMB_POT_ANTE_BB_VALUES,
   BOMB_POT_DURATION_SECONDS_MAX,
   BOMB_POT_DURATION_SECONDS_MIN,

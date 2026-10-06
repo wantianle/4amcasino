@@ -143,12 +143,19 @@ const isSquidNet = (v: unknown): boolean => isObj(v) && isNum(v.seat) && isNum(v
 const isSquidSettings = (v: unknown): boolean =>
   isObj(v) && isBool(v.enabled) && isNum(v.penaltyBb) && isNum(v.minPlayers);
 
+/**
+ * Ante in BBs is a plain number now (whole 1..BOMB_POT_ANTE_BB_MAX, enforced by
+ * the server when the setting is written; see roomRules.ts) - it used to be the
+ * literal enum 1/2/3, checked here with the multi-run `isRun`. Guards follow
+ * this file's structure-only rule: like `penaltyBb` next door, range is the
+ * server's word, and a stale enum here would silently drop legal frames.
+ */
 const isBombPotSettings = (v: unknown): boolean => {
   if (!isObj(v)) return false;
   const { schedule } = v;
   return (
     isBool(v.enabled) &&
-    isRun(v.anteBb) &&
+    isNum(v.anteBb) &&
     isObj(schedule) &&
     isScheduleMode(schedule.mode) &&
     isNum(schedule.value)

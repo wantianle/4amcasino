@@ -106,6 +106,42 @@ describe('room gameplay settings', () => {
     expect(state.features.bombPot.anteBb).toBe(2);
   });
 
+  // Bomb-pot ante: the old 1/2/3 enum is now a whole-BB range (shared
+  // BOMB_POT_ANTE_BB_MIN..MAX = 1..10). The DB column is an unconstrained
+  // INTEGER, so these zod bounds plus the readRoomFeatures clamp are the
+  // entire guard - they must cover both write paths (create and settings).
+  it('accepts any whole BB bomb-pot ante from 1 to 10 and rejects outside', async () => {
+    const host = await user('gs_ante');
+    const room = await makeRoom(host.token);
+    for (const anteBb of [1, 4, 5, 10]) {
+      const ok = await setFeatures(room.id, host.token, { bombPot: { enabled: true, anteBb } });
+      expect(ok.statusCode).toBe(200);
+      const state = (
+        await ctx.app.inject({ method: 'GET', url: `/api/rooms/${room.id}`, headers: auth(host.token) })
+      ).json();
+      expect(state.features.bombPot.anteBb).toBe(anteBb);
+    }
+    for (const anteBb of [0, 11, 2.5]) {
+      const bad = await setFeatures(room.id, host.token, { bombPot: { enabled: true, anteBb } });
+      expect(bad.statusCode).toBe(400);
+    }
+  });
+
+  it('accepts a free-range ante at room creation too', async () => {
+    const host = await user('gs_ante_create');
+    const room = await makeRoom(host.token, {
+      features: { bombPot: { enabled: true, anteBb: 7 } },
+    });
+    expect(room.features.bombPot.anteBb).toBe(7);
+    const tooBig = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: auth(host.token),
+      payload: { name: 'r2', sb: 1, bb: 2, features: { bombPot: { enabled: true, anteBb: 99 } } },
+    });
+    expect(tooBig.statusCode).toBe(400);
+  });
+
   it('rejects feature changes while a hand is in progress', async () => {
     const host = await user('gs_live');
     const room = await makeRoom(host.token);

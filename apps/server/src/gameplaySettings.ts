@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
-  BOMB_POT_ANTE_BB_VALUES,
+  BOMB_POT_ANTE_BB_MAX,
+  BOMB_POT_ANTE_BB_MIN,
   BOMB_POT_DURATION_SECONDS_MAX,
   BOMB_POT_DURATION_SECONDS_MIN,
   BOMB_POT_HANDS_MAX,
@@ -54,7 +55,12 @@ export interface RoomFeatureColumns {
  */
 export const ROOM_FEATURE_DEFAULTS: RoomGameplaySettings = DEFAULT_GAMEPLAY_SETTINGS;
 
-const bombAnteSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+/**
+ * The bomb-pot ante is any whole number of BBs within the shared bounds.
+ * `BOMB_POT_ANTE_BB_MIN..MAX` in roomRules.ts is the single source of truth,
+ * so the UI cannot offer a value the server rejects.
+ */
+const bombAnteSchema = z.number().int().min(BOMB_POT_ANTE_BB_MIN).max(BOMB_POT_ANTE_BB_MAX);
 
 /**
  * A deep-partial patch: a client may send just the one knob they changed
@@ -112,9 +118,13 @@ export type GameplayFeaturesPatch = z.infer<typeof gameplayFeaturesSchema>;
 
 /** Reads the stored settings out of a rooms row. */
 export function readRoomFeatures(row: RoomFeatureColumns): RoomGameplaySettings {
-  const ante = (BOMB_POT_ANTE_BB_VALUES as readonly number[]).includes(row.bomb_pot_ante_bb)
-    ? (row.bomb_pot_ante_bb as 1 | 2 | 3)
-    : 1;
+  // The DB column is a plain INTEGER with no CHECK, so a hand-edited or legacy
+  // row can hold anything; clamp it into the legal range instead of echoing an
+  // ante the validators would reject.
+  const rawAnte = Number.isFinite(row.bomb_pot_ante_bb)
+    ? Math.round(row.bomb_pot_ante_bb)
+    : BOMB_POT_ANTE_BB_MIN;
+  const ante = Math.min(BOMB_POT_ANTE_BB_MAX, Math.max(BOMB_POT_ANTE_BB_MIN, rawAnte));
   const mode = row.bomb_pot_schedule_mode === 'duration' ? 'duration' : 'hands';
   return {
     squid: {

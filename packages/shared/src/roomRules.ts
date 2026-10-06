@@ -30,8 +30,11 @@ export interface RoomGameplaySettings {
   /** Bomb pot: a preflop ante with no blinds, on a fixed schedule. */
   bombPot: {
     enabled: boolean;
-    /** Ante charged to each player, in big blinds. */
-    anteBb: 1 | 2 | 3;
+    /**
+     * Ante charged to each player, in big blinds. Any whole number of BBs
+     * within BOMB_POT_ANTE_BB_MIN..MAX; 1/2/3 remain the common presets.
+     */
+    anteBb: number;
     /** When the next bomb pot fires. */
     schedule: { mode: 'hands' | 'duration'; value: number };
   };
@@ -55,7 +58,19 @@ export const TIME_BANK_SECONDS_MAX = 600;
 export const TIME_BANK_REFILL_EVERY_HANDS_MIN = 1;
 export const TIME_BANK_REFILL_EVERY_HANDS_MAX = 1000;
 
-/** Ante options are an enum, not a range: 1, 2 or 3 big blinds. */
+/**
+ * Bomb-pot ante bounds, in big blinds. Any whole number of BBs from 1 to 10.
+ * The floor is 1 (an ante of 0 would just be a normal hand); the cap keeps the
+ * forced pot within roughly one buy-in even at a full 9/10-seat ring — at the
+ * extreme a 10 BB ante across 9 seats antes 90 BB, and anything larger would
+ * pre-commit full stacks before the flop, which defeats the "straight to the
+ * flop" playability the feature exists for. The old 1/2/3 enum lives on as
+ * {@link BOMB_POT_ANTE_BB_VALUES}: the UI shows them as quick presets above the
+ * free numeric input, but they are no longer the only legal values.
+ */
+export const BOMB_POT_ANTE_BB_MIN = 1;
+export const BOMB_POT_ANTE_BB_MAX = 10;
+/** Quick-pick ante presets offered by the settings UI (a subset of MIN..MAX). */
 export const BOMB_POT_ANTE_BB_VALUES = [1, 2, 3] as const;
 export const BOMB_POT_HANDS_MIN = 1;
 export const BOMB_POT_HANDS_MAX = 1000;

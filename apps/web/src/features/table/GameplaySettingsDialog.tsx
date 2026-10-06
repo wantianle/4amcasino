@@ -1,10 +1,16 @@
-// P2 Lane D — gameplay rules ("玩法规则") editor for squid / time bank / bomb pot /
-// multi-run, shared by the lobby create-room form and the table (later lane opens
+// P2 Lane D — gameplay rules ("玩法规则") editor for squid / bomb pot / multi-run,
+// shared by the lobby create-room form and the table (later lane opens
 // GameplaySettingsDialog from the table menu). Values and bounds come from
 // @4am/shared/roomRules.ts so client and server can never drift; the server keeps
-// the final word on validation (host-only, hand boundary only).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+// the final word on validation (host-only, and 409s while a hand is in play — the
+// dialog's save queue is what turns that hard boundary into an always-clickable
+// button). The time bank lives in the table's timer popover
+// (widgets/table/TableQuickControls.tsx), which reuses this file's Field / Switch
+// primitives and the useFeatureSaveQueue hook.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  BOMB_POT_ANTE_BB_MAX,
+  BOMB_POT_ANTE_BB_MIN,
   BOMB_POT_ANTE_BB_VALUES,
   BOMB_POT_DURATION_SECONDS_MAX,
   BOMB_POT_DURATION_SECONDS_MIN,
@@ -22,12 +28,12 @@ import {
   TIME_BANK_SECONDS_MIN,
   type RoomGameplaySettings,
 } from '@4am/shared';
-import { api } from '../../shared/api.ts';
+import { ApiError, api, type RoomFeaturesPatch } from '../../shared/api.ts';
 import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Dialog, Input } from '../../shared/ui/index.tsx';
 import { cn } from '../../shared/lib/cn.ts';
-import { Bomb, CaretDown, Cards, Skull, Timer } from '@phosphor-icons/react';
+import { Bomb, CaretDown, Cards, Skull } from '@phosphor-icons/react';
 
 /**
  * UI-only default used when a host flips the bomb-pot cadence from hands to
@@ -92,9 +98,14 @@ export function normalizeGameplaySettings(s: RoomGameplaySettings): RoomGameplay
     },
     bombPot: {
       enabled: !!s.bombPot?.enabled,
-      anteBb: (BOMB_POT_ANTE_BB_VALUES as readonly number[]).includes(s.bombPot?.anteBb)
-        ? (s.bombPot.anteBb as 1 | 2 | 3)
-        : DEFAULT_GAMEPLAY_SETTINGS.bombPot.anteBb,
+      // free numeric ante now: clamp whatever arrived (legacy 1/2/3 enums are
+      // inside this range anyway) instead of snapping anything off-preset back
+      // to the default.
+      anteBb: clampInt(
+        s.bombPot?.anteBb ?? DEFAULT_GAMEPLAY_SETTINGS.bombPot.anteBb,
+        BOMB_POT_ANTE_BB_MIN,
+        BOMB_POT_ANTE_BB_MAX,
+      ),
       schedule: {
         mode,
         value:
@@ -107,17 +118,19 @@ export function normalizeGameplaySettings(s: RoomGameplaySettings): RoomGameplay
   };
 }
 
+/**
+ * Features the dialog owns: the time bank lives in the table's timer popover
+ * now, so it is deliberately not counted or named here even though it stays
+ * part of the room's settings object.
+ */
 export function enabledFeatureCount(s: RoomGameplaySettings): number {
-  return [s.squid.enabled, s.timeBank.enabled, s.bombPot.enabled, s.multiRun.enabled].filter(
-    Boolean,
-  ).length;
+  return [s.squid.enabled, s.bombPot.enabled, s.multiRun.enabled].filter(Boolean).length;
 }
 
 /** Short names for the collapsed lobby header, e.g. 「鱿鱼游戏 · 炸弹池」. */
 export function enabledFeatureNames(s: RoomGameplaySettings): string[] {
   const names: string[] = [];
   if (s.squid.enabled) names.push(t('Squid Game'));
-  if (s.timeBank.enabled) names.push(t('Time bank'));
   if (s.bombPot.enabled) names.push(t('Bomb pot'));
   if (s.multiRun.enabled) names.push(t('Multi-run all-in'));
   return names;
@@ -125,7 +138,7 @@ export function enabledFeatureNames(s: RoomGameplaySettings): string[] {
 
 // ── small building blocks ────────────────────────────────────────────────────
 
-function Switch({
+export function Switch({
   checked,
   onChange,
   disabled,
@@ -159,7 +172,7 @@ function Switch({
   );
 }
 
-function Field({
+export function Field({
   label,
   min,
   max,
@@ -502,8 +515,6 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
 
   const setSquid = (p: Partial<RoomGameplaySettings['squid']>) =>
     onChange({ ...value, squid: { ...value.squid, ...p } });
-  const setTimeBank = (p: Partial<RoomGameplaySettings['timeBank']>) =>
-    onChange({ ...value, timeBank: { ...value.timeBank, ...p } });
   const setBomb = (
     p: Partial<Omit<RoomGameplaySettings['bombPot'], 'schedule'>>,
     schedule?: Partial<RoomGameplaySettings['bombPot']['schedule']>,
@@ -579,60 +590,7 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
         />
       </FeatureCard>
 
-      {/* B2 — Time bank ------------------------------------------------------ */}
-      <FeatureCard
-        icon={<Timer size={18} weight="bold" className="text-amber-600 dark:text-amber-400" />}
-        iconClass="bg-amber-50 dark:bg-amber-950/50"
-        title={t('Time bank')}
-        pitch={t('Banked thinking time')}
-        enabled={value.timeBank.enabled}
-        disabled={disabled}
-        onToggle={(v) => setTimeBank({ enabled: v })}
-        toggleLabel={t('Enable time bank')}
-        previews={
-          <>
-            <Preview>
-              {t('Everyone starts with {initial} seconds, then gets {refill} seconds every {hands} hands', {
-                initial: value.timeBank.initialSeconds,
-                refill: value.timeBank.refillSeconds,
-                hands: value.timeBank.refillEveryHands,
-              })}
-            </Preview>
-            <Preview>
-              {t('The regular timer runs down first; an empty bank folds for you.')}
-            </Preview>
-            <Preview>{t('Change these numbers and every bank resets to the new start.')}</Preview>
-          </>
-        }
-      >
-        <Field
-          label={t('Starting bank')}
-          unit={t('seconds')}
-          min={TIME_BANK_SECONDS_MIN}
-          max={TIME_BANK_SECONDS_MAX}
-          value={value.timeBank.initialSeconds}
-          disabled={disabled}
-          onChange={(n) => setTimeBank({ initialSeconds: n })}
-        />
-        <Field
-          label={t('Refill every')}
-          unit={t('hands')}
-          min={TIME_BANK_REFILL_EVERY_HANDS_MIN}
-          max={TIME_BANK_REFILL_EVERY_HANDS_MAX}
-          value={value.timeBank.refillEveryHands}
-          disabled={disabled}
-          onChange={(n) => setTimeBank({ refillEveryHands: n })}
-        />
-        <Field
-          label={t('Refill amount')}
-          unit={t('seconds')}
-          min={TIME_BANK_SECONDS_MIN}
-          max={TIME_BANK_SECONDS_MAX}
-          value={value.timeBank.refillSeconds}
-          disabled={disabled}
-          onChange={(n) => setTimeBank({ refillSeconds: n })}
-        />
-      </FeatureCard>
+      {/* B2 — Time bank moved to the table timer popover (TableQuickControls) */}
 
       {/* B3 — Bomb pot -------------------------------------------------------- */}
       <FeatureCard
@@ -659,21 +617,38 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
           </>
         }
       >
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-            {t('Ante per player')}
-          </span>
-          <Segmented
-            ariaLabel={t('Ante per player')}
-            disabled={disabled}
+        {/* Free numeric ante (whole BBs, BOMB_POT_ANTE_BB_MIN..MAX) with the
+            old 1/2/3 enum demoted to quick presets under the field. */}
+        <div>
+          <Field
+            label={t('Ante per player')}
+            unit={t('× BB')}
+            min={BOMB_POT_ANTE_BB_MIN}
+            max={BOMB_POT_ANTE_BB_MAX}
             value={value.bombPot.anteBb}
-            onChange={(v) => setBomb({ anteBb: v })}
-            options={BOMB_POT_ANTE_BB_VALUES.map((n) => ({
-              value: n,
-              label: t('{n}× BB', { n }),
-            }))}
+            disabled={disabled}
+            onChange={(n) => setBomb({ anteBb: n })}
           />
-        </label>
+          <div role="group" aria-label={t('Ante presets')} className="mt-1.5 flex gap-1">
+            {BOMB_POT_ANTE_BB_VALUES.map((n) => (
+              <button
+                key={n}
+                type="button"
+                disabled={disabled}
+                aria-pressed={value.bombPot.anteBb === n}
+                onClick={() => setBomb({ anteBb: n })}
+                className={cn(
+                  'min-h-7 rounded-md px-2 text-xs font-semibold ring-1 transition-colors disabled:cursor-not-allowed',
+                  value.bombPot.anteBb === n
+                    ? 'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:ring-indigo-800'
+                    : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700 dark:hover:text-slate-200',
+                )}
+              >
+                {t('{n}× BB', { n })}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
             {t('Fire every')}
@@ -768,6 +743,174 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
   );
 }
 
+// ── save queue ───────────────────────────────────────────────────────────────
+//
+// Server semantics (verified against rooms.ts): a `features` write through
+// PUT /api/rooms/:id/settings is rejected with **409 for the whole duration of
+// a hand** (`if (activeHands.has(id)) → 409 'Gameplay settings apply between
+// hands.'`), and the server never queues the change itself. The old UI reacted
+// by greying the Save button while `handActive` — on a table that auto-deals
+// nonstop that button was permanently dead and the host had no way to express
+// intent. The queue lives client-side instead, next to the only party that can
+// see the hand boundary from here: a submit writes immediately between hands,
+// and while a hand is in play (or when a hand start beats the PUT to the
+// server) the write stays pending and flushes itself at the next boundary,
+// retried on 409. The "applies between hands" rule stays enforced exactly
+// where the server enforces it; the button never lies about being unusable.
+
+/** How often a queued write re-checks the boundary while the table keeps
+ *  dealing. Only active while the dialog/popover holds an unflushed submit. */
+const QUEUE_POLL_MS = 2000;
+/** How long the 「Saved.」 flash stays up after a write lands. */
+const SAVED_FLASH_MS = 2600;
+
+export interface FeatureSaveQueue {
+  /** a PUT is in flight right now */
+  saving: boolean;
+  /** the submit is waiting for a hand boundary (fresh queue or 409 retry) */
+  queued: boolean;
+  /** the last submit landed; flashes for a moment */
+  saved: boolean;
+  /** a real rejection (400/403/500…): the queue gave up, the draft stays */
+  error: string | null;
+  /** write now if between hands, otherwise hold it for the next boundary */
+  submit: (patch: RoomFeaturesPatch) => void;
+  /** drop a queued (not yet landed) write */
+  cancel: () => void;
+  /** cancel + clear error/flash, e.g. when a form re-seeds */
+  reset: () => void;
+}
+
+/**
+ * One save queue per form surface. Dialog and timer popover use the same hook
+ * so both honour the same server rule with the same words. `onSaved` is read
+ * through a ref, so callers can pass a closure over fresh state without
+ * re-arming the queue on every render.
+ */
+export function useFeatureSaveQueue(opts: {
+  roomId: string;
+  /** true while this client sees a hand in play at the table */
+  handActive: boolean;
+  /** receives the server's canonical full settings after a successful write */
+  onSaved: (features: RoomGameplaySettings) => void;
+}): FeatureSaveQueue {
+  const { roomId } = opts;
+  const [saving, setSaving] = useState(false);
+  const [queued, setQueued] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pendingRef = useRef<RoomFeaturesPatch | null>(null);
+  const pollRef = useRef<number | null>(null);
+  const flashRef = useRef<number | null>(null);
+  const handActiveRef = useRef(opts.handActive);
+  const onSavedRef = useRef(opts.onSaved);
+  const commitRef = useRef<() => void>(() => {});
+
+  const clearPoll = () => {
+    if (pollRef.current !== null) {
+      window.clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const commit = useCallback(() => {
+    const patch = pendingRef.current;
+    if (!patch) return;
+    if (handActiveRef.current) {
+      // hand in play: the server would 409, so wait for the boundary
+      clearPoll();
+      pollRef.current = window.setTimeout(() => {
+        pollRef.current = null;
+        commitRef.current();
+      }, QUEUE_POLL_MS);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    void (api.setRoomFeatures(roomId, patch) as Promise<{ features?: RoomGameplaySettings }>)
+      .then((res) => {
+        if (pendingRef.current === patch) {
+          pendingRef.current = null;
+          setQueued(false);
+        }
+        if (res.features) onSavedRef.current(res.features);
+        setSaved(true);
+        if (flashRef.current !== null) window.clearTimeout(flashRef.current);
+        flashRef.current = window.setTimeout(() => setSaved(false), SAVED_FLASH_MS);
+      })
+      .catch((err: unknown) => {
+        // a hand started between our snapshot and the server: stay queued and
+        // retry at the next boundary instead of failing the host's intent
+        if (err instanceof ApiError && err.status === 409) {
+          clearPoll();
+          pollRef.current = window.setTimeout(() => {
+            pollRef.current = null;
+            commitRef.current();
+          }, QUEUE_POLL_MS);
+          return;
+        }
+        if (pendingRef.current === patch) {
+          pendingRef.current = null;
+          setQueued(false);
+        }
+        setError(err instanceof Error ? err.message : t('could not save gameplay settings'));
+      })
+      .finally(() => setSaving(false));
+  }, [roomId]);
+  commitRef.current = commit;
+
+  // flush a queued write the moment the table shows the hand is over
+  useEffect(() => {
+    const wasActive = handActiveRef.current;
+    handActiveRef.current = opts.handActive;
+    if (wasActive && !opts.handActive && pendingRef.current) {
+      clearPoll();
+      commitRef.current();
+    }
+  }, [opts.handActive]);
+
+  useEffect(
+    () => () => {
+      if (pollRef.current !== null) window.clearTimeout(pollRef.current);
+      if (flashRef.current !== null) window.clearTimeout(flashRef.current);
+    },
+    [],
+  );
+
+  const submit = useCallback((patch: RoomFeaturesPatch) => {
+    setError(null);
+    setSaved(false);
+    pendingRef.current = patch;
+    setQueued(true);
+    commitRef.current();
+  }, []);
+
+  const cancel = useCallback(() => {
+    pendingRef.current = null;
+    setQueued(false);
+    clearPoll();
+  }, []);
+
+  const reset = useCallback(() => {
+    cancel();
+    setError(null);
+    setSaved(false);
+  }, [cancel]);
+
+  return { saving, queued, saved, error, submit, cancel, reset };
+}
+
+/**
+ * The dialog owns squid / bomb pot / multi-run. The time bank lives in the
+ * timer popover, so it is deliberately NOT in this patch: the server deep-
+ * merges what is absent, which keeps a bank change made after this dialog was
+ * seeded from being silently overwritten by a stale copy.
+ */
+export function ownedFeaturePatch(s: RoomGameplaySettings): RoomFeaturesPatch {
+  return { squid: s.squid, bombPot: s.bombPot, multiRun: s.multiRun };
+}
+
 // ── the dialog ───────────────────────────────────────────────────────────────
 
 export interface GameplaySettingsDialogProps {
@@ -783,8 +926,10 @@ export interface GameplaySettingsDialogProps {
 /**
  * Edit one room's gameplay rules in place. The same editor the lobby uses at
  * create time, wired to `api.setRoomFeatures`. Host-only (the server enforces
- * it; the dialog also locks up when it can see a non-host at the table), and
- * saving waits for a hand boundary because rules only make sense between hands.
+ * it; the dialog also locks up when it can see a non-host at the table). The
+ * Save button is always live: the server only accepts feature writes between
+ * hands (409 during one), so a mid-hand click queues the change and the queue
+ * flushes it at the next boundary.
  */
 export function GameplaySettingsDialog({
   roomId,
@@ -805,28 +950,32 @@ export function GameplaySettingsDialog({
   const [baseline, setBaseline] = useState<RoomGameplaySettings>(() =>
     cloneGameplaySettings(features),
   );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const savedTimer = useRef<number | null>(null);
+
+  const queue = useFeatureSaveQueue({
+    roomId,
+    handActive,
+    onSaved: (serverFeatures) => {
+      const canonical = normalizeGameplaySettings(serverFeatures);
+      setDraft(canonical);
+      setBaseline(canonical);
+      onSaved?.(canonical);
+    },
+  });
 
   // Re-seed the draft whenever the dialog opens. Deliberately not keyed on
   // `features`: a parent re-render must not wipe what the host is typing.
+  // Closing drops an un-flushed queue: a "queued" save only holds while the
+  // host is actually looking at the form - nothing writes behind their back.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      queue.cancel();
+      return;
+    }
     setDraft(cloneGameplaySettings(features));
     setBaseline(cloneGameplaySettings(features));
-    setError(null);
-    setSaved(false);
+    queue.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  useEffect(
-    () => () => {
-      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
-    },
-    [],
-  );
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(baseline),
@@ -835,32 +984,13 @@ export function GameplaySettingsDialog({
 
   function discard() {
     setDraft(cloneGameplaySettings(baseline));
-    setError(null);
-    setSaved(false);
+    queue.cancel();
   }
 
-  async function save() {
-    if (saving || !dirty || !isHost || handActive) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const res = (await api.setRoomFeatures(roomId, draft)) as {
-        ok: boolean;
-        features?: RoomGameplaySettings;
-      };
-      const canonical = normalizeGameplaySettings(res.features ?? draft);
-      setDraft(canonical);
-      setBaseline(canonical);
-      onSaved?.(canonical);
-      setSaved(true);
-      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
-      savedTimer.current = window.setTimeout(() => setSaved(false), 2600);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('could not save gameplay settings'));
-    } finally {
-      setSaving(false);
-    }
+  function save() {
+    // `handActive` is deliberately NOT a gate: a click during a hand queues.
+    if (queue.saving || !dirty || !isHost) return;
+    queue.submit(ownedFeaturePatch(draft));
   }
 
   return (
@@ -874,7 +1004,7 @@ export function GameplaySettingsDialog({
         {t('Optional twists on top of regular poker. The host can change them between hands.')}
       </p>
 
-      {dirty && !handActive && isHost && (
+      {dirty && !queue.queued && !queue.saved && isHost && (
         <p className="mb-3 text-xs font-medium text-indigo-600 dark:text-indigo-400">
           {t('Unsaved changes')}
         </p>
@@ -883,22 +1013,26 @@ export function GameplaySettingsDialog({
       <GameplaySettingsEditor
         value={draft}
         onChange={setDraft}
-        disabled={!isHost || saving}
+        disabled={!isHost || queue.saving}
       />
 
       <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
         <div aria-live="polite" className="min-h-5 text-sm">
-          {error ? (
+          {queue.error ? (
             <p role="alert" className="text-rose-600 dark:text-rose-400">
-              {error}
+              {queue.error}
             </p>
-          ) : saved ? (
+          ) : queue.saved ? (
             <p className="text-emerald-600 dark:text-emerald-400">{t('Saved.')}</p>
           ) : !isHost ? (
             <p className="text-slate-500 dark:text-slate-400">
               {t('Only the host can change gameplay settings.')}
             </p>
-          ) : handActive ? (
+          ) : queue.queued ? (
+            <p className="text-amber-600 dark:text-amber-400">
+              {t('Queued — saves as soon as this hand ends.')}
+            </p>
+          ) : handActive && dirty ? (
             <p className="text-slate-500 dark:text-slate-400">
               {t('These settings apply between hands. The hand in play keeps its own rules.')}
             </p>
@@ -906,15 +1040,24 @@ export function GameplaySettingsDialog({
         </div>
         {isHost && (
           <div className="flex items-center justify-end gap-2">
-            <Button variant="ghost" type="button" disabled={!dirty || saving} onClick={discard}>
+            {queue.queued && (
+              <Button variant="ghost" type="button" onClick={queue.cancel}>
+                {t('Cancel queue')}
+              </Button>
+            )}
+            <Button variant="ghost" type="button" disabled={!dirty || queue.saving} onClick={discard}>
               {t('Discard')}
             </Button>
             <Button
               type="button"
-              disabled={!dirty || saving || handActive}
-              onClick={() => void save()}
+              disabled={!dirty || queue.saving}
+              onClick={save}
             >
-              {saving ? t('Saving…') : t('Save changes')}
+              {queue.saving
+                ? t('Saving…')
+                : queue.queued
+                  ? t('Re-queue changes')
+                  : t('Save changes')}
             </Button>
           </div>
         )}

@@ -15,7 +15,7 @@ const gameplay: Record<string, string> = {
   'Gameplay settings': '玩法规则',
   'Optional twists on top of regular poker.': '在常规德扑之上，再叠几条可选玩法。',
   'Optional twists on top of regular poker. The host can change them between hands.':
-    '在常规德扑之上，再叠几条可选玩法。房主在两手牌之间随时能调。',
+    '在常规德扑之上，再叠几条可选玩法。房主随时能改，改动在本手结束后生效。',
   'None enabled': '都没开',
   '{n} on': '已开 {n} 项',
   'You can change these between hands from the table menu.':
@@ -46,7 +46,9 @@ const gameplay: Record<string, string> = {
   'The host triggers it by hand. Penalties come off table stakes; short stacks pay only what they have.':
     '由房主手动触发，罚金从桌面筹码里扣；筹码不够的只付得出多少赔多少。',
 
-  // ── B2 Time bank ─────────────────────────────────────────────────────────
+  // ── Time bank (timer popover, TableQuickControls) ────────────────────────
+  // Moved out of the gameplay dialog: the bank is a between-hands knob, so it
+  // lives in the table's 计时 chip popover now. Keys shared with the popover:
   'Time bank': '计时银行',
   'Banked thinking time': '存起来的思考时间',
   'Enable time bank': '开启计时银行',
@@ -65,6 +67,7 @@ const gameplay: Record<string, string> = {
   'Ante up, straight to the flop': '每人交前注，直接开翻牌',
   'Enable bomb pot': '开启炸弹池',
   'Ante per player': '每人前注',
+  'Ante presets': '前注快捷预设',
   'Fire every': '触发节奏',
   'By hands': '按手数',
   'By time': '按时长',
@@ -92,6 +95,18 @@ const gameplay: Record<string, string> = {
   'These settings apply between hands. The hand in play keeps its own rules.':
     '规则在两手牌之间生效。正在打的这一手照原来的规矩走完。',
   'could not save gameplay settings': '玩法规则没保存成功，再试一次。',
+
+  // ── Hand-boundary save queue (dialog + timer popover) ────────────────────
+  // The server 409s feature writes while a hand runs and does not queue them
+  // itself, so a mid-hand click is held client-side until the next boundary.
+  'Queued — saves as soon as this hand ends.': '已排队：这一手一结束就自动保存。',
+  'Cancel queue': '取消排队',
+  'Re-queue changes': '重新排队保存',
+  'Only the host can change the timer settings.': '只有房主能改计时设置。',
+  'could not load room settings': '没读到房间设置，再开一次试试。',
+
+  // ── Timer chip popover (TableQuickControls) ──────────────────────────────
+  'Turn timer & time bank': '计时与时间银行',
 };
 
 export default gameplay;
