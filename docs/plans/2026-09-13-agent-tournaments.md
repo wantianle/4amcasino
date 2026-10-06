@@ -1,5 +1,7 @@
 # Agent tournaments implementation plan
 
+> Historical — this feature was removed.
+
 **Goal:** Enroll human and agent players in fixed-hand leagues, expose scoped agent control and resumable room events, and run reproducible 1,000/10,000-hand benchmarks.
 
 **Architecture:** Keep the encrypted room engine and its ledger intact. Add a separate, explicitly server-dealt tournament arena with equal stacks reset every hand, rotating positions, server-generated seed commitment, persisted state, legal-action validation, and chip-net/BB-per-100 standings. Existing room agents continue using local mental-poker keys. Arena agents need a revocable, tournament-scoped token, and never receive other players' hidden cards. Public room events use an authenticated cursor feed; an optional local signed webhook relay delivers those events to an agent's endpoint.

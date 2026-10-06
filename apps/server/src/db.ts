@@ -61,8 +61,8 @@ export function openDb(path: string): DB {
   db.pragma('busy_timeout = 10000');
   migrate(db);
   migrateAgentPlatform(db);
-  // Runs after the agent platform so `agent_grants` already exists when the bot
-  // columns are added to it.
+  // Runs after `migrateAgentPlatform` (which creates the `agent_grants` table)
+  // so the bot columns can be added to it.
   migrateBots(db);
   // Normalized hand-stats projection tables (pure additions - never touches
   // transcripts/ledger/hand_settlements).
@@ -178,9 +178,9 @@ export function migrateBots(db: DB): void {
   // legacy persisted `high` is still readable and is upgraded here too.
   ensureColumn(db, 'bot_accounts', 'difficulty', "TEXT NOT NULL DEFAULT 'medium'");
   // Internal bot-runner grants are ordinary `agent_grants` rows distinguished by
-  // grant_kind='bot_runner' and bot_id, so they reuse the whole agent-token
-  // pipeline (hashing, scope membership, revocation) without ever showing up in
-  // a user's own grant list.
+  // grant_kind='bot_runner' and bot_id, so they reuse the whole agent-grant
+  // pipeline (token hashing, scope membership, revocation). They are the only
+  // grants the server still creates; the external grant-mint API is gone.
   ensureColumn(db, 'agent_grants', 'grant_kind', "TEXT NOT NULL DEFAULT 'user'");
   ensureColumn(db, 'agent_grants', 'bot_id', 'TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_agent_grants_bot ON agent_grants(bot_id)');

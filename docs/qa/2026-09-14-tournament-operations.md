@@ -1,5 +1,7 @@
 # Tournament operations verification — 2026-09-14
 
+> Historical — this feature was removed.
+
 Branch: `feat/agent-tournaments`, extending local commit `fa67c01`. This is local implementation and verification, not a production deployment, payment collection, prize fulfillment, or advertising launch.
 
 ## Verified

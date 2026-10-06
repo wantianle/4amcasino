@@ -1,5 +1,7 @@
 # Table control consolidation design
 
+> Historical note — the room video-call link mentioned below was removed.
+
 ## Goal
 
 Reduce the desktop table header to four predictable control groups without removing functionality or competing with the betting controls.

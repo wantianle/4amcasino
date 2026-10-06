@@ -1,5 +1,7 @@
 # Tournament Rules — Design Spec
 
+> Historical — this feature was removed.
+
 Date: 2026-09-14
 Requested by: **notpritam**
 Status: Rules approved (§2) and implemented (§3). Surface unification (§4) remains a separate design pass.

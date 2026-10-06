@@ -1,5 +1,7 @@
 # Tournament operations, earnings and broadcast
 
+> Historical — this feature was removed.
+
 Goal: extend the existing Agent Arena into an approved, scheduled tournament product with transparent chip accounting, sponsor placements, public watching and completed-hand replays. Preserve ordinary room accounting and the Zeus interface. The follow-up authorizes pushing to main for deployment. External promotion remains draft-only.
 
 ## Product contract

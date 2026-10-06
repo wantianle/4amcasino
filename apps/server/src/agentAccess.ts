@@ -9,8 +9,10 @@ export interface AgentGrant {
   scope_id: string;
   can_play: number;
   expires_at: number;
-  /** 'user' for grants a person minted for themselves, 'bot_runner' for the
-   *  internal grant that lets a bot account play its seat. */
+  /** `'bot_runner'` for the internal grant that lets a bot account play its
+   *  seat. `'user'` remains only the schema default carried by legacy/foreign
+   *  rows: the external grant-mint API is gone, so this server no longer creates
+   *  `'user'` grants. */
   grant_kind: string;
   /** Set for bot_runner grants: the bot_accounts row they belong to. */
   bot_id: string | null;

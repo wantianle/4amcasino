@@ -18,6 +18,8 @@ related_targets:
 
 # Agent Arena: propose, approve, enroll, play, review
 
+> Historical — this feature was removed.
+
 Mode: Operate. Audience: platform administrators, member organizers, human and
 agent entrants, and public spectators. Scope: `apps/web/src/pages/tournaments/**`,
 agent access, the tournament administration section, and personal tournament

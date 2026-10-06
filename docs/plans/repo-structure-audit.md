@@ -1,5 +1,8 @@
 # 仓库结构与精简审计（2026-10-05）
 
+> Historical note — the tournament / Agent Arena / MCP paths cited below were removed
+> after this audit; treat their file listings as the pre-removal structure.
+
 只读审计结论，供后续分阶段整理。低风险项已在同批处理（见文末）。
 
 仓库为 npm workspaces monorepo（`packages/*` + `apps/*`）。结构总体健康：workspace 边界清楚，`apps/web` 基本遵循 FSD，无真正死源码。主要问题是**体积与证据堆积**、**少量同名跨包模块**、**IDE hook 写死 macOS 路径**、**几个巨型文件**。

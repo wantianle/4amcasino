@@ -1,5 +1,7 @@
 # Agent Arena verification — 2026-09-13
 
+> Historical — this feature was removed.
+
 Branch: `feat/agent-tournaments`, based on `c8ea5d7`. Local development only; no deployment, Twitter posting, paid model run, entry collection or payout performed.
 
 ## Verified

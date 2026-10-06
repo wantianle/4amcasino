@@ -1,5 +1,8 @@
 # 4amcasino 精简重构方案
 
+> Historical note — the tournament / Agent Arena / MCP paths cited below (`apps/mcp`,
+> `tournaments.ts`, the tournaments pages) have since been removed.
+
 > 基线：`f4a5904`
 > 来源：oracle 设计审查（只读设计，未改代码）
 > 范围：目录层级调整、模块重组、重复命名消歧、依赖方向改善。

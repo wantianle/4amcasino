@@ -176,7 +176,10 @@ export class HeadlessClient {
     private password: string,
   ) {}
 
-  /** Load a room-scoped credential without sharing the account password. */
+  /** Bot-runner login: exchange a one-time `agent_grants` runner grant (minted
+   *  by `claimStartingBot`) for the account's public identity, then connect to
+   *  its room. This is the internal handshake the bot runner uses; there is no
+   *  external agent-minted grant any more. */
   async loginWithGrant(token: string, signingSeed?: string): Promise<void> {
     this.token = token;
     const info = (await this.api('/api/agent/identity')) as {

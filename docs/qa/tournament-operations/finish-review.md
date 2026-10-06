@@ -1,3 +1,5 @@
+> Historical — this feature was removed.
+
 disposition: ship
 
 Review substitution: a general subagent performed the unavailable Impeccable finish-reviewer role. No separate creative contract, concept seed, quality-bar card, or approved comp was supplied; the parent confirmed an incumbent Zeus extension governed by DESIGN.md and docs/plans/2026-09-14-tournament-economy.md. Source was sampled; server behavior and unpictured interaction states were not independently executed.

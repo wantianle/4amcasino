@@ -276,11 +276,17 @@ The ordering contract is **durable write → reveal → hold → `hand_end`**:
    transaction; the writer only records the bounty's `seven-deuce` ledger legs
    (its stack movement already rode `stackDeltas`). A crash can never commit a
    settled hand without paying it. A `duplicate` marker means the chips already
-   moved and nothing is replayed.
-3. **Single source of truth for final stacks.** Inside the same transaction the
-   writer re-reads `room_players.stack` after every money move (pot, rake,
-   squid, bounty) and returns it as `finalStacks`. `persistSettlement()` adopts
-   that read as `Hand.settlement.stacks`, so
+   moved; the writer does **not** replay them, but it no longer returns an empty
+   result either - it rebuilds the committed hand's full historical receipt from
+   durable state (see "P0-1: the durable duplicate receipt" below), or throws on
+   any identity conflict.
+3. **Single source of truth for final stacks.** For a first-time write, inside
+   the same transaction the writer re-reads `room_players.stack` after every
+   money move (pot, rake, squid, bounty) and returns it as `finalStacks`. On a
+   `duplicate` the writer instead returns the `hand_settlements.final_stacks`
+   recorded by the original commit (never a fresh `room_players` read, which may
+   have moved on through a mid-hand buy, a peek or the next hand).
+   `persistSettlement()` adopts that receipt as `Hand.settlement.stacks`, so
    `room_players.stack === hand_settlements.final_stacks === hand_players.ending_stack === Hand.settlement.stacks === hand_end.stacks`,
    and `hand_end.deltas` are the exact poker+squid+bounty nets
    (`sum(deltas) === -rake`, i.e. 0 with no rake). The projection's `net_delta`
@@ -319,6 +325,50 @@ The ordering contract is **durable write → reveal → hold → `hand_end`**:
    is discarded, see below) or by a voluntary show during the hold (a
    live-only frame).
 
+### P0-1: the durable duplicate receipt
+
+A `duplicate` marker is not "return empty and move on". `applyHandSettlement()`
+first claims the marker with `INSERT ... ON CONFLICT(hand_id) DO NOTHING`; when
+the insert affects no row it calls `loadSettledReceipt()`, which rebuilds the
+committed hand's **full receipt** from durable state and returns
+`status: 'duplicate'`:
+
+- `hand_settlements` is the identity source: `room_id`, `head`, `rake` and the
+  strictly parsed `final_stacks`. Parsing rejects any malformed entry, duplicate
+  user, or non-integer / negative stack; a missing participant is an error, and a
+  value is **never** fabricated as `0` (`parseFinalStacksStrict` returns `null`
+  rather than a partial list).
+- the sealed `transcripts` row must exist for a production write (only the
+  aux/test `transcriptlessReceipt` flag may omit it, and `GameRoom` never sets
+  that flag). The transcript's `head` is not trusted on its own:
+  `computeHead(parsed) === t.head` must replay the entry chain, so a corrupt row
+  cannot rewrite the column in place.
+- exactly one `hand_start` and one `settlement` payload must be present
+  (duplicate, malformed or missing is corruption), the seat list must be
+  non-empty with no duplicate seat or user, and every projected delta must map to
+  a known seat.
+- `finalStacks`, the game deltas, the account-level commission leg and the
+  automatic 7-2 bounty decision are cross-checked against the ledger: transcript
+  game deltas must equal both the candidate write and the ledger
+  (`sum(gameDeltas) === -rake`), the commission leg must equal the resolved
+  recipient's `+rake` (and the transcript's seat-filtered view must match the
+  ledger's), and the `seven-deuce` rows must be zero-sum with exactly one winner
+  whose seat is resolvable. Any mismatch throws
+  `settlement identity conflict ...`, which rolls the (no-op) transaction back
+  rather than trusting the candidate.
+- `publishSettlement()` adopts the rebuilt receipt (final stacks, commission leg,
+  bounty) exactly as it adopts a first-time write, re-marks the already-paid
+  bounty, and delivers the historical terminal `hand_end` instead of dropping the
+  hand silently.
+
+The retry input is frozen on the **first** writer attempt: `persistSettlement()`
+does `const write = (this.sealedWrite ??= this.buildSealedWrite())`, so every
+retry reuses the same sealed transcript/head, identity, computed bounty and
+timestamp and can never append a second diagnostic event or move the committed
+head. **`sealedWrite` is an in-memory cache only.** Durable prepared input - so a
+fresh process can replay a hand that crashed before commit - is **not
+implemented** (that is P0-2, see "Settlement recovery").
+
 ### Settlement recovery (frozen / fail-closed)
 
 The settlement transaction is atomic and idempotent on its
@@ -353,10 +403,11 @@ What each window can and cannot do:
 - **Crashed after commit:** the `committed` row and marker exist; a restart
   must not re-pay (writer duplicate) but the committed hand is recovered.
 - **Crashed before commit, with only a `running` lifecycle row:** there is no
-  prepared-input record to replay, so this is **process-restart / manual
-  resolution only**. The room stays frozen; the engine never guesses a winner
-  or fabricates a marker. This is a deliberately documented limitation, not a
-  complete operator recovery.
+  durable prepared-input record to replay (P0-2 is **not implemented** - the
+  sealed write input is frozen in memory only, see the P0-1 section), so this is
+  **process-restart / manual resolution only**. The room stays frozen; the engine
+  never guesses a winner or fabricates a marker. This is a deliberately documented
+  limitation, not a complete operator recovery.
 - **Graceful shutdown:** the hub stops dealing, gives a live not-yet-settled
   hand a bounded window (`shutdownDrainMs`, default `SHUTDOWN_DRAIN_MS`) to
   reach a terminal state, then `abort()`s it so its row becomes `aborted`. This

@@ -1,5 +1,7 @@
 # Tournament release correction — 2026-09-14
 
+> Historical — this feature was removed.
+
 User correction: bankers never receive commission. Tournament cuts go only to the house and prize pool. The user authorized merging and pushing to trigger production deployment.
 
 ## Changes

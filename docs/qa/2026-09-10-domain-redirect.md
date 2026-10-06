@@ -11,9 +11,9 @@ the root domain. The existing service also handles the old hostname:
 - New-domain API and WebSocket origins are allowed without environment
   overrides. Render health checks, local development and unrelated hosts
   do not redirect.
-- The MCP default, current documentation and replay share text use the new
-  domain. An existing MCP configuration with an explicit FOURAM_URL should
-  be updated to the new domain; cross-origin redirects may drop auth headers.
+- The app's default domain, documentation and replay share text use the new
+  domain. Anything still pointing at the old host should be updated;
+  cross-origin redirects may drop auth headers.
 - Accounts remain in the same database. Browser sessions are origin-scoped,
   so players may need to sign in again on the new domain.
 

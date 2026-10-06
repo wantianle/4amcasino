@@ -1,5 +1,9 @@
 # Platform Control Center Implementation Plan
 
+> Historical note — the sponsor/tournament admin actions named in the audit-coverage
+> section were removed with the Agent Arena feature; the house-cut and dashboard plan
+> remains current.
+
 **Goal:** Set the house cut to 0.5%, let the platform account change it at runtime,
 and provide a dedicated admin dashboard at admin.4amcasino.com.
 

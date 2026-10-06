@@ -36,8 +36,8 @@ theme.
 
 **The people.** Friends with live presence, table invites (with an opt-in auto-join), public
 tables listed in every lobby or private 6-letter codes, watch-only spectator links where
-viewers can ask to join and the banker admits them, an attached Meet/Zoom link per table,
-voice chat, table chat with your own quick phrases, and reactions.
+viewers can ask to join and the banker admits them, voice chat, table chat with your own
+quick phrases, and reactions.
 
 **The money.** A banker (plus an optional co-banker) approves buy-ins; every movement is
 hash-chained. Players can send or lend chips to each other between hands. The banker can revert
@@ -127,8 +127,7 @@ MongoDB snapshot layer (`MONGO_URL`) that continuously backs up and restores the
 The primary domain is `4amcasino.com`. Requests to `poker.notpritam.in` receive
 a permanent 308 redirect with their path and query preserved. Keep the old
 domain's DNS and Render custom-domain entry in place so these redirects and
-its HTTPS certificate keep working. Existing MCP configurations should use
-`FOURAM_URL=https://4amcasino.com` to send authenticated requests directly.
+its HTTPS certificate keep working.
 
 **Docker (any VPS, Fly.io, Railway):**
 
@@ -176,6 +175,7 @@ No second service or database is needed.
 ```
 packages/shared        cards, hand evaluator, betting engine, WS message schemas
 packages/mental-poker  the crypto: group ops, shuffle/unmask, DLEQ proofs, transcripts
+packages/agent-core    bot brain: headless WS client, decision view, rule/LLM policies
 apps/server            Fastify + ws + SQLite: auth, rooms, bank/ledger, hand orchestration
 apps/web               React (Feature-Sliced Design) + Tailwind v4 client, dark theme
 docs/                  design spec, implementation plans, screenshots, UI reference
