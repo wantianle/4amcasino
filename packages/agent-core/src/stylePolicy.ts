@@ -271,8 +271,8 @@ export interface PolicyResolution {
  *
  * `opts.p2` is forwarded to the `RulePolicy` built here, so the caller (server
  * resolver / difficulty dispatch) can inject P2 switches. Omitted fields keep
- * `DEFAULT_P2` (all off since the 2026-10-06 A/B revert); pass explicit switches
- * on to opt into P2 (`P2_ALL_OFF` is now equivalent to the default).
+ * `DEFAULT_P2` (`sizeGrid` / `buckets` on since the 2026-10-06 prune; a product
+ * default, not a validated one); pass explicit `P2_ALL_OFF` for the pre-P2 path.
  */
 export function resolvePolicy(
   kindRaw: string | null | undefined,

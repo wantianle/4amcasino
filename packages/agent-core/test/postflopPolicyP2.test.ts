@@ -27,17 +27,9 @@ import {
   gridFraction,
   handBucket,
   opponentModelStats,
-  preflopRaiseCount,
-  propagateVillainModel,
   snapBetFraction,
   type P2Options,
 } from '../src/postflopPolicy.js';
-import {
-  OPPONENT_PRIORS,
-  estimateOpponent,
-  shrinkConfidence,
-  shrinkRate,
-} from '../src/sessionMemory.js';
 import { estimateEquity } from '../src/equity.js';
 import { RULE_PRESETS } from '../src/ruleStyles.js';
 import { BaselinePostflopPolicy } from './fixtures/postflopPolicyBaseline.js';
@@ -233,146 +225,21 @@ function actionCounts(
 }
 
 // ---------------------------------------------------------------------------
-// #2 shrinkage opponent model
+// #2 opponent model (permanent `sampleHands < 10` cutoff)
 // ---------------------------------------------------------------------------
 
-describe('postflop P2: shrinkage opponent model', () => {
-  it('small samples collapse toward the prior; large samples approach the frequency', () => {
-    const prior = OPPONENT_PRIORS.vpip;
-    // 4/5 observed: the raw 80% is far from the prior, the posterior is not.
-    const small = shrinkRate(4, 5, prior);
-    expect(small).toBeCloseTo((prior.strength * prior.mean + 4) / (prior.strength + 5), 12);
-    expect(Math.abs(small - prior.mean)).toBeLessThan(Math.abs(small - 0.8));
-    expect(Math.abs(small - prior.mean)).toBeLessThan(0.15);
-
-    // A large sample barely moves from the raw frequency.
-    const large = shrinkRate(300, 500, prior);
-    expect(Math.abs(large - 0.6)).toBeLessThan(0.02);
-  });
-
-  it('converges monotonically to the observed frequency as n grows', () => {
-    const prior = OPPONENT_PRIORS.pfr;
-    const trueRate = 0.4;
-    let previousDistance = Number.POSITIVE_INFINITY;
-    for (const n of [0, 5, 20, 100, 500, 5000]) {
-      const estimate = shrinkRate(trueRate * n, n, prior);
-      const distance = Math.abs(estimate - trueRate);
-      expect(distance, `n=${n}`).toBeLessThanOrEqual(previousDistance + 1e-12);
-      previousDistance = distance;
-    }
-    expect(shrinkRate(trueRate * 5000, 5000, prior)).toBeCloseTo(trueRate, 2);
-  });
-
-  it('is exactly the prior at n=0 and stays in [0,1]', () => {
-    for (const key of Object.keys(OPPONENT_PRIORS) as (keyof typeof OPPONENT_PRIORS)[]) {
-      const prior = OPPONENT_PRIORS[key];
-      expect(shrinkRate(0, 0, prior)).toBeCloseTo(prior.mean, 12);
-      for (const [hits, n] of [
-        [0, 3],
-        [3, 3],
-        [999, 1000],
-      ] as const) {
-        const value = shrinkRate(hits, n, prior);
-        expect(value).toBeGreaterThanOrEqual(0);
-        expect(value).toBeLessThanOrEqual(1);
-      }
-    }
-    // Malformed counts fail safe rather than producing NaN.
-    const safe = shrinkRate(Number.NaN, 5, OPPONENT_PRIORS.vpip);
-    expect(Number.isFinite(safe)).toBe(true);
-    expect(safe).toBeCloseTo(shrinkRate(0, 5, OPPONENT_PRIORS.vpip), 12);
-  });
-
-  it('honours the total input contract: k+n=0, hits>n, negatives, fractions', () => {
-    const prior = OPPONENT_PRIORS.vpip;
-    const noPrior: { mean: number; strength: number } = { mean: 0.3, strength: 0 };
-    // No sample and no prior: undefined posterior -> neutral fallback = prior mean.
-    expect(shrinkRate(0, 0, noPrior)).toBeCloseTo(0.3, 12);
-    expect(shrinkRate(5, 0, noPrior)).toBeCloseTo(0.3, 12); // hits only, no trials
-    expect(shrinkConfidence(0, noPrior)).toBe(0); // no information at all
-    expect(shrinkConfidence(7, noPrior)).toBe(1); // no prior + sample = full trust
-
-    // hits > n is clamped to a saturated observation, never an out-of-range rate.
-    expect(shrinkRate(9, 3, noPrior)).toBe(1);
-    expect(shrinkRate(9, 3, prior)).toBeCloseTo(
-      (prior.strength * prior.mean + 3) / (prior.strength + 3),
-      12,
-    );
-
-    // Negative / non-finite counts read as 0; fractional weighted counts are kept.
-    expect(shrinkRate(-5, 10, prior)).toBeCloseTo(shrinkRate(0, 10, prior), 12);
-    expect(shrinkRate(3, -1, prior)).toBeCloseTo(shrinkRate(0, 0, prior), 12);
-    expect(shrinkRate(2.5, 5, prior)).toBeCloseTo(
-      (prior.strength * prior.mean + 2.5) / (prior.strength + 5),
-      12,
-    );
-    expect(shrinkRate(5, Number.POSITIVE_INFINITY, prior)).toBeCloseTo(
-      shrinkRate(0, 0, prior),
-      12,
-    );
-
-    // Every combination stays finite and inside [0,1].
-    for (const [h, n] of [
-      [Number.NaN, Number.NaN],
-      [-1, -1],
-      [1e9, 1],
-      [0.5, 0.25],
-    ] as const) {
-      const v = shrinkRate(h, n, prior);
-      expect(Number.isFinite(v)).toBe(true);
-      expect(v).toBeGreaterThanOrEqual(0);
-      expect(v).toBeLessThanOrEqual(1);
-    }
-  });
-
-  it('confidence rises from 0 to 1 and is k=half at n=strength', () => {
-    const prior = OPPONENT_PRIORS.vpip;
-    expect(shrinkConfidence(0, prior)).toBe(0);
-    expect(shrinkConfidence(prior.strength, prior)).toBeCloseTo(0.5, 12);
-    expect(shrinkConfidence(1000, prior)).toBeGreaterThan(0.97);
-    expect(shrinkConfidence(5, prior)).toBeLessThan(0.25);
-  });
-
-  it('estimateOpponent pairs counts with their own prior per stat', () => {
-    const est = estimateOpponent({
-      seat: 0,
-      sampleHands: 50,
-      vpipHands: 30,
-      pfrHands: 5,
-      postflopBetsRaises: 10,
-      postflopCalls: 10,
-    });
-    expect(est.vpip).toBeCloseTo(shrinkRate(30, 50, OPPONENT_PRIORS.vpip), 12);
-    expect(est.pfr).toBeCloseTo(shrinkRate(5, 50, OPPONENT_PRIORS.pfr), 12);
-    // Aggression denominator is bet/raise + call, not sampleHands.
-    expect(est.aggression).toBeCloseTo(shrinkRate(10, 20, OPPONENT_PRIORS.aggression), 12);
-    expect(est.confidence).toBeCloseTo(shrinkConfidence(50, OPPONENT_PRIORS.vpip), 12);
-    // No postflop actions: the aggression rate is the prior, not 0/0.
-    const empty = estimateOpponent({
-      seat: 0,
-      sampleHands: 3,
-      vpipHands: 0,
-      pfrHands: 0,
-      postflopBetsRaises: 0,
-      postflopCalls: 0,
-    });
-    expect(empty.aggression).toBeCloseTo(OPPONENT_PRIORS.aggression.mean, 12);
-  });
-
-  it('opponentModelStats no longer hard-drops a 5-hand sample', () => {
-    // A 2-of-5 voluntary rate: raw 40%, prior 28%; the shrunk read is ~30%.
+describe('postflop P2: opponent model cutoff', () => {
+  it('opponentModelStats keeps the sampleHands < 10 cutoff (permanent post-prune)', () => {
+    // A 2-of-5 voluntary rate: below the cutoff, so it is discarded entirely and
+    // the table reads as a neutral "no read". This is the fixed behaviour that
+    // replaced the deleted `shrinkage` posterior-mean branch.
     const view = facingView([c('Qs'), c('Qd')], [c('Kh'), c('7d'), c('2c')], 150, 50, {
       sessionMemory: memoryWith(stats(0.4, 0, 5)),
     });
-    // Old path: ignored. Shrinkage path: a near-prior posterior-mean read.
-    expect(opponentModelStats(view, false)).toEqual({});
-    const shrunk = opponentModelStats(view, true);
-    expect(shrunk.vpip).toBeDefined();
-    expect(shrunk.vpip!).toBeGreaterThan(OPPONENT_PRIORS.vpip.mean);
-    expect(Math.abs(shrunk.vpip! - OPPONENT_PRIORS.vpip.mean)).toBeLessThan(0.05);
+    expect(opponentModelStats(view)).toEqual({});
   });
 
-  it('keeps the station / nit exploit read through the posterior', () => {
+  it('reads the station / nit exploit bands from raw rates above the cutoff', () => {
     const villain = [seat({ seat: 0 })];
     const withStats = (s: OpponentStats) =>
       facingView([c('8s'), c('3s')], [c('Ks'), c('7s'), c('2d')], 100, 0, {
@@ -440,9 +307,8 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     const base = { allIn: false, heroWasAggressor: false, wet: false };
     // Raw continuous read: 0.9 sits in no size bucket -> balanced.
     expect(chooseVillainModel({ ...base, betFraction: 0.9 }, false)).toBe('balanced');
-    // Grid read: 0.9 snaps to 1.0 pot -> value-heavy. This is an intentional
-    // behaviour change of the sizeGrid switch, off by default and enabled
-    // explicitly here.
+    // Grid read: 0.9 snaps to 1.0 pot -> value-heavy. This is the intentional
+    // behaviour change of the sizeGrid switch (on by default since 2026-10-06).
     expect(chooseVillainModel({ ...base, betFraction: 0.9 }, true)).toBe('value-heavy');
   });
 
@@ -454,12 +320,12 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     expect(chooseVillainModel({ ...base, betFraction: 1 })).toBe('value-heavy');
     expect(chooseVillainModel({ ...base, betFraction: 2 })).toBe('value-heavy');
     expect(chooseVillainModel({ ...base, betFraction: 0.5, allIn: true })).toBe('value-heavy');
-    // The default `sizeGrid` argument follows DEFAULT_P2 (all off after the
-    // 2026-10-06 A/B revert), so a single-argument call keeps the raw-continuous
-    // read for the odd 0.9-pot bet.
-    expect(chooseVillainModel({ ...base, betFraction: 0.9 })).toBe('balanced');
-    // An explicit on snaps the odd 0.9 to 1.0 -> value-heavy.
-    expect(chooseVillainModel({ ...base, betFraction: 0.9 }, true)).toBe('value-heavy');
+    // The default `sizeGrid` argument follows DEFAULT_P2 (on since the
+    // 2026-10-06 product decision), so a single-argument call snaps the odd
+    // 0.9-pot bet to 1.0 -> value-heavy.
+    expect(chooseVillainModel({ ...base, betFraction: 0.9 })).toBe('value-heavy');
+    // An explicit off keeps the raw-continuous read.
+    expect(chooseVillainModel({ ...base, betFraction: 0.9 }, false)).toBe('balanced');
   });
 });
 
@@ -657,158 +523,7 @@ describe('postflop P2: 24 hand-strength buckets', () => {
     // Empty range is neutral, not NaN.
     expect(bucketAdvantage([c('Kc'), c('Kd')], DRY, [])).toBe(0);
     // NOT wired into any decision: `bucketAdvantage` has no caller in the policy
-    // and the `buckets` switch is off by default. It is an eval-only probe.
-  });
-});
-
-// ---------------------------------------------------------------------------
-// #1 range propagation
-// ---------------------------------------------------------------------------
-
-describe('postflop P2: range propagation', () => {
-  const DRY = [c('Kh'), c('7d'), c('2c')];
-
-  it('is the identity with no preflop history heads-up', () => {
-    for (const base of ['bluff-heavy', 'balanced', 'value-heavy'] as const) {
-      expect(
-        propagateVillainModel(base, {
-          preflopRaises: 0,
-          heroWasAggressor: false,
-          activeOpponents: 1,
-        }),
-      ).toBe(base);
-    }
-  });
-
-  it('tightens a 3-bet pot one tier', () => {
-    expect(
-      propagateVillainModel('balanced', {
-        preflopRaises: 2,
-        heroWasAggressor: false,
-        activeOpponents: 2,
-      }),
-    ).toBe('value-heavy');
-    expect(
-      propagateVillainModel('bluff-heavy', {
-        preflopRaises: 3,
-        heroWasAggressor: false,
-        activeOpponents: 2,
-      }),
-    ).toBe('balanced');
-  });
-
-  it('tightens a raised multiway and a very multiway pot', () => {
-    expect(
-      propagateVillainModel('bluff-heavy', {
-        preflopRaises: 1,
-        heroWasAggressor: false,
-        activeOpponents: 3,
-      }),
-    ).toBe('balanced');
-    expect(
-      propagateVillainModel('bluff-heavy', {
-        preflopRaises: 0,
-        heroWasAggressor: false,
-        activeOpponents: 4,
-      }),
-    ).toBe('balanced');
-    expect(
-      propagateVillainModel('bluff-heavy', {
-        preflopRaises: 1,
-        heroWasAggressor: false,
-        activeOpponents: 4,
-      }),
-    ).toBe('value-heavy');
-  });
-
-  it("widens a tier when hero made the last preflop raise (opponent's range is capped)", () => {
-    expect(
-      propagateVillainModel('value-heavy', {
-        preflopRaises: 0,
-        heroWasAggressor: true,
-        activeOpponents: 1,
-      }),
-    ).toBe('balanced');
-  });
-
-  it('derives the propagation evidence from the public view', () => {
-    const board = DRY;
-    const hole = [c('Qs'), c('Qd')];
-    const ON: P2Options = { ...DEFAULT_P2, rangePropagation: true };
-    const OFF: P2Options = { ...DEFAULT_P2, rangePropagation: false };
-    // Medium bet (0.5 pot) reads balanced on its own; a 3-bet line tightens it.
-    const called = facingView(hole, board, 150, 50);
-    const threeBet = facingView(hole, board, 150, 50, {
-      actionHistory: [preflopRaise(0, 0), preflopRaise(0, 1)],
-    });
-    expect(preflopRaiseCount(called)).toBe(0);
-    expect(preflopRaiseCount(threeBet)).toBe(2);
-    expect(facingVillainModel(called, 100, 50, ON)).toBe('balanced');
-    expect(facingVillainModel(threeBet, 100, 50, ON)).toBe('value-heavy');
-    // The toggle off reproduces the base read; the default is all-off too
-    // (2026-10-06 A/B revert), so a 3-bet line does not tighten it.
-    expect(facingVillainModel(threeBet, 100, 50, OFF)).toBe('balanced');
-    expect(facingVillainModel(threeBet, 100, 50)).toBe('balanced');
-  });
-
-  it('tightens a four-way pot relative to heads-up for the same bet', () => {
-    const hole = [c('Qs'), c('Qd')];
-    const ON: P2Options = { ...DEFAULT_P2, rangePropagation: true };
-    const headsUp = facingView(hole, DRY, 150, 50);
-    const fourWay = facingView(hole, DRY, 150, 50, {
-      opponents: [
-        seat({ seat: 0, committed: 50, total: 50 }),
-        seat({ seat: 2, committed: 50, total: 50 }),
-        seat({ seat: 3, committed: 50, total: 50 }),
-        seat({ seat: 4, committed: 50, total: 50 }),
-      ],
-    });
-    expect(facingVillainModel(headsUp, 100, 50, ON)).toBe('balanced');
-    expect(facingVillainModel(fourWay, 100, 50, ON)).toBe('value-heavy');
-    // Inert by default (all-off after the 2026-10-06 A/B revert), so the same
-    // inputs read balanced with DEFAULT_P2.
-    expect(facingVillainModel(fourWay, 100, 50)).toBe('balanced');
-  });
-
-  // -- historyComplete contract (disconnect gap / mid-hand join) --------------
-
-  it('refuses to propagate a 3-bet line from an incomplete history', () => {
-    const hole = [c('Qs'), c('Qd')];
-    const complete = facingView(hole, DRY, 150, 50, {
-      historyComplete: true,
-      actionHistory: [preflopRaise(0, 0), preflopRaise(0, 1)],
-    });
-    const partial: DecisionView = { ...complete, historyComplete: false };
-    const on: P2Options = { ...DEFAULT_P2, rangePropagation: true };
-    // With reliable history the line tightens the model...
-    expect(facingVillainModel(complete, 100, 50, on)).toBe('value-heavy');
-    // ...but a partial history keeps the size-only base read.
-    expect(facingVillainModel(partial, 100, 50, on)).toBe('balanced');
-    // The count itself refuses to read a partial history as "no raise".
-    expect(preflopRaiseCount(complete)).toBe(2);
-    expect(preflopRaiseCount(partial)).toBe(0);
-  });
-
-  it('ignores the action line for a mid-hand join even when the snapshot looks multiway', () => {
-    // historyComplete=false, no history replayed, but 4 active opponents. Without
-    // the gate the "very multiway" rule would tighten to value-heavy; the gate
-    // must keep the base read because the line is unknown.
-    const hole = [c('Qs'), c('Qd')];
-    const joined = facingView(hole, DRY, 150, 50, {
-      historyComplete: false,
-      actionHistory: [],
-      opponents: [
-        seat({ seat: 0, committed: 50, total: 50 }),
-        seat({ seat: 2, committed: 50, total: 50 }),
-        seat({ seat: 3, committed: 50, total: 50 }),
-        seat({ seat: 4, committed: 50, total: 50 }),
-      ],
-    });
-    const on: P2Options = { ...DEFAULT_P2, rangePropagation: true };
-    expect(facingVillainModel(joined, 100, 50, on)).toBe('balanced');
-    // Sanity: the same shape with a complete history does tighten.
-    const complete: DecisionView = { ...joined, historyComplete: true };
-    expect(facingVillainModel(complete, 100, 50, on)).toBe('value-heavy');
+    // (the `buckets` switch reweights the villain range elsewhere). Eval probe only.
   });
 });
 
@@ -818,61 +533,8 @@ describe('postflop P2: range propagation', () => {
 
 describe('postflop P2: decision-level on-vs-off', () => {
   const DRY = [c('Kh'), c('7d'), c('2c')];
-  // A 10-hand maniac: the legacy path keeps all 10 hands, the shrunk read pulls
-  // the rates back toward the priors and stops classifying a maniac.
-  const maniac: OpponentStats = {
-    seat: 0,
-    sampleHands: 10,
-    vpipHands: 8,
-    pfrHands: 7,
-    postflopBetsRaises: 12,
-    postflopCalls: 4,
-  };
-  const OFF: P2Options = {
-    shrinkage: false,
-    sizeGrid: false,
-    rangePropagation: false,
-    buckets: false,
-  };
-
-  it('shrinkage changes the villain model, equity and the action rate', () => {
-    // 98 on K72 facing half pot: a marginal call at the decision boundary.
-    const view = (seq: number) =>
-      facingView([c('9s'), c('8d')], DRY, 150, 50, {
-        actionSeq: seq,
-        sessionMemory: memoryWith(maniac),
-      });
-    expect(facingVillainModel(view(0), 100, 50, OFF)).toBe('bluff-heavy');
-    expect(facingVillainModel(view(0), 100, 50, { ...OFF, shrinkage: true })).toBe('balanced');
-
-    const rangeOff = facingVillainRange(view(0), [c('9s'), c('8d')], 100, 50, OFF);
-    const rangeOn = facingVillainRange(view(0), [c('9s'), c('8d')], 100, 50, {
-      ...OFF,
-      shrinkage: true,
-    });
-    const eqOff = estimateEquity({
-      hole: [c('9s'), c('8d')],
-      board: DRY,
-      samples: 512,
-      seed: 1,
-      villainRange: rangeOff,
-    }).equity;
-    const eqOn = estimateEquity({
-      hole: [c('9s'), c('8d')],
-      board: DRY,
-      samples: 512,
-      seed: 1,
-      villainRange: rangeOn,
-    }).equity;
-    expect(eqOn).not.toBe(eqOff);
-
-    const offCounts = actionCounts(policy(OFF), view);
-    const onCounts = actionCounts(policy({ ...OFF, shrinkage: true }), view);
-    expect(onCounts).not.toEqual(offCounts);
-    // The maniac read widens the villain range, so the shrunk (balanced) read
-    // folds this marginal hand more, not less.
-    expect(onCounts.fold ?? 0).toBeGreaterThan(offCounts.fold ?? 0);
-  });
+  // Explicit all-off: the pre-P2 control for the two surviving switches.
+  const OFF: P2Options = { sizeGrid: false, buckets: false };
 
   it('sizeGrid changes the villain model, range weights and the action rate', () => {
     // call/potBefore = 90/100 = 0.9 pot: raw-continuous reads balanced, the grid
@@ -894,22 +556,6 @@ describe('postflop P2: decision-level on-vs-off', () => {
     const onCounts = actionCounts(policy({ ...OFF, sizeGrid: true }), view);
     expect(onCounts).not.toEqual(offCounts);
     // A value-heavy read folds the underpairs more, not less.
-    expect(onCounts.fold ?? 0).toBeGreaterThan(offCounts.fold ?? 0);
-  });
-
-  it('rangePropagation shifts the model and the action rate on a 3-bet line', () => {
-    const view = (seq: number) =>
-      facingView([c('3s'), c('3d')], DRY, 150, 50, {
-        actionSeq: seq,
-        actionHistory: [preflopRaise(0, 0), preflopRaise(0, 1)],
-      });
-    expect(facingVillainModel(view(0), 100, 50, OFF)).toBe('balanced');
-    expect(facingVillainModel(view(0), 100, 50, { ...OFF, rangePropagation: true })).toBe(
-      'value-heavy',
-    );
-    const offCounts = actionCounts(policy(OFF), view);
-    const onCounts = actionCounts(policy({ ...OFF, rangePropagation: true }), view);
-    expect(onCounts).not.toEqual(offCounts);
     expect(onCounts.fold ?? 0).toBeGreaterThan(offCounts.fold ?? 0);
   });
 
@@ -989,7 +635,7 @@ describe('postflop P2: decision-level on-vs-off', () => {
     const configs: Partial<P2Options>[] = [
       {},
       { buckets: true },
-      { shrinkage: false, sizeGrid: false, rangePropagation: false },
+      { sizeGrid: false, buckets: false },
     ];
     for (const p2 of configs) {
       const p = policy(p2);
@@ -1019,45 +665,37 @@ describe('postflop P2: decision-level on-vs-off', () => {
     for (let i = 0; i < 50; i++) expect(p.decide(v())).toEqual(first);
   });
 
-  it('DEFAULT_P2 is frozen all-off: the default cannot be mutated at runtime (P0-2)', () => {
+  it('DEFAULT_P2 is frozen with buckets + sizeGrid on; P2_ALL_OFF stays the all-off control', () => {
     // The constant must not be a mutable object that default parameters alias,
-    // or `DEFAULT_P2.sizeGrid = true` would silently flip every default read.
+    // or `DEFAULT_P2.sizeGrid = false` would silently flip every default read.
     expect(Object.isFrozen(DEFAULT_P2)).toBe(true);
-    for (const key of ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets'] as const) {
-      expect(Reflect.set(DEFAULT_P2, key, true)).toBe(false);
-      expect(DEFAULT_P2[key]).toBe(false);
+    for (const key of ['sizeGrid', 'buckets'] as const) {
+      expect(Reflect.set(DEFAULT_P2, key, false)).toBe(false);
+      expect(DEFAULT_P2[key]).toBe(true);
     }
-    // All four switches are off again after the 2026-10-06 A/B revert.
-    expect({ ...DEFAULT_P2 }).toEqual({
-      shrinkage: false,
-      sizeGrid: false,
-      rangePropagation: false,
-      buckets: false,
-    });
-    // A refused mutation leaves the all-off semantics intact: the default
-    // parameter still reads `false`, so 0.9 pot stays on the raw-continuous path.
+    // Both surviving switches default ON (2026-10-06 product decision; the v2
+    // A/B was inconclusive, see DEFAULT_P2's note).
+    expect({ ...DEFAULT_P2 }).toEqual({ sizeGrid: true, buckets: true });
+    // A refused mutation leaves the on-by-default semantics intact: the default
+    // parameter still reads `true`, so 0.9 pot snaps to 1.0 -> value-heavy.
     expect(
       chooseVillainModel({ allIn: false, heroWasAggressor: false, wet: false, betFraction: 0.9 }),
-    ).toBe('balanced');
+    ).toBe('value-heavy');
 
-    // The named kill-switch constant is the immutable all-off counterpart; since
-    // the A/B revert it is byte-identical to the default.
+    // The named kill-switch constant is the immutable all-off counterpart, no
+    // longer identical to the default.
     expect(Object.isFrozen(P2_ALL_OFF)).toBe(true);
-    expect({ ...P2_ALL_OFF }).toEqual({
-      shrinkage: false,
-      sizeGrid: false,
-      rangePropagation: false,
-      buckets: false,
-    });
-    expect({ ...P2_ALL_OFF }).toEqual({ ...DEFAULT_P2 });
+    expect({ ...P2_ALL_OFF }).toEqual({ sizeGrid: false, buckets: false });
+    expect({ ...P2_ALL_OFF }).not.toEqual({ ...DEFAULT_P2 });
   });
 });
 
 // ---------------------------------------------------------------------------
-// default (all-off, reverted) versus the true HEAD f4a5904 baseline, per input
+// explicit all-off (P2_ALL_OFF) versus the true HEAD f4a5904 baseline, per input,
+// plus proof the new on-by-default switches actually reach the decision
 // ---------------------------------------------------------------------------
 
-describe('postflop P2: default all-off reproduces the HEAD baseline', () => {
+describe('postflop P2: explicit all-off reproduces the HEAD baseline', () => {
   const DRY = [c('Kh'), c('7d'), c('2c')];
 
   /** A deterministic grid that exercises every input the P0/P1 engine reads. */
@@ -1093,7 +731,8 @@ describe('postflop P2: default all-off reproduces the HEAD baseline', () => {
           for (const seq of [0, 1, 2]) {
             out.push(facingView([...hole], [...board], pot, call, { actionSeq: seq }));
           }
-          // 3-bet line + a 10-hand maniac read (shrinkage / propagation inputs).
+          // 3-bet line + a 10-hand opponent read (feeds the always-on opponent
+          // model; the deleted `rangePropagation` is no longer an input here).
           out.push(
             facingView([...hole], [...board], pot, call, {
               actionSeq: 5,
@@ -1141,12 +780,14 @@ describe('postflop P2: default all-off reproduces the HEAD baseline', () => {
   }
 
   it(
-    'the default (all-off) config reproduces the HEAD f4a5904 baseline',
+    'the explicit P2_ALL_OFF config reproduces the HEAD f4a5904 baseline',
     { timeout: 120_000 },
     () => {
       const views = baselineGrid();
       expect(views.length).toBeGreaterThan(200);
-      const current = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2: all off
+      // The pre-P2 control is now opt-in: pass P2_ALL_OFF explicitly. The product
+      // default (DEFAULT_P2) is buckets + sizeGrid ON and is checked below.
+      const current = new PostflopPolicy({ params: PARAMS, seed: SEED, p2: P2_ALL_OFF });
       const baseline = new BaselinePostflopPolicy({ params: PARAMS, seed: SEED });
       for (let i = 0; i < views.length; i++) {
         const view = views[i]!;
@@ -1157,27 +798,25 @@ describe('postflop P2: default all-off reproduces the HEAD baseline', () => {
     },
   );
 
-  it('an explicit P2_ALL_OFF config equals the default all-off config', () => {
-    const views = baselineGrid().slice(0, 120);
-    const def = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2: all off
-    const explicit = new PostflopPolicy({ params: PARAMS, seed: SEED, p2: P2_ALL_OFF });
-    for (const view of views) expect(def.decide(view)).toEqual(explicit.decide(view));
-  });
-
-  it('an explicit all-on config is live and differs from the default all-off path', () => {
+  it('the product default (buckets + sizeGrid on) differs from the all-off baseline', () => {
+    // Behaviour-level proof that the new defaults are live: the default is NOT
+    // the pre-P2 engine any more. The differential grid includes the 0.9-pot
+    // size that `sizeGrid` re-buckets and boards where `buckets` reweights the
+    // range, so at least one decision must move.
     const views = baselineGrid();
-    const def = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2: all off
-    const allOn = new PostflopPolicy({
-      params: PARAMS,
-      seed: SEED,
-      p2: { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true },
-    });
-    // Decisive evidence that the four switches actually reach the decision when
-    // enabled, so "default is all-off" is not a claim that P2 is unreachable.
+    const def = new PostflopPolicy({ params: PARAMS, seed: SEED }); // DEFAULT_P2
+    const off = new PostflopPolicy({ params: PARAMS, seed: SEED, p2: P2_ALL_OFF });
     expect(
       views.some(
-        (view) => JSON.stringify(def.decide(view)) !== JSON.stringify(allOn.decide(view)),
+        (view) => JSON.stringify(def.decide(view)) !== JSON.stringify(off.decide(view)),
       ),
     ).toBe(true);
+    // And the default equals an explicit all-on config, byte for byte.
+    const explicitOn = new PostflopPolicy({
+      params: PARAMS,
+      seed: SEED,
+      p2: { sizeGrid: true, buckets: true },
+    });
+    for (const view of views) expect(def.decide(view)).toEqual(explicitOn.decide(view));
   });
 });

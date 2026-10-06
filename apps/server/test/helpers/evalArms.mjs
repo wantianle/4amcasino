@@ -110,7 +110,7 @@ export function runIsClean(run) {
  * @param {number}   [opts.hands]     hands per run (each pair plays 2x)
  * @param {boolean}  [opts.memory]    inject cross-hand session memory (default
  *   `true`; arm mode is meant to measure the full production strategy, and
- *   `shrinkage` needs opponent history to be observable)
+ *   `sizeGrid` / `buckets` need opponent history to be observable)
  * @param {object}   [opts.match]     extra options forwarded to `comparePair`
  */
 export async function runArmComparison(opts = {}) {

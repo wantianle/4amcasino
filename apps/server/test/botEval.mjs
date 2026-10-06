@@ -22,7 +22,7 @@
  *   node --import tsx apps/server/test/botEval.mjs
  *   HANDS=200 SEED=1234 node --import tsx apps/server/test/botEval.mjs
  *   node --import tsx apps/server/test/botEval.mjs --hands=200 --pair=always-fold,equity-threshold
- *   ARMS=rules-v1,p2:shrinkage,p2:all HANDS=200 node --import tsx apps/server/test/botEval.mjs
+ *   ARMS=rules-v1,p2:sizeGrid,p2:all HANDS=200 node --import tsx apps/server/test/botEval.mjs
  *
  * Writes JSON + Markdown into docs/qa/bot-playtest/ (same folder as the
  * single-run playtest). Exits non-zero if any invariant fails.
@@ -78,9 +78,9 @@ const ARMS = cfgStr('arms', '')
   .map((s) => s.trim())
   .filter(Boolean);
 const REFERENCE = cfgStr('reference', 'rules-v1');
-// Cross-hand session memory: arm mode defaults ON so `shrinkage` actually sees
-// opponent history (the full production strategy). Legacy round-robin keeps the
-// historical OFF default so its numbers are unchanged; either is overridable.
+// Cross-hand session memory: arm mode defaults ON so the opponent model actually
+// sees opponent history (the full production strategy). Legacy round-robin keeps
+// the historical OFF default so its numbers are unchanged; either is overridable.
 const MEMORY = cfgBool('memory', ARMS.length > 0);
 
 if (ARMS.length === 0 && STRATEGIES.length < 2) throw new Error('need at least 2 strategies to compare');
@@ -329,7 +329,7 @@ async function mainArms(startedAt, runId) {
       ),
       check(`${tag}: pair clean gate`, p.clean === true, `clean=${p.clean}`),
       // With memory on, prove the arm actually saw opponent history mid-match,
-      // otherwise `shrinkage` is being judged on an empty snapshot.
+      // otherwise the opponent-model read is judged on an empty snapshot.
       check(
         `${tag}: arm saw settled opponent history`,
         !MEMORY || p.memorySeen.withOpponentStats > 0,
@@ -393,7 +393,7 @@ function renderArmsMarkdown(r) {
   );
   L.push('');
   L.push(
-    `Cross-hand session memory: **${r.memory === true ? 'ON' : 'OFF'}**. With it on the policy sees the real opponent VPIP/PFR/aggression history (full production behaviour) and \`shrinkage\` can be observed; with it off every decision view carries an empty snapshot, so opponent-model switches are inert.`,
+    `Cross-hand session memory: **${r.memory === true ? 'ON' : 'OFF'}**. With it on the policy sees the real opponent VPIP/PFR/aggression history (full production behaviour) and the opponent-model read can be observed; with it off every decision view carries an empty snapshot, so opponent-model switches are inert.`,
   );
   L.push('');
   L.push('## Reproduce');

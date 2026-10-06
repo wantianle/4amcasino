@@ -152,7 +152,7 @@ function emptyActionCounts() {
  * @param {number} [opts.sb] @param {number} [opts.bb] @param {number} [opts.buyIn]
  * @param {boolean} [opts.memory]     inject cross-hand `sessionMemory` into the
  *   bot decision views (default `false` = legacy empty-memory behaviour). Arm
- *   mode turns this on so opponent-model switches (`shrinkage`) actually see
+ *   mode turns this on so opponent-model reads actually see
  *   opponent history instead of a permanently empty snapshot.
  */
 export async function runEvalMatch({
@@ -195,7 +195,7 @@ export async function runEvalMatch({
   };
   // How often each seat's policy actually saw a non-empty opponent snapshot.
   // With `memory: false` this stays 0 for every seat; with it on it proves the
-  // `shrinkage` path got real opponent statistics rather than `{}`.
+  // opponent-model read got real opponent statistics rather than `{}`.
   const memoryBySeat = new Map();
   const memoryForSeat = (seat) => {
     if (!memoryBySeat.has(seat))

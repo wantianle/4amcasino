@@ -94,7 +94,8 @@ export interface BotRunnerOptions {
   /**
    * P2 switches for the rules-v1 postflop engine (see `p2OptionsFromEnv`).
    * Omitted reads the server env (`FOURAM_P2`/`FOURAM_P2_ALL_OFF`), which
-   * defaults to P2 all-off (2026-10-06 A/B revert). Ignored for the `llm` kind.
+   * defaults to `DEFAULT_P2` (`sizeGrid` / `buckets` on; a product default).
+   * Ignored for the `llm` kind.
    */
   p2?: Partial<P2Options>;
   /**

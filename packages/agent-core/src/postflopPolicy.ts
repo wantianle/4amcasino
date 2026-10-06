@@ -18,7 +18,6 @@ import type { PolicyDecision } from './policy.js';
 import { seatsInDealingOrder } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import type { RuleParams } from './ruleStyles.js';
-import { estimateOpponent } from './sessionMemory.js';
 
 /**
  * Rules-v1 postflop engine.
@@ -347,10 +346,10 @@ export function bucketStrength(bucket: HandBucket): number {
  * 24-bucket abstraction; it does not compare hands and never replaces the
  * shared evaluator.
  *
- * **Experimental API, not wired into any decision** (and reachable only when the
- * `buckets` switch is enabled, which is off by default). It exists so a future
- * eval can measure the bucket abstraction; it must not be advertised as an
- * active part of the policy.
+ * **Experimental API, not wired into any decision.** (The `buckets` switch,
+ * on by default since 2026-10-06, reweights the *villain range* fed to the
+ * decision, not this helper.) It exists so an eval can measure the bucket
+ * abstraction; it must not be advertised as an active part of the policy.
  */
 export function bucketAdvantage(
   hole: readonly CardId[],
@@ -1137,7 +1136,8 @@ export function chooseVillainModel(
   } else {
     // P2: read the size on the discrete grid, so a weird size (0.42, 0.62, 3.0)
     // is translated to its nearest abstract size instead of being read as an
-    // exact continuous value. With the grid off the raw thresholds are used.
+    // exact continuous value. `sizeGrid` is on by default since 2026-10-06; with
+    // it off the raw thresholds are used.
     const size = sizeGrid ? gridFraction(snapBetFraction(input.betFraction)) : input.betFraction;
     if (size >= 1) score += 1.5;
     else if (size <= 0.4) score -= 1;
@@ -1318,9 +1318,9 @@ export function buildVillainRange(
         ? villainModelWeight(1, model) * exposedFlushFactor
         : weight * flushFactor;
     }
-    // P2 buckets (off by default): tilt by the 24-bucket strength, so the
-    // range/nut-advantage read has one more independent signal than the ad-hoc
-    // P0/P1 tier. A documented heuristic, not a solved range.
+    // P2 buckets (on by default since 2026-10-06): tilt by the 24-bucket
+    // strength, so the range/nut-advantage read has one more independent signal
+    // than the ad-hoc P0/P1 tier. A documented heuristic, not a solved range.
     if (opts.buckets) {
       weight *= 0.5 + bucketStrength(handBucket([combo.a, combo.b], board));
     }
@@ -1334,19 +1334,21 @@ export function buildVillainRange(
 // ---------------------------------------------------------------------------
 
 /**
- * The four P2 behaviour switches. Each is independently injectable so a caller
- * (or a test) can A/B or enable one without touching the others.
+ * The P2 behaviour switches that remain after the 2026-10-06 prune. Each is
+ * independently injectable so a caller (or a test) can A/B or enable one without
+ * touching the other.
  *
- * **Every switch is OFF by default (all four `false`), reverted 2026-10-06 after
- * the first real A/B evaluation.** The product briefly ran P2 all-on
- * (commit `5e8566a`), but the eval at
- * `docs/plans/2026-10-06-bot-ab-eval-results.md` found all-four-on
- * significantly *worse* than the all-off baseline in its narrow rig (3-handed,
- * `always-call` anchor, mirror strategy): `p2:all` cluster CI `[-85.8, -17.1]`,
- * verdict `worse`. The user's ruling was therefore to turn P2 back off and
- * return to the baseline while keeping the capability available. The
- * implementation and its tests remain, so an explicit `p2` override (or a
- * future eval-gated decision) can re-enable any subset without a code change.
+ * History: the product briefly ran P2 all-on (commit `5e8566a`); the first A/B
+ * eval (`docs/plans/2026-10-06-bot-ab-eval-results.md`) judged all-four-on
+ * `worse` than the all-off baseline in its narrow rig (3-handed, `always-call`
+ * anchor, mirror strategy): `p2:all` cluster CI `[-85.8, -17.1]`, so it was
+ * reverted to all-off on 2026-10-06. The fairer follow-up
+ * (`docs/plans/2026-10-06-bot-ab-eval-v2-fair.md`, real tendentious opponents
+ * TAG/station/LAG + `always-call`) then found `rangePropagation` significantly
+ * harmful under two opponents (TAG -43.7 bb/100, station -55.3) and `shrinkage`
+ * harmful under station (-32.0), with consistent sign; **both switches were
+ * therefore deleted outright** (capability permanently off, no toggle). Only
+ * `sizeGrid` / `buckets` survive.
  *
  * **Not byte-for-byte identical to the pre-P2 baseline**: this file also carries
  * an always-on `evaluateHand` fix (exclude straight draws with no hero-only rank
@@ -1355,65 +1357,63 @@ export function buildVillainRange(
  * `docs/plans/postflop-p2-report.md` §3 for the exact scope.
  */
 export interface P2Options {
-  /** Beta posterior-mean opponent estimates instead of a `sampleHands < 10` cutoff. */
-  shrinkage: boolean;
   /** Snap an observed bet size to the discrete `POSTFLOP_SIZE_GRID`. */
   sizeGrid: boolean;
-  /** Shift the villain model along the preflop action line / table size. */
-  rangePropagation: boolean;
   /** Tilt villain combo weights by their 24-bucket strength. */
   buckets: boolean;
 }
 
 /**
- * Frozen all-off default. `Object.freeze` + `Readonly<P2Options>` make "默认全关"
- * an immutable guarantee: a runtime write (`DEFAULT_P2.sizeGrid = true`) neither
- * compiles nor takes effect, so the default parameters that read this constant
- * cannot be silently flipped. Callers that want a switch on must pass their own
- * explicit `p2` option.
+ * Default P2 configuration. **`sizeGrid` / `buckets` are ON by default.**
  *
- * Reverted to all-off (commit `5e8566a` had briefly made it all-on) on
- * 2026-10-06 after the A/B eval `docs/plans/2026-10-06-bot-ab-eval-results.md`
- * judged all-four-on `worse` than the all-off baseline (`p2:all` cluster CI
- * `[-85.8, -17.1]`). See {@link P2Options}.
+ * ⚠️ Risk, recorded explicitly: the fair v2 A/B
+ * (`docs/plans/2026-10-06-bot-ab-eval-v2-fair.md`) measured a positive mean for
+ * `buckets` across all four opponents (+3.8 / +6.6 / +20.1 / +4.5 bb/100) but
+ * **every interval was inconclusive** (sample too small - this is NOT proof it
+ * helps), and `sizeGrid` is ≈0 against betting opponents and exactly 0 against
+ * non-betting ones. **Defaulting them on is a product decision, not a
+ * statistical conclusion — do not describe it as "validated".** Set
+ * `FOURAM_P2_ALL_OFF=1` for the all-off fallback.
+ *
+ * History: this constant was all-off after the 2026-10-06 revert (commit
+ * `5e8566a` had briefly made it all-on, and
+ * `docs/plans/2026-10-06-bot-ab-eval-results.md` judged all-four-on `worse` in
+ * its narrow rig). `rangePropagation` / `shrinkage` were subsequently deleted
+ * (see {@link P2Options}); the two survivors become product-default on.
+ *
+ * `Object.freeze` + `Readonly<P2Options>` keep the default immutable: a runtime
+ * write (`DEFAULT_P2.sizeGrid = false`) neither compiles nor takes effect, so
+ * the default parameters that read this constant cannot be silently flipped.
+ * Callers that want a switch off must pass their own explicit `p2` option.
  */
 export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
-  shrinkage: false,
-  sizeGrid: false,
-  rangePropagation: false,
-  buckets: false,
+  sizeGrid: true,
+  buckets: true,
 });
 
 /**
- * Frozen all-off configuration: the explicit revert / kill-switch back to the
- * pre-P2 decision path (`shrinkage` / `sizeGrid` / `rangePropagation` / `buckets`
- * all `false`). Since the 2026-10-06 A/B revert this is **byte-identical to
- * {@link DEFAULT_P2}**; it is kept as a named constant because callers (server
- * env `FOURAM_P2_ALL_OFF`, the eval harness) and tests reference it explicitly,
- * so the one-import rollback / kill-switch cannot drift from the `DEFAULT_P2`
- * shape. Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })`, or omit `p2`
- * entirely for the same all-off default.
+ * Frozen explicit all-off configuration: the pre-P2 decision path
+ * (`sizeGrid` / `buckets` both `false`). With {@link DEFAULT_P2} now defaulting
+ * both on this is the named **kill-switch / A/B control**, and it is no longer
+ * identical to the default. It is kept as a named constant because callers
+ * (server env `FOURAM_P2_ALL_OFF`, the eval harness) and tests reference it
+ * explicitly, so the one-import rollback cannot drift from the `DEFAULT_P2`
+ * shape. Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })`.
  */
 export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
-  shrinkage: false,
   sizeGrid: false,
-  rangePropagation: false,
   buckets: false,
 });
 
 /**
- * Observed average VPIP / PFR / postflop aggression of the active opponents.
- *
- * P2: with `shrinkage` on this is the average **Beta posterior mean** of each
- * opponent's rate (small samples sit near `OPPONENT_PRIORS`, large samples
- * approach the raw frequency) instead of discarding every opponent with fewer
- * than 10 hands. With it off the original `sampleHands < 10` cutoff and raw
- * ratios are used.
+ * Observed average VPIP / PFR / postflop aggression of the active opponents,
+ * using the raw ratios of every opponent with at least 10 observed hands
+ * (`sampleHands < 10` is discarded). This is the permanent post-prune behaviour:
+ * the former `shrinkage` alternative (Beta posterior mean) was deleted together
+ * with its switch, so a small sample can no longer contribute. An all-short-
+ * sample table yields `{}` (a neutral, no-read result).
  */
-export function opponentModelStats(
-  view: DecisionView,
-  shrinkage: boolean = DEFAULT_P2.shrinkage,
-): {
+export function opponentModelStats(view: DecisionView): {
   vpip?: number;
   pfr?: number;
   aggression?: number;
@@ -1427,85 +1427,15 @@ export function opponentModelStats(
     if (o.folded) continue;
     const stats = bySeat.get(o.seat);
     if (!stats) continue;
-    if (shrinkage) {
-      const est = estimateOpponent(stats);
-      vpip += est.vpip;
-      pfr += est.pfr;
-      aggression += est.aggression;
-      n++;
-    } else {
-      if (stats.sampleHands < 10) continue;
-      vpip += stats.vpipHands / stats.sampleHands;
-      pfr += stats.pfrHands / stats.sampleHands;
-      aggression +=
-        stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
-      n++;
-    }
+    if (stats.sampleHands < 10) continue;
+    vpip += stats.vpipHands / stats.sampleHands;
+    pfr += stats.pfrHands / stats.sampleHands;
+    aggression +=
+      stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
+    n++;
   }
   if (n === 0) return {};
   return { vpip: vpip / n, pfr: pfr / n, aggression: aggression / n };
-}
-
-// ---------------------------------------------------------------------------
-// P2: range propagation along the action line
-// ---------------------------------------------------------------------------
-
-/** Evidence used to propagate a range tighter or wider than the size read. */
-export interface RangePropagationContext {
-  /** Preflop bet/raise actions observed in the current hand's history. */
-  preflopRaises: number;
-  /** Hero made the last preflop aggressive action (the bettor's range is capped). */
-  heroWasAggressor: boolean;
-  /** Non-folded opponents still in the hand. */
-  activeOpponents: number;
-}
-
-/** Count of preflop bet/raise actions in the public history. */
-export function preflopRaiseCount(view: DecisionView): number {
-  // `historyComplete === false` (disconnect gap / mid-hand join) means the
-  // action history is partial, so a missing raise cannot be read as "this pot
-  // was not raised". Return 0 - i.e. no propagation evidence - instead of
-  // propagating from a stale, under-counted line.
-  if (!view.historyComplete) return 0;
-  let raises = 0;
-  for (const a of view.actionHistory) {
-    if (a.street === 'preflop' && (a.action.type === 'bet' || a.action.type === 'raise')) raises++;
-  }
-  return raises;
-}
-
-const MODEL_ORDER: readonly VillainRangeModel[] = ['bluff-heavy', 'balanced', 'value-heavy'];
-
-/**
- * Propagate the size-based villain model along the preflop action line instead
- * of re-deriving it from scratch each street. Relative to the base model:
- *
- *  - a **3-bet or 4-bet pot** (`preflopRaises >= 2`) tightens one tier: a bettor
- *    who three-bet and is now betting has a stronger range than one who just
- *    called;
- *  - a **raised multiway** pot (an open/3-bet into 3+ players) tightens one
- *    tier, and a **very multiway** pot (4+ active) tightens another: betting
- *    into more opponents is more value-weighted;
- *  - **hero made the last preflop raise** widens one tier: the opponent called
- *    (or is betting into) a range they did not cap, so their range is capped.
- *
- * The shifts are additive and clamped to the three tiers. With an empty
- * preflop history and a heads-up pot this is the identity, so the pre-P2
- * (size/texture/opponent-type) read is preserved exactly. `facingVillainModel`
- * additionally refuses to call this at all when `view.historyComplete` is false,
- * because a missing raise must never be propagated as a missing raise.
- */
-export function propagateVillainModel(
-  base: VillainRangeModel,
-  ctx: RangePropagationContext,
-): VillainRangeModel {
-  let shift = 0;
-  if (ctx.preflopRaises >= 2) shift += 1;
-  else if (ctx.preflopRaises >= 1 && ctx.activeOpponents >= 3) shift += 1;
-  if (ctx.activeOpponents >= 4) shift += 1;
-  if (ctx.heroWasAggressor) shift -= 1;
-  const index = clamp(MODEL_ORDER.indexOf(base) + shift, 0, MODEL_ORDER.length - 1);
-  return MODEL_ORDER[Math.round(index)]!;
 }
 
 /**
@@ -1522,8 +1452,8 @@ export function facingVillainModel(
   const board = view.hand?.board ?? [];
   const texture = classifyTexture(board);
   const activeOpponents = view.opponents.filter((o) => !o.folded);
-  const stats = opponentModelStats(view, opts.shrinkage);
-  const base = chooseVillainModel(
+  const stats = opponentModelStats(view);
+  return chooseVillainModel(
     {
       betFraction: potBefore > 0 ? call / potBefore : 1,
       allIn: activeOpponents.some((o) => o.allIn),
@@ -1535,18 +1465,6 @@ export function facingVillainModel(
     },
     opts.sizeGrid,
   );
-  if (!opts.rangePropagation) return base;
-  // A partial history cannot be trusted for an action-line shift: with
-  // `historyComplete === false` we keep the size/texture/opponent-type base read
-  // rather than propagating from a line that may be missing raises. (The base
-  // read only uses the current snapshot / observed stats, never the count of
-  // missed actions.)
-  if (!view.historyComplete) return base;
-  return propagateVillainModel(base, {
-    preflopRaises: preflopRaiseCount(view),
-    heroWasAggressor: heroWasAggressor(view),
-    activeOpponents: activeOpponents.length,
-  });
 }
 
 /** Weighted range the P0/P2 decision samples against for this view. */
@@ -1699,27 +1617,18 @@ export class PostflopPolicy {
     const bySeat = new Map(view.sessionMemory.opponents.map((o) => [o.seat, o]));
     let vpip = 0;
     let pfr = 0;
-    let confidence = 0;
     let n = 0;
     for (const o of view.opponents) {
       if (o.folded) continue;
       const stats = bySeat.get(o.seat);
       if (!stats) continue;
-      if (this.p2.shrinkage) {
-        // P2: posterior-mean read; `confidence` (n/(n+k)) scales how far the
-        // exploit may move from neutral, so a 5-hand sample barely budges while
-        // a 50-hand sample gets most of the raw effect.
-        const est = estimateOpponent(stats);
-        vpip += est.vpip;
-        pfr += est.pfr;
-        confidence += est.confidence;
-        n++;
-      } else {
-        if (stats.sampleHands < 10) continue;
-        vpip += stats.vpipHands / stats.sampleHands;
-        pfr += stats.pfrHands / stats.sampleHands;
-        n++;
-      }
+      // Raw rates from opponents with a usable sample. The former `shrinkage`
+      // branch (posterior-mean read + confidence-scaled exploit) was deleted
+      // with its switch, so this cutoff is the permanent behaviour.
+      if (stats.sampleHands < 10) continue;
+      vpip += stats.vpipHands / stats.sampleHands;
+      pfr += stats.pfrHands / stats.sampleHands;
+      n++;
     }
     if (n === 0) return 1;
     const avgVpip = vpip / n;
@@ -1727,7 +1636,6 @@ export class PostflopPolicy {
     let m = 1;
     if (avgVpip > 0.45 && avgPfr < 0.18) m *= 0.6; // station: bluff less
     else if (avgVpip < 0.22) m *= 1.25; // nit: bluff more
-    if (this.p2.shrinkage) m = 1 + (m - 1) * (confidence / n);
     return clamp(m, 0.4, 1.4);
   }
 

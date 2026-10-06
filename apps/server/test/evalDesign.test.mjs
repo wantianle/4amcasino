@@ -572,13 +572,12 @@ describe.skipIf(!SMOKE)('replicated run (EVAL_DESIGN_SMOKE=1)', () => {
     '3 seeds x 20 hands aggregate into pooled + block + cluster estimates, all clean, with a real treatment contrast',
     async () => {
       const startedAt = Date.now();
-      // 20 hands/replica (not 3): a 3-hand deck cannot exercise the shrinkage
-      // read (the opponent model is barely populated), so the arm and the
-      // all-off baseline would produce the same decisions and the A/B would
-      // "pass" without ever measuring a contrast - the exact false positive
-      // the explicit all-off baseline fixed. The assertions below pin the
-      // contrast, not just a zero point estimate.
-      const r = await runReplicatedComparison('p2:shrinkage', 'rules-v1', {
+      // 20 hands/replica (not 3): a 3-hand deck barely populates the opponent
+      // model, so the arm and the all-off baseline could produce the same
+      // decisions and the A/B would "pass" without ever measuring a contrast -
+      // the exact false positive the explicit all-off baseline fixed. The
+      // assertions below pin the contrast, not just a zero point estimate.
+      const r = await runReplicatedComparison('p2:all', 'rules-v1', {
         seeds: [1234, 1235, 1236],
         hands: 20,
         memory: true,
@@ -599,9 +598,9 @@ describe.skipIf(!SMOKE)('replicated run (EVAL_DESIGN_SMOKE=1)', () => {
       expect(r.allClean).toBe(true);
       expect(r.replicas).toHaveLength(3);
       expect(r.iid.n).toBe(60);
-      // The A/B must NOT collapse to the control: the shrinkage arm has to
-      // change at least some decisions vs the all-off baseline, otherwise the
-      // config is not actually wired through (the original blocker).
+      // The A/B must NOT collapse to the control: the `p2:all` (sizeGrid +
+      // buckets) arm has to change at least some decisions vs the all-off
+      // baseline, otherwise the config is not actually wired through.
       expect(r.replicas.some((x) => x.samples.some((v) => v !== 0))).toBe(true);
       expect(r.pooledMean).not.toBe(0);
       expect(r.verdict.status).toBeDefined();

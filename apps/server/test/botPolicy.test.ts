@@ -137,10 +137,9 @@ describe('resolveBotPolicyDetailed', () => {
 });
 
 describe('p2OptionsFromEnv', () => {
-  it('defaults to all-off (no override) when the switch is unset', () => {
-    // Unset/unrecognised env returns `{}`, i.e. keep `DEFAULT_P2` - now all-off
-    // after the 2026-10-06 A/B revert
-    // (`docs/plans/2026-10-06-bot-ab-eval-results.md`).
+  it('returns {} (keep DEFAULT_P2) when the switch is unset or unrecognised', () => {
+    // Unset/unrecognised env returns `{}`, i.e. keep `DEFAULT_P2` - `sizeGrid` /
+    // `buckets` on (a product default, not a statistically validated one).
     expect(p2OptionsFromEnv({} as NodeJS.ProcessEnv)).toEqual({});
     // An unrecognised value is ignored rather than erroring (original semantics).
     expect(p2OptionsFromEnv({ FOURAM_P2: 'maybe' } as NodeJS.ProcessEnv)).toEqual({});
@@ -156,7 +155,7 @@ describe('p2OptionsFromEnv', () => {
   });
 
   it('FOURAM_P2=on|true|all is an explicit all-on override', () => {
-    const allOn = { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true };
+    const allOn = { sizeGrid: true, buckets: true };
     for (const raw of ['on', 'true', 'all', 'ON', 'All']) {
       expect(p2OptionsFromEnv({ FOURAM_P2: raw } as NodeJS.ProcessEnv)).toEqual(allOn);
     }
@@ -248,7 +247,7 @@ function p2View(
 
 describe('P2 env kill-switch reaches the production resolver chain', () => {
   const c = (n: string) => cardFromName(n);
-  // A 10-hand maniac (shrinkage input) and a 0.9-pot size (sizeGrid input).
+  // A 10-hand opponent sample and a 0.9-pot size (the sizeGrid read input).
   const maniac = {
     seat: 0,
     sampleHands: 10,
@@ -315,16 +314,17 @@ describe('P2 env kill-switch reaches the production resolver chain', () => {
     expect(def).toBeInstanceOf(RulePolicy);
     expect(kill).toBeInstanceOf(RulePolicy);
 
+    // The product default (no env) is buckets + sizeGrid ON; the explicit env
+    // kill-switch restores the all-off pre-P2 path, so they must differ.
     const withDefault = decisionsWith({});
     const withKillSwitch = decisionsWith({ FOURAM_P2_ALL_OFF: '1' });
-    // The product default is all-off again, so the explicit env kill-switch is
-    // now a no-op on the decisions (kept only for operator compatibility).
-    expect(withKillSwitch).toEqual(withDefault);
+    expect(withKillSwitch).not.toEqual(withDefault);
 
-    // Decisive evidence that the env can still turn P2 back on: `FOURAM_P2=on`
-    // flows through the resolver and changes the decisions.
-    const withEnvAllOn = decisionsWith({ FOURAM_P2: 'on' });
-    expect(withEnvAllOn).not.toEqual(withDefault);
+    // `FOURAM_P2=off` is the same explicit all-off as the kill-switch...
+    expect(decisionsWith({ FOURAM_P2: 'off' })).toEqual(withKillSwitch);
+    // ...and `FOURAM_P2=on` flows through the resolver as the (already default)
+    // all-on config, so it matches the product default.
+    expect(decisionsWith({ FOURAM_P2: 'on' })).toEqual(withDefault);
   });
 });
 

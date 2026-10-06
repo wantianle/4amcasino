@@ -40,30 +40,30 @@ import {
  *
  * Name grammar (`+`-joined segments, order-independent):
  *   - `rules-v1` / `baseline` / `default`  -> explicit all-off P2 baseline
- *   - `p2:shrinkage`                       -> all-off + one switch on
- *   - `p2:shrinkage+sizeGrid`              -> all-off + several switches on
- *   - `p2:all`                             -> all four switches on
+ *   - `p2:sizeGrid`                        -> all-off + one switch on
+ *   - `p2:sizeGrid+buckets`                -> all-off + both surviving switches on
+ *   - `p2:all`                             -> both switches on
  *   - `adaptive-preflop`                   -> `params.adaptivePreflop = true`
  *   - `p2:all+adaptive-preflop`            -> combined arm
  * Every arm starts from the explicit all-off `defaultP2()`, never the product
- * `DEFAULT_P2` (all-off since the 2026-10-06 A/B revert), so the baseline stays
- * independent of how the product default is set.
- * An unknown segment (e.g. `p2:banana`, bare `sizeGrid`) resolves to `null`,
- * and `runEvalMatch` turns that into a hard error rather than silently seating
- * the wrong policy.
+ * `DEFAULT_P2` (`sizeGrid` / `buckets` on since the 2026-10-06 prune), so the
+ * baseline stays independent of how the product default is set.
+ * An unknown segment (e.g. `p2:banana`, bare `sizeGrid`, or the deleted
+ * `p2:shrinkage` / `p2:rangePropagation`) resolves to `null`, and `runEvalMatch`
+ * turns that into a hard error rather than silently seating the wrong policy.
  */
-export const P2_FLAGS = ['shrinkage', 'sizeGrid', 'rangePropagation', 'buckets'];
+export const P2_FLAGS = ['sizeGrid', 'buckets'];
 
 /**
  * Explicit all-off P2 snapshot: the harness baseline, **decoupled from the
- * shipped `DEFAULT_P2` product default** (all-off since the 2026-10-06 A/B
- * revert, but treated as an independent value that may change). The baseline arm
- * `rules-v1` must be the pre-P2 decision path regardless of how the product
- * flips its defaults, otherwise every `p2:*` arm would start from an all-on
- * config and a "one switch on" arm could be byte-identical to the baseline
- * (the A/B treatment and control would collapse to the same policy). Anchored
- * to the shipped, frozen `P2_ALL_OFF` constant so the shape can never drift
- * from `P2Options`.
+ * shipped `DEFAULT_P2` product default** (`sizeGrid` / `buckets` on since the
+ * 2026-10-06 prune, but treated as an independent value that may change). The
+ * baseline arm `rules-v1` must be the pre-P2 decision path regardless of how the
+ * product flips its defaults, otherwise every `p2:*` arm would start from an
+ * all-on config and a "one switch on" arm could be byte-identical to the
+ * baseline (the A/B treatment and control would collapse to the same policy).
+ * Anchored to the shipped, frozen `P2_ALL_OFF` constant so the shape can never
+ * drift from `P2Options`.
  */
 export function defaultP2() {
   return { ...P2_ALL_OFF };
@@ -89,7 +89,7 @@ export function parseArmName(raw) {
 
   // A bare flag (`sizeGrid`) is only accepted when the arm also carries at least
   // one explicit `p2:` segment. That keeps the order truly irrelevant - both
-  // `p2:shrinkage+sizeGrid` and `sizeGrid+p2:shrinkage` parse the same - while
+  // `p2:sizeGrid+buckets` and `buckets+p2:sizeGrid` parse the same - while
   // still rejecting a lone `sizeGrid`, which is almost certainly a typo for a
   // baseline style rather than an arm.
   const hasP2Segment = tokens.some((t) => t.startsWith('p2:'));
@@ -357,7 +357,7 @@ export function isSupportedStrategy(name) {
 /** Human-readable list of supported baseline names, for error messages. */
 export const SUPPORTED_STRATEGY_HINT =
   'baselines: always-fold, always-call, equity-threshold[:t]; arms: rules-v1, ' +
-  'p2:<shrinkage|sizeGrid|rangePropagation|buckets|all>[+...], adaptive-preflop';
+  'p2:<sizeGrid|buckets|all>[+...], adaptive-preflop';
 
 /**
  * Resolve a strategy name to a legality-guarded `Policy`, throwing on an

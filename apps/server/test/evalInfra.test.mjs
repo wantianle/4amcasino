@@ -9,7 +9,7 @@
  * These spin up the real server in-process, so the timeouts are generous.
  */
 import { describe, it, expect } from 'vitest';
-import { RulePolicy, P2_ALL_OFF, opponentModelStats } from '@4am/agent-core';
+import { RulePolicy, P2_ALL_OFF } from '@4am/agent-core';
 import {
   deterministicPerm,
   hashSeed,
@@ -305,9 +305,7 @@ const RULE_GRID = [
 describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
   it('parses every supported arm into an explicit p2 / adaptive config', () => {
     expect(defaultP2()).toEqual({
-      shrinkage: false,
       sizeGrid: false,
-      rangePropagation: false,
       buckets: false,
     });
     expect(parseArmName('rules-v1')).toMatchObject({
@@ -315,44 +313,42 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
       p2: defaultP2(),
       adaptivePreflop: false,
     });
-    expect(parseArmName('p2:shrinkage')).toMatchObject({
-      p2: { ...defaultP2(), shrinkage: true },
+    expect(parseArmName('p2:sizeGrid')).toMatchObject({
+      p2: { ...defaultP2(), sizeGrid: true },
       adaptivePreflop: false,
     });
-    expect(parseArmName('p2:shrinkage+sizeGrid')).toMatchObject({
-      p2: { ...defaultP2(), shrinkage: true, sizeGrid: true },
+    expect(parseArmName('p2:sizeGrid+buckets')).toMatchObject({
+      p2: { ...defaultP2(), sizeGrid: true, buckets: true },
     });
     expect(parseArmName('p2:all')).toMatchObject({
-      p2: { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true },
+      p2: { sizeGrid: true, buckets: true },
     });
     expect(parseArmName('adaptive-preflop')).toMatchObject({
       p2: defaultP2(),
       adaptivePreflop: true,
     });
     expect(parseArmName('p2:all+adaptive-preflop')).toMatchObject({
-      p2: { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true },
+      p2: { sizeGrid: true, buckets: true },
       adaptivePreflop: true,
     });
     // Report keying: name + resolved snapshot, not just the prefix.
     expect(armConfig('p2:buckets').p2.buckets).toBe(true);
-    expect(armConfig('p2:buckets').p2.shrinkage).toBe(false);
+    expect(armConfig('p2:buckets').p2.sizeGrid).toBe(false);
   });
 
   it('parses flags order-independently, merges p2 segments, and de-duplicates', () => {
     const flags = (name) => armConfig(name).p2;
     // The bare flag may precede or follow the `p2:` segment.
-    expect(flags('p2:shrinkage+sizeGrid')).toEqual(flags('sizeGrid+p2:shrinkage'));
-    expect(flags('sizeGrid+p2:shrinkage')).toEqual({
-      shrinkage: true,
+    expect(flags('p2:sizeGrid+buckets')).toEqual(flags('buckets+p2:sizeGrid'));
+    expect(flags('buckets+p2:sizeGrid')).toEqual({
       sizeGrid: true,
-      rangePropagation: false,
-      buckets: false,
+      buckets: true,
     });
     // Several `p2:` segments merge, `all` unions with explicit flags, repeats
     // are idempotent.
-    const want = { shrinkage: true, sizeGrid: true, rangePropagation: true, buckets: true };
-    expect(flags('p2:all+p2:shrinkage')).toEqual(want);
-    expect(flags('p2:shrinkage+p2:sizeGrid+p2:rangePropagation+p2:buckets')).toEqual(want);
+    const want = { sizeGrid: true, buckets: true };
+    expect(flags('p2:all+p2:sizeGrid')).toEqual(want);
+    expect(flags('p2:sizeGrid+p2:buckets')).toEqual(want);
     expect(flags('p2:all+p2:all')).toEqual(want);
     // adaptive-preflop stays order-independent too.
     expect(armConfig('p2:all+adaptive-preflop').p2).toEqual(
@@ -367,9 +363,11 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
       'sizeGrid',
       'p2:',
       'shrinkage',
+      'p2:shrinkage',
+      'p2:rangePropagation',
       'all',
       'p2:all+banana',
-      'p2:banana+p2:shrinkage',
+      'p2:banana+p2:sizeGrid',
       '',
     ]) {
       expect(parseArmName(bad)).toBeNull();
@@ -384,10 +382,10 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
   });
 
   it('default arm is the explicit all-off baseline, isolated from the product default', () => {
-    // The harness baseline must NOT track the shipped `DEFAULT_P2` (all-off since
-    // the 2026-10-06 A/B revert, but treated as an independent value): it is the
-    // pre-P2 engine, built by passing `P2_ALL_OFF` explicitly. That makes
-    // `rules-v1` a real A/B control for every `p2:*` arm.
+    // The harness baseline must NOT track the shipped `DEFAULT_P2` (`sizeGrid` /
+    // `buckets` on since the 2026-10-06 prune, but treated as an independent
+    // value): it is the pre-P2 engine, built by passing `P2_ALL_OFF` explicitly.
+    // That makes `rules-v1` a real A/B control for every `p2:*` arm.
     const allOff = new RulePolicy({ kind: 'tight-aggressive', p2: P2_ALL_OFF });
     const arm = makeStrategy('rules-v1');
     const alias = makeStrategy('default');
@@ -402,14 +400,7 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
   });
 
   it('every p2 arm emits only legal actions on the grid', () => {
-    for (const name of [
-      'p2:shrinkage',
-      'p2:sizeGrid',
-      'p2:rangePropagation',
-      'p2:buckets',
-      'p2:all',
-      'adaptive-preflop',
-    ]) {
+    for (const name of ['p2:sizeGrid', 'p2:buckets', 'p2:all', 'adaptive-preflop']) {
       const p = resolveEvalStrategy(name);
       for (const view of RULE_GRID) {
         const d = p.decide(view);
@@ -423,125 +414,21 @@ describe('arm factory (rules-v1 / p2:* / adaptive-preflop)', () => {
     const all = armConfig('p2:all');
     expect(all.p2).not.toEqual(base.p2);
     // A combination arm parses to exactly the combined flag set.
-    expect(armConfig('p2:shrinkage+rangePropagation').p2).toEqual({
-      shrinkage: true,
-      sizeGrid: false,
-      rangePropagation: true,
-      buckets: false,
+    expect(armConfig('p2:sizeGrid+buckets').p2).toEqual({
+      sizeGrid: true,
+      buckets: true,
     });
   });
 });
 
-describe('shrinkage data path', () => {
-  it('reads opponent history that the all-off sampleHands<10 cutoff discards', () => {
-    // Four observed hands: below the 10-hand cutoff, so all-off returns {}.
-    const view = {
-      opponents: [{ seat: 1, folded: false }],
-      sessionMemory: {
-        handsObserved: 4,
-        netChips: null,
-        recentHands: [],
-        opponents: [
-          {
-            seat: 1,
-            sampleHands: 4,
-            vpipHands: 3,
-            pfrHands: 2,
-            postflopBetsRaises: 5,
-            postflopCalls: 1,
-          },
-        ],
-      },
-    };
-    expect(opponentModelStats(view, false)).toEqual({});
-    const on = opponentModelStats(view, true);
-    expect(on.vpip).toBeGreaterThan(0);
-    expect(on.pfr).toBeGreaterThan(0);
-    expect(on.aggression).toBeGreaterThan(0);
-  });
-
-  it('the same full DecisionView flips a decision when only shrinkage differs', () => {
-    // A LAG opponent with 20 settled hands. `rules-v1` reads the raw rates
-    // (pip=0.7/pfr=0.5/aggr=0.75) and calls; `p2:shrinkage` shrinks them toward
-    // the priors and folds the same hand. Identical view, identical policy seed
-    // - the ONLY difference is the switch, so this is a direct behavior sample.
-    const lag = {
-      seat: 1,
-      sampleHands: 20,
-      vpipHands: 14,
-      pfrHands: 10,
-      postflopBetsRaises: 18,
-      postflopCalls: 6,
-    };
-    const view = {
-      room: { sb: 10, bb: 20 },
-      hand: {
-        handId: 'h1',
-        street: 'flop',
-        buttonSeat: 0,
-        board: [9, 13, 22],
-        pot: 40,
-        currentBet: 20,
-        toAct: 0,
-        deadline: null,
-        myCards: [2, 14],
-        mySeat: 0,
-      },
-      me: {
-        seat: 0,
-        userId: 1,
-        displayName: 'me',
-        isMe: true,
-        stack: 2000,
-        committed: 0,
-        total: 0,
-        folded: false,
-        allIn: false,
-        sittingOut: false,
-        connected: true,
-      },
-      legalActions: {
-        canCheck: false,
-        canCall: true,
-        callAmount: 20,
-        canBet: false,
-        canRaise: true,
-        minRaiseTo: 40,
-        maxRaiseTo: 4000,
-      },
-      potOdds: { callAmount: 20, pot: 40, potOdds: 1 / 3, breakEvenEquity: 1 / 3 },
-      actionHistory: [],
-      opponents: [
-        {
-          seat: 1,
-          userId: 2,
-          displayName: 'opp',
-          isMe: false,
-          stack: 2000,
-          committed: 0,
-          total: 0,
-          folded: false,
-          allIn: false,
-          sittingOut: false,
-          connected: true,
-        },
-      ],
-      sessionMemory: { handsObserved: 20, netChips: null, recentHands: [], opponents: [lag] },
-      historyComplete: true,
-    };
-    expect(makeArmPolicy('rules-v1').decide(view).action).toEqual({ type: 'call' });
-    expect(makeArmPolicy('p2:shrinkage').decide(view).action).toEqual({ type: 'fold' });
-    // The combined arm inherits the shrinkage read on this spot too.
-    expect(makeArmPolicy('p2:all').decide(view).action).toEqual({ type: 'fold' });
-  });
-
+describe('cross-hand memory path', () => {
   it(
     'with memory on, the arm actually sees settled opponent history across hands',
     async () => {
       const out = await runEvalMatch({
         seed: 7788,
         hands: 12,
-        seatPolicies: { 1: 'rules-v1', 2: 'p2:shrinkage' },
+        seatPolicies: { 1: 'rules-v1', 2: 'p2:buckets' },
         anchor: 'always-call',
         memory: true,
         actionMs: 800,
@@ -566,7 +453,7 @@ describe('shrinkage data path', () => {
       const out = await runEvalMatch({
         seed: 7789,
         hands: 6,
-        seatPolicies: { 1: 'rules-v1', 2: 'p2:shrinkage' },
+        seatPolicies: { 1: 'rules-v1', 2: 'p2:buckets' },
         anchor: 'always-call',
         actionMs: 800,
         cryptoMs: 2000,
