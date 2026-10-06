@@ -185,21 +185,10 @@ const server: Record<string, string> = {
     '合并后房间 {room} 的账本校验失败（问题记录 ID {id}）。',
   'merge failed': '合并失败。',
 
-  // ── HTTP: agent tokens & live subscriptions ─────────────────────────────
-  'Agent token not found.': '找不到代理令牌。',
+  // ── HTTP: bot identity token (apps/server/src/botRoutes.ts) ─────────────
+  // The agent-token / live-subscription routes were removed with the Agent
+  // access chain (dd0da72); this is the one survivor still emitted there.
   'Agent token is expired or revoked.': '代理令牌已过期或已被吊销。',
-  'Sign in or use a valid agent token.': '请先登录，或使用有效的代理令牌。',
-  'This agent token does not allow that action.': '这个代理令牌没有该操作的权限。',
-  'Invalid agent access settings.': '代理访问设置无效。',
-  'Revoke an existing agent token first (20 active tokens maximum).':
-    '先吊销一个现有的代理令牌（最多同时 20 个有效令牌）。',
-  'Room not found.': '找不到房间。',
-  'Join this room first.': '先进这个房间。',
-  'Invalid event subscription.': '事件订阅无效。',
-  'Subscription access ended.': '订阅已到期。',
-  'At most three simultaneous subscriptions per account.': '每个账号最多同时订阅 3 个。',
-  'Invalid audit cursor.': '审计游标无效。',
-  'Invalid result cursor.': '结果游标无效。',
 
   // ── HTTP: chip-amount validation (label + generic) ──────────────────────
   '{label} must be whole chips within the supported limit.':

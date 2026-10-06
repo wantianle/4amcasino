@@ -42,6 +42,10 @@ export interface RoomFeatureColumns {
  * `features` payload supplied at room-creation time (there is no stored row to
  * merge against yet).
  *
+ * Note: the shared object is deep-frozen (see `roomRules.ts`), so this alias is
+ * immutable at runtime as well; read-only spreads such as
+ * {@link mergeRoomFeatures} are unaffected.
+ *
  * Every feature is ON by default: a new table is meant to have the new gameplay
  * (squid / time bank / bomb pot / multi-run) available out of the box. A host
  * can still switch any of them off through the settings dialog. The DB column

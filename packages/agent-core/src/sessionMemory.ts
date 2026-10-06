@@ -88,14 +88,11 @@ export interface ShrinkagePrior {
  *  - `vpip`       ~28% (between the nit and the maniac bands, so a tiny sample
  *                 of limps does not flip the exploit read);
  *  - `pfr`        ~15% (a typical tight-open frequency);
- *  - `foldToBet`  ~55% (a default fold-to-a-bet rate; kept for callers once the
- *                 stat is surfaced - see the module report);
  *  - `aggression` ~30% (postflop bet/raise share of bet+raise+call).
  */
 export const OPPONENT_PRIORS = {
   vpip: { mean: 0.28, strength: 20 },
   pfr: { mean: 0.15, strength: 20 },
-  foldToBet: { mean: 0.55, strength: 16 },
   aggression: { mean: 0.3, strength: 12 },
 } as const satisfies Record<string, ShrinkagePrior>;
 

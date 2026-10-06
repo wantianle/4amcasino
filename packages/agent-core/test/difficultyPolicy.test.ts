@@ -10,7 +10,7 @@ import type {
 import {
   BOT_DIFFICULTIES,
   DEFAULT_BOT_DIFFICULTY,
-  normalizeBotDifficulty,
+  parseBotDifficultyStrict,
   resolveDifficulty,
   resolvePolicyForDifficulty,
 } from '../src/difficultyPolicy.js';
@@ -91,22 +91,22 @@ function view(myCards: CardId[]): DecisionView {
   };
 }
 
-describe('normalizeBotDifficulty', () => {
+describe('parseBotDifficultyStrict', () => {
   it('accepts the remaining tiers case/space-insensitively; high is withdrawn', () => {
     expect(BOT_DIFFICULTIES).toEqual(['low', 'medium']);
-    expect(normalizeBotDifficulty(' LOW ')).toBe('low');
-    expect(normalizeBotDifficulty('Medium')).toBe('medium');
+    expect(parseBotDifficultyStrict(' LOW ')).toBe('low');
+    expect(parseBotDifficultyStrict('Medium')).toBe('medium');
     // `high` was never implemented and is withdrawn from the tier list, so it
     // no longer parses as a valid tier.
-    expect(normalizeBotDifficulty('high')).toBeNull();
+    expect(parseBotDifficultyStrict('high')).toBeNull();
   });
 
   it('returns null for empty or unknown values', () => {
-    expect(normalizeBotDifficulty('')).toBeNull();
-    expect(normalizeBotDifficulty('   ')).toBeNull();
-    expect(normalizeBotDifficulty(null)).toBeNull();
-    expect(normalizeBotDifficulty(undefined)).toBeNull();
-    expect(normalizeBotDifficulty('galaxy-brain')).toBeNull();
+    expect(parseBotDifficultyStrict('')).toBeNull();
+    expect(parseBotDifficultyStrict('   ')).toBeNull();
+    expect(parseBotDifficultyStrict(null)).toBeNull();
+    expect(parseBotDifficultyStrict(undefined)).toBeNull();
+    expect(parseBotDifficultyStrict('galaxy-brain')).toBeNull();
   });
 });
 

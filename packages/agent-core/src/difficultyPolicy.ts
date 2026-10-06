@@ -43,10 +43,16 @@ export type { BotDifficulty };
 /**
  * Case/space-insensitive difficulty parser; null for unknown/empty values, and
  * also null for a retired tier like `high` (reported separately by
- * {@link resolveDifficulty}). Alias of the shared strict parser so agent-core's
- * public API is unchanged.
+ * {@link resolveDifficulty}).
+ *
+ * NAMING: deliberately NOT called `normalizeBotDifficulty`. @4am/shared exports
+ * a same-input `normalizeBotDifficulty` with the OPPOSITE semantics: it folds a
+ * retired/unknown value into `DEFAULT_BOT_DIFFICULTY`. This strict alias maps
+ * such a value to `null` so `resolveDifficulty` can tell a withdrawn `high`
+ * from a typo and warn correctly. Distinct names keep a cross-package reader
+ * from importing the collapsing one by mistake and silently folding `high`.
  */
-export const normalizeBotDifficulty = parseBotDifficulty;
+export const parseBotDifficultyStrict = parseBotDifficulty;
 
 export interface DifficultyResolution {
   /** Effective tier after fallback (always one of `BOT_DIFFICULTIES`). */
@@ -76,7 +82,7 @@ export function resolveDifficulty(raw: string | null | undefined): DifficultyRes
   if (requested === null) {
     return { difficulty: DEFAULT_BOT_DIFFICULTY, requested: null, downgraded: false, ignored: false, warnings };
   }
-  const normalized = normalizeBotDifficulty(requested);
+  const normalized = parseBotDifficultyStrict(requested);
   if (!normalized) {
     const key = requested.trim().toLowerCase();
     const retired = (RETIRED_BOT_DIFFICULTIES as readonly string[]).includes(key);

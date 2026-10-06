@@ -64,16 +64,38 @@ export const BOMB_POT_DURATION_SECONDS_MAX = 604800;
 
 export const MULTI_RUN_MAX_RUNS = 3;
 
+/**
+ * Recursively `Object.freeze` a plain-data object. Used once at module load to
+ * make {@link DEFAULT_GAMEPLAY_SETTINGS} immutable in depth: a stray write
+ * (directly or through the server's `ROOM_FEATURE_DEFAULTS` alias, which is the
+ * same object) throws in strict-mode ESM instead of silently corrupting the
+ * defaults for every room. Only plain nested objects exist here, so a simple
+ * value walk is enough.
+ */
+function deepFreeze<T extends object>(value: T): T {
+  for (const child of Object.values(value)) {
+    if (child !== null && typeof child === 'object') deepFreeze(child);
+  }
+  return Object.freeze(value);
+}
+
 /** The default gameplay settings for a room: every new-gameplay feature is ON
  *  out of the box, and a host can switch any of them off.
  *
  *  This is the single TypeScript source of truth: the server's
  *  `ROOM_FEATURE_DEFAULTS` re-exports this exact object (no copy), and the DB
  *  column defaults are a safety fallback that room creation never relies on.
- *  The web UI also derives its fresh-form seed and field fallbacks from here. */
-export const DEFAULT_GAMEPLAY_SETTINGS: RoomGameplaySettings = {
+ *  The web UI also derives its fresh-form seed and field fallbacks from here.
+ *
+ *  Frozen in depth on purpose: the object is shared by every caller and is
+ *  never meant to be written, so mutation is blocked at runtime rather than
+ *  silently corrupting the global defaults. The server's only consumer,
+ *  `mergeRoomFeatures`, only spreads these values into a fresh object (it never
+ *  writes the source), and the web clones before editing, so nothing legitimate
+ *  is affected. */
+export const DEFAULT_GAMEPLAY_SETTINGS: RoomGameplaySettings = deepFreeze<RoomGameplaySettings>({
   squid: { enabled: true, penaltyBb: 1, minPlayers: 3 },
   timeBank: { enabled: true, initialSeconds: 30, refillEveryHands: 30, refillSeconds: 30 },
   bombPot: { enabled: true, anteBb: 1, schedule: { mode: 'hands', value: 10 } },
   multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
-};
+});
