@@ -398,25 +398,40 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
       return reply.code(400).send({ error: 'not enough chips to send that' });
     // Same idempotency as buy-ins: a double-tap on Send used to move the chips
     // twice, and the second one is indistinguishable from a deliberate repeat
-    // once it is on the ledger. An identical transfer to the same person
-    // moments later is treated as the same transfer.
+    // once it is on the ledger.
+    //
+    // The key is the whole transfer - (room, sender, recipient, amount) - not
+    // just the recipient leg. The old query matched `user_id = toUserId AND
+    // delta = +amount`, so within the 2.5s window ANY two different senders
+    // paying the same recipient the same amount collided and the second was
+    // swallowed with a 200. Both legs of a transfer now carry the same `ref`,
+    // so the pair can be matched as one transfer: a double-tap from one sender
+    // to one recipient is still deduped, while two different senders both land.
+    const cutoff = Date.now() - LIMITS.dedupWindowMs;
     const dupe = db
       .prepare(
-        `SELECT 1 FROM ledger WHERE room_id = ? AND user_id = ? AND kind = 'transfer'
-           AND delta = ? AND ts > ? LIMIT 1`,
+        `SELECT 1 FROM ledger s JOIN ledger r ON r.ref = s.ref
+          WHERE s.room_id = ? AND s.kind = 'transfer' AND s.user_id = ? AND s.delta = ?
+            AND s.ref IS NOT NULL AND s.ts > ?
+            AND r.kind = 'transfer' AND r.user_id = ? AND r.delta = ? LIMIT 1`,
       )
-      .get(id, parsed.data.toUserId, parsed.data.amount, Date.now() - LIMITS.dedupWindowMs);
+      .get(id, req.userId, -parsed.data.amount, cutoff, parsed.data.toUserId, parsed.data.amount);
     if (dupe) return { ok: true, duplicate: true };
     const names = db
       .prepare('SELECT id, COALESCE(display_name, username) as name FROM users WHERE id IN (?, ?)')
       .all(req.userId, parsed.data.toUserId) as { id: number; name: string }[];
     const nameOf = (uid: number) => names.find((n) => n.id === uid)?.name ?? `#${uid}`;
+    // One identity shared by the two legs, so the idempotency lookup above can
+    // prove it is looking at a single transfer rather than two unrelated legs
+    // that merely share sender/recipient/amount.
+    const transferRef = randomBytes(8).toString('hex');
     const apply = db.transaction(() => {
       appendLedger(db, {
         roomId: id,
         userId: req.userId,
         delta: -parsed.data.amount,
         kind: 'transfer',
+        ref: transferRef,
         note: `sent to ${nameOf(parsed.data.toUserId)}${parsed.data.note ? `: ${parsed.data.note}` : ''}`,
       });
       appendLedger(db, {
@@ -424,6 +439,7 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
         userId: parsed.data.toUserId,
         delta: parsed.data.amount,
         kind: 'transfer',
+        ref: transferRef,
         note: `from ${nameOf(req.userId)}${parsed.data.note ? `: ${parsed.data.note}` : ''}`,
       });
       db.prepare('UPDATE room_players SET stack = stack - ? WHERE room_id = ? AND user_id = ?').run(
@@ -761,7 +777,16 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
     const { roomId, otherUserId, note } = parsed.data;
     if (otherUserId === req.userId) return reply.code(400).send({ error: 'you cannot settle with yourself' });
-    if (!getRoom(db, roomId)) return reply.code(404).send({ error: 'no such room' });
+    const room = getRoom(db, roomId);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    // Record a settlement only where the debt is actually visible. `/api/me/debts`
+    // (and `/api/users/:id/shared-rooms`) list a room only when
+    // `voided = 0 AND archived = 0 AND deleted = 0`. A settlement written against
+    // a hidden room would be dropped from that list while `settledSum` still
+    // cancelled the next debt in the same room - money off the books. Keep the
+    // two predicates in lockstep.
+    if (room.voided || room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
     if (!isMember(db, roomId, req.userId) || !isMember(db, roomId, otherUserId))
       return reply.code(403).send({ error: 'both players must be in this room' });
     let proofBytes: Buffer | null = null;

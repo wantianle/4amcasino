@@ -111,8 +111,6 @@ export const LIMITS = {
    *  Long enough to swallow a double-click or a client retry, short enough that
    *  two deliberate identical buys a few seconds apart both land. */
   dedupWindowMs: 2_500,
-  /** Friend requests you may send per day. */
-  friendRequestsPerDay: 100,
   /** Inbound WebSocket frame size and rate, per connection. */
   wsFrameBytes: 256 * 1024,
   wsMessagesPerSec: 30,

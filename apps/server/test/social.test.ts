@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createApp } from '../src/app.js';
 import { verifyLedger } from '../src/ledger.js';
 
@@ -329,5 +330,108 @@ describe('play style mining', () => {
       .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
       .get(room.id, mallory.userId) as { seat: number | null };
     expect(row.seat).toBeNull();
+  });
+});
+
+describe('chip transfer idempotency key', () => {
+  async function fundedRoom() {
+    const recv = await user('xf_recv');
+    const s1 = await user('xf_s1');
+    const s2 = await user('xf_s2');
+    const room = await makeRoom(recv.token);
+    for (const u of [s1, s2]) await post('/api/rooms/join', u.token, { joinCode: room.joinCode });
+    for (const u of [s1, s2]) {
+      const req = (await post(`/api/rooms/${room.id}/buy`, u.token, { amount: 1000 })).json();
+      await post(`/api/rooms/${room.id}/approve`, recv.token, { requestId: req.id, approve: true });
+    }
+    return { recv, s1, s2, room };
+  }
+  const stackOf = (state: { players: { username: string; stack: number }[] }, n: string) =>
+    state.players.find((p) => p.username === n)!.stack;
+
+  it('two different senders paying the same recipient the same amount both land', async () => {
+    const { recv, s1, s2, room } = await fundedRoom();
+    const r1 = (
+      await post(`/api/rooms/${room.id}/transfer`, s1.token, { toUserId: recv.userId, amount: 200 })
+    ).json();
+    const r2 = (
+      await post(`/api/rooms/${room.id}/transfer`, s2.token, { toUserId: recv.userId, amount: 200 })
+    ).json();
+    // neither is treated as the other's duplicate: both senders were debited
+    expect(r1.duplicate).toBeUndefined();
+    expect(r2.duplicate).toBeUndefined();
+    const ledger = await get(`/api/rooms/${room.id}/ledger`, recv.token);
+    expect(ledger.entries.filter((e: { kind: string }) => e.kind === 'transfer')).toHaveLength(4);
+    const state = await get(`/api/rooms/${room.id}`, recv.token);
+    expect(stackOf(state, 'xf_s1')).toBe(800);
+    expect(stackOf(state, 'xf_s2')).toBe(800);
+    expect(stackOf(state, 'xf_recv')).toBe(400);
+  });
+
+  it('the same sender double-tapping the same transfer is still deduped', async () => {
+    const { recv, s1, room } = await fundedRoom();
+    const first = (
+      await post(`/api/rooms/${room.id}/transfer`, s1.token, { toUserId: recv.userId, amount: 100 })
+    ).json();
+    const second = (
+      await post(`/api/rooms/${room.id}/transfer`, s1.token, { toUserId: recv.userId, amount: 100 })
+    ).json();
+    expect(first.duplicate).toBeUndefined();
+    expect(second.duplicate).toBe(true);
+    const ledger = await get(`/api/rooms/${room.id}/ledger`, recv.token);
+    expect(ledger.entries.filter((e: { kind: string }) => e.kind === 'transfer')).toHaveLength(2);
+    const state = await get(`/api/rooms/${room.id}`, recv.token);
+    expect(stackOf(state, 'xf_s1')).toBe(900);
+    expect(stackOf(state, 'xf_recv')).toBe(100);
+  });
+});
+
+describe('settlement room visibility', () => {
+  async function debtRoom() {
+    const host = await user('st_host');
+    const alice = await user('st_alice');
+    const room = await makeRoom(host.token);
+    await post('/api/rooms/join', alice.token, { joinCode: room.joinCode });
+    for (const u of [host, alice]) {
+      const req = (await post(`/api/rooms/${room.id}/buy`, u.token, { amount: 1000 })).json();
+      await post(`/api/rooms/${room.id}/approve`, host.token, { requestId: req.id, approve: true });
+    }
+    // alice loses 500 to host, so she owes him 500
+    const { appendLedger } = await import('../src/ledger.js');
+    appendLedger(ctx.db, { roomId: room.id, userId: host.userId, delta: 500, kind: 'hand-settlement', ref: 'sthand' });
+    appendLedger(ctx.db, { roomId: room.id, userId: alice.userId, delta: -500, kind: 'hand-settlement', ref: 'sthand' });
+    ctx.db.prepare('UPDATE room_players SET stack = 1500 WHERE room_id = ? AND user_id = ?').run(room.id, host.userId);
+    ctx.db.prepare('UPDATE room_players SET stack = 500 WHERE room_id = ? AND user_id = ?').run(room.id, alice.userId);
+    return { host, alice, room };
+  }
+
+  it('still records a settlement on a live room', async () => {
+    const { host, alice, room } = await debtRoom();
+    const r = await post('/api/settlements', alice.token, { roomId: room.id, otherUserId: host.userId });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().settled).toBe(false);
+  });
+
+  it('refuses a settlement on a voided room, matching /api/me/debts visibility', async () => {
+    const { host, alice, room } = await debtRoom();
+    expect((await post(`/api/rooms/${room.id}/void`, host.token, { voided: true })).statusCode).toBe(200);
+    const debts = await get('/api/me/debts', alice.token);
+    expect(debts.debts.find((d: { roomId: string }) => d.roomId === room.id)).toBeUndefined();
+    const r = await post('/api/settlements', alice.token, { roomId: room.id, otherUserId: host.userId });
+    expect(r.statusCode).toBe(409);
+  });
+
+  it('refuses a settlement on a closed (archived) room', async () => {
+    const { host, alice, room } = await debtRoom();
+    expect((await post(`/api/rooms/${room.id}/close`, host.token, {})).statusCode).toBe(200);
+    const r = await post('/api/settlements', alice.token, { roomId: room.id, otherUserId: host.userId });
+    expect(r.statusCode).toBe(409);
+  });
+});
+
+describe('limits honesty', () => {
+  it('carries no dead friendRequestsPerDay constant', () => {
+    const src = readFileSync(new URL('../src/limits.ts', import.meta.url), 'utf8');
+    expect(src).not.toContain('friendRequestsPerDay');
   });
 });
