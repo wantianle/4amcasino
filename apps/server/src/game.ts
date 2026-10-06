@@ -3622,9 +3622,9 @@ class Hand {
       bb: this.bb,
       auditMode: this.auditMode,
     };
-    this.room.broadcast(this.startMsg);
+    this.publish(this.startMsg);
     if (this.features.squid.settings)
-      this.room.broadcast({
+      this.publish({
         t: 'feature_started',
         handId: this.id,
         squid: this.features.squid.settings,
@@ -4007,7 +4007,7 @@ class Hand {
   private appendServer(type: string, payload: unknown): void {
     const sig = signContent(this.serverId.secretKey, this.id, type, payload);
     const e = this.transcript.append({ type, from: this.serverId.publicKey, payload, sig });
-    this.room.broadcast({
+    this.publish({
       t: 'transcript_entry',
       handId: this.id,
       seq: e.seq,
@@ -4019,7 +4019,7 @@ class Hand {
 
   private appendPlayer(type: string, pubkey: string, payload: unknown, sig: string): void {
     const e = this.transcript.append({ type, from: pubkey, payload, sig });
-    this.room.broadcast({
+    this.publish({
       t: 'transcript_entry',
       handId: this.id,
       seq: e.seq,
@@ -4185,7 +4185,7 @@ class Hand {
     this.commits.set(info.seat, commit);
     this.retriesLeft = this.opts.cryptoRetries ?? 3;
     this.appendPlayer('key_commit', info.pubkey, { commit: commitHex }, sig);
-    this.room.broadcast({
+    this.publish({
       t: 'key_commit_applied',
       handId: this.id,
       seat: info.seat,
@@ -4225,7 +4225,7 @@ class Hand {
     this.deck = points;
     this.retriesLeft = this.opts.cryptoRetries ?? 3;
     this.appendPlayer('shuffle_deck', info.pubkey, { deck: deckHexes }, sig);
-    this.room.broadcast({ t: 'deck_state', handId: this.id, seat: info.seat, deck: deckHexes });
+    this.publish({ t: 'deck_state', handId: this.id, seat: info.seat, deck: deckHexes });
     this.shuffleIdx++;
     if (this.shuffleIdx < this.n) {
       this.requestShuffle();
@@ -4297,7 +4297,7 @@ class Hand {
     }
     this.retriesLeft = this.opts.cryptoRetries ?? 3;
     this.appendPlayer('unmask_share', info.pubkey, { deckIndex, out: outHex, proof }, sig);
-    this.room.broadcast({
+    this.publish({
       t: 'share_applied',
       handId: this.id,
       deckIndex,
@@ -4351,7 +4351,7 @@ class Hand {
           card,
           ...(run > 1 ? { run } : {}),
         });
-        this.room.broadcast({
+        this.publish({
           t: 'board_open',
           handId: this.id,
           deckIndex: chain.deckIndex,
@@ -4462,7 +4462,7 @@ class Hand {
       };
     });
     this.appendServer('ante_post', { posts: antePosts, ts: Date.now() });
-    this.room.broadcast({
+    this.publish({
       t: 'feature_started',
       handId: this.id,
       ...(settings ? { bombPot: settings } : {}),
@@ -4520,7 +4520,7 @@ class Hand {
     const used = Math.min(spent, current);
     if (used <= 0) return;
     bank.balances.set(seat, current - used);
-    this.room.broadcast({
+    this.publish({
       t: 'time_bank_update',
       handId: this.id,
       seat,
@@ -4555,7 +4555,7 @@ class Hand {
         lastActedAt: s.lastActedAt,
       })),
     });
-    this.room.broadcast({
+    this.publish({
       t: 'betting_state',
       handId: this.id,
       actionSeq: this.actionSeq,
@@ -4672,7 +4672,7 @@ class Hand {
     // the action really applied: charge the clock it used past the base deadline
     this.consumeTurnTime(seat);
     this.actionSeq++;
-    this.room.broadcast({
+    this.publish({
       t: 'action_applied',
       handId: this.id,
       seat,
@@ -4932,7 +4932,7 @@ class Hand {
     // Terminal off-book fold (settles the hand immediately, so the counter is
     // never consumed further): stamp it with the index it would occupy so the
     // frame still carries an authoritative, collision-free `actionSeq`.
-    this.room.broadcast({
+    this.publish({
       t: 'action_applied',
       handId: this.id,
       seat,
@@ -4955,7 +4955,7 @@ class Hand {
       out: pointHex(out),
       proof,
     });
-    this.room.broadcast({
+    this.publish({
       t: 'share_applied',
       handId: this.id,
       deckIndex: chain.deckIndex,
@@ -5037,7 +5037,7 @@ class Hand {
    *  `agreement` (= "ahead-agrees"), matching `MultiRunStage` in
    *  packages/shared/src/wsProtocol.ts. See docs/p2-gameplay-design.md 2.6. */
   private sendMultiRunOffer(state: NonNullable<Hand['multiRun']>): void {
-    this.room.broadcast({
+    this.publish({
       t: 'multi_run_offer',
       handId: this.id,
       decisionId: state.decisionId,
@@ -5187,7 +5187,7 @@ class Hand {
     }
     this.runs = resolved;
     this.appendServer('multi_run_result', { runs: resolved, reason });
-    this.room.broadcast({
+    this.publish({
       t: 'multi_run_result',
       handId: this.id,
       runs: resolved,
@@ -5643,6 +5643,37 @@ class Hand {
     this.scheduleHandEnd();
   }
 
+  /**
+   * Best-effort publisher for every Hand WS frame. A delivery failure is
+   * notification-only: it is logged and swallowed, so it can never unwind the
+   * caller, mutate lifecycle/phase, undo a committed settlement, or bubble up
+   * to the hub where an escaping error would mark the whole room unhealthy.
+   * Settlement-path frames that carry test fault hooks go through
+   * `safeBroadcast`, which brackets this publisher with its fault points.
+   * Returns whether the frame was handed to the transport.
+   */
+  private publish(msg: ServerMsg, label = 'hand broadcast failed'): boolean {
+    try {
+      this.room.broadcast(msg);
+      return true;
+    } catch (err) {
+      this.logBroadcastFailure(label, msg.t, err);
+      return false;
+    }
+  }
+
+  private logBroadcastFailure(label: string, t: string, err: unknown): void {
+    const detail = {
+      id: this.id,
+      t,
+      message: err instanceof Error ? err.message : String(err),
+    };
+    hdbg('broadcastFailed', detail);
+    // hdbg is off by default, so a lost frame would otherwise be completely
+    // silent in production. Surface it on the normal error log.
+    console.error(label, detail);
+  }
+
   /** A settlement-path broadcast is notification only: swallow transport/DB
    *  failures so a committed hand always finishes and never triggers a refund.
    *  The optional fault points bracket the frame and are swallowed with it: a
@@ -5654,18 +5685,10 @@ class Hand {
     try {
       if (phases?.before) this.opts.faultInjection?.phase?.(phases.before);
       this.opts.faultInjection?.broadcast?.(msg);
-      this.room.broadcast(msg);
-      if (phases?.after) this.opts.faultInjection?.phase?.(phases.after);
+      const delivered = this.publish(msg, 'hand settlement broadcast failed');
+      if (delivered && phases?.after) this.opts.faultInjection?.phase?.(phases.after);
     } catch (err) {
-      const detail = {
-        id: this.id,
-        t: msg.t,
-        message: err instanceof Error ? err.message : String(err),
-      };
-      hdbg('broadcastFailed', detail);
-      // hdbg is off by default, so a lost settlement frame would otherwise be
-      // completely silent in production. Surface it on the normal error log.
-      console.error('hand settlement broadcast failed', detail);
+      this.logBroadcastFailure('hand settlement broadcast failed', msg.t, err);
     }
   }
 
