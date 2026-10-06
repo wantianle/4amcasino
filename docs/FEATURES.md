@@ -17,7 +17,7 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | Banker badge on seats, docked side chat, fullscreen toggle, controls merged onto the table | **notpritam** |
 | Leaderboard rank (#1, #2, #3...) on player profiles; profile header merged for space | **notpritam** |
 | Chip physics: bets slide chip stacks to the pot, sweep in at street end, pot pulses; chip-slide and pot-collect sounds | **notpritam** |
-| Big draggable hole cards (move anywhere, resize, remembered), giant winner reveal, larger table oval | **notpritam** |
+| Winner reveal: a gold WIN tag with the amount rides the winning seat's card, chips fly from the pot, and the winner's stack value reveals; larger table oval | **notpritam** |
 | Text diet: icon labels, terse status lines; control strip moved below the table | **notpritam** |
 | Blinking turn highlight: breathing glow, PLAYING pill, scale-up on the to-act seat | **notpritam** |
 | Real chip stacks: denominations colored by tier off the big blind, isometric piles that grow with bets and the pot | **notpritam** |
@@ -31,14 +31,14 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | TV replays: banker toggle that saves every player's hand key post-hand; the server decrypts folded hole cards into the transcript and replays show ALL cards from the deal, WSOP broadcast style | **notpritam** |
 | Save hand: download the full signed hand record (transcript + players) as JSON from the replay page | **notpritam** |
 | Ready check: auto-deal never starts betting until everyone clicks "I'm ready"; a short 1.5s window (it ends the instant everyone is in), then it deals without the stragglers | **notpritam** |
-| Room auto-deal switch in both table views; prefers the online, seated host, automatically chooses a funded online fallback, preserves readiness, and pauses when too few players are ready | **notpritam** |
+| Room auto-deal switch on the table; prefers the online, seated host, automatically chooses a funded online fallback, preserves readiness, and pauses when too few players are ready | **notpritam** |
 | Misclick guard: Fold / Check-Call / Raise hold fixed positions in every state and go dead for a beat whenever the options change | **notpritam** |
 | Custom poker shortcuts: account-saved Fold, Check, Call, Bet/Raise, half-pot, pot, and all-in bindings; record, select, clear, disable, or restore in Settings or at the table. Shared keyboard handling across desktop and phone; typed amount plus Enter confirms sizing shortcuts | **notpritam** |
 | Run it twice: when everyone is all-in before the river the players vote (unanimous; each of the two stages - the behind player's run-count choice, then the ahead player's agreement - gets its own 7.5s, so a valid-but-slow negotiation can take up to 15s total); the remaining streets deal twice from the untouched deck and every pot splits between the boards | **notpritam** |
 | Showdown shows every player's cards: the result banner lists each player with THEIR two cards, the hand they made, and their net - not just the winning five | **notpritam** |
 | Thunder reveal: lightning flash + thunder crack on every showdown | **notpritam** |
 | The table cards in the result banner, next to the winning five | **notpritam** |
-| Position badges: bold D / SB / BB discs on the seat avatars | **notpritam** |
+| Dealer button: a bold gold D disc on the felt marks the button and stays with the seat all hand (no SB/BB badges) | **notpritam** |
 | Fold-key escrow: a folding client hands its per-hand key to the server (only the server, never the transcript), so a folder who leaves can never strand the hand - the server computes their unmask shares with publicly verifiable DLEQ proofs (`recovered_share`). Tradeoff: after your fold the server can decrypt your two cards, nobody else's | **notpritam** |
 | Last-hand strip: a collapsible recap at the bottom of the table - previous hand's winner, board, everyone's revealed cards and nets, one click to open or cut out (remembered), with a jump to the full replay | **notpritam** |
 | Platform commission, mandatory and automatic: 0.5% initial rate for all rooms, editable by the platform account at runtime for all rooms or new rooms only (floored per pot; running hands and historical dues keep their original rate) to the platform account on the ledger (auto-seeded/adopted on boot; falls back to the banker only if unseeded) - the donation that keeps the platform running; shown in the result banner as "to the house" | **notpritam** |
@@ -67,6 +67,6 @@ core (see `/api/rooms/:id/hands` for the pattern).
 | Auto ready: a profile toggle that counts you as ready the moment a ready check opens, held server-side so it works with the tab in the background; if everyone at the table has it on the check is skipped entirely | **notpritam** |
 | Archive a table: the host or banker retires a finished game - it leaves the room list, stops dealing, and stops counting towards stats, while the ledger, every hand and anything still owed stay exactly where they are. Reversible from the lobby | **notpritam** |
 | Host badge on the seat, next to the banker's, and the host role moves to someone still at the table after 60s offline - the banker never moves on a timer | **notpritam** |
-| Standings docked above the table chat: who is up and who is down is always on screen and refreshes at the end of every hand, instead of a dialog you reopen after each one. Collapsible and remembered | **notpritam** |
+| Room standings: a Standings button opens a dialog of who is up and who is down, refreshing at the end of every hand while it is open | **notpritam** |
 | Dedicated Zeus administration workspace at admin.4amcasino.com, with /admin fallback: overview, daily commission chart, searchable users, room controls, requests, dues, and audited commission settings | **notpritam** |
 | Qualification requirements capped at 30 hands, including migration of older rooms above that limit; hosts may choose fewer hands or zero | **notpritam** |
