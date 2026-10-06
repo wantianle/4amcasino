@@ -5,7 +5,14 @@ import type { DB } from './db.js';
 import { requireUser } from './auth.js';
 import { isPlatform, platformUserId } from './platform.js';
 import { canBank, getRoom, isMember } from './rooms.js';
-import { settlementNotVoidedSql, voidHandExclusionSql, voidHandExistsSql } from './handProjection.js';
+import {
+  gameNetLedgerDeltaSql,
+  gameNetLedgerKindSql,
+  ledgerHandIdSql,
+  settlementNotVoidedSql,
+  voidHandExclusionSql,
+  voidHandExistsSql,
+} from './handProjection.js';
 import {
   DEFAULT_POKER_HOTKEYS,
   ALL_IN_RATIO,
@@ -120,20 +127,22 @@ const avatarSchema = z.object({
   image: z.string().regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/),
 });
 
-// Squid-game transfers ride on the same hand ref as the settlement, so a hand
-// can contribute several ledger rows. Folding them into one row per
-// (room, ref, user) first keeps `biggestWin` a per-hand figure and lets the
-// hand COUNT stay anchored to the settlement rows alone.
+// A hand contributes several ledger rows under two different refs: the
+// head-ref game legs (hand-settlement / squid-game) and the hand-id-ref
+// automatic 7-2 bounty. They are grouped by the canonical hand id (NOT the raw
+// ref) and summed with the authoritative game-net helper, so `biggestWin` stays
+// a per-hand figure matching `net_delta` and the hand COUNT stays anchored to
+// the settlement rows alone.
 const LEADERBOARD_SQL = `
   WITH per_hand AS (
-    SELECT l.room_id AS room_id, l.ref AS ref, l.user_id AS user_id,
-           SUM(l.delta) AS net,
+    SELECT l.room_id AS room_id, ${ledgerHandIdSql('l')} AS ref, l.user_id AS user_id,
+           SUM(${gameNetLedgerDeltaSql('l')}) AS net,
            MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
     FROM ledger l JOIN rooms r ON r.id = l.room_id
-    WHERE l.kind IN ('hand-settlement', 'squid-game')
+    WHERE ${gameNetLedgerKindSql('l')}
       AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
       AND ${settlementNotVoidedSql('l')} %ROOM%
-    GROUP BY l.room_id, l.ref, l.user_id
+    GROUP BY l.room_id, ${ledgerHandIdSql('l')}, l.user_id
   )
   SELECT u.id as userId, u.username, u.display_name as displayName, u.avatar_version as avatarVersion,
          SUM(ph.net) as net,
@@ -361,13 +370,13 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const stats = db
       .prepare(
         `WITH per_hand AS (
-           SELECT l.room_id AS room_id, l.ref AS ref, SUM(l.delta) AS net,
+           SELECT l.room_id AS room_id, ${ledgerHandIdSql('l')} AS ref, SUM(${gameNetLedgerDeltaSql('l')}) AS net,
                   MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) AS settled
            FROM ledger l JOIN rooms r ON r.id = l.room_id
-           WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
+           WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')}
              AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
              AND ${settlementNotVoidedSql('l')}
-           GROUP BY l.room_id, l.ref
+           GROUP BY l.room_id, ${ledgerHandIdSql('l')}
          )
          SELECT COALESCE(SUM(net), 0) as net,
                 COUNT(DISTINCT CASE WHEN settled = 1 THEN room_id || ':' || ref END) as handsPlayed,
@@ -382,11 +391,11 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     // side. Both queries therefore carry the shared void exclusion.
     const mine = db
       .prepare(
-        `SELECT l.room_id AS roomId, l.ref AS ref, SUM(l.delta) AS delta
+        `SELECT l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref, SUM(${gameNetLedgerDeltaSql('l')}) AS delta
          FROM ledger l
-         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game') AND l.ref IS NOT NULL
+         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')} AND l.ref IS NOT NULL
            AND ${settlementNotVoidedSql('l')}
-         GROUP BY l.room_id, l.ref`,
+         GROUP BY l.room_id, ${ledgerHandIdSql('l')}`,
       )
       .all(id) as { roomId: string; ref: string; delta: number }[];
     const rivalKey = (roomId: string, ref: string) => `${roomId}\u0000${ref}`;
@@ -395,14 +404,14 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     if (mine.length > 0) {
       const others = db
         .prepare(
-          `SELECT DISTINCT l.user_id AS userId, l.room_id AS roomId, l.ref AS ref
+          `SELECT DISTINCT l.user_id AS userId, l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref
            FROM ledger l
            JOIN (
-             SELECT m.room_id, m.ref FROM ledger m
-             WHERE m.user_id = ? AND m.kind IN ('hand-settlement', 'squid-game') AND m.ref IS NOT NULL
+             SELECT m.room_id, ${ledgerHandIdSql('m')} AS ref FROM ledger m
+             WHERE m.user_id = ? AND ${gameNetLedgerKindSql('m')} AND m.ref IS NOT NULL
                AND ${settlementNotVoidedSql('m')}
-           ) mine ON mine.room_id = l.room_id AND mine.ref = l.ref
-           WHERE l.kind IN ('hand-settlement', 'squid-game') AND l.user_id != ?
+           ) mine ON mine.room_id = l.room_id AND mine.ref = ${ledgerHandIdSql('l')}
+           WHERE ${gameNetLedgerKindSql('l')} AND l.user_id != ?
              AND ${settlementNotVoidedSql('l')}`,
         )
         .all(id, id) as { userId: number; roomId: string; ref: string }[];
@@ -474,8 +483,8 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/me/timeline', authed, async (req) => {
     const rows = db
       .prepare(
-        `SELECT l.ts, l.delta FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND l.kind IN ('hand-settlement', 'squid-game')
+        `SELECT l.ts, ${gameNetLedgerDeltaSql('l')} AS delta FROM ledger l JOIN rooms r ON r.id = l.room_id
+         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')}
            AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND ${settlementNotVoidedSql('l')}
          ORDER BY l.ts LIMIT 2000`,
@@ -626,12 +635,12 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
                   MAX(ph.net) as biggestWin,
                   MIN(ph.net) as biggestLoss
            FROM (
-             SELECT l.room_id as room_id, l.ref as ref, l.user_id as user_id,
-                    SUM(l.delta) as net,
+             SELECT l.room_id as room_id, ${ledgerHandIdSql('l')} as ref, l.user_id as user_id,
+                    SUM(${gameNetLedgerDeltaSql('l')}) as net,
                     MAX(CASE WHEN l.kind = 'hand-settlement' THEN 1 ELSE 0 END) as settled
-             FROM ledger l WHERE l.room_id = @roomId AND l.kind IN ('hand-settlement', 'squid-game')
+             FROM ledger l WHERE l.room_id = @roomId AND ${gameNetLedgerKindSql('l')}
                AND ${settlementNotVoidedSql('l')}
-             GROUP BY l.room_id, l.ref, l.user_id
+             GROUP BY l.room_id, ${ledgerHandIdSql('l')}, l.user_id
            ) ph
            GROUP BY ph.user_id
          ) st ON st.user_id = rp.user_id
@@ -675,8 +684,13 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
          ORDER BY t.ts DESC LIMIT 140`,
       )
       .all(req.userId) as { handId: string; roomId: string; roomName: string; head: string; entries: string; ts: number }[];
+    // Canonical hand id (NOT the bare head): the head-ref game legs and the
+    // hand-id-ref automatic bounty must both match, so the caller passes
+    // `row.handId` and the helper collapses every leg onto one key.
     const netStmt = db.prepare(
-      "SELECT COALESCE(SUM(delta), 0) as net FROM ledger WHERE user_id = ? AND room_id = ? AND ref = ? AND kind IN ('hand-settlement', 'squid-game')",
+      `SELECT COALESCE(SUM(${gameNetLedgerDeltaSql('ledger')}), 0) as net
+       FROM ledger
+       WHERE user_id = ? AND room_id = ? AND ${ledgerHandIdSql('ledger')} = ? AND ${gameNetLedgerKindSql('ledger')}`,
     );
     // Room-scoped and key-agnostic: a void may carry the settlement head or the
     // hand id. Reuses the shared correlation helper (never the bare ref only).
@@ -726,7 +740,7 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
             (e.payload.action as { type: string }).type === 'fold') ||
           (e.type === 'timeout_fold' && (e.payload.seat as number) === mine.seat),
       );
-      const net = (netStmt.get(req.userId, row.roomId, row.head) as { net: number }).net;
+      const net = (netStmt.get(req.userId, row.roomId, row.handId) as { net: number }).net;
       const outcome = !settlement
         ? 'aborted'
         : reveal
@@ -771,19 +785,25 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
       .get(id) as { id: number; showBestHand: number } | undefined;
     if (!user) return reply.code(404).send({ error: 'no such player' });
     if (!user.showBestHand && req.userId !== id) return { hidden: true, hand: null };
+    // Biggest per-hand GAME net (poker + squid + automatic 7-2 bounty), not the
+    // biggest single settlement leg: group every game leg by the canonical hand
+    // id and sum with the authoritative helper.
     const best = db
       .prepare(
-        `SELECT l.delta, l.ref, l.room_id as roomId, r.name as roomName
+        `SELECT ${ledgerHandIdSql('l')} AS handId, SUM(${gameNetLedgerDeltaSql('l')}) AS delta,
+                l.room_id as roomId, r.name as roomName
          FROM ledger l JOIN rooms r ON r.id = l.room_id
-         WHERE l.user_id = ? AND l.kind = 'hand-settlement' AND l.delta > 0 AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
+         WHERE l.user_id = ? AND ${gameNetLedgerKindSql('l')} AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
            AND ${settlementNotVoidedSql('l')}
-         ORDER BY l.delta DESC LIMIT 1`,
+         GROUP BY l.room_id, ${ledgerHandIdSql('l')}
+         HAVING SUM(${gameNetLedgerDeltaSql('l')}) > 0
+         ORDER BY delta DESC LIMIT 1`,
       )
-      .get(id) as { delta: number; ref: string; roomId: string; roomName: string } | undefined;
+      .get(id) as { handId: string; delta: number; roomId: string; roomName: string } | undefined;
     if (!best) return { hidden: !user.showBestHand, hand: null };
     const t = db
-      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND head = ?')
-      .get(best.roomId, best.ref) as { handId: string; entries: string; ts: number } | undefined;
+      .prepare('SELECT hand_id as handId, entries, ts FROM transcripts WHERE room_id = ? AND hand_id = ?')
+      .get(best.roomId, best.handId) as { handId: string; entries: string; ts: number } | undefined;
     if (!t) return { hidden: !user.showBestHand, hand: null };
     let board: number[] = [];
     let myCards: number[] | null = null;
