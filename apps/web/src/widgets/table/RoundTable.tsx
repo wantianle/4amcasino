@@ -6,14 +6,15 @@ import { isValidHudPlayer, SeatBadges } from './SeatBadges.tsx';
 import { Crown, Coins, Eye, MicrophoneSlash, Play, Robot, Timer, X } from '@phosphor-icons/react';
 import type { CardId, PlayerAction } from '@4am/shared';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { fmtBB } from '../../shared/lib/bb.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { botStatusLabel, botStatusTone } from '../../features/bots/botStatus.ts';
 import { Avatar } from '../../entities/user/Avatar.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { ChipStack } from './ChipStack.tsx';
-import { BetFlight, ChipFlight, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
+import { BetFlight, ChipFlight, COLLECT_REVEAL_LEAD_MS, StackValue, WinBadge, useWinnerFx } from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
-import { DealCard } from './DealCard.tsx';
+import { DealCard, DEAL_STAGGER_MS, SEAT_DEAL_STAGGER_MS } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
 import { useStore, type PeekResult } from '../../shared/store.ts';
 import {
@@ -87,7 +88,7 @@ function actionLabel(a: PlayerAction & { auto?: boolean }, unit: 'chips' | 'bb',
   if (a.type === 'check') return t('Check');
   if (a.type === 'call') return t('Call');
   const amount = a.amount ?? 0;
-  const shown = unit === 'chips' ? fmt(amount) : `${Math.round(amount / Math.max(1, bb))} BB`;
+  const shown = unit === 'chips' ? fmt(amount) : `${fmtBB(amount, bb)} BB`;
   if (a.type === 'bet') return t('Bet {n}', { n: shown });
   return t('Raise to {n}', { n: shown });
 }
@@ -124,6 +125,7 @@ function HoleCards({
   handId = null,
   motionPrefix = 'hole:opponent',
   reveal = false,
+  gold,
 }: {
   size: 'xs' | 'sm' | 'pod' | 'md';
   cards?: CardId[];
@@ -133,6 +135,8 @@ function HoleCards({
   handId?: string | null;
   motionPrefix?: string;
   reveal?: boolean;
+  /** Cards composing this seat's made hand (see goldBySeat) — gold-framed. */
+  gold?: Set<CardId>;
 }) {
   // L2 (rev-3 mockup): opponents' face-down cards ride the avatar's top edge
   // as a small-angle GG fan — two burgundy backs tilted ±6° with a slight
@@ -146,7 +150,7 @@ function HoleCards({
           size={size}
           className="table-pod-fan-back table-pod-fan-back--first"
         /></DealCard>
-        <DealCard delay={delay + 90} handId={handId} motionKey={`${motionPrefix}:1`} epoch={dealMotionEpoch(handId, `${motionPrefix}:1`)}><PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" /></DealCard>
+        <DealCard delay={delay + DEAL_STAGGER_MS} handId={handId} motionKey={`${motionPrefix}:1`} epoch={dealMotionEpoch(handId, `${motionPrefix}:1`)}><PlayingCard faceDown size={size} className="table-pod-fan-back table-pod-fan-back--last" /></DealCard>
       </div>
     );
   }
@@ -154,7 +158,7 @@ function HoleCards({
   return (
     <div className={cn('flex items-center', narrow ? 'gap-0.5' : 'gap-[5px]')}>
       {cards.slice(0, 2).map((c, i) => (
-        <DealCard key={`${i}-${c}`} reveal={reveal} delay={delay + i * 90} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace /></DealCard>
+        <DealCard key={`${i}-${c}`} reveal={reveal} delay={delay + i * DEAL_STAGGER_MS} handId={handId} epoch={dealMotionEpoch(handId, `${motionPrefix}:${i}`)} motionKey={`${motionPrefix}:${i}`}><PlayingCard card={c} size={size} podFace className={gold?.has(c) ? 'table-card-gold' : undefined} /></DealCard>
       ))}
     </div>
   );
@@ -192,6 +196,7 @@ export function RoundTable({
   centerBudget = false,
   ribbon,
   handTypes,
+  goldBySeat,
   collectSeats,
   peekTargets,
   peekResults,
@@ -250,6 +255,10 @@ export function RoundTable({
   ribbon?: React.ReactNode;
   /** Hand type (牌型) to show at the bottom of each pod, keyed by seat. */
   handTypes?: Record<number, string>;
+  /** The cards composing each seat's made hand (two pair+, final board),
+   *  keyed by seat. Only hero and revealed seats ever appear here — the gold
+   *  frame rides exactly these cards. */
+  goldBySeat?: Record<number, Set<CardId>>;
   /** Public pot awards can begin their flight before hand_end supplies game nets. */
   collectSeats?: number[];
   /** Between-hand private peek controls. The page only supplies these to the
@@ -281,8 +290,23 @@ export function RoundTable({
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
   const winners = seats.filter((s) => s.won);
-  const collectors = collectSeats ?? winners.map((s) => s.seat);
+  // The pot flies ONCE, to the seat that actually won the hand. collectSeats
+  // is per-payout data (every board / side-pot winner with amount > 0), and a
+  // run-it-twice or side-pot split can pay a seat that still LOST overall —
+  // flying the pot to them too reads as "the loser collected" (user report:
+  // 跑马一输一赢、筹码两边飞). Intersect with the net winners; a true tie
+  // (nobody net positive) keeps the per-payout split.
+  const netWinners = winners.map((s) => s.seat);
+  const collectors = collectSeats
+    ? netWinners.length
+      ? netWinners.filter((seat) => collectSeats.includes(seat))
+      : collectSeats
+    : netWinners;
   const fxLit = useWinnerFx(collectors.length > 0);
+  // when the moment carries a showdown reveal, the chips wait for the flips
+  // (one lead value feeds BOTH the flight and the stack-number gate, so the
+  // bump always meets the discs)
+  const collectLead = collectSeats && collectSeats.length > 0 ? COLLECT_REVEAL_LEAD_MS : 0;
   const potRef = useRef<HTMLDivElement | null>(null);
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});
   const betEls = useRef<Record<number, HTMLDivElement | null>>({});
@@ -523,7 +547,7 @@ export function RoundTable({
             // its stack sits just off the center line (user feedback v2 #1).
             const bet = betPoint(a, narrow ? BET_RING_PHONE : BET_RING);
             const isMe = p.userId === myUserId;
-            const bbCount = Math.round(p.stack / Math.max(1, bb));
+            const bbCount = fmtBB(p.stack, bb);
             const strength = handTypes?.[seat] ?? null;
             const peekTarget = !isMe ? peekTargets?.[seat] : undefined;
             const peekResult = peekResults?.[seat];
@@ -670,7 +694,7 @@ export function RoundTable({
                             <span className="table-bet-amt">
                               {stackUnit === 'chips'
                                 ? fmt(committed)
-                                : `${Math.round(committed / Math.max(1, bb))} BB`}
+                                : `${fmtBB(committed, bb)} BB`}
                             </span>
                           </motion.div>
                         </motion.div>
@@ -729,12 +753,13 @@ export function RoundTable({
                       >
                         <HoleCards
                           key={handId}
-                          delay={i * 45}
+                          delay={i * SEAT_DEAL_STAGGER_MS}
                           size={narrow ? holeSize : 'md'}
                           narrow={narrow}
                           cards={myCards}
                           handId={handId}
                           motionPrefix="hole:hero"
+                          gold={goldBySeat?.[p.seat]}
                         />
                       </div>
                     )}
@@ -756,7 +781,7 @@ export function RoundTable({
                         >
                           <HoleCards
                             key={handId}
-                            delay={i * 45}
+                            delay={i * SEAT_DEAL_STAGGER_MS}
                             size={holeSize}
                             narrow={narrow}
                               cards={isMe ? myCards : peekCards ?? p.revealed}
@@ -764,6 +789,7 @@ export function RoundTable({
                             handId={handId}
                               motionPrefix={peekCards ? `peek:${p.seat}` : p.revealed ? `reveal:${p.seat}` : `hole:seat:${p.seat}`}
                               reveal={!!p.revealed || !!peekCards}
+                              gold={goldBySeat?.[p.seat]}
                           />
                         </div>
                       )}
@@ -861,7 +887,7 @@ export function RoundTable({
                         >
                           {stackUnit === 'chips' ? (
                             <>
-                              <StackValue stack={p.stack} won={p.won} />
+                              <StackValue stack={p.stack} won={p.won} flightLead={collectLead} />
                               <span className="table-pstack-unit">{t('pts')}</span>
                             </>
                           ) : (
@@ -1044,7 +1070,7 @@ export function RoundTable({
             key={`fly-${handId}-${seat}`}
             run={fxLit}
             discs={collectors.length === 1 ? 6 : 4}
-            delay={collectSeats && collectSeats.length > 0 ? 1500 : 0}
+            delay={collectLead}
             getFrom={() => potRef.current}
             getTo={() => podEls.current[seat] ?? null}
           />

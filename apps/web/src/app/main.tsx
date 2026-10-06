@@ -30,6 +30,11 @@ const DURATION_CSS_VARS: ReadonlyArray<readonly [key: string, cssVar: string]> =
   ['tableDurGlowMs', '--table-dur-glow'],
   ['tableDurDimMs', '--table-dur-dim'],
   ['tableDurHighlightMs', '--table-dur-highlight'],
+  // The deal entrance split out of --table-dur-highlight (DealCard.tsx): the
+  // server table does not carry these keys yet, so the mapping is inert until
+  // tunables.ts adds them — the CSS defaults stay authoritative meanwhile.
+  ['tableDurDealMs', '--table-dur-deal'],
+  ['tableDurFlipMs', '--table-dur-flip'],
   // Inert until WinnerFx.tsx reads them (see follow-up); published now so the
   // contract is in place when that lane frees the file.
   ['winFxMs', '--win-fx-ms'],

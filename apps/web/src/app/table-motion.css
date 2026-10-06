@@ -103,6 +103,22 @@
 /* ── pot number pulse (spec row 5): the existing spring on the pot pill
    (motion scale 1.12→1, L3/L4) already covers this - no extra CSS needed. ── */
 
+/* ── made-hand gold frame (two pair+): rides ONLY the cards composing the
+   best five, once the board is final. Three gold breaths on the card edge,
+   then it settles to a quiet hairline ring - decoration of information the
+   pod already shows (牌型 line), never a full-felt effect. ── */
+@keyframes table-card-gold {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(245, 214, 123, 0.35), 0 0 6px rgba(211, 155, 37, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 2.5px var(--table-gold-hi), 0 0 16px rgba(245, 214, 123, 0.55);
+  }
+}
+.table-card-gold {
+  animation: table-card-gold 1.1s var(--table-ease-standard) 3 both;
+}
+
 /* ── reduced motion (spec §3): glows go static, transitions collapse.
    The countdown ring/underline keep draining - required information. ── */
 @media (prefers-reduced-motion: reduce) {
@@ -110,6 +126,11 @@
   .table-avatar-ring--won::after,
   .table-avatar-ring--hot::after {
     animation: none;
+  }
+  /* the made-hand set stays readable as a static ring, it just never breathes */
+  .table-card-gold {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--table-gold-hi);
   }
   .table-pod-card {
     transition-duration: 1ms;

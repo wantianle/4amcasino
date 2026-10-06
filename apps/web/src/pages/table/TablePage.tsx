@@ -30,6 +30,7 @@ import {
 import NumberFlow from '@number-flow/react';
 import {
   bestFive,
+  type CardId,
   describeScore,
   evaluate7,
   type RoomGameplaySettings,
@@ -65,7 +66,9 @@ import type { SeatView } from '../../widgets/table/RoundTable.tsx';
 import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
-import { DealCard } from '../../widgets/table/DealCard.tsx';
+import { DealCard, FLOP_STAGGER_MS } from '../../widgets/table/DealCard.tsx';
+import { goldFive } from '../../widgets/table/goldFive.ts';
+import { bbValue } from '../../shared/lib/bb.ts';
 import { BombPotIntro } from '../../widgets/table/BombPotIntro.tsx';
 import { ribbonFitsRail } from '../../widgets/table/geometry.ts';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
@@ -1299,6 +1302,26 @@ export function TablePage() {
   // counted below; every other seat count flows it at the column head, where
   // it is.
   const boardRuns = hand.boards.length > 0 ? hand.boards : [hand.board];
+  // Made-hand gold frame (two pair+): the exact cards composing each visible
+  // seat's best five, once that run's board is final. Hero from its hole
+  // cards, opponents only once revealed (showdown) - the same seat set the
+  // 牌型 line runs, so the glow never precedes information already on felt.
+  const goldBySeat: Record<number, Set<CardId>> = {};
+  const goldByRun = boardRuns.map(() => new Set<CardId>());
+  for (const s of seatViews) {
+    const hole = s.seat === mySeat ? hand.myCards : s.revealed;
+    if (!hole || hole.length < 2 || (!s.inHand && !s.revealed)) continue;
+    const union = new Set<CardId>();
+    boardRuns.forEach((run, ri) => {
+      const five = goldFive(hole, run);
+      if (!five) return;
+      for (const c of five) {
+        union.add(c);
+        goldByRun[ri]!.add(c);
+      }
+    });
+    if (union.size > 0) goldBySeat[s.seat] = union;
+  }
   // EFFECTIVE multi-run, decided by the server's INTENT, not by card arrival:
   // - primary: multi_run_result with runs > 1 - broadcast the moment the
   //   negotiation resolves, BEFORE run 2's first board_open lands (boards
@@ -2146,6 +2169,7 @@ export function TablePage() {
               readyCheck={!handLive ? hand.readyCheck : null}
                onShareHand={shareData ? () => setShareOpen(true) : undefined}
                handTypes={strengthLabels}
+               goldBySeat={goldBySeat}
                collectSeats={showdownCollectors}
                peekTargets={peekTargets}
                peekResults={!amSpectator ? hand.peekResults : undefined}
@@ -2169,7 +2193,7 @@ export function TablePage() {
                         seat stacks and the action bar: BB when the table is in
                         BB, points otherwise - never a second, chip-only total. */}
                     <NumberFlow
-                      value={prefs.stackUnit === 'bb' ? Math.round(pot / Math.max(1, room?.room.bb ?? 1)) : pot}
+                      value={prefs.stackUnit === 'bb' ? bbValue(pot, room?.room.bb ?? 1) : pot}
                     />
                   </motion.span>
                   {prefs.stackUnit === 'bb' && <span className="table-pot-label">BB</span>}
@@ -2246,15 +2270,17 @@ export function TablePage() {
                       <>
                         <div className={cn('flex items-center justify-center', runGap)}>
                           {multiRunBoard && runLabel(1)}
-                          {[0, 1, 2, 3, 4].map((index) =>
-                            first![index] !== undefined ? (
-                               <DealCard key={boardMotionKey(hand.handId, 0, first![index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, 0, first![index]!))} motionKey={boardMotionKey(hand.handId, 0, first![index]!)} delay={index < 3 ? index * 90 : 0}><PlayingCard
-                                card={first![index]}
-                                size={runSize}
-                                // the three flop cards land together, so cascade them; the
-                                // turn and river arrive alone and flip immediately
-                                dealDelay={first!.length === 3 ? index * 0.16 : 0}
-                              /></DealCard>
+                           {/* the flop is PUSHED out (平移, one card behind the
+                               next like a live dealer); the turn and river
+                               arrive ALONE and flip over in place */}
+                           {[0, 1, 2, 3, 4].map((index) =>
+                             first![index] !== undefined ? (
+                                <DealCard key={boardMotionKey(hand.handId, 0, first![index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, 0, first![index]!))} motionKey={boardMotionKey(hand.handId, 0, first![index]!)}
+                                   mode={index < 3 ? 'slide' : 'flip'} delay={index * FLOP_STAGGER_MS}><PlayingCard
+                                 card={first![index]}
+                                 size={runSize}
+                                 className={goldByRun[0]?.has(first![index]!) ? 'table-card-gold' : undefined}
+                               /></DealCard>
                             ) : (
                               emptySlot(`r0-slot-${index}`, index)
                             ),
@@ -2272,12 +2298,13 @@ export function TablePage() {
                               className={cn('flex items-center justify-center', runGap)}
                             >
                               {runLabel(runIdx + 2)}
-                              {[0, 1, 2, 3, 4].map((index) =>
-                                run[index] !== undefined ? (
-                                   <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} delay={index < 3 ? index * 90 : 0}><PlayingCard
-                                    card={run[index]}
-                                    size={runSize}
-                                  /></DealCard>
+                               {[0, 1, 2, 3, 4].map((index) =>
+                                 run[index] !== undefined ? (
+                                    <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} mode={index < 3 ? 'slide' : 'flip'} delay={index * FLOP_STAGGER_MS}><PlayingCard
+                                     card={run[index]}
+                                     size={runSize}
+                                     className={goldByRun[runIdx + 1]?.has(run[index]!) ? 'table-card-gold' : undefined}
+                                   /></DealCard>
                                 ) : (
                                   emptySlot(`r${runIdx}-slot-${index}`, index)
                                 ),

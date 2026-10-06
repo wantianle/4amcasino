@@ -9,6 +9,7 @@ import { ApiError, type BotPublic } from '../../shared/api.ts';
 import { api } from '../../shared/api.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { fmt } from '../../shared/lib/cn.ts';
+import { fmtBB } from '../../shared/lib/bb.ts';
 import { Badge, Button, Dialog, Input } from '../../shared/ui/index.tsx';
 import { cn } from '../../shared/lib/cn.ts';
 import {
@@ -636,7 +637,7 @@ export function BotsDialog({
                 {initialBuyIn > 0
                   ? t('Buys in for {n} chips ({bb} BB).', {
                       n: fmt(initialBuyIn),
-                      bb: Math.round(initialBuyIn / Math.max(1, bb)),
+                      bb: fmtBB(initialBuyIn, bb),
                     })
                   : t('Enter a whole number of chips.')}
               </span>

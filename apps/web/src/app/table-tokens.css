@@ -138,9 +138,17 @@
      are animated per-frame. */
   --table-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --table-ease-decelerate: cubic-bezier(0, 0, 0, 1);
-  --table-dur-glow: 0.45s;      /* acting glow entrance (opacity/scale) */
-  --table-dur-dim: 0.46s;        /* fold / leave / lost dimming */
-  --table-dur-highlight: 0.62s; /* WIN highlight fade-in */
+  --table-dur-glow: 0.45s;      /* acting glow entrance (opacity/scale) — deliberately NOT
+                                     slowed with the celebration beats: the turn cue must stay
+                                     snappy mid-action (also drives bomb-arrive + hot breathe) */
+  --table-dur-dim: 0.55s;        /* fold / leave / lost dimming (was 0.46) */
+  --table-dur-highlight: 0.78s; /* WIN highlight fade-in (was 0.62) */
+  /* entrances split out of --table-dur-highlight (DealCard used to borrow the WIN
+     token for its duration, coupling deal pace to the win glow):
+       --table-dur-deal: card flying from the deck / flop cards pushed into place
+       --table-dur-flip: in-place flip reveal (showdown hole cards, board turn/river) */
+  --table-dur-deal: 0.82s;
+  --table-dur-flip: 0.9s;
 }
 
 /* ─────────────────────── Tailwind v4 utility mapping ───────────────────────

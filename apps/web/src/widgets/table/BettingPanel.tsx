@@ -5,6 +5,7 @@ import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts
 import { useStore } from '../../shared/store.ts';
 import { presetLabel, presetRaiseTo } from '../../features/table/betPresets.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
+import { bbValue } from '../../shared/lib/bb.ts';
 import { ACTION_TIMEOUT_SECS } from '../../shared/lib/tableTimers.ts';
 import { HourglassMedium, Bomb, Timer, Play } from '@phosphor-icons/react';
 import { Button } from '../../shared/ui/index.tsx';
@@ -19,9 +20,6 @@ import { t } from '../../shared/i18n/index.ts';
  *  big 弃牌 / 跟注 N / 加注至 N buttons, and a circular action-timer ring.
  *  Layout only: the act()/latch/settling/hotkey flow is the single table
  *  betting implementation. */
-
-const bbOf = (amount: number, bb: number): number =>
-  Math.max(0, Math.round(amount / Math.max(1, bb)));
 
 export function clampRaiseAmount(value: number, min: number, max: number, fallback = min): number {
   const safeFallback = Number.isFinite(fallback) ? fallback : min;
@@ -213,7 +211,7 @@ export function BettingPanel({
   // chip-denominated; `showBB` only changes how every amount is DISPLAYED. The
   // editable amount converts in and out so the panel shows exactly one unit.
   const showBB = stackUnit === 'bb';
-  const toUnit = (chips: number) => (showBB ? bbOf(chips, bb) : chips);
+  const toUnit = (chips: number) => (showBB ? bbValue(chips, bb) : chips);
   const fromUnit = (value: number) => (showBB ? Math.round(value * Math.max(1, bb)) : value);
   const unitText = (chips: number) => (showBB ? `${toUnit(chips)} BB` : fmt(chips));
   // L4: the merged deal post shows 「Invite a friend to deal.」 vs 「Deal
@@ -495,7 +493,7 @@ export function BettingPanel({
                   inputMode="numeric"
                   min={toUnit(la.minRaiseTo)}
                   max={toUnit(la.maxRaiseTo)}
-                  step={1}
+                  step={showBB ? 'any' : 1}
                   value={Number.isFinite(raiseTo) ? toUnit(raiseTo) : ''}
                   aria-label={t('Bet or raise amount')}
                   aria-keyshortcuts={binding('raise')}
