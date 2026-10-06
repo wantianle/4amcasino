@@ -7,6 +7,7 @@ import { archiveRoom, roomEvents } from './rooms.js';
 import { mergeAccounts } from './merge.js';
 import { rekey } from './account.js';
 import { activeHands } from './liveHands.js';
+import { abortPendingHandSettlement, applyPreparedHandSettlement } from './game.js';
 import { platformDues } from './house.js';
 import { registerPlatformControl } from './adminControl.js';
 import { derivePlatformCredentials } from './platform-crypto.js';
@@ -380,6 +381,151 @@ export function registerAdminRoutes(app: FastifyInstance, db: DB): void {
     })();
     if (info.changes > 0) roomEvents.emit('changed', id);
     return { ok: true, changed: info.changes > 0 };
+  });
+
+  /**
+   * P0-2 operator recovery for hands dealt but never settled. This surface is
+   * deliberately DB-only: it never touches a live `GameRoom`, so it still works
+   * after a process restart has discarded all in-memory hand state.
+   *
+   * `hand_lifecycle` rows in `running`/`prepared`/`quarantined` are "money
+   * facts unknown" and freeze the room (`firstPendingHandLifecycle`). `running`
+   * has no frozen input, so it can only be aborted; `prepared` has a complete
+   * frozen input and can be retried; `quarantined` has a proven-bad frozen input
+   * that can never be applied, so it can only be aborted (its original
+   * `last_error` is preserved in the audit detail).
+   */
+  app.get('/api/admin/hands/pending', platformOnly, async () => {
+    const rows = db
+      .prepare(
+        `SELECT l.hand_id AS handId, l.room_id AS roomId, l.status,
+                l.created_at AS createdAt, l.updated_at AS updatedAt,
+                l.last_error AS lastError,
+                (SELECT p.prepared_at FROM hand_settlement_prepared p WHERE p.hand_id = l.hand_id) AS preparedAt,
+                (SELECT p.input_hash FROM hand_settlement_prepared p WHERE p.hand_id = l.hand_id) AS inputHash,
+                (SELECT p.attempts FROM hand_settlement_prepared p WHERE p.hand_id = l.hand_id) AS attempts
+           FROM hand_lifecycle l
+          WHERE l.status IN ('running','prepared','quarantined')
+          ORDER BY l.created_at ASC, l.rowid ASC`,
+      )
+      .all() as {
+      handId: string;
+      roomId: string;
+      status: string;
+      createdAt: number;
+      updatedAt: number;
+      lastError: string | null;
+      preparedAt: number | null;
+      inputHash: string | null;
+      attempts: number | null;
+    }[];
+    return {
+      hands: rows.map((r) => ({
+        handId: r.handId,
+        roomId: r.roomId,
+        status: r.status,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        lastError: r.lastError,
+        hasPreparedInput: r.preparedAt !== null,
+        preparedAt: r.preparedAt,
+        inputHash: r.inputHash,
+        attempts: r.attempts,
+      })),
+    };
+  });
+
+  /** Retry a `prepared` hand from its frozen input. Never available for
+   *  `running` (nothing frozen to apply) or `quarantined` (provably bad input:
+   *  use `abort`, its only exit). */
+  app.post('/api/admin/hands/:handId/retry', platformOnly, async (req, reply) => {
+    const { handId } = req.params as { handId: string };
+    const row = db
+      .prepare('SELECT room_id AS roomId, status FROM hand_lifecycle WHERE hand_id = ?')
+      .get(handId) as { roomId: string; status: string } | undefined;
+    if (!row) return reply.code(404).send({ error: 'no such hand' });
+    if (activeHands.has(row.roomId))
+      return reply
+        .code(409)
+        .send({ error: 'a hand is live in memory; use the in-room recovery' });
+    if (row.status === 'committed') return { ok: true, status: 'committed', already: true };
+    if (row.status === 'aborted') return reply.code(409).send({ error: 'hand is aborted' });
+    if (row.status === 'quarantined')
+      return reply.code(409).send({ error: 'hand is quarantined; operator review required' });
+    if (row.status !== 'prepared')
+      return reply.code(409).send({ error: `hand is ${row.status}; no prepared input to retry` });
+    const prepared = db
+      .prepare('SELECT 1 FROM hand_settlement_prepared WHERE hand_id = ?')
+      .get(handId);
+    if (!prepared) return reply.code(409).send({ error: 'no prepared input' });
+    try {
+      const result = applyPreparedHandSettlement(db, handId, {
+        resolvedBy: req.userId,
+        resolution: 'operator_retry',
+      });
+      writeAdminAudit(db, req.userId, 'hand.retry', 'hand', handId, {
+        roomId: row.roomId,
+        status: result.status,
+      });
+      return { ok: true, status: result.status };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'retry failed';
+      const after = db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(handId) as
+        | { status: string }
+        | undefined;
+      writeAdminAudit(db, req.userId, 'hand.retry', 'hand', handId, {
+        roomId: row.roomId,
+        error: message,
+        status: after?.status ?? 'unknown',
+      });
+      return reply.code(409).send({ ok: false, status: after?.status ?? 'unknown', error: message });
+    }
+  });
+
+  /** Abort a `running`/`prepared`/`quarantined` hand explicitly. Requires
+   *  `{confirm:true}`: the hand moves no chips, but a mistaken abort permanently
+   *  freezes its money facts. Idempotent on an already-aborted hand.
+   *
+   *  A `quarantined` hand can NEVER be settled from its frozen input, so abort is
+   *  its only exit; the route therefore stays reachable even while the room is
+   *  live in memory (the in-memory recovery surface cannot resolve it). The
+   *  original `last_error` is copied into the audit detail so the failure
+   *  evidence survives the resolution. */
+  app.post('/api/admin/hands/:handId/abort', platformOnly, async (req, reply) => {
+    const parsed = z.object({ confirm: z.boolean() }).safeParse(req.body ?? {});
+    if (!parsed.success || parsed.data.confirm !== true)
+      return reply.code(400).send({ error: 'explicit confirmation required' });
+    const { handId } = req.params as { handId: string };
+    const row = db
+      .prepare('SELECT room_id AS roomId, status, last_error AS lastError FROM hand_lifecycle WHERE hand_id = ?')
+      .get(handId) as { roomId: string; status: string; lastError: string | null } | undefined;
+    if (!row) return reply.code(404).send({ error: 'no such hand' });
+    // running/prepared keep the in-room path while a hand is live; quarantined
+    // is a special case because only the DB-only path can ever resolve it.
+    if (row.status !== 'quarantined' && activeHands.has(row.roomId))
+      return reply
+        .code(409)
+        .send({ error: 'a hand is live in memory; use the in-room recovery' });
+    if (row.status === 'committed')
+      return reply.code(409).send({ error: 'hand already committed; cannot abort' });
+    try {
+      const result = abortPendingHandSettlement(db, handId, { resolvedBy: req.userId });
+      writeAdminAudit(db, req.userId, 'hand.abort', 'hand', handId, {
+        roomId: row.roomId,
+        status: result.status,
+        // Preserve the failure evidence that justified a quarantine (or the
+        // last retry error) after the lifecycle row stops carrying it.
+        lastError: result.lastError ?? row.lastError ?? null,
+      });
+      return { ok: true, status: result.status };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'abort failed';
+      writeAdminAudit(db, req.userId, 'hand.abort', 'hand', handId, {
+        roomId: row.roomId,
+        error: message,
+      });
+      return reply.code(409).send({ ok: false, error: message });
+    }
   });
 
   /** Force-disable an account outright, no merge involved (a spam signup, a

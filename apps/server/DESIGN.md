@@ -365,9 +365,10 @@ The retry input is frozen on the **first** writer attempt: `persistSettlement()`
 does `const write = (this.sealedWrite ??= this.buildSealedWrite())`, so every
 retry reuses the same sealed transcript/head, identity, computed bounty and
 timestamp and can never append a second diagnostic event or move the committed
-head. **`sealedWrite` is an in-memory cache only.** Durable prepared input - so a
-fresh process can replay a hand that crashed before commit - is **not
-implemented** (that is P0-2, see "Settlement recovery").
+head. **`sealedWrite` is an in-memory cache only**; the durable copy is the
+`hand_settlement_prepared` row that `persistPreparedInput()` commits *before* the
+money transaction, so a fresh process can replay a hand that crashed before commit
+(P0-2, see "Settlement recovery").
 
 ### Settlement recovery (frozen / fail-closed)
 
@@ -403,11 +404,45 @@ What each window can and cannot do:
 - **Crashed after commit:** the `committed` row and marker exist; a restart
   must not re-pay (writer duplicate) but the committed hand is recovered.
 - **Crashed before commit, with only a `running` lifecycle row:** there is no
-  durable prepared-input record to replay (P0-2 is **not implemented** - the
-  sealed write input is frozen in memory only, see the P0-1 section), so this is
-  **process-restart / manual resolution only**. The room stays frozen; the engine
-  never guesses a winner or fabricates a marker. This is a deliberately documented
-  limitation, not a complete operator recovery.
+  prepared-input record to replay, so the hand cannot be settled. A DB-only
+  operator API (`GET /api/admin/hands/pending`, `POST
+  /api/admin/hands/:handId/abort`) resolves it as `aborted` - the engine never
+  guesses a winner or fabricates a marker. `abort` also releases any feature
+  triggers the hand still claimed and marks its prepared row resolved.
+- **Operator recovery API (DB-only).** The admin hand-recovery surface never
+  touches a live `GameRoom`, so it works after a restart with no in-memory
+  state. `retry` applies a `prepared` hand's frozen input exactly once
+  (`applyPreparedHandSettlement`); `abort` resolves `running`, `prepared` or
+  `quarantined` as `aborted`. All routes require the platform account and abort
+  requires `{confirm:true}`. Because a live process still holds the frozen
+  `GameRoom.hand`, the room adopts an out-of-band resolution at the next deal
+  attempt (`GameRoom.reconcileOperatorResolvedHand()`): once the durable row is
+  terminal it drops the stale hand and clears only the recoverable
+  settlement-failure mark, so the table can deal again without a restart.
+- **Quarantined is not a dead end.** A `quarantined` row means the frozen input
+  is provably bad (hash/shape/identity/DB mismatch) and can NEVER be applied, so
+  the operator `abort` is its explicit exit. The original `last_error` is
+  preserved on the lifecycle row and copied into `admin_audit` detail so the
+  failure evidence survives the resolution. The quarantine health mark is
+  `recoverable` (it is a durable, operator-resolvable money state, not an
+  unexplained programming error); a real programming error still escalates to
+  the sticky, non-recoverable mark.
+- **Malformed frozen JSON is always fail-closed.** `parsePreparedWrite()`
+  structurally validates the whole `HandSettlementWrite` (all arrays, numeric
+  fields and the nested 7-2 bounty) so a hash-correct but shape-wrong row
+  quarantines the hand instead of throwing a plain `TypeError` into the
+  recoverable retry path. Optional fields are normalised to explicit values
+  before hashing, so an absent optional and an explicit `null`/default hash
+  identically *by construction* and the frozen row always carries a complete
+  structure.
+- **Resolved prepared rows are retained.** `hand_settlement_prepared` rows are
+  never deleted: a resolved row is the durable audit trail of what was frozen
+  and how it was disposed (`resolution` = `settlement` / `operator_retry` /
+  `aborted` / `aborted_quarantined`, plus `resolved_by`/`resolved_at`). The
+  `(room_id, resolved_at)` index exists for a future retention sweep; none runs
+  today, because the table is one small row per hand and dropping the evidence
+  would defeat the audit. A retention window is tracked as low-priority
+  follow-up, not a correctness gap.
 - **Graceful shutdown:** the hub stops dealing, gives a live not-yet-settled
   hand a bounded window (`shutdownDrainMs`, default `SHUTDOWN_DRAIN_MS`) to
   reach a terminal state, then `abort()`s it so its row becomes `aborted`. This
@@ -496,8 +531,11 @@ recoverable.
 Health states are separate from the settlement freeze:
 `GameRoom.markUnhealthy()` is for an unexpected (programming) error caught by
 the hub. Unknown errors are **not** recoverable and can only be cleared by a
-process restart; only a settlement-failure mark is `recoverable` and cleared by
-a proven retry. Marks escalate, never downgrade: a recoverable settlement mark
+process restart; a settlement-failure mark (including a quarantine, which is a
+durable operator-resolvable state) is `recoverable` and cleared either by a
+proven in-room retry or by `reconcileOperatorResolvedHand()` once the DB-only
+operator API has made the durable row terminal. Marks escalate, never downgrade:
+a recoverable settlement mark
 set first is upgraded to permanent if a real programming error then appears, so
 a later settlement success can never clear the room while an unknown error is
 unexplained. A known, retryable business failure (a rolled-back post-hand 7-2

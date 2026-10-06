@@ -1175,6 +1175,447 @@ export function applyHandSettlement(db: DB, w: HandSettlementWrite): HandSettlem
   return write();
 }
 
+// ---------------------------------------------------------------------------
+// P0-2 durable prepared settlement input
+//
+// The `Hand` freezes its whole settlement input (transcript + every money leg)
+// into `hand_settlement_prepared` in its OWN committed transaction, then runs
+// the money transaction from that DB row. A process crash between the two
+// leaves a complete input a restarted server (or an operator) can settle
+// without rebuilding anything from mutable room state - the current
+// `room_players.stack` may have been moved by a mid-hand buy/peek/next action.
+// ---------------------------------------------------------------------------
+
+/** Canonical (key-order-stable) JSON for a frozen settlement input, so equal
+ *  inputs hash equally regardless of object construction order.
+ *
+ *  NOTE the `undefined`-dropping rule below is only ever reached for the
+ *  `entries` blob (whose own JSON round-trip also drops `undefined`); every
+ *  optional top-level field is materialised to an explicit value by
+ *  `normalizePreparedWrite` BEFORE this runs, so `{ sevenDeuce: undefined }` and
+ *  `{ sevenDeuce: null }` both canonicalise to `"sevenDeuce":null`. That
+ *  equivalence is intentional and safe: under `HandSettlementWrite` an absent
+ *  optional means "use the default", which is exactly what explicit `null`/
+ *  derived-default means. Normalising first makes the equivalence explicit and
+ *  guarantees the frozen row always carries a complete structure. */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+}
+
+/** Materialise every optional field to its explicit value so the frozen JSON is
+ *  a complete `HandSettlementWrite` (see the `canonicalJson` note above). The
+ *  derived defaults mirror what `applyHandSettlement` already does with an
+ *  absent field, so normalisation never changes the settled numbers. */
+function normalizePreparedWrite(w: HandSettlementWrite): HandSettlementWrite {
+  return {
+    ...w,
+    projectionPokerLedger: w.projectionPokerLedger ?? w.pokerLedger,
+    sevenDeuce: w.sevenDeuce ?? null,
+    transcriptlessReceipt: w.transcriptlessReceipt ?? false,
+  };
+}
+
+/** SHA-256 of a canonical prepared input, stored beside it and re-checked on
+ *  every read so a tampered/truncated row fails closed. */
+export function settlementInputHash(json: string): string {
+  return createHash('sha256').update(json).digest('hex');
+}
+
+function isSafeInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v);
+}
+
+/** Every `{userId,delta}` leg must be a well-formed safe-integer pair. */
+function isUserDeltaArray(v: unknown): boolean {
+  if (!Array.isArray(v)) return false;
+  return v.every((d) => {
+    if (!d || typeof d !== 'object') return false;
+    const { userId, delta } = d as { userId?: unknown; delta?: unknown };
+    return isSafeInt(userId) && isSafeInt(delta);
+  });
+}
+
+/**
+ * Full structural check of a frozen `HandSettlementWrite`. This is the
+ * fail-closed boundary: a malformed frozen JSON (right hash, wrong shape) must
+ * be classified as a `PreparedInputError` and quarantine the hand, never
+ * escape as a plain `TypeError` that `onPersistFailed` would treat as a
+ * retryable failure. Returns a quarantine reason, or null when the shape is
+ * intact. The optional fields are accepted absent (legacy rows) because
+ * `normalizePreparedWrite` supplies their defaults on read.
+ */
+function validateWriteShape(w: HandSettlementWrite): string | null {
+  if (typeof w.handId !== 'string' || typeof w.roomId !== 'string' || typeof w.head !== 'string')
+    return 'prepared input has a non-string identity field';
+  if (!Array.isArray(w.entries)) return 'prepared input entries is not an array';
+  if (!isSafeInt(w.rake) || w.rake < 0) return 'prepared input rake is invalid';
+  if (typeof w.commissionBps !== 'number' || !Number.isFinite(w.commissionBps))
+    return 'prepared input commissionBps is invalid';
+  if (!isUserDeltaArray(w.stackDeltas)) return 'prepared input stackDeltas is malformed';
+  if (!isUserDeltaArray(w.pokerLedger)) return 'prepared input pokerLedger is malformed';
+  if (w.projectionPokerLedger !== undefined && !isUserDeltaArray(w.projectionPokerLedger))
+    return 'prepared input projectionPokerLedger is malformed';
+  if (!isUserDeltaArray(w.squidLedger)) return 'prepared input squidLedger is malformed';
+  if (typeof w.squidNote !== 'string') return 'prepared input squidNote is invalid';
+  if (!Array.isArray(w.timeBanks)) return 'prepared input timeBanks is not an array';
+  for (const tb of w.timeBanks) {
+    if (!tb || typeof tb !== 'object') return 'prepared input has a malformed time-bank entry';
+    const { userId, ms, hands } = tb as { userId?: unknown; ms?: unknown; hands?: unknown };
+    if (!isSafeInt(userId) || !isSafeInt(ms) || !isSafeInt(hands))
+      return 'prepared input has a malformed time-bank entry';
+  }
+  if (w.timeBankEpoch !== null && !isSafeInt(w.timeBankEpoch))
+    return 'prepared input timeBankEpoch is invalid';
+  if (!Array.isArray(w.triggerIds) || !w.triggerIds.every((id) => id === null || isSafeInt(id)))
+    return 'prepared input triggerIds is malformed';
+  if (typeof w.bombRan !== 'boolean') return 'prepared input bombRan is invalid';
+  if (w.rakeRecipientId !== null && !isSafeInt(w.rakeRecipientId))
+    return 'prepared input rakeRecipientId is invalid';
+  if (w.sevenDeuce !== undefined && w.sevenDeuce !== null) {
+    const s = w.sevenDeuce;
+    if (!isSafeInt(s.winnerUserId) || !isSafeInt(s.winnerSeat) || !isSafeInt(s.winnerAmount))
+      return 'prepared input sevenDeuce is malformed';
+    if (!Array.isArray(s.payerAmounts)) return 'prepared input sevenDeuce payerAmounts is missing';
+    for (const p of s.payerAmounts) {
+      if (!p || typeof p !== 'object') return 'prepared input sevenDeuce payerAmounts is malformed';
+      const { userId, amount } = p as { userId?: unknown; amount?: unknown };
+      if (!isSafeInt(userId) || !isSafeInt(amount))
+        return 'prepared input sevenDeuce payerAmounts is malformed';
+    }
+  }
+  if (w.transcriptlessReceipt !== undefined && typeof w.transcriptlessReceipt !== 'boolean')
+    return 'prepared input transcriptlessReceipt is invalid';
+  if (!isSafeInt(w.now)) return 'prepared input now is invalid';
+  return null;
+}
+
+/** A prepared input that must NOT be silently applied (hash/identity/DB
+ *  inconsistency). The hand is quarantined and the room stays frozen until an
+ *  operator resolves it; callers must not retry it as if it were transient. */
+export class PreparedInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PreparedInputError';
+  }
+}
+
+interface PreparedSettlementRow {
+  hand_id: string;
+  room_id: string;
+  head: string;
+  input_json: string;
+  input_hash: string;
+  prepared_at: number;
+  attempts: number;
+  last_error: string | null;
+  resolved_at: number | null;
+  resolved_by: number | null;
+  resolution: string | null;
+}
+
+/** Fail closed: a hand whose frozen input cannot be trusted is quarantined, not
+ *  aborted. `running`/`prepared`/`quarantined` all mean "money facts unknown";
+ *  only an operator may resolve it. A hand that already committed/aborted is
+ *  left alone (its history is settled). */
+function quarantineHand(db: DB, handId: string, reason: string, now = Date.now()): void {
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE hand_lifecycle SET status = 'quarantined', updated_at = ?, resolved_at = NULL, last_error = ?
+        WHERE hand_id = ? AND status IN ('running','prepared','quarantined')`,
+    ).run(now, reason, handId);
+    db.prepare('UPDATE hand_settlement_prepared SET last_error = ? WHERE hand_id = ?').run(
+      reason,
+      handId,
+    );
+  }).immediate();
+}
+
+/** Freeze a hand's whole settlement input in its OWN committed transaction and
+ *  move `hand_lifecycle` running -> prepared. Idempotent for the in-process
+ *  retry path: a second call must carry the identical input (the sealed write
+ *  is frozen in memory), and a differing input is corruption that quarantines
+ *  the hand rather than silently settling the wrong numbers. */
+export function persistPreparedInput(
+  db: DB,
+  w: HandSettlementWrite,
+): { hash: string; inserted: boolean } {
+  const json = canonicalJson(normalizePreparedWrite(w));
+  const hash = settlementInputHash(json);
+  const now = Date.now();
+  const work = db.transaction((): { hash: string; inserted: boolean } | { conflict: string } => {
+    const existing = db
+      .prepare('SELECT input_hash FROM hand_settlement_prepared WHERE hand_id = ?')
+      .get(w.handId) as { input_hash: string } | undefined;
+    if (existing) {
+      if (existing.input_hash !== hash)
+        return { conflict: `prepared settlement input changed for hand ${w.handId}` };
+      return { hash, inserted: false };
+    }
+    const lc = db
+      .prepare(
+        `UPDATE hand_lifecycle SET status = 'prepared', updated_at = ?, last_error = NULL
+          WHERE hand_id = ? AND room_id = ? AND status IN ('running','prepared')`,
+      )
+      .run(now, w.handId, w.roomId);
+    if (lc.changes === 0) {
+      const row = db.prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?').get(w.handId) as
+        | { status: string }
+        | undefined;
+      // Already fully settled: nothing to prepare (the caller will see the
+      // marker and report a duplicate).
+      if (row?.status === 'committed') return { hash, inserted: false };
+      return {
+        conflict: `cannot prepare hand ${w.handId}: lifecycle is ${row?.status ?? 'missing'}`,
+      };
+    }
+    db.prepare(
+      `INSERT INTO hand_settlement_prepared
+         (hand_id, room_id, head, input_json, input_hash, prepared_at, attempts, last_error, resolved_at, resolved_by, resolution)
+       VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL)`,
+    ).run(w.handId, w.roomId, w.head, json, hash, now);
+    return { hash, inserted: true };
+  });
+  const result = work.immediate();
+  if ('conflict' in result) {
+    quarantineHand(db, w.handId, result.conflict, now);
+    throw new PreparedInputError(result.conflict);
+  }
+  return result;
+}
+
+/** Parse + identity-check + hash-check + full structural-check a prepared row.
+ *  Returns a quarantine reason instead of throwing so the caller can persist it.
+ *  The check is deliberately exhaustive: a hash-correct but structurally wrong
+ *  JSON must quarantine, never throw a bare `TypeError` into the transient
+ *  retry path. */
+function parsePreparedWrite(
+  row: PreparedSettlementRow,
+): { write: HandSettlementWrite } | { reason: string } {
+  if (settlementInputHash(row.input_json) !== row.input_hash)
+    return { reason: `prepared input hash mismatch on hand ${row.hand_id}` };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.input_json);
+  } catch {
+    return { reason: `prepared input is not valid JSON on hand ${row.hand_id}` };
+  }
+  if (!parsed || typeof parsed !== 'object')
+    return { reason: `prepared input is not an object on hand ${row.hand_id}` };
+  const w = parsed as HandSettlementWrite;
+  if (w.handId !== row.hand_id)
+    return { reason: `prepared input hand_id ${String(w.handId)} != ${row.hand_id}` };
+  if (w.roomId !== row.room_id)
+    return { reason: `prepared input room_id ${String(w.roomId)} != ${row.room_id}` };
+  if (w.head !== row.head)
+    return { reason: `prepared input head ${String(w.head)} != ${row.head}` };
+  const shape = validateWriteShape(w);
+  if (shape) return { reason: `${shape} on hand ${row.hand_id}` };
+  return { write: normalizePreparedWrite(w) };
+}
+
+/** Cross-check a frozen input against current durable state. Any mismatch means
+ *  the room moved under a hand whose money was already frozen, so a blind
+ *  apply would corrupt accounting/counters. Returns a quarantine reason or
+ *  null when the input is safe to apply. */
+function validatePreparedAgainstDb(db: DB, w: HandSettlementWrite): string | null {
+  // A transcript can only exist for a hand whose settlement already committed;
+  // if one exists, it must describe the same sealed head.
+  const t = db.prepare('SELECT head FROM transcripts WHERE hand_id = ?').get(w.handId) as
+    | { head: string }
+    | undefined;
+  if (t && t.head !== w.head)
+    return `transcript head disagrees with prepared input on hand ${w.handId}`;
+
+  // Every participant the input moves chips for must still hold a room row.
+  // A vanished row is a mid-hand change we must not guess about: settling would
+  // fabricate a zero balance.
+  const seen = new Set<number>();
+  for (const d of w.stackDeltas) {
+    if (seen.has(d.userId)) return `prepared input has duplicate participant ${d.userId}`;
+    seen.add(d.userId);
+    const rp = db
+      .prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(w.roomId, d.userId);
+    if (!rp)
+      return `prepared participant ${d.userId} has no room_players row on hand ${w.handId}`;
+  }
+
+  // A feature trigger the hand claimed must still be owned by it. If another
+  // hand has re-claimed it, applying this settlement would mis-account the
+  // trigger that other hand now owns.
+  for (const id of w.triggerIds) {
+    if (!id) continue;
+    const tr = db
+      .prepare('SELECT status, claimed_hand_id FROM room_feature_triggers WHERE id = ?')
+      .get(id) as { status: string; claimed_hand_id: string | null } | undefined;
+    if (!tr || tr.status !== 'claimed' || tr.claimed_hand_id !== w.handId)
+      return `feature trigger ${id} is not still claimed by hand ${w.handId}`;
+  }
+
+  // No marker yet, but ledger legs for this hand already exist: a partially
+  // applied settlement. Never layer a full settlement over it.
+  const marker = db.prepare('SELECT 1 FROM hand_settlements WHERE hand_id = ?').get(w.handId);
+  if (!marker) {
+    const partial = db
+      .prepare(
+        `SELECT 1 FROM ledger WHERE room_id = ? AND (ref = ? OR (kind = 'seven-deuce' AND ref = ?)) LIMIT 1`,
+      )
+      .get(w.roomId, w.head, w.handId);
+    if (partial) return `ledger has entries for hand ${w.handId} but no settlement marker`;
+  }
+  return null;
+}
+
+export interface ApplyPreparedResult {
+  status: 'applied' | 'duplicate';
+  outcome: HandSettlementOutcome;
+}
+
+/**
+ * Reconstruct and apply a hand's settlement purely from its durable prepared
+ * input - never from a live `GameRoom` or current room state.
+ *
+ * Every identity/hash/DB mismatch quarantines the hand (fail closed) and
+ * throws `PreparedInputError`. A transient DB failure (lock/interrupt) is
+ * rethrown so the caller may retry it. On success the prepared row is marked
+ * resolved IN THE SAME transaction as the money move, so the frozen input and
+ * its disposition can never disagree.
+ */
+export function applyPreparedHandSettlement(
+  db: DB,
+  handId: string,
+  opts: { resolvedBy?: number | null; resolution?: string } = {},
+): ApplyPreparedResult {
+  const row = db
+    .prepare('SELECT * FROM hand_settlement_prepared WHERE hand_id = ?')
+    .get(handId) as PreparedSettlementRow | undefined;
+  if (!row) throw new PreparedInputError(`no prepared settlement input for hand ${handId}`);
+
+  const lifecycle = db
+    .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+    .get(handId) as { status: string } | undefined;
+  if (lifecycle?.status === 'aborted')
+    throw new PreparedInputError(`hand ${handId} is aborted; settlement refused`);
+
+  db.prepare('UPDATE hand_settlement_prepared SET attempts = attempts + 1 WHERE hand_id = ?').run(
+    handId,
+  );
+
+  const parsed = parsePreparedWrite(row);
+  if ('reason' in parsed) {
+    quarantineHand(db, handId, parsed.reason);
+    throw new PreparedInputError(parsed.reason);
+  }
+  const w = parsed.write;
+  // `validatePreparedAgainstDb` iterates the frozen structure, so a shape
+  // deviation it did not expect would surface here as a plain TypeError. Wrap
+  // it so ANY validation error is still classified fail-closed (quarantine),
+  // never a recoverable transient failure.
+  let dbReason: string | null;
+  try {
+    dbReason = validatePreparedAgainstDb(db, w);
+  } catch (err) {
+    dbReason = `prepared input validation error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (dbReason) {
+    quarantineHand(db, handId, dbReason);
+    throw new PreparedInputError(dbReason);
+  }
+
+  try {
+    const outcome = db.transaction((): HandSettlementOutcome => {
+      const o = applyHandSettlement(db, w);
+      db.prepare(
+        `UPDATE hand_settlement_prepared
+           SET resolved_at = ?, resolved_by = ?, resolution = ?, last_error = NULL
+         WHERE hand_id = ?`,
+      ).run(Date.now(), opts.resolvedBy ?? null, opts.resolution ?? 'settlement', handId);
+      return o;
+    })();
+    return { status: outcome.status, outcome };
+  } catch (err) {
+    if (isTransientTransferError(err)) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    if (!(err instanceof PreparedInputError)) quarantineHand(db, handId, message);
+    throw new PreparedInputError(message);
+  }
+}
+
+export interface OperatorAbortResult {
+  status: 'aborted' | 'already_aborted';
+  /** The failure evidence recorded before the abort (`hand_lifecycle.last_error`),
+   *  preserved so the HTTP layer can copy it into the admin audit trail after
+   *  the lifecycle row has been overwritten. */
+  lastError?: string | null;
+}
+
+/**
+ * Operator abort of a hand that was dealt but never settled, using only durable
+ * data. A `running` hand has no frozen input (crash before prepare); a
+ * `prepared` hand has one but must not be guessed into a settlement; a
+ * `quarantined` hand has a proven-bad frozen input that can NEVER be applied, so
+ * abort is its only exit. None moves chips/ledger/transcript, so the operator
+ * marks the hand `aborted` explicitly and releases the feature triggers it still
+ * claims, letting the room deal again.
+ *
+ * The original `last_error` is deliberately preserved (COALESCE, not an
+ * overwrite) so the failure evidence survives the resolution.
+ */
+export function abortPendingHandSettlement(
+  db: DB,
+  handId: string,
+  opts: { resolvedBy?: number | null } = {},
+): OperatorAbortResult {
+  const row = db
+    .prepare('SELECT status, last_error FROM hand_lifecycle WHERE hand_id = ?')
+    .get(handId) as { status: string; last_error: string | null } | undefined;
+  if (!row) throw new PreparedInputError(`unknown hand ${handId}`);
+  if (row.status === 'aborted') return { status: 'already_aborted', lastError: row.last_error };
+  if (row.status !== 'running' && row.status !== 'prepared' && row.status !== 'quarantined')
+    throw new PreparedInputError(
+      `hand ${handId} is ${row.status}; only running/prepared/quarantined can be aborted`,
+    );
+  const now = Date.now();
+  return db.transaction((): OperatorAbortResult => {
+    db.prepare(
+      `UPDATE hand_lifecycle
+          SET status = 'aborted', updated_at = ?, resolved_at = ?,
+              last_error = COALESCE(last_error, 'operator abort')
+        WHERE hand_id = ? AND status IN ('running','prepared','quarantined')`,
+    ).run(now, now, handId);
+    const triggers = db
+      .prepare(
+        "SELECT id, source FROM room_feature_triggers WHERE claimed_hand_id = ? AND status = 'claimed'",
+      )
+      .all(handId) as { id: number; source: string }[];
+    for (const t of triggers) {
+      if (t.source === 'manual')
+        db.prepare(
+          "UPDATE room_feature_triggers SET status = 'pending', claimed_hand_id = NULL, resolved_at = NULL WHERE id = ? AND status = 'claimed'",
+        ).run(t.id);
+      else
+        db.prepare(
+          "UPDATE room_feature_triggers SET status = 'cancelled', resolved_at = ? WHERE id = ? AND status = 'claimed'",
+        ).run(now, t.id);
+    }
+    db.prepare(
+      `UPDATE hand_settlement_prepared SET resolved_at = ?, resolved_by = ?, resolution = ?
+        WHERE hand_id = ?`,
+    ).run(
+      now,
+      opts.resolvedBy ?? null,
+      row.status === 'quarantined' ? 'aborted_quarantined' : 'aborted',
+      handId,
+    );
+    return { status: 'aborted', lastError: row.last_error };
+  }).immediate();
+}
+
 /**
  * Strictly parse one persisted seat->delta leg (`settlement.deltas` or
  * `settlement.commissionDeltas`).
@@ -1739,6 +2180,52 @@ export class GameRoom {
   }
 
   /**
+   * Reconcile an in-memory hand this process froze (settlement never applied
+   * here) against an out-of-band resolution of its durable lifecycle row.
+   *
+   * The operator recovery API is deliberately DB-only - it must work after a
+   * restart where no `GameRoom` exists - so while the process is still running
+   * the frozen `this.hand` (and the recoverable settlement-failure health mark)
+   * would otherwise keep the table blocked forever even though the durable row
+   * is now terminal. This drops that stale hand and clears ONLY the
+   * settlement-failure mark, so the table can deal again.
+   *
+   * A no-op unless the durable row is already `aborted`/`committed`: a
+   * `running`/`prepared`/`quarantined` row is still an open money fact and must
+   * keep the table frozen. A non-recoverable (programming-error) mark is never
+   * cleared - `clearUnhealthy` refuses it by design.
+   */
+  reconcileOperatorResolvedHand(): void {
+    const hand = this.hand;
+    if (!hand) return;
+    // The money moved HERE and the terminal-frame path owns teardown:
+    // never interfere with an applied settlement.
+    if (hand.isSettlementCommitted()) return;
+    const row = this.db
+      .prepare('SELECT status FROM hand_lifecycle WHERE hand_id = ?')
+      .get(hand.id) as { status: string } | undefined;
+    if (!row || (row.status !== 'aborted' && row.status !== 'committed')) return;
+    // Durable row is terminal but this process never applied it: the money
+    // either never moved (aborted) or moved via an operator retry elsewhere
+    // (committed). Nothing in memory can be completed, and the durable hand is
+    // authoritative for reconnecting clients (`sendDurableRecovery`). Drop it.
+    hand.clearTimer();
+    this.hand = null;
+    activeHands.delete(this.roomId);
+    const failure = hand.settlementFailureReason();
+    if (this.unhealthyRecoverable && failure)
+      this.clearUnhealthy(`settlement failed: ${failure}`);
+    try {
+      this.broadcastRoomState();
+    } catch (err) {
+      hdbg('reconcileResolvedHandBroadcastFailed', {
+        room: this.roomId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * The authoritative fail-closed guard: a durable `hand_lifecycle` row that
    * was written at deal time but never reached `committed`/`aborted`. This
    * catches a settlement transaction that rolled back entirely (no transcript,
@@ -2080,6 +2567,10 @@ export class GameRoom {
             t: 'error',
             message: 'this table is archived - unarchive it to deal again',
           });
+        // A frozen hand resolved out-of-band by an operator (DB-only recovery)
+        // must not keep answering "hand already running" forever: adopt the
+        // durable resolution before the in-memory guard.
+        this.reconcileOperatorResolvedHand();
         if (this.hand) return this.send(userId, { t: 'error', message: 'hand already running' });
         this.cancelAutoDeal();
         this.cancelReadyCheck();
@@ -2307,6 +2798,10 @@ export class GameRoom {
   }
 
   private startHand(auto = false, onlyIds?: Set<number>): void {
+    // An operator may have resolved this room's frozen hand out-of-band (the
+    // DB-only recovery API) since the last deal attempt: adopt that resolution
+    // before consulting the in-memory guards below.
+    this.reconcileOperatorResolvedHand();
     const room = getRoom(this.db, this.roomId)!;
     if (this.hand || room.archived || room.deleted) return;
     // A graceful shutdown has begun: never deal a hand that would be aborted
@@ -5081,7 +5576,11 @@ class Hand {
       attempt: this.settlementAttempts,
       reason,
     });
-    const canRetry = this.settlementAttempts <= SETTLE_MAX_RETRIES;
+    // A quarantined hand has a durable `quarantined` lifecycle row: re-running
+    // the same frozen input cannot help, so freeze immediately and do not offer
+    // a recoverable retry. Only an operator may resolve it.
+    const quarantined = err instanceof PreparedInputError;
+    const canRetry = !quarantined && this.settlementAttempts <= SETTLE_MAX_RETRIES;
     this.safeBroadcast({
       t: 'settlement_failed',
       handId: this.id,
@@ -5091,10 +5590,15 @@ class Hand {
     } as ServerMsg);
     if (!canRetry) {
       // Terminal: freeze the hand in place so the table cannot deal again until
-      // an operator intervenes. `this.hand` stays set on the GameRoom. Mark the
-      // room unhealthy as RECOVERABLE: a successful host `retry_settlement` is
-      // proof the write finally committed, and clears this specific mark. It is
-      // deliberately not a permanent lock.
+      // an operator intervenes. `this.hand` stays set on the GameRoom and the
+      // durable lifecycle row keeps `startHand`'s `firstUnsettledHand` guard
+      // closed. The health mark is RECOVERABLE for BOTH classes: a quarantine
+      // is a durable, operator-resolvable "money facts unknown" state (not an
+      // unexplained programming error), so the DB-only operator abort/retry must
+      // be able to release the room. A recoverable mark is only ever cleared by
+      // `reconcileOperatorResolvedHand()` once the durable row is provably
+      // terminal; a real programming error still escalates to the sticky,
+      // non-recoverable mark in `markUnhealthy`.
       this.phase = 'done';
       this.room.markUnhealthy(`settlement failed: ${reason}`, { recoverable: true });
       return;
@@ -5109,10 +5613,13 @@ class Hand {
 
   /**
    * Host/operator recovery from a frozen settlement (retries exhausted). The
-   * already-computed settlement is deterministic, and the writer is idempotent
+   * already-computed settlement is deterministic, and the write is idempotent
    * on the `hand_settlements` marker, so clearing the retry budget and writing
-   * again is safe and can never double-pay. Returns whether the hand is now
-   * settled. See DESIGN.md ("Settlement recovery").
+   * again is safe and can never double-pay. The retry re-reads the FROZEN input
+   * from `hand_settlement_prepared` via `applyPreparedHandSettlement` (through
+   * `persistSettlement`); it never rebuilds money inputs from the current room
+   * state. Returns whether the hand is now settled. See DESIGN.md ("Settlement
+   * recovery").
    */
   retrySettlement(): boolean {
     if (this.settlementApplied || !this.settlement) return false;
@@ -5126,6 +5633,13 @@ class Hand {
   /** True once the durable write has exhausted its retries (table frozen). */
   isSettlementFrozen(): boolean {
     return !this.settlementApplied && this.settlementAttempts > SETTLE_MAX_RETRIES;
+  }
+
+  /** The last recorded settlement failure, or null. Used by the room to clear
+   *  exactly the settlement-failure health mark once the durable hand has been
+   *  resolved out-of-band (operator abort/retry). */
+  settlementFailureReason(): string | null {
+    return this.settlementError;
   }
 
   /** True once this hand's settlement transaction has committed. */
@@ -5206,7 +5720,13 @@ class Hand {
     // Test-only commit fault injection (never wired in production).
     this.opts.faultInjection?.persist?.(this.settlementAttempts + 1);
 
-    const outcome = applyHandSettlement(this.db, write);
+    // 1. Freeze the complete input durably in its OWN committed transaction.
+    //    A crash after this point can settle from the DB alone - nothing is
+    //    rebuilt from the current room state on retry.
+    persistPreparedInput(this.db, write);
+    // 2. Apply the money transaction FROM THE DB INPUT and mark the prepared
+    //    row resolved in that same transaction.
+    const outcome = applyPreparedHandSettlement(this.db, this.id).outcome;
     // B1 single authority: the committed receipt is the only source for this
     // hand's final stacks, commission leg and bounty decision. Adopt it before
     // marking the hand applied so a mapping failure is still retryable.
