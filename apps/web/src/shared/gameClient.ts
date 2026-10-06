@@ -14,6 +14,7 @@ import {
 } from '@4am/mental-poker';
 import { legalActions, type PlayerAction, type ServerMsg } from '@4am/shared';
 import { t, tr } from './i18n/index.ts';
+import { handReducer } from './handReducer.ts';
 import { useStore } from './store.ts';
 import { wsClient } from './ws.ts';
 import { voice } from './voice.ts';
@@ -670,8 +671,15 @@ export function handle(msg: ServerMsg): void {
       return;
     }
 
+    // Pure hand-state alignment: the reducer owns the state change, this switch
+    // only writes it back to the store. No side effects live in these frames.
+    case 'ready_end':
+    case 'feature_started':
+    case 'time_bank_update':
+    case 'peek_offers_snapshot':
     case 'auto_deal': {
-      store.patchHand({ autoDealAt: msg.inMs > 0 ? Date.now() + msg.inMs : null });
+      const patch = handReducer(useStore.getState().hand, msg, Date.now());
+      if (patch) store.patchHand(patch);
       return;
     }
 
@@ -682,11 +690,6 @@ export function handle(msg: ServerMsg): void {
         autoDealAt: null,
         readyCheck: { deadlineTs: msg.deadlineTs, eligible: msg.eligible, ready: msg.ready },
       });
-      return;
-    }
-
-    case 'ready_end': {
-      store.patchHand({ readyCheck: null });
       return;
     }
 
@@ -704,24 +707,6 @@ export function handle(msg: ServerMsg): void {
       // open and grows as run-2 cards land
       const shared = [...msg.sharedBoard];
       store.patchHand({ ritOffer: null, boards: [shared, msg.runTwice ? [...shared] : []] });
-      return;
-    }
-
-    case 'feature_started': {
-      if (msg.handId && msg.handId !== useStore.getState().hand.handId) return;
-      // announces which new-gameplay features are live for this hand; re-sent
-      // on reconnect, so it simply overwrites the previous announcement
-      store.patchHand({
-        featureStarted: { squid: msg.squid, bombPot: msg.bombPot },
-      });
-      return;
-    }
-
-    case 'time_bank_update': {
-      const { hand } = useStore.getState();
-      store.patchHand({
-        timeBanks: { ...hand.timeBanks, [msg.seat]: msg.remainingMs },
-      });
       return;
     }
 
@@ -806,15 +791,6 @@ export function handle(msg: ServerMsg): void {
         window.dispatchEvent(new CustomEvent('4am-peek-accepted'));
       }
       store.patchHand({ peekOffers: h.peekOffers.filter((o) => o.offerId !== msg.offerId) });
-      return;
-    }
-
-    case 'peek_offers_snapshot': {
-      const h = useStore.getState().hand;
-      // The server snapshot is the authoritative set of still-open INCOMING
-      // offers after reconnect. It says nothing about our outgoing offers.
-      const live = new Set(msg.incomingOfferIds);
-      store.patchHand({ peekOffers: h.peekOffers.filter((o) => live.has(o.offerId)) });
       return;
     }
 

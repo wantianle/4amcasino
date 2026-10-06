@@ -162,7 +162,7 @@ export interface PeekResult {
   cards: CardId[];
 }
 
-interface HandView {
+export interface HandView {
   handId: string | null;
   seats: HandStartMsg['seats'];
   buttonSeat: number | null;
