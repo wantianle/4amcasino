@@ -378,6 +378,29 @@ describe('postflop board suppression: madeHandSuppressedByBoard (pure)', () => {
     );
   });
 
+  it('suppresses a board-only straight (hero zero contribution, cat 4)', () => {
+    // `As Kd` on `5c 6d 7h 8s 9c`: hero's best five IS the board's 9-high
+    // straight, so the straight is shared. The pre-fix `category >= 5` guard
+    // let this through (category === 4) and the value leg still bet it.
+    const board = [c('5c'), c('6d'), c('7h'), c('8s'), c('9c')];
+    expect(suppressed([c('As'), c('Kd')], board)).toBe(true);
+  });
+
+  it('does not suppress a hero who truly upgrades the straight (cat 4)', () => {
+    // Same board, but the `T` makes hero's own `T-9-8-7-6` straight, which beats
+    // the shared board straight - this is real value and must stay unsuppressed.
+    const board = [c('5c'), c('6d'), c('7h'), c('8s'), c('9c')];
+    expect(suppressed([c('Th'), c('Kd')], board)).toBe(false);
+  });
+
+  it('suppresses board-only trips (analogous cat-3 gap)', () => {
+    // `8d 4d` on `7h 7d 7c Ks 9s`: hero contributes nothing, the best five are
+    // the board's own `777 K 9`. The value leg reads `category >= 3` (trips) as
+    // value, so this is the same defect class as the straight.
+    const board = [c('7h'), c('7d'), c('7c'), c('Ks'), c('9s')];
+    expect(suppressed([c('8d'), c('4d')], board)).toBe(true);
+  });
+
   it('does not suppress board quads when a hole kicker improves the board (kicker plays)', () => {
     // board = JJJJ + 7; hero As improves the fifth card from 7 to A. Hero does
     // NOT merely play the board - all four jacks are on the board, so the hand
@@ -458,6 +481,23 @@ describe('postflop board suppression: the unopened value bet is gated too', () =
     expect(
       valueBetRate([c('3d'), c('4d')], [c('Jc'), c('Jd'), c('Jh'), c('Js'), c('7c')], 100, policy()),
     ).toBe(0);
+  });
+
+  it('does not value-bet a board-only straight when checked to (branch isolation)', () => {
+    // The unopened value leg is `!boardSuppressed && (category >= 3 || pct >=
+    // 0.8)` with NO equity fallback, so this asserts the suppression branch
+    // itself (unlike the facing-bet `equity >= 0.8` leg, which can mask a
+    // regression). `As Kd` on `5c 6d 7h 8s 9c`: hero's best five are the
+    // board's own straight, so `valueBetRate` must be exactly 0.
+    const board = [c('5c'), c('6d'), c('7h'), c('8s'), c('9c')];
+    expect(valueBetRate([c('As'), c('Kd')], board, 100, policy())).toBe(0);
+  });
+
+  it('still value-bets a hero-contributed straight on the same board', () => {
+    // Same runout, but hero's `T` makes `T-9-8-7-6` - a genuinely better
+    // straight than the shared board runout. Must keep value betting.
+    const board = [c('5c'), c('6d'), c('7h'), c('8s'), c('9c')];
+    expect(valueBetRate([c('Th'), c('Kd')], board, 100, policy())).toBeGreaterThan(0.5);
   });
 
   it('still value-bets a dry-board set when checked to', () => {

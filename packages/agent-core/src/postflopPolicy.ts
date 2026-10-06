@@ -48,10 +48,10 @@ import type { RuleParams } from './ruleStyles.js';
  *     facing-bet value raise and the unopened value bet additionally apply
  *     `madeHandSuppressedByBoard`, a board-aware correction: on a four-flush
  *     board with no card of the suit, on a four-to-a-straight board with no
- *     straight, or with a board-only flush / full house / quads / straight flush
- *     (category >= 5 built by the board itself), the made hand is no longer
- *     treated as an automatic value hand (only a real equity edge / the normal
- *     check-bluff flow is).
+ *     straight, or with a board-only made hand of value category (`>= 3`:
+ *     trips / straight / flush / boat / quads / straight flush built by the
+ *     board itself), the made hand is no longer treated as an automatic value
+ *     hand (only a real equity edge / the normal check-bluff flow is).
  *  3. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
  *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
  *     range advantage.
@@ -669,12 +669,22 @@ function boardOnlyMadeHand(board: readonly CardId[], ev: HandEval): boolean {
  * the caller falls back to the real equity edge / normal flow instead of the
  * category / percentile proxies:
  *
- *  - **Board-only flush or better** (`category >= 5` and `boardOnlyMadeHand`):
- *    a flush / full house / quads / straight flush whose best five are the
- *    board's own best five is shared by every player, not hero's value. A
- *    straight flush on a five-flush board is covered here too (`category === 8`).
- *    A boat / quads / flush that hero actually improves (e.g. `Js 7d` on
- *    `Jc 7c 4c 2c Jd`) is *not* board-only and stays a value hand.
+ *  - **Board-only made hand of value category** (`category >= 3` and
+ *    `boardOnlyMadeHand`): a trips / straight / flush / full house / quads /
+ *    straight flush whose best five are the board's own best five is shared by
+ *    every player, not hero's value. This is exactly the set the value leg
+ *    treats as value (`category >= 3`), so it is the set that must be nullified:
+ *    the pre-fix `category >= 5` enumeration missed a board-only **straight**
+ *    (`As Kd` on `5c 6d 7h 8s 9c`, `category === 4`) and a board-only **trips**
+ *    (e.g. `8d 4d` on `7h 7d 7c Ks 9s`, `category === 3`), both of which kept
+ *    value betting / raising. A straight flush on a five-flush board is covered
+ *    here too (`category === 8`). A boat / quads / flush / straight / trips that
+ *    hero actually improves (e.g. `Js 7d` on `Jc 7c 4c 2c Jd`) is *not*
+ *    board-only and stays a value hand. A board-only hand of `category <= 2`
+ *    (pair / two pair / high card) is deliberately NOT flagged here: it can
+ *    never satisfy the `category >= 3` value test and its percentile tops out
+ *    far below the `0.8 / 0.85` value gates, so it is never value in the first
+ *    place (see `boardOnlyMadeHand` and the `weak board-only` tests).
  *  - **Four-flush board, hero holds no card of the suit** (`texture.maxSuit >= 4`
  *    and `heroFlushExposed`) for a hand worse than a full house (`category < 6`):
  *    every such made hand - a board-only flush (`category === 5`, only reachable
@@ -702,8 +712,11 @@ export function madeHandSuppressedByBoard(
   ev: HandEval,
   texture: BoardTexture,
 ): boolean {
-  // Board-only flush / boat / quads / straight flush: shared, not hero's value.
-  if (ev.category >= 5 && boardOnlyMadeHand(board, ev)) return true;
+  // Board-only made hand of value category (`>= 3`): trips / straight / flush /
+  // boat / quads / straight flush whose best five are the board's own best
+  // five, shared by every player, not hero's value. This is exactly the set the
+  // value leg treats as value, so it is the set that must be nullified.
+  if (ev.category >= 3 && boardOnlyMadeHand(board, ev)) return true;
   // Four-flush board, no suit card, hand worse than a full house: any flush
   // beats it. `category === 5` here is a board-only flush (the whole board is
   // one suit and hero holds none of it); a hero-contributed flush has a suit
