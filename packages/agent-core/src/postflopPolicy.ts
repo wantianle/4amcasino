@@ -1778,9 +1778,9 @@ export class PostflopPolicy {
     const blocker = blockerScore(hole, board);
     const draw = ev.flushDraw || ev.straightDraw >= 1;
     // Board-aware: a made hand whose raw category is nullified by the board
-    // (a four-flush / four-straight runout, or a board-only boat or better) is
-    // not an automatic value bet - only a live hand is. See
-    // `madeHandSuppressedByBoard`.
+    // (a four-flush / four-straight runout, or a board-only made hand of value
+    // category - trips / straight / flush / boat / quads) is not an automatic
+    // value bet - only a live hand is. See `madeHandSuppressedByBoard`.
     const boardSuppressed = madeHandSuppressedByBoard(hole, board, ev, texture);
     const value = !boardSuppressed && (ev.category >= 3 || percentile >= 0.8);
     const bluffCandidate = !value && percentile < 0.6 && (draw || blocker >= 0.4);
