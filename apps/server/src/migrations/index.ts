@@ -2,6 +2,7 @@ import * as dbModel from '../db.js';
 import type { DB } from '../db.js';
 import { migrateAgentPlatform } from '../agentSchema.js';
 import { migrateHandStats } from '../handProjection.js';
+import { migrateBots } from './bots.js';
 import { migrateAdminAudit } from './adminAudit.js';
 import { migrateSettlementPrepared } from './settlementPrepared.js';
 
@@ -24,7 +25,7 @@ export const STEPS: Migration[] = [
   { name: 'base', run: (db) => dbModel.migrate(db) },
   { name: 'agent-platform', run: migrateAgentPlatform },
   // needs: agent-platform (creates agent_grants).
-  { name: 'bots', run: (db) => dbModel.migrateBots(db) },
+  { name: 'bots', run: migrateBots },
   { name: 'hand-stats', run: migrateHandStats },
   // needs: hand-stats (creates hands / hand_players).
   { name: 'reconcile-lifecycle', run: (db) => dbModel.reconcileMissingSettlements(db) },
