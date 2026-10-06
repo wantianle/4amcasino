@@ -67,8 +67,16 @@ export interface GameOpts {
   /** After a showdown hand settles, how long before the next auto-deal may start
    *  (default SETTLE_HOLD_MS). Fold-outs carry no reveal animation and skip it. */
   settleHoldMs?: number;
-  /** How long the run-it-twice vote stays open when everyone is all-in (default 15s). */
+  /** How long the run-it-twice vote stays open when everyone is all-in. Each
+   *  stage (the behind player's run-count choice, then the ahead player's
+   *  agreement) gets this full budget, so a slow-but-valid negotiation can take
+   *  up to 2x. Default `RIT_VOTE_MS` (7.5s per stage). */
   ritVoteMs?: number;
+  /** Pre-betting reconnect grace before a dropped player's hand is aborted
+   *  (default `GONE_ABORT_GRACE_MS`). The timer is cancelled on reconnect, so
+   *  this only bounds a *persistent* absence. Tests use a short value to drive
+   *  the abort without waiting the production 4s. */
+  goneGraceMs?: number;
   /** Offer run-it-twice at all. Off by default: the second-board unmask chains
    *  were hanging and aborting hands. */
   runItTwice?: boolean;
@@ -151,17 +159,19 @@ export { activeHands };
 /** With auto-deal on, the next hand starts this soon after the previous one
  *  settles. Overridable via `GameOpts.autoDealMs` (tests use a shorter one).
  *  Must stay >= SETTLE_HOLD_MS so a showdown's post-settle pause is respected
- *  even when `autoDealMs` overrides the cadence. */
-export const AUTO_DEAL_INTERVAL_MS = 3_000;
+ *  even when `autoDealMs` overrides the cadence. Kept short (1.5s): a long
+ *  cadence makes auto-deal feel manual. */
+export const AUTO_DEAL_INTERVAL_MS = 1_500;
 
 /**
  * How long the showdown reveal frame is held before `hand_end` is broadcast, so
  * clients can run the win/lose animation before the stacks jump. The durable
  * settlement (`applyHandSettlement`) is written BEFORE the reveal is broadcast -
  * the hold only delays the `hand_end` broadcast and auto-deal cadence, never the
- * database write. Overridable via `GameOpts.showdownHoldMs`.
+ * database write. Overridable via `GameOpts.showdownHoldMs`. Kept short (1.5s);
+ * the web win animation (`apps/web` `WIN_FX_MS`) must match this or it is cut.
  */
-export const SHOWDOWN_HOLD_MS = 3_000;
+export const SHOWDOWN_HOLD_MS = 1_500;
 
 /**
  * Product contract: a paid peek offer stays open for five seconds. After that
@@ -174,9 +184,10 @@ export const PEEK_OFFER_TTL_MS = 5_000;
  * After a showdown hand has settled, how long the table waits before the next
  * auto-deal. Gives the client's settlement animation room to finish. Fold-outs
  * (no reveal) skip it and rely on the normal AUTO_DEAL_INTERVAL_MS cadence.
- * Overridable via `GameOpts.settleHoldMs`.
+ * Overridable via `GameOpts.settleHoldMs`. Kept short (1.5s), matching the
+ * auto-deal cadence so a showdown does not add a second full pause.
  */
-export const SETTLE_HOLD_MS = 3_000;
+export const SETTLE_HOLD_MS = 1_500;
 
 /** How long to wait before retrying a failed durable settlement write. */
 export const SETTLE_RETRY_MS = 250;
@@ -188,6 +199,30 @@ export const SETTLE_MAX_RETRIES = 4;
  *  reach a terminal lifecycle state before it aborts the hand. Must be short:
  *  a deploy cannot block on a full action timeout. */
 export const SHUTDOWN_DRAIN_MS = 3_000;
+
+/**
+ * BEFORE betting, a player's socket dropping is given this reconnect grace
+ * before the hand aborts and the auto-redeal skips them (see `onPlayerGone`).
+ *
+ * This is NOT a fixed penalty for a blip: the timer is cancelled the moment the
+ * player reconnects (`Hand.onPlayerReconnected`), so it only ever elapses for a
+ * *persistent* absence. 4s is deliberately generous enough to absorb a real
+ * network blip - the web client reconnects with a 500ms->8s backoff and a
+ * backgrounded tab throttles timers - while still freeing a closed tab's seat
+ * in bounded time. A 2s window was too tight: a reconnect that landed after it
+ * aborted a hand the returning client could never recover.
+ *
+ * Overridable via `GameOpts.goneGraceMs` (tests use a short value).
+ */
+export const GONE_ABORT_GRACE_MS = 4_000;
+
+/**
+ * How long an all-in run-it-twice offer/vote stays open. Run-it-twice is off by
+ * default; when enabled this only bounds the negotiation - it resolves the
+ * instant both players respond. Kept short (7.5s) so an ignored offer cannot
+ * stall the hand. Overridable via `GameOpts.ritVoteMs`.
+ */
+export const RIT_VOTE_MS = 7_500;
 
 /**
  * A known, expected game-level failure (a business rule or a bad client
@@ -273,8 +308,8 @@ function hdbg(event: string, data: Record<string, unknown>): void {
 /** How long the ready check waits when auto-deal is on. The check resolves the
  *  instant every player is in, so this only bounds a straggler - it must not be
  *  the old 20s or auto-deal would feel manual. Overridable via
- *  `GameOpts.readyCheckMs`. */
-export const AUTO_DEAL_READY_CHECK_MS = 3_000;
+ *  `GameOpts.readyCheckMs`. Kept short (1.5s). */
+export const AUTO_DEAL_READY_CHECK_MS = 1_500;
 
 /** Street order used by the stats projection's `street` events. */
 const STREET_INDEX: Record<string, number> = { preflop: 0, flop: 1, turn: 2, river: 3 };
@@ -795,9 +830,10 @@ export class GameRoom {
   /** After a showdown, no auto-deal may start before this wall-clock time, so
    *  the client's settle animation is not cut off. Set in broadcastHandEnd. */
   private settleHoldUntil = 0;
-  // no hand auto-starts until everyone is ready: a 20s ready check runs
-  // before each auto-deal, and whoever has not clicked by the deadline is
-  // left out of that hand (requested by notpritam, docs/FEATURES.md)
+  // no hand auto-starts until everyone is ready: a short ready check
+  // (AUTO_DEAL_READY_CHECK_MS, 1.5s) runs before each auto-deal, and whoever
+  // has not clicked by the deadline is left out of that hand
+  // (requested by notpritam, docs/FEATURES.md)
   private readyCheck: {
     deadline: number;
     timer: NodeJS.Timeout;
@@ -844,6 +880,9 @@ export class GameRoom {
     // and a player stuck in that loop answers no crypto requests, so every hand
     // they are dealt into stalls out. The orphan is cheap; the loop was not.
     this.sockets.set(userId, ws);
+    // A player who comes back inside the pre-betting grace must not be aborted
+    // out of a hand they are actively rejoining: cancel their pending timer.
+    this.hand?.onPlayerReconnected(userId);
     this.broadcastRoomState();
     // A rejoining participant gets the whole hand context back (hand_start,
     // their private cards, the board, the reveal) BEFORE any courtesy frames,
@@ -2191,7 +2230,10 @@ class Hand {
   private squidSettlement: SquidSettlement | null = null;
   // Turn timing: one shared base clock per turn plus each actor's own bank.
   private turnBaseDeadline: number | null = null;
-  private goneTimer: NodeJS.Timeout | null = null;
+  /** One pre-betting disconnect grace timer per absent player, keyed by userId.
+   *  A reconnect deletes only that player's entry (`onPlayerReconnected`), so
+   *  two players dropping at once are still each guarded on their own. */
+  private goneTimers = new Map<number, NodeJS.Timeout>();
   private timer: NodeJS.Timeout | null = null;
   /** Holds the `hand_end` broadcast until the showdown reveal has been on screen
    *  for SHOWDOWN_HOLD_MS. Never gates the durable write. Cleared by
@@ -2464,6 +2506,9 @@ class Hand {
     if (this.settlementApplied) return;
     if (this.phase === 'done' && !force) return;
     this.clearTimer();
+    // A pending pre-betting grace timer has no hand left to act on: drop it.
+    for (const t of this.goneTimers.values()) clearTimeout(t);
+    this.goneTimers.clear();
     // Durable intent FIRST: a forced abort must not tear the hand down (or
     // broadcast an abort) unless the `aborted` row is confirmed, otherwise a
     // failed durable update would leave a `running` row behind while the room
@@ -3521,19 +3566,40 @@ class Hand {
       this.phase === 'shuffle' ||
       (this.phase === 'deal' && !this.betting);
     if (preBetting()) {
-      if (this.goneTimer) return;
-      this.goneTimer = setTimeout(() => {
-        this.goneTimer = null;
-        if (preBetting() && !this.room.isConnected(info.userId)) {
-          this.abort('player left during the deal', info.seat);
-        }
-      }, 4000);
+      if (this.goneTimers.has(userId)) return;
+      const graceMs = this.opts.goneGraceMs ?? GONE_ABORT_GRACE_MS;
+      this.goneTimers.set(
+        userId,
+        setTimeout(() => {
+          this.goneTimers.delete(userId);
+          if (preBetting() && !this.room.isConnected(userId)) {
+            this.abort('player left during the deal', info.seat);
+          }
+        }, graceMs),
+      );
       return;
     }
     if (this.phase !== 'deal' && this.phase !== 'reveal') return;
     // a folded player's escrowed key lets us finish without them
     if (this.recoverStalledChains(false)) return;
     this.foldDroppedIfDecisive(info.seat);
+  }
+
+  /**
+   * A participant's socket came back. A pre-betting grace timer exists only to
+   * give a *blip* time to recover, so the moment they are reachable again it has
+   * no reason to fire - cancel it. This is what keeps the grace about a
+   * persistent absence rather than about beating the reconnect clock: without
+   * it, a reconnect racing the deadline could still lose the hand.
+   *
+   * Deliberately per-user: another player dropping in the same window keeps
+   * their own guard untouched.
+   */
+  onPlayerReconnected(userId: number): void {
+    const pending = this.goneTimers.get(userId);
+    if (!pending) return;
+    clearTimeout(pending);
+    this.goneTimers.delete(userId);
   }
 
   /** A live player who drops mid-unmask cannot send their shares, and nobody
@@ -3726,7 +3792,7 @@ class Hand {
         if (eq.equitiesBps[0] === eq.equitiesBps[1])
           return this.finishMultiRun(1, 'ineligible');
         const aAhead = eq.equitiesBps[0] > eq.equitiesBps[1];
-        const ms = this.opts.ritVoteMs ?? 15_000;
+        const ms = this.opts.ritVoteMs ?? RIT_VOTE_MS;
         this.multiRun = {
           decisionId,
           stage: 'choice',
@@ -3779,7 +3845,7 @@ class Hand {
     }
     this.appendPlayer('run_count_choice', info.pubkey, { decisionId, count, seat: info.seat }, sig);
     if (count === 1) return this.finishMultiRun(1, 'agreed');
-    const ms = this.opts.ritVoteMs ?? 15_000;
+    const ms = this.opts.ritVoteMs ?? RIT_VOTE_MS;
     this.multiRun.stage = 'agreement';
     this.multiRun.requestedRuns = count;
     this.multiRun.deadline = Date.now() + ms;

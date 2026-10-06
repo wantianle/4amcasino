@@ -2605,7 +2605,8 @@ describe('full hand integration', () => {
         .slice(0, 2)
         .map((p) => p.waitFor(() => p.handAbort !== null || p.handEnd !== null, 12000)),
     );
-    // the pre-betting grace is ~4s - nothing like the old multi-retry stall
+    // the pre-betting grace is ~4s (and cancelled on reconnect) - nothing like
+    // the old multi-retry stall
     expect(Date.now() - t0).toBeLessThan(9000);
     if (players[0]!.handAbort) {
       expect(players[0]!.handAbort!.reason).toBe('player left during the deal');
