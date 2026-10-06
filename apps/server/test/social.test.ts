@@ -384,6 +384,60 @@ describe('chip transfer idempotency key', () => {
     expect(stackOf(state, 'xf_s1')).toBe(900);
     expect(stackOf(state, 'xf_recv')).toBe(100);
   });
+
+  it('one sender paying two different recipients the same amount lands both', async () => {
+    // The control that pins the whole design: constraining only the sender (the
+    // rejected option (a)) would treat the second transfer as a duplicate.
+    const recv1 = await user('xr_recv1');
+    const recv2 = await user('xr_recv2');
+    const s1 = await user('xr_s1');
+    const room = await makeRoom(recv1.token);
+    for (const u of [recv2, s1]) await post('/api/rooms/join', u.token, { joinCode: room.joinCode });
+    const req = (await post(`/api/rooms/${room.id}/buy`, s1.token, { amount: 1000 })).json();
+    await post(`/api/rooms/${room.id}/approve`, recv1.token, { requestId: req.id, approve: true });
+
+    const r1 = (
+      await post(`/api/rooms/${room.id}/transfer`, s1.token, { toUserId: recv1.userId, amount: 200 })
+    ).json();
+    const r2 = (
+      await post(`/api/rooms/${room.id}/transfer`, s1.token, { toUserId: recv2.userId, amount: 200 })
+    ).json();
+    expect(r1.duplicate).toBeUndefined();
+    expect(r2.duplicate).toBeUndefined();
+    const state = await get(`/api/rooms/${room.id}`, recv1.token);
+    expect(stackOf(state, 'xr_s1')).toBe(600);
+    expect(stackOf(state, 'xr_recv1')).toBe(200);
+    expect(stackOf(state, 'xr_recv2')).toBe(200);
+    // P2: every leg carries a 128-bit (32 hex) ref...
+    const refs = ctx.db
+      .prepare("SELECT ref FROM ledger WHERE room_id = ? AND kind = 'transfer'")
+      .all(room.id) as { ref: string }[];
+    expect(refs).toHaveLength(4);
+    expect(refs.every((r) => /^[0-9a-f]{32}$/.test(r.ref))).toBe(true);
+    // ...and the ref is hashed, so the chain must still verify.
+    expect(verifyLedger(ctx.db, room.id).ok).toBe(true);
+  });
+
+  it('scopes the idempotency join to one room (no cross-room ref match)', async () => {
+    const { recv, s1, room } = await fundedRoom();
+    // a second room shared by the same two people
+    const room2 = (await post('/api/rooms', s1.token, { name: 'Other', sb: 5, bb: 10 })).json();
+    await post('/api/rooms/join', recv.token, { joinCode: room2.joinCode });
+    const req = (await post(`/api/rooms/${room2.id}/buy`, s1.token, { amount: 1000 })).json();
+    await post(`/api/rooms/${room2.id}/approve`, s1.token, { requestId: req.id, approve: true });
+    const { appendLedger } = await import('../src/ledger.js');
+    // Force the SAME ref into both rooms: room A gets the full pair, room B only
+    // the sender leg. A room-blind join would let room A's recipient leg satisfy
+    // room B's transfer check.
+    appendLedger(ctx.db, { roomId: room.id, userId: s1.userId, delta: -200, kind: 'transfer', ref: 'forced-shared-ref' });
+    appendLedger(ctx.db, { roomId: room.id, userId: recv.userId, delta: 200, kind: 'transfer', ref: 'forced-shared-ref' });
+    appendLedger(ctx.db, { roomId: room2.id, userId: s1.userId, delta: -200, kind: 'transfer', ref: 'forced-shared-ref' });
+
+    const r = (
+      await post(`/api/rooms/${room2.id}/transfer`, s1.token, { toUserId: recv.userId, amount: 200 })
+    ).json();
+    expect(r.duplicate).toBeUndefined();
+  });
 });
 
 describe('settlement room visibility', () => {

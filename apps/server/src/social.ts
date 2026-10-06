@@ -407,10 +407,15 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     // swallowed with a 200. Both legs of a transfer now carry the same `ref`,
     // so the pair can be matched as one transfer: a double-tap from one sender
     // to one recipient is still deduped, while two different senders both land.
+    //
+    // The join is also scoped to the same room: `ref` is not a unique key, so
+    // without `r.room_id = s.room_id` a colliding ref from another room's
+    // recipient leg could satisfy the match. The sender leg already pins the
+    // room, so this only tightens the range.
     const cutoff = Date.now() - LIMITS.dedupWindowMs;
     const dupe = db
       .prepare(
-        `SELECT 1 FROM ledger s JOIN ledger r ON r.ref = s.ref
+        `SELECT 1 FROM ledger s JOIN ledger r ON r.room_id = s.room_id AND r.ref = s.ref
           WHERE s.room_id = ? AND s.kind = 'transfer' AND s.user_id = ? AND s.delta = ?
             AND s.ref IS NOT NULL AND s.ts > ?
             AND r.kind = 'transfer' AND r.user_id = ? AND r.delta = ? LIMIT 1`,
@@ -423,8 +428,10 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     const nameOf = (uid: number) => names.find((n) => n.id === uid)?.name ?? `#${uid}`;
     // One identity shared by the two legs, so the idempotency lookup above can
     // prove it is looking at a single transfer rather than two unrelated legs
-    // that merely share sender/recipient/amount.
-    const transferRef = randomBytes(8).toString('hex');
+    // that merely share sender/recipient/amount. 128 bits: `ref` is not a unique
+    // key, and a collision on this idempotency key would silently drop a real
+    // transfer, so it gets the same collision margin as a session token.
+    const transferRef = randomBytes(16).toString('hex');
     const apply = db.transaction(() => {
       appendLedger(db, {
         roomId: id,
