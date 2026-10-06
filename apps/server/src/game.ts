@@ -790,6 +790,28 @@ export class GameRoom {
   }
 
   /**
+   * Best-effort unicast sender - the per-socket counterpart of {@link publish}.
+   * A unicast delivery failure belongs to the SAME notification-only class as a
+   * broadcast failure: it is logged through the shared tiered logger and
+   * swallowed, so a committed money move whose follow-up frame cannot reach one
+   * recipient (an accepted peek's `peek_result`/`peek_offer_closed`) can never
+   * unwind through the caller and bubble to the hub, where an escaping error
+   * would mark the whole room unhealthy. `send` is already a no-op when the
+   * user has no socket (`?.`); only an existing-but-broken transport throws,
+   * which is exactly the loss we swallow. Returns whether the frame was handed
+   * to the transport.
+   */
+  sendSafe(userId: number, msg: ServerMsg, label = 'unicast send failed'): boolean {
+    try {
+      this.send(userId, msg);
+      return true;
+    } catch (err) {
+      logBroadcastFailure(this.roomId, label, msg.t, err);
+      return false;
+    }
+  }
+
+  /**
    * Best-effort `broadcastRoomState`, the room-state half of {@link publish}.
    * Routed through the same tiered logger so a committed money move whose
    * follow-up `room_state` fails still cannot mark the room unhealthy.
@@ -1584,22 +1606,30 @@ export class GameRoom {
     status: 'accepted' | 'declined' | 'expired' | 'failed',
     cards?: CardId[],
   ): void {
-    this.send(offer.fromUserId, {
-      t: 'peek_result',
-      offerId,
-      handId: offer.handId,
-      targetSeat: offer.targetSeat,
-      status,
-      amount: offer.amount,
-      ...(cards ? { cards } : {}),
-    });
-    this.send(offer.targetUserId, {
-      t: 'peek_offer_closed',
-      offerId,
-      handId: offer.handId,
-      targetSeat: offer.targetSeat,
-      status,
-    });
+    this.sendSafe(
+      offer.fromUserId,
+      {
+        t: 'peek_result',
+        offerId,
+        handId: offer.handId,
+        targetSeat: offer.targetSeat,
+        status,
+        amount: offer.amount,
+        ...(cards ? { cards } : {}),
+      },
+      'peek_result send failed',
+    );
+    this.sendSafe(
+      offer.targetUserId,
+      {
+        t: 'peek_offer_closed',
+        offerId,
+        handId: offer.handId,
+        targetSeat: offer.targetSeat,
+        status,
+      },
+      'peek_offer_closed send failed',
+    );
   }
 
   /** Terminally end every outstanding offer, optionally telling each requester
@@ -3874,12 +3904,18 @@ class Hand {
     try {
       this.room.broadcastRoomState();
     } catch (err) {
-      const detail = {
-        room: this.roomId,
-        message: err instanceof Error ? err.message : String(err),
-      };
-      hdbg('broadcastRoomStateFailed', detail);
-      console.error('hand settlement room_state broadcast failed', detail);
+      // Route through the SAME shared tiered logger as every other best-effort
+      // broadcast (`Hand.publish`, `GameRoom.publish`/`publishRoomState`). The
+      // try/catch swallow is unchanged - this stays the hand settlement path's
+      // notification-only room_state - only the reporting is unified, so a
+      // TypeError here is classified as an unexpected programming error instead
+      // of an anonymous line.
+      logBroadcastFailure(
+        this.id,
+        'hand settlement room_state broadcast failed',
+        'room_state',
+        err,
+      );
     }
   }
 
