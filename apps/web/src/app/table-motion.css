@@ -195,13 +195,16 @@
   }
 }
 
-/* ── think-glow lane: full acting pod flash ────────────────────────────────
-   The overlay belongs to .table-pod-card, not the avatar ring or timer bar:
-   avatar, name, stack and action line all receive the same white lift.
-   The acting pod uses its own fixed 1s flash token, independently from the
-   1.6s wait/bot pulse token. The runtime value is exposed through
-   --table-dur-action-flash. Keep this block isolated so deal/settlement lanes
-   can rebase without touching it. ── */
+/* ── think-glow lane: acting pod halo - breathing curve only ──────────────
+   The halo itself (transparent interior, white edge ring + bloom, inset,
+   border-radius, pointer-events, the 1s animation binding and its
+   reduced-motion static degradation) is owned by the base rule in
+   table-pod.css - one declaration site per property, no cross-file cascade
+   and no dependence on index.css import order. Only the curve lives here:
+   it breathes the whole ::after layer's opacity (bright flash, settle,
+   fade) on the acting pod's own fixed 1s token --table-dur-action-flash,
+   independently from the 1.6s wait/bot pulse token. Keep this block
+   isolated so deal/settlement lanes can rebase without touching it. ── */
 @keyframes table-pod-action-flash {
   0%,
   100% {
@@ -212,15 +215,5 @@
   }
   58% {
     opacity: 0.42;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  /* Keep the acting seat unmistakable without a repeating flash. */
-  .table-pod-card--acting::after {
-    animation: none;
-    background: rgba(255, 255, 255, 0.2);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.62),
-      0 0 12px rgba(255, 255, 255, 0.26);
   }
 }

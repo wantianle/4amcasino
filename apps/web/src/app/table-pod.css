@@ -333,7 +333,12 @@
 .table-pod-card--bare {
   padding-top: var(--table-pod-pad-top-bare);
 }
-/* acting: gold border tint plus a full-pod white flash */
+/* acting: gold border tint plus a breathing white HALO on the pod's outer
+   edge. The ::after is paint-only (box-shadow, transparent interior): the
+   avatar, name, stack, action line and hole cards are never covered. This
+   base rule is the single declaration site for the halo's geometry and
+   look; the 1s breathing curve (keyframes) lives in table-motion.css and
+   only references this layer. */
 .table-pod-card--acting {
   isolation: isolate;
   border-color: var(--table-ring-gold-soft);
@@ -343,14 +348,30 @@
   content: '';
   position: absolute;
   z-index: 0;
-  inset: -2px;
+  /* -1px lands the box exactly on the pod's border-box edge (abs inset is
+     measured from the padding box and the pod has a 1px border), so
+     border-radius:inherit (16px) stays concentric and the spread ring hugs
+     the outer edge. Outset shadows never affect layout size. */
+  inset: -1px;
   border-radius: inherit;
-  background: rgba(255, 255, 255, 0.28);
+  background: transparent;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.72),
-    0 0 18px rgba(255, 255, 255, 0.42);
+    0 0 0 2px rgba(255, 255, 255, 0.95),
+    0 0 12px 2px rgba(255, 255, 255, 0.5),
+    0 0 26px 6px rgba(255, 255, 255, 0.2);
   pointer-events: none;
   animation: table-pod-action-flash var(--table-dur-action-flash) ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the acting seat unmistakable without a repeating flash: the same
+     halo, frozen - a static white outline ring, still zero interior fill.
+     Declared right below the base rule so the override order is local. */
+  .table-pod-card--acting::after {
+    animation: none;
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.72),
+      0 0 14px 2px rgba(255, 255, 255, 0.28);
+  }
 }
 .table-pod-card--won {
   border-color: color-mix(in srgb, var(--table-gold) 50%, transparent);
