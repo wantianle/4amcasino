@@ -5,7 +5,6 @@ import {
   parseBotDifficulty,
   type BotDifficulty,
 } from '@4am/shared';
-import type { Policy } from './policy.js';
 import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE } from './ruleStyles.js';
 import { resolvePolicy, type PolicyResolution } from './stylePolicy.js';
@@ -205,18 +204,4 @@ export function resolvePolicyForDifficulty(
     difficultyWarnings: d.warnings,
     warnings: [...d.warnings, ...forced.warnings, ...resolved.warnings],
   };
-}
-
-/** Convenience alias for callers that only want the `Policy`. */
-export function policyForDifficulty(
-  kindRaw: string | null | undefined,
-  policyJson: string | null | undefined,
-  difficultyRaw: string | null | undefined,
-  opts?: {
-    seed?: number;
-    p2?: Partial<P2Options>;
-    onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
-  },
-): Policy {
-  return resolvePolicyForDifficulty(kindRaw, policyJson, difficultyRaw, opts).policy;
 }

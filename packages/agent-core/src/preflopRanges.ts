@@ -37,9 +37,6 @@ export function positionGroup(pos: Position): PositionGroup {
   }
 }
 
-/** Human label + rough combo share, for the report / telemetry. */
-export const POSITION_GROUPS: readonly PositionGroup[] = ['EP', 'MP', 'LP', 'SB', 'BB'];
-
 /**
  * Raise-first-in ranges by opening position. `BB` never opens (it closes the
  * action), so its entry is empty; `SB` is a raise-or-fold chart (no limping).
