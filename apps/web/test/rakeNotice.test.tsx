@@ -4,6 +4,13 @@ import { RakeNotice } from '../src/widgets/table/RakeNotice.tsx';
 import { rakeTakenOf } from '../src/widgets/table/LastHandStrip.tsx';
 import { fmt } from '../src/shared/lib/cn.ts';
 import { t } from '../src/shared/i18n/index.ts';
+import {
+  emptyCurrentHand,
+  lastHandSnap,
+  renderLastHandStrip,
+  renderRakeNotice,
+  setRakeState,
+} from './helpers/rakeSurface.tsx';
 
 /**
  * The rake chip shown for the instant a hand ends.
@@ -28,13 +35,26 @@ describe('RakeNotice', () => {
     expect(markup(rake)).toContain(expected(2));
   });
 
-  it('uses the same figure the last-hand strip renders', () => {
+  it('renders the same raw-delta figure as the last-hand strip, surface for surface', () => {
     const deltas = [
-      { delta: 878 },
-      ...Array.from({ length: 8 }, () => ({ delta: -110 })),
+      { seat: 0, delta: 878 },
+      ...Array.from({ length: 8 }, (_, i) => ({ seat: i + 1, delta: -110 })),
     ];
-    // The protocol invariant: sum(deltas) === -commission.
-    expect(markup(rakeTakenOf(deltas))).toContain(expected(2));
+    // Computed HERE from the raw input, deliberately NOT through rakeTakenOf -
+    // otherwise the two assertions below would only re-prove one function call.
+    const handRake = -deltas.reduce((sum, d) => sum + d.delta, 0);
+    expect(handRake).toBe(2);
+
+    // Surface 1: the chip, rendered by the real component.
+    expect(renderRakeNotice(handRake)).toContain(`${t('Rake')} ${fmt(handRake)}`);
+
+    // Surface 2: the real strip, deriving the figure on its own from the same
+    // deltas (never handed `handRake`).
+    setRakeState(emptyCurrentHand, lastHandSnap('prev', deltas));
+    expect(renderLastHandStrip()).toContain(`${t('Rake')} ${fmt(handRake)}`);
+
+    // And TablePage would hand the chip exactly this: the strip's own -Σdeltas.
+    expect(rakeTakenOf(deltas)).toBe(handRake);
   });
 
   it('renders nothing when the hand was not raked (no phantom "Rake 0")', () => {

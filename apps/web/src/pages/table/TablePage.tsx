@@ -858,22 +858,6 @@ export function TablePage() {
   const winnersLine = resultWinners.length
     ? resultWinners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
     : t('chips stayed put');
-  const renderFlash = () => {
-    if (!showResult) return null;
-    const dismiss = () => setResultDismissed(true);
-    if (hand.abort) {
-      return (
-        <ResultFlash
-          aborted
-          headline={t('Hand aborted')}
-          detail={tr(hand.abort.reason)}
-          onDismiss={dismiss}
-        />
-      );
-    }
-    return null;
-  };
-
   const spectatorPanel = (
     <Panel className="text-center">
       <p className="flex items-center justify-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300">
@@ -2033,7 +2017,12 @@ export function TablePage() {
             role="region"
             aria-label={t('Hand result')}
           >
-            {renderFlash()}
+            <ResultFlash
+              aborted
+              headline={t('Hand aborted')}
+              detail={tr(hand.abort.reason)}
+              onDismiss={() => setResultDismissed(true)}
+            />
           </div>
         )}
         {showResult && !hand.abort && hand.result && (
