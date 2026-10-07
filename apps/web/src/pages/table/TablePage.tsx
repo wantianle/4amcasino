@@ -866,40 +866,7 @@ export function TablePage() {
         />
       );
     }
-    if (hand.result?.recovered) {
-      // A committed hand rebuilt from durable data after a restart: it is over
-      // (chips moved) but the per-seat detail did not survive. Say so instead of
-      // showing an empty winner list as though nobody won.
-      return (
-        <ResultFlash
-          dark={dark}
-          headline={t('Hand finished')}
-          detail={t('The result was recovered after a server restart; per-hand details are unavailable.')}
-          onDismiss={dismiss}
-        />
-      );
-    }
-    const winners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
-    const top = hand.showdown
-      ? [...hand.showdown.reveals].sort((a, b) => b.score - a.score)[0]
-      : undefined;
-    const label = hand.showdown?.multiRun
-      ? t('ran it {n} times', { n: Math.max(1, hand.showdown.multiRun.boards.length) })
-      : hand.showdown?.runTwice
-        ? t('ran it twice')
-        : top
-          ? tScore(top.score)
-          : t('everyone folded');
-    const commission = hand.result?.commission ?? 0;
-    return (
-      <ResultFlash
-        dark={dark}
-        headline={winners.length ? winnersLine : t('chips stayed put')}
-        detail={commission > 0 ? `${label} · ${t('Rake')} ${fmt(commission)}` : label}
-        onDismiss={dismiss}
-        onShare={shareData ? () => setShareOpen(true) : undefined}
-      />
-    );
+    return null;
   };
 
   const spectatorPanel = (
