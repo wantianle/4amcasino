@@ -14,6 +14,7 @@ import {
   verifyBotIdentity,
   type BotRow,
 } from '../src/botRoutes.js';
+import { RANDOM_BOT_PRESETS } from '../src/botPresetPick.js';
 
 const KEY = 'ab'.repeat(32);
 const ORIGINAL_KEY = process.env.BOT_IDENTITY_KEY;
@@ -757,7 +758,9 @@ describe('bot difficulty', () => {
     await startBot(created.bot.id);
     const claim = claimStartingBot(ctx.db, created.bot.id)!;
     expect(claim.difficulty).toBe('medium');
-    expect(claim.policyKind).toBe('scripted');
+    // The kind is assigned at random at create time, so assert the claim carries
+    // one of the local presets rather than a specific style.
+    expect(RANDOM_BOT_PRESETS).toContain(claim.policyKind);
   });
 
   it('migrates a pre-difficulty schema in place and stays idempotent', () => {
@@ -901,5 +904,41 @@ describe('bot difficulty', () => {
     } finally {
       legacy.close();
     }
+  });
+});
+
+describe('bot create: randomised policy kind', () => {
+  it('writes a local preset and spreads the room across all four', async () => {
+    const kinds: string[] = [];
+    for (let seat = 1; seat <= 5; seat++) {
+      const res = await createBot({ seat });
+      expect(res.statusCode).toBe(200);
+      kinds.push(botRow(res.json().bot.id).policy_kind);
+    }
+    // Every create lands on a local preset, never llm.
+    for (const kind of kinds) expect(RANDOM_BOT_PRESETS).toContain(kind);
+    // Balanced assignment guarantees the first four are one of each.
+    expect(new Set(kinds.slice(0, 4)).size).toBe(4);
+    expect([...kinds.slice(0, 4)].sort()).toEqual([...RANDOM_BOT_PRESETS].sort());
+    // The fifth duplicates one already seated (4 presets, 5 bots).
+    expect(kinds.slice(0, 4)).toContain(kinds[4]);
+  });
+
+  it('honours an explicit llm request verbatim', async () => {
+    const res = await createBot({ seat: 1, policyKind: 'llm' });
+    expect(res.statusCode).toBe(200);
+    expect(botRow(res.json().bot.id).policy_kind).toBe('llm');
+  });
+
+  it('ignores an explicit local preset and assigns a random one', async () => {
+    // The balanced selector cannot repeat a preset while another is absent, so
+    // four 'scripted' requests still yield the full spread - proving the client
+    // value is not what reaches the row.
+    const kinds: string[] = [];
+    for (let seat = 1; seat <= 4; seat++) {
+      const res = await createBot({ seat, policyKind: 'scripted' });
+      kinds.push(botRow(res.json().bot.id).policy_kind);
+    }
+    expect(new Set(kinds).size).toBe(4);
   });
 });

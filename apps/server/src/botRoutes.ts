@@ -19,6 +19,8 @@ import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIden
 import { pickFunBotName } from './botNames.js';
 import { resolveAgentGrant } from './botAccess.js';
 import { botGoneMessage, isBotGone } from './botLifecycle.js';
+import { isLlmPolicyKind } from './botPolicy.js';
+import { pickBotPolicyKind, roomPolicyKinds } from './botPresetPick.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -106,6 +108,9 @@ export type { BotDifficulty };
 
 const createBotSchema = z.object({
   name: z.string().trim().min(1).max(24).optional(),
+  // Accepted for API compatibility, but a local preset sent here is IGNORED:
+  // the route draws a balanced-random local preset at create time (see the
+  // POST /bots handler). Only `llm` is honoured verbatim.
   policyKind: z.string().trim().min(1).max(40).default('scripted'),
   policyJson: z.string().max(20_000).optional(),
   // Defaults to `medium` (the rules-v1 engine) so a create with no difficulty
@@ -816,6 +821,21 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
     const b = parsed.data;
 
+    // Assign the bot's play style here, at create time.
+    //
+    // At the default `medium` difficulty the rules-v1 engine always wins and the
+    // `policy_kind` alone selects the preset (`RULE_PRESETS`), so every bot
+    // created with the same kind plays identically up to its RNG seed. To make a
+    // table visibly varied we draw a random **local** preset, balanced by the
+    // kinds the room already has, and write THAT.
+    //
+    // An explicit `llm` request is honoured as-is: the model is a distinct
+    // capability (external call, per-call cost, multi-second latency), not a
+    // style preset, so it is deliberately not part of the random pool.
+    const policyKind = isLlmPolicyKind(b.policyKind)
+      ? 'llm'
+      : pickBotPolicyKind(Math.random, roomPolicyKinds(db, id));
+
     // Fail closed: without the encryption key we cannot protect (or later
     // recover) a signing identity, and minting one we cannot store would leave a
     // bot that can never play again. Refuse before creating any rows.
@@ -877,7 +897,7 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
         req.userId,
         userId,
         initialStatus,
-        b.policyKind,
+        policyKind,
         b.policyJson ?? null,
         b.difficulty,
         b.seat,
