@@ -1872,6 +1872,10 @@ class Hand {
     // was silently cleared.
     const confirmed = this.markLifecycleAborted();
     if (force && !confirmed) throw new Error('lifecycle abort could not be confirmed');
+    // Structured, always-on telemetry: exactly ONE line per real abort (after
+    // the early returns and the durable intent). Fail-open, pure reads only -
+    // it must never perturb the fail-closed semantics below.
+    this.logHandAbort(reason, blamedSeat, force);
     this.phase = 'done';
     this.appendServer('hand_abort', { reason, blamedSeat });
     // an aborted hand moves no chips, no ledger rows and no time bank: put any
@@ -1881,6 +1885,78 @@ class Hand {
     // and punishing a flaky connection kept locking people out of their seat
     this.safeBroadcast({ t: 'hand_abort', handId: this.id, reason, blamedSeat });
     this.onDone();
+  }
+
+  /**
+   * Label an abort for the B8a metric: the **live in-process `Hand.abort()`
+   * rate, by reason category**. SCOPE: this ONLY covers aborts raised inside
+   * this class. It deliberately does NOT cover the durable operator/reconciler
+   * abort (`settlementWriter.abortPendingHandSettlement`, `transcriptReconcile`)
+   * - those never call `abort()` and need their own telemetry.
+   *
+   * Pure and side-effect free: it only reads the existing free-form `reason`
+   * plus the blamed seat's live socket, and never gates the abort.
+   *
+   * `timeout_disconnected` is a CORRELATION, not a cause: the abort was a
+   * timeout AND the blamed seat had no live socket at that moment. Do not read
+   * it as proof the dropout caused the abort.
+   */
+  private abortCategory(reason: string, blamedSeat: number | null): string {
+    if (reason === 'player left during the deal') return 'player_disconnected';
+    if (reason.startsWith('server shutdown')) return 'shutdown';
+    if (reason.endsWith('timeout')) {
+      const info =
+        blamedSeat === null ? undefined : this.seats.find((s) => s.seat === blamedSeat);
+      return info && !this.room.isConnected(info.userId) ? 'timeout_disconnected' : 'timeout';
+    }
+    // Explicit per-reason map: a future non-crypto reason must fall through to
+    // `unknown`, never be silently mislabelled `crypto_protocol`.
+    if (
+      reason === 'invalid deck from shuffler' ||
+      reason === 'shuffled deck has duplicates' ||
+      reason === 'malformed unmask point' ||
+      reason === 'invalid unmask proof'
+    )
+      return 'crypto_protocol';
+    if (reason.includes('not a card') || reason.includes('mis-shuffle')) return 'mis_shuffle';
+    return 'unknown';
+  }
+
+  /**
+   * Emit ONE structured, always-on abort telemetry line (reusing the server's
+   * `[tag] {json}` convention, cf. `[llm-metric]`/`[preflop-telemetry]`).
+   *
+   * SCOPE: `"scope":"live"` marks a live in-process `Hand.abort()` event. It
+   * does NOT stand for operator/reconciler durable aborts
+   * (`settlementWriter.abortPendingHandSettlement`, `transcriptReconcile`) -
+   * they never call `abort()` and need their own telemetry. Grep/aggregate on
+   * `scope` before counting aborted hands.
+   *
+   * Fail-open by construction: a logging failure must never affect the abort.
+   */
+  private logHandAbort(reason: string, blamedSeat: number | null, force: boolean): void {
+    try {
+      const seatsLive = this.betting
+        ? this.betting.seats.filter((s) => !s.folded).length
+        : this.n;
+      console.log(
+        `[hand_abort] ${JSON.stringify({
+          event: 'hand_abort',
+          scope: 'live',
+          reason: this.abortCategory(reason, blamedSeat),
+          detail: reason,
+          handId: this.id,
+          roomId: this.roomId,
+          phase: this.phase,
+          seatsLive,
+          boardComplete: this.boardCards.size >= 5,
+          blamedSeat,
+          force,
+        })}`,
+      );
+    } catch {
+      /* telemetry must never affect the abort flow */
+    }
   }
 
   /** Abort path: un-claim the features this hand never settled. Scheduled
