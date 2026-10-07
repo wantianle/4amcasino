@@ -82,6 +82,7 @@ const player: Record<string, string> = {
   'Play style': '打法风格',
   'Detailed hand statistics': '完整手牌统计',
   'Public hand transcripts, position splits, and postflop detail.': '公开手牌记录、位置拆分与翻后细节。',
+  'Could not load player profile.': '无法加载玩家资料。',
   'Could not load player statistics.': '无法加载玩家统计。',
   'This player could not be found.': '找不到这位玩家。',
   'Loading statistics…': '正在加载统计…',

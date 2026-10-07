@@ -935,11 +935,52 @@ export function PlayerPage() {
   const myUserId = useStore((s) => s.auth.userId);
   const [p, setP] = useState<PlayerProfile | null>(null);
   const [style, setStyle] = useState<PlayStyle | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    api.userProfile(Number(id)).then(setP);
-    api.playStyle(Number(id)).then(setStyle).catch(() => {});
-  }, [id]);
+    let active = true;
+    setP(null);
+    setError(null);
+    void api
+      .userProfile(Number(id))
+      .then((profile) => {
+        if (active) setP(profile);
+      })
+      .catch((e: unknown) => {
+        // Without this the page would sit on the spinner forever whenever the
+        // request fails (server busy, offline, 404): the profile is the only
+        // thing gating the render.
+        if (!active) return;
+        setError(
+          e instanceof ApiError && e.status === 404
+            ? t('This player could not be found.')
+            : t('Could not load player profile.'),
+        );
+      });
+    api
+      .playStyle(Number(id))
+      .then((s) => {
+        if (active) setStyle(s);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id, attempt]);
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3">
+        <p role="alert" className="text-sm text-rose-600">
+          {tr(error)}
+        </p>
+        <Button variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
+          {t('Retry')}
+        </Button>
+      </div>
+    );
+  }
 
   if (!p) {
     return (
