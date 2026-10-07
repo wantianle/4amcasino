@@ -37,7 +37,7 @@
 | B12 | HUD 两个补强测试（PlayerHud 结算重拉 / RoundTable closeHud） | 改进 | 审查 | 回归用例数（0→2） | 两测试落地并覆盖对应行为；非阻断 | 无 |
 | B13 | 防御性编程收尾（agent-core 2 处 fallback） | 清理 | 审查 | fallback 处数（2→0） | 2 处删除或标注为有意；A 级审计维持 0 项 | 无 |
 | B14 | 短筹码路径无场景 | 改进 | 审查 | 覆盖短筹码/破产线的端到端场景数（0→≥1） | 至少 1 个短筹码路径场景落地 | 无 |
-| B15 | `docs/qa` 证据时效性（体积 8.5M 不是问题） | 清理 | 技术债 | **被引用的图片路径缺失数 = 0**（可自动检查）+ 非当前批次的旧 before/after 已清 | 加一个 `check`（扫描 `docs/qa/**/*.json` 与 README 中的路径，验证文件存在）；删除已被新结论取代的旧批次目录；**不 gitignore**（被引用）；**不再做有损压缩**（用户已否决） | 无 |
+| B15 | `docs/qa` 素材引用完整性 | 清理 | 技术债 | **被引用的素材路径缺失数（active）= 0**；新增缺口立刻可见 | ✅ 已建 `scripts/check-doc-assets.mjs`（selftest 28 例，JSON 只认 value、剔除 md 围栏，已串入 `check:all`，`0df13f0`）。现状 **94 refs / 12 missing** 全在显式 allowlist（每条带 reason+source，`--strict` 可暴露）；**不 gitignore、不做有损压缩**。⚠️ 残留：`table-skins` 6 + `table-hero-clear` 4 需用户裁「补图 or 订正 README 宣称」 | 无 |
 | B17 | agent-core 生产侧 `clamp01` 三副本 | 清理 | 技术债 | 生产侧定义处数（3→1） | ✅ 已收敛到 `postflopMath.ts`（`ef54357`）；快照 sha 不变；fixture 副本保留 | 无 |
 | B18 | `TODO(rules-v2)`：`seatOrder` 迁移 | 清理 | 技术债 | 该 TODO 处数（2→0） | 所有 caller 填充 `DecisionView.seatOrder`；删 TODO + baseline fallback | rules-v2 |
 | B19 | `RoundTable` settlement-bubble TODO | 清理 | 技术债 | 该 TODO 处数（1→0） | equity bubble 有显式退场时机；删 TODO | 无 |
