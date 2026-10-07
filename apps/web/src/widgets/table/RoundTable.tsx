@@ -378,7 +378,12 @@ export function RoundTable({
   const [hudUserId, setHudUserId] = useState<number | null>(null);
   const [hud, setHud] = useState<RoomHud | null>(null);
   const hudOpener = useRef<HTMLElement | null>(null);
-  const closeHud = useCallback(() => setHudUserId(null), []);
+  // Closing must drop the cached HUD snapshot too: SeatBadges reads `hud`, so
+  // leaving it would keep painting this seat's previous-hand badge data.
+  const closeHud = useCallback(() => {
+    setHudUserId(null);
+    setHud(null);
+  }, []);
   const openHud = useCallback(
     (userId: number, opener: HTMLElement) => {
       hudOpener.current = opener;

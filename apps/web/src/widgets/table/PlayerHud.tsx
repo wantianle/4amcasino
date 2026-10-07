@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../shared/api.ts';
+import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { metricValue, type RoomHud } from '../../features/stats/types.ts';
@@ -37,12 +38,17 @@ function HudContent({ roomId, userId, onData }: { roomId: string; userId: number
   const [data, setData] = useState<RoomHud | null>(null);
   const [error, setError] = useState('');
   const [revision, refresh] = useState(0);
+  // The live room's stats change only when a hand settles, and `lastHand.handId`
+  // is frozen exactly there (`hand_end`) and not cleared at the next `hand_start`
+  // — a monotonic settlement signal. Keying the fetch on it keeps an OPEN HUD
+  // current instead of freezing on the values it opened with.
+  const settledHandId = useStore((s) => s.lastHand?.handId ?? null);
   useEffect(() => {
     let active = true;
     setData(null); setError(''); onData(null);
     api.roomHud(roomId).then((r) => { if (!active) return; if (Array.isArray(r?.players)) { setData(r); onData(r); } else setError(t('Could not load statistics.')); }).catch((e: Error) => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [roomId, revision, onData]);
+  }, [roomId, revision, settledHandId, onData]);
   if (error) return <div role="alert" className="space-y-2 text-sm"><p>{t('Could not load statistics.')}</p><p className="text-xs text-slate-400">{error}</p><Button onClick={() => refresh((n) => n + 1)}>{t('Retry')}</Button></div>;
   if (!data) return <div role="status"><Spinner label={t('Loading statistics…')} /></div>;
   const players = Array.isArray(data.players) ? data.players.filter(isValidHudPlayer) : [];
