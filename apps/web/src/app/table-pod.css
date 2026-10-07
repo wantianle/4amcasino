@@ -333,10 +333,24 @@
 .table-pod-card--bare {
   padding-top: var(--table-pod-pad-top-bare);
 }
-/* acting: faint gold border tint (the glow lives on the avatar ring) */
+/* acting: gold border tint plus a full-pod white flash */
 .table-pod-card--acting {
+  isolation: isolate;
   border-color: var(--table-ring-gold-soft);
   padding-bottom: 13px; /* keep the TurnProgress drain bar off the last line */
+}
+.table-pod-card--acting::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: -2px;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.72),
+    0 0 18px rgba(255, 255, 255, 0.42);
+  pointer-events: none;
+  animation: table-pod-action-flash var(--table-dur-action-flash) ease-in-out infinite;
 }
 .table-pod-card--won {
   border-color: color-mix(in srgb, var(--table-gold) 50%, transparent);

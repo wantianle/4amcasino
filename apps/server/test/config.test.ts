@@ -31,6 +31,7 @@ const PUBLIC_KEYS = [
   'tableDurFlopStaggerMs',
   'tableDurGlowMs',
   'tableDurHighlightMs',
+  'tableDurActionFlashMs',
   'tableDurPulseMs',
   'winFxMs',
 ].sort();
@@ -50,6 +51,7 @@ const ENV_KEYS = [
   'TABLE_DUR_FLIP_MS',
   'TABLE_DUR_FLOP_PULL_MS',
   'TABLE_DUR_FLOP_STAGGER_MS',
+  'TABLE_DUR_ACTION_FLASH_MS',
   'WIN_FX_MS',
   'STACK_LAND_MS',
 ] as const;
@@ -94,6 +96,7 @@ describe('GET /api/config', () => {
       tableDurFlipMs: 900,
       tableDurFlopPullMs: 400,
       tableDurFlopStaggerMs: 300,
+      tableDurActionFlashMs: 1000,
       winFxMs: 3800,
       stackLandMs: 1950,
     });
@@ -298,6 +301,7 @@ describe('tunables parsing', () => {
     expect(pub).toEqual({
       multiRunChoiceTimeoutMs: 5000,
       tableDurPulseMs: 1600,
+      tableDurActionFlashMs: 1000,
       tableDurGlowMs: 450,
       tableDurDimMs: 550,
       tableDurHighlightMs: 780,

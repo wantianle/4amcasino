@@ -134,6 +134,7 @@
 
   /* ── motion — used by table-pod.css and table-motion.css. ── */
   --table-dur-pulse: 1.6s;    /* ready? breathing */
+  --table-dur-action-flash: 1s; /* acting pod white flash: fixed 1Hz cycle */
   /* entrances decelerate, state changes use standard, only transform/opacity
      are animated per-frame. */
   --table-ease-standard: cubic-bezier(0.2, 0, 0, 1);

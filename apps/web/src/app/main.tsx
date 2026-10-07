@@ -27,6 +27,7 @@ import './index.css';
  *  publish is simply absent from the response and stays at its CSS default. */
 const DURATION_CSS_VARS: ReadonlyArray<readonly [key: string, cssVar: string]> = [
   ['tableDurPulseMs', '--table-dur-pulse'],
+  ['tableDurActionFlashMs', '--table-dur-action-flash'],
   ['tableDurGlowMs', '--table-dur-glow'],
   ['tableDurDimMs', '--table-dur-dim'],
   ['tableDurHighlightMs', '--table-dur-highlight'],

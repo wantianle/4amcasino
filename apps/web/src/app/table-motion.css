@@ -194,3 +194,33 @@
     transition-duration: 1ms;
   }
 }
+
+/* ── think-glow lane: full acting pod flash ────────────────────────────────
+   The overlay belongs to .table-pod-card, not the avatar ring or timer bar:
+   avatar, name, stack and action line all receive the same white lift.
+   The acting pod uses its own fixed 1s flash token, independently from the
+   1.6s wait/bot pulse token. The runtime value is exposed through
+   --table-dur-action-flash. Keep this block isolated so deal/settlement lanes
+   can rebase without touching it. ── */
+@keyframes table-pod-action-flash {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  42% {
+    opacity: 0.82;
+  }
+  58% {
+    opacity: 0.42;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the acting seat unmistakable without a repeating flash. */
+  .table-pod-card--acting::after {
+    animation: none;
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.62),
+      0 0 12px rgba(255, 255, 255, 0.26);
+  }
+}

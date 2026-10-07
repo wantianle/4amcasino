@@ -67,6 +67,7 @@ export const TUNABLE_DEFAULTS = {
   // The deal/flip entrances were split out of `--table-dur-highlight` (the
   // highlight token is the WIN fade-in only now), so they carry their own keys.
   tableDurPulseMs: 1_600,
+  tableDurActionFlashMs: 1_000,
   tableDurGlowMs: 450,
   tableDurDimMs: 550,
   tableDurHighlightMs: 780,
@@ -173,6 +174,16 @@ export const TUNABLES = [
     max: 10_000,
     public: true,
     describe: 'Ready-seat breathing pulse (--table-dur-pulse).',
+  },
+  {
+    key: 'tableDurActionFlashMs',
+    env: 'TABLE_DUR_ACTION_FLASH_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.tableDurActionFlashMs,
+    min: 1,
+    max: 10_000,
+    public: true,
+    describe: 'Acting pod white-flash cycle (--table-dur-action-flash).',
   },
   {
     key: 'tableDurGlowMs',
