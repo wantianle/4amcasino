@@ -197,6 +197,15 @@ export function chooseVillainModel(
  * / middle / low from the combo's own same-suit ranks (see `flushLayerOf`), so a
  * value-heavy continuing range is weighted by flush percentile rather than
  * treating every flush as equally strong.
+ *
+ * Input contract: `hole` is exactly the two distinct cards held by the player
+ * and `board` is a legal board (no duplicates, no overlap with `hole`). The
+ * in-module caller `villainBaseCombos` always satisfies this. This function is
+ * also re-exported through `postflopPolicy.js`, where the `CardId[]` parameter
+ * types cannot express "exactly two distinct cards", so the two `??` guards in
+ * `strengthTierFromEval` are the deliberate **boundary of that external input
+ * contract** - not internal defence. On a well-formed hole/board they are
+ * unreachable; do not delete them without moving the contract into the type.
  */
 export function villainStrengthTier(
   hole: readonly CardId[],
@@ -205,7 +214,9 @@ export function villainStrengthTier(
   return strengthTierFromEval(evaluateHand(hole, board), hole, board);
 }
 
-/** Tier from an already-computed `HandEval` (avoids a second board sweep). */
+/** Tier from an already-computed `HandEval` (avoids a second board sweep).
+ *  Assumes a well-formed hole/board per `villainStrengthTier`'s input contract;
+ *  the two `??` below only absorb an external caller's contract breach. */
 function strengthTierFromEval(
   ev: HandEval,
   hole: readonly CardId[],
@@ -214,6 +225,9 @@ function strengthTierFromEval(
   if (ev.category >= HAND_CATEGORY.fullHouse) return 1; // full house / quads / straight flush
   if (ev.category === HAND_CATEGORY.flush) {
     // P1 flush stratification: nut 1.0, second .97, middle .93, low .88.
+    // `?? 'low'` is the input-contract boundary (see `villainStrengthTier`): an
+    // illegal external hole/board that `evaluateHand` calls a flush but
+    // `flushLayerOf` cannot layer. Never reached from `villainBaseCombos`.
     return FLUSH_TIER[flushLayerOf(hole, board) ?? 'low'];
   }
   // On a four-flush board every non-flush made hand loses to any flush, so it
@@ -232,6 +246,9 @@ function strengthTierFromEval(
       // Top/middle pair vs a weak pair: compare the paired rank to the second
       // highest board rank (a coarse "top pair or better" split).
       const sorted = [...new Set(boardRanks)].sort((a, b) => b - a);
+      // `?? maxBoard` is the input-contract boundary (see `villainStrengthTier`):
+      // a legal board always yields two distinct ranks here once a hole card
+      // pairs it, so this only absorbs a malformed/short external board.
       const second = sorted[1] ?? maxBoard;
       return rankOf(pairedWithBoard) >= second ? 0.62 : 0.4;
     }

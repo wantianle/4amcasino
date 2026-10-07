@@ -9,7 +9,7 @@ import { Badge, Button, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { useStore } from '../../shared/store.ts';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
-import type { SeatView } from '../../widgets/table/RoundTable.tsx';
+import type { SeatView } from '../../entities/table/tableTypes.ts';
 import { t } from '../../shared/i18n/index.ts';
 
 interface RoomPlayer {

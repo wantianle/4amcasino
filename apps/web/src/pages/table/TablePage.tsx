@@ -61,7 +61,7 @@ import { t, tr } from '../../shared/i18n/index.ts';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
-import type { SeatView } from '../../widgets/table/RoundTable.tsx';
+import type { SeatView } from '../../entities/table/tableTypes.ts';
 import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';

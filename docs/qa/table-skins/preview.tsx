@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { RoundTable, type SeatView } from '../../../apps/web/src/widgets/table/RoundTable';
+import { RoundTable } from '../../../apps/web/src/widgets/table/RoundTable';
+import type { SeatView } from '../../../apps/web/src/entities/table/tableTypes';
 import { PlayingCard } from '../../../apps/web/src/entities/card/PlayingCard';
 import '../../../apps/web/src/app/index.css';
 import './preview.css';
