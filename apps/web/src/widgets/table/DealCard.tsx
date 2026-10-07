@@ -13,12 +13,12 @@ type ActiveDeal = {
 
 const activeDeals = new Map<string, ActiveDeal>();
 
-/** Deal cadence (ms). Every "one card behind the next" gap reads these three
+/** Deal cadence (ms). Every "one card behind the next" gap reads these two
  *  constants so a rhythm retune is one edit per number, not a hunt through the
- *  table code. Durations themselves live in the --table-dur-* tokens. */
+ *  table code. Durations themselves live in the --table-dur-* tokens (the flop
+ *  pull reads its own --table-dur-flop-pull/stagger tokens in the effect). */
 export const DEAL_STAGGER_MS = 140;      /* second hole card behind the first */
 export const SEAT_DEAL_STAGGER_MS = 70;  /* dealer ripple from seat to seat */
-export const FLOP_STAGGER_MS = 160;      /* flop cards pushed out one after another */
 
 /** How a card arrives:
  *   fly   — arcs in from the deck, shrinking + tilting (seat hole cards).
@@ -45,11 +45,64 @@ function cancelRecord(key: string, record: ActiveDeal): void {
   delete record.element.dataset.dealing;
 }
 
+/** The element's laid-out slot in viewport px, ignoring any running transform:
+ *  a slide origin must be a felt position, not a card caught mid-flight.
+ *  offsetWidth/Height are pre-transform, and a translate leaves the measured
+ *  width intact, so the width ratio is the accumulated canvas scale. */
+function slotRect(el: HTMLElement): { x: number; y: number; width: number; height: number } {
+  const rect = el.getBoundingClientRect();
+  const k = el.offsetWidth ? rect.width / el.offsetWidth : 1;
+  const parent = el.offsetParent as HTMLElement | null;
+  const pr = parent?.getBoundingClientRect();
+  return {
+    x: (pr?.left ?? 0) + el.offsetLeft * k,
+    y: (pr?.top ?? 0) + el.offsetTop * k,
+    width: el.offsetWidth * k,
+    height: el.offsetHeight * k,
+  };
+}
+
+/** A slide card's origin is a felt point on the card's OWN horizontal line, so
+ *  the flop is pulled out sideways instead of dropping from the deck (which
+ *  sits above the board). The first card starts at the deck's x; a card that
+ *  names `slideFrom` starts at that card's slot — the flop's 2nd/3rd cards
+ *  slide out from under the 1st. Keeping the origin on the target's y means the
+ *  push is a pure horizontal translation. */
+function slideOriginRect(
+  el: HTMLDivElement,
+  deck: Element,
+  slideFrom: string | undefined,
+  to: DOMRect,
+): { x: number; y: number; width: number; height: number } {
+  let base: { x: number; y: number; width: number; height: number } = (() => {
+    const r = deck.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })();
+  if (slideFrom) {
+    const canvas = el.closest('.table-canvas');
+    const origin = canvas
+      ? [...canvas.querySelectorAll<HTMLElement>('.table-dealt-card')].find(
+          (c) => c.dataset.dealKey === slideFrom,
+        )
+      : null;
+    if (origin) base = slotRect(origin);
+  }
+  return { x: base.x, y: to.y, width: base.width, height: to.height };
+}
+
 /** Animate the real card, not a duplicate. A registry owns the animation,
  *  listener and DOM marker so StrictMode replay can reuse all three safely. */
-export function DealCard({ children, delay = 0, handId = null, motionKey, epoch = 0, reveal = false, mode }: {
+export function DealCard({ children, delay = 0, handId = null, motionKey, epoch = 0, reveal = false, mode, slideFrom, staggerIndex }: {
   children: ReactNode; delay?: number; handId?: string | null; motionKey?: string; epoch?: number; reveal?: boolean;
   mode?: DealMode;
+  /** motionKey of the card a slide card is pulled out from (the flop's 1st
+   *  card); omitted, a slide starts at the deck. */
+  slideFrom?: string;
+  /** Flop position (0-based). When set, the slide's delay is
+   *  `staggerIndex * --table-dur-flop-stagger` and its duration is
+   *  `--table-dur-flop-pull`, so the three flop cards read as a sequence
+   *  instead of one motion; ignored by non-slide modes. */
+  staggerIndex?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -83,13 +136,38 @@ export function DealCard({ children, delay = 0, handId = null, motionKey, epoch 
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     if (media.matches) return;
     const to = el.getBoundingClientRect();
-    const from = deck.getBoundingClientRect();
     const scale = to.width / el.offsetWidth || 1;
     const style = getComputedStyle(el);
     // deck → slot delta in the card's own coordinate space (shared by the
-    // flight and the flop push; the push keeps the card flat, the toss shrinks it)
+    // flight and the flop push; the push keeps the card flat, the toss shrinks
+    // it). The push is HORIZONTAL: its origin sits on the card's own line (see
+    // slideOriginRect) so the flop is pulled out sideways — not dropped from
+    // the deck above it, which is what read as "落下".
+    const from = dealMode === 'slide'
+      ? slideOriginRect(el, deck, slideFrom, to)
+      : deck.getBoundingClientRect();
     const dx = (from.x + from.width / 2 - to.x - to.width / 2) / scale;
     const dy = (from.y + from.height / 2 - to.y - to.height / 2) / scale;
+    // The flop pull is a SEQUENCE, not one motion: its own duration + per-card
+    // beat come from the flop tokens so "the 1st card out, then the rest" reads
+    // legibly — a 820ms card cannot fit a three-card sequence inside ~1s without
+    // also slowing the seat hole-card flight. Non-flop deals keep delay/820ms.
+    const flopPull = dealMode === 'slide' && staggerIndex !== undefined;
+    const duration = parseDurMs(
+      style.getPropertyValue(
+        dealMode === 'flip'
+          ? '--table-dur-flip'
+          : flopPull
+            ? '--table-dur-flop-pull'
+            : '--table-dur-deal',
+      ),
+      dealMode === 'flip' ? 900 : flopPull ? 400 : 820,
+    );
+    const startDelay = dealMode === 'flip'
+      ? 0
+      : flopPull
+        ? staggerIndex * parseDurMs(style.getPropertyValue('--table-dur-flop-stagger'), 300)
+        : delay;
     const animation = el.animate(dealMode === 'flip' ? [
       { transform: 'perspective(600px) rotateY(90deg)', opacity: 0 },
       { transform: 'perspective(600px) rotateY(0deg)', opacity: 1 },
@@ -104,15 +182,13 @@ export function DealCard({ children, delay = 0, handId = null, motionKey, epoch 
       { transform: 'none', opacity: 1 },
     ], {
       // durations come from the dedicated motion tokens (--table-dur-deal for
-      // cards coming into place, --table-dur-flip for in-place reveals). The
-      // tokens file writes SECONDS and the /api/config injection writes
-      // MILLISECONDS, so parseDurMs is the only safe reader; the literals are
-      // its no-token fallbacks.
-      duration: parseDurMs(
-        style.getPropertyValue(dealMode === 'flip' ? '--table-dur-flip' : '--table-dur-deal'),
-        dealMode === 'flip' ? 900 : 820,
-      ),
-      delay: dealMode === 'flip' ? 0 : delay, easing: style.getPropertyValue('--table-ease-decelerate').trim(), fill: 'backwards',
+      // cards coming into place, --table-dur-flip for in-place reveals, the
+      // flop-pull pair for the board's sequence). The tokens file writes
+      // SECONDS and the /api/config injection writes MILLISECONDS, so
+      // parseDurMs is the only safe reader; the literals are its no-token
+      // fallbacks.
+      duration,
+      delay: startDelay, easing: style.getPropertyValue('--table-ease-decelerate').trim(), fill: 'backwards',
     });
     const record: ActiveDeal = {
       animation, element: el, media, onMediaChange: () => cancelRecord(key, record),
@@ -135,6 +211,6 @@ export function DealCard({ children, delay = 0, handId = null, motionKey, epoch 
       record.cancelTimer = window.setTimeout(() => cancelRecord(key, record), 0);
     };
     return cleanup;
-  }, [epoch, handId, motionKey, reveal, mode]);
-  return <div ref={ref} className="table-dealt-card">{children}</div>;
+  }, [epoch, handId, motionKey, reveal, mode, slideFrom, staggerIndex]);
+  return <div ref={ref} className="table-dealt-card" data-deal-key={motionKey}>{children}</div>;
 }

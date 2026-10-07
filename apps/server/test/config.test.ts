@@ -26,6 +26,8 @@ const PUBLIC_KEYS = [
   'tableDurDealMs',
   'tableDurDimMs',
   'tableDurFlipMs',
+  'tableDurFlopPullMs',
+  'tableDurFlopStaggerMs',
   'tableDurGlowMs',
   'tableDurHighlightMs',
   'tableDurPulseMs',
@@ -44,6 +46,8 @@ const ENV_KEYS = [
   'TABLE_DUR_HIGHLIGHT_MS',
   'TABLE_DUR_DEAL_MS',
   'TABLE_DUR_FLIP_MS',
+  'TABLE_DUR_FLOP_PULL_MS',
+  'TABLE_DUR_FLOP_STAGGER_MS',
   'WIN_FX_MS',
   'STACK_LAND_MS',
 ] as const;
@@ -85,6 +89,8 @@ describe('GET /api/config', () => {
       tableDurHighlightMs: 780,
       tableDurDealMs: 820,
       tableDurFlipMs: 900,
+      tableDurFlopPullMs: 400,
+      tableDurFlopStaggerMs: 300,
       winFxMs: 3800,
       stackLandMs: 1950,
     });
@@ -279,6 +285,8 @@ describe('tunables parsing', () => {
       tableDurHighlightMs: 780,
       tableDurDealMs: 820,
       tableDurFlipMs: 900,
+      tableDurFlopPullMs: 400,
+      tableDurFlopStaggerMs: 300,
       winFxMs: 3800,
       stackLandMs: 1950,
     });

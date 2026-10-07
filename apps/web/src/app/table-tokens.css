@@ -149,6 +149,13 @@
        --table-dur-flip: in-place flip reveal (showdown hole cards, board turn/river) */
   --table-dur-deal: 0.82s;
   --table-dur-flip: 0.9s;
+  /* Flop pull: a dedicated slide duration + per-card beat, kept apart from
+     --table-dur-deal (which the seat hole-card flight still uses). A legible
+     "first card, then the rest" three-card sequence cannot fit inside ~1s while
+     each card also takes 820ms, so the flop slides faster and staggers wider
+     without slowing the hole-card toss. */
+  --table-dur-flop-pull: 0.4s;    /* one flop card's horizontal slide */
+  --table-dur-flop-stagger: 0.3s; /* gap before the next flop card follows */
 }
 
 /* ─────────────────────── Tailwind v4 utility mapping ───────────────────────

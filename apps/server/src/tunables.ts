@@ -72,6 +72,11 @@ export const TUNABLE_DEFAULTS = {
   tableDurHighlightMs: 780,
   tableDurDealMs: 820,
   tableDurFlipMs: 900,
+  // Flop pull: the board's horizontal slide and its per-card beat are their own
+  // pair so the flop can read as "first card, then the rest" without touching
+  // the seat hole-card flight (which still reads tableDurDealMs).
+  tableDurFlopPullMs: 400,
+  tableDurFlopStaggerMs: 300,
   winFxMs: 3_800,
   stackLandMs: 1_950,
 } as const;
@@ -211,6 +216,26 @@ export const TUNABLES = [
     max: 10_000,
     public: true,
     describe: 'In-place flip reveal - showdown hole cards / board (--table-dur-flip).',
+  },
+  {
+    key: 'tableDurFlopPullMs',
+    env: 'TABLE_DUR_FLOP_PULL_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.tableDurFlopPullMs,
+    min: 0,
+    max: 10_000,
+    public: true,
+    describe: 'Flop pull - one community card sliding out (--table-dur-flop-pull).',
+  },
+  {
+    key: 'tableDurFlopStaggerMs',
+    env: 'TABLE_DUR_FLOP_STAGGER_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.tableDurFlopStaggerMs,
+    min: 0,
+    max: 10_000,
+    public: true,
+    describe: 'Flop pull - gap before the next flop card follows (--table-dur-flop-stagger).',
   },
   {
     key: 'winFxMs',

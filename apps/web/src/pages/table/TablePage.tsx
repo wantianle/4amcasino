@@ -66,7 +66,7 @@ import type { SeatView } from '../../widgets/table/RoundTable.tsx';
 import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
-import { DealCard, FLOP_STAGGER_MS } from '../../widgets/table/DealCard.tsx';
+import { DealCard } from '../../widgets/table/DealCard.tsx';
 import { ChipStack } from '../../widgets/table/ChipStack.tsx';
 import { goldFive } from '../../widgets/table/goldFive.ts';
 import { bbValue } from '../../shared/lib/bb.ts';
@@ -2231,13 +2231,15 @@ export function TablePage() {
                       <>
                         {first && first.length > 0 && <div className={cn('flex items-center justify-center', runGap)} data-table-board-run="0">
                           {multiRunBoard && runLabel(1)}
-                           {/* the flop is PUSHED out (平移, one card behind the
-                               next like a live dealer); the turn and river
-                               arrive ALONE and flip over in place */}
+                           {/* the flop is PULLED OUT sideways (平移): the 1st
+                               card from the deck, the 2nd/3rd from under it
+                               (slideFrom = the 1st card), so they never drop
+                               from the deck above; the turn and river arrive
+                               ALONE and flip over in place */}
                            {[0, 1, 2, 3, 4].map((index) =>
                              first![index] !== undefined ? (
                                 <DealCard key={boardMotionKey(hand.handId, 0, first![index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, 0, first![index]!))} motionKey={boardMotionKey(hand.handId, 0, first![index]!)}
-                                   mode={index < 3 ? 'slide' : 'flip'} delay={index * FLOP_STAGGER_MS}><PlayingCard
+                                   mode={index < 3 ? 'slide' : 'flip'} staggerIndex={index} slideFrom={index === 0 ? undefined : boardMotionKey(hand.handId, 0, first![0]!)}><PlayingCard
                                  card={first![index]}
                                  size={runSize}
                                  className={goldByRun[0]?.has(first![index]!) ? 'table-card-gold' : undefined}
@@ -2262,7 +2264,7 @@ export function TablePage() {
                               {runLabel(runIdx + 2)}
                                {[0, 1, 2, 3, 4].map((index) =>
                                  run[index] !== undefined ? (
-                                    <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} mode={index < 3 ? 'slide' : 'flip'} delay={index * FLOP_STAGGER_MS}><PlayingCard
+                                    <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} mode={index < 3 ? 'slide' : 'flip'} staggerIndex={index} slideFrom={index === 0 || run[0] === undefined ? undefined : boardMotionKey(hand.handId, runIdx + 1, run[0]!)}><PlayingCard
                                      card={run[index]}
                                      size={runSize}
                                      className={goldByRun[runIdx + 1]?.has(run[index]!) ? 'table-card-gold' : undefined}

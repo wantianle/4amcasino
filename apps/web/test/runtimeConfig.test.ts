@@ -30,6 +30,8 @@ describe('runtimeCssVars', () => {
         tableDurGlowMs: 450,
         tableDurDimMs: 460,
         tableDurHighlightMs: 620,
+        tableDurFlopPullMs: 400,
+        tableDurFlopStaggerMs: 300,
         winFxMs: 3000,
         stackLandMs: 910,
       }),
@@ -38,6 +40,8 @@ describe('runtimeCssVars', () => {
       ['--table-dur-glow', '450ms'],
       ['--table-dur-dim', '460ms'],
       ['--table-dur-highlight', '620ms'],
+      ['--table-dur-flop-pull', '400ms'],
+      ['--table-dur-flop-stagger', '300ms'],
       ['--win-fx-ms', '3000ms'],
       ['--stack-land-ms', '910ms'],
     ]);

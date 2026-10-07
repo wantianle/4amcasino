@@ -35,6 +35,9 @@ const DURATION_CSS_VARS: ReadonlyArray<readonly [key: string, cssVar: string]> =
   // tunables.ts adds them — the CSS defaults stay authoritative meanwhile.
   ['tableDurDealMs', '--table-dur-deal'],
   ['tableDurFlipMs', '--table-dur-flip'],
+  // Flop pull: the board's horizontal slide duration + per-card beat (DealCard).
+  ['tableDurFlopPullMs', '--table-dur-flop-pull'],
+  ['tableDurFlopStaggerMs', '--table-dur-flop-stagger'],
   // Inert until WinnerFx.tsx reads them (see follow-up); published now so the
   // contract is in place when that lane frees the file.
   ['winFxMs', '--win-fx-ms'],
