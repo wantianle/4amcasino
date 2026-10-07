@@ -1,0 +1,1050 @@
+{
+  "meta": {
+    "params": "constrained-random",
+    "seed": 2654435769,
+    "p2": {
+      "sizeGrid": true,
+      "buckets": true
+    },
+    "note": "Frozen postflop decision + reconstructed signals. Do not edit by hand; regenerate with UPDATE_SNAPSHOTS=1."
+  },
+  "scenarios": {
+    "checkedTo/dry-83o/air": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.08)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869,
+          "madeBucket": "air",
+          "drawBucket": "none",
+          "bucketId": "air/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.198613
+        }
+      }
+    },
+    "checkedTo/dry-AA/as-preflop-aggressor": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 33
+      },
+      "reason": "rules-v1 postflop value (pct 0.97)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.966235,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": true
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.6,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 1,
+          "betFraction": 1.25,
+          "bluffBetProbability": 1
+        }
+      }
+    },
+    "checkedTo/dry-AA/value": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop value (pct 0.97)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.966235,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.65856
+        }
+      }
+    },
+    "checkedTo/dry-KQ-top-pair": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop value (pct 0.96)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.958372,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.4,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.40768
+        }
+      }
+    },
+    "checkedTo/dry-set77/value": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop value (pct 1.00)",
+      "signals": {
+        "hand": {
+          "category": 3,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.997225,
+          "madeBucket": "strong-made",
+          "drawBucket": "none",
+          "bucketId": "strong-made/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.2,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.28224
+        }
+      }
+    },
+    "checkedTo/monotone-AA-no-suit/exposed-overpair": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 75
+      },
+      "reason": "rules-v1 postflop value (pct 0.92, no-suit overpair)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.924607,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.75,
+          "bluffBetProbability": 0.68544
+        }
+      }
+    },
+    "checkedTo/twoTone-JTh/combo-draw": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop bluff (blocker 0.43)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.428587
+        }
+      }
+    },
+    "checkedTo/twoTone-JTh/draw-multiway": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.26)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 2,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.300011
+        }
+      }
+    },
+    "checkedTo/twoTone-JTh/draw-nit": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop bluff (blocker 0.43)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {
+            "vpip": 0.16,
+            "pfr": 0.12,
+            "aggression": 0.42105263157894735
+          }
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1.25,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.535733
+        }
+      }
+    },
+    "checkedTo/twoTone-JTh/draw-station": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.26)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {
+            "vpip": 0.6,
+            "pfr": 0.1,
+            "aggression": 0.1388888888888889
+          }
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 0.6,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.257152
+        }
+      }
+    },
+    "facingBet/dry-83o/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "fold"
+      },
+      "reason": "rules-v1 postflop fold (equity 0.15 < pot odds 0.25, pct 0.08)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869,
+          "madeBucket": "air",
+          "drawBucket": "none",
+          "bucketId": "air/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.148438,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/dry-83o/half-pot-station": {
+      "node": "facingBet",
+      "action": {
+        "type": "fold"
+      },
+      "reason": "rules-v1 postflop fold (equity 0.06 < pot odds 0.25, pct 0.08)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869,
+          "madeBucket": "air",
+          "drawBucket": "none",
+          "bucketId": "air/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {
+            "vpip": 0.6,
+            "pfr": 0.1,
+            "aggression": 0.1388888888888889
+          }
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 0.6,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.058594,
+          "villainModel": "value-heavy",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/dry-AA/half-pot-aggressor": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 100
+      },
+      "reason": "rules-v1 postflop semibluff raise (blocker 0.80)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.966235,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": true
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.6,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.765625,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/dry-KQ/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "call"
+      },
+      "reason": "rules-v1 postflop call (equity 0.74 vs pot odds 0.25, pct 0.96)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.958372,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.4,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.738281,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/dry-set77/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 125
+      },
+      "reason": "rules-v1 postflop value raise (pct 1.00, eq 0.95)",
+      "signals": {
+        "hand": {
+          "category": 3,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.997225,
+          "madeBucket": "strong-made",
+          "drawBucket": "none",
+          "bucketId": "strong-made/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.2,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.953125,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/monotone-AA-no-suit/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 163
+      },
+      "reason": "rules-v1 postflop value raise (pct 0.92, eq 0.57, no-suit overpair)",
+      "signals": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.924607,
+          "madeBucket": "top-pair",
+          "drawBucket": "none",
+          "bucketId": "top-pair/none"
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.566406,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/paired-KQ/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "call"
+      },
+      "reason": "rules-v1 postflop call (equity 0.95 vs pot odds 0.25, pct 0.99)",
+      "signals": {
+        "hand": {
+          "category": 3,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.989362,
+          "madeBucket": "strong-made",
+          "drawBucket": "none",
+          "bucketId": "strong-made/none"
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": true,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.4,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.949219,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/twoTone-JTh/combo-draw": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 125
+      },
+      "reason": "rules-v1 postflop semibluff raise (blocker 0.43)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.757813,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/twoTone-JTh/combo-draw-multiway": {
+      "node": "facingBet",
+      "action": {
+        "type": "call"
+      },
+      "reason": "rules-v1 postflop call (equity 0.59 vs pot odds 0.25, pct 0.26)",
+      "signals": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182,
+          "madeBucket": "air",
+          "drawBucket": "combo-draw",
+          "bucketId": "air/combo-draw"
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 2,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.59375,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 64
+        }
+      }
+    }
+  },
+  "cannotObserve": {
+    "summary": "PostflopPolicy.decide() returns only { action, reason }. The signals below are reconstructed from exported pure helpers against the same view; they are not read from the live decision. Their agreement with the internal decision is asserted only indirectly (same inputs, same exported functions), never observed.",
+    "reconstructedNotObserved": [
+      "sprOf (private PostflopPolicy.spr) - reproduced from potOdds/me/opponents",
+      "exploitMultiplierOf (private PostflopPolicy.exploitMultiplier) - reproduced from sessionMemory",
+      "facingBet equity estimate - reproduced by calling the exported estimateEquity/facingVillainRange with the same seed, samples and price",
+      "checkedTo value/bluff probabilities - reproduced with exported valueBetProbability/bluffBetProbability; the bluff value uses the reconstructed exploit multiplier, and overbetRoll is a FIXED REFERENCE 0, not a production draw (the tag `reconstructedWithOverbetRollZero` marks every checkedTo signal)"
+    ],
+    "notReachable": [
+      "the current API does not expose the real decision-time RNG draw trace (how many mulberry32 rolls decide() consumed and which branch consumed each); from the snapshot alone one cannot PROVE that the recomputation consumed the same draws as the internal path",
+      "SizingContext.overbetRoll actually used and whether the overbet branch fired (the recomputation fixes it at 0 as a reference)",
+      "the intermediate booleans value / bluffCandidate / defend / priceTrusted / strong / exposedOverpair as the policy computed them (only inferable from the reason string)",
+      "the per-branch decision order (which branch was evaluated first and short-circuited)"
+    ],
+    "toExposeForPhase5": [
+      "a PostflopTrace return object (or an onTrace option on PostflopOptions) carrying: node, ev, bucket, percentile, texture, inPosition, wasAggressor, opponentModel, blocker, boardSuppressed, exposedOverpair, rangeAdvantage, spr, price, equity estimate, the value/bluff/defend probabilities, and the draw index of each rng() call",
+      "the resolved SizingContext (fraction + overbetRoll + allIn) actually used for a bet/raise",
+      "an explicit list of considered branches with the threshold each was compared against"
+    ]
+  }
+}
