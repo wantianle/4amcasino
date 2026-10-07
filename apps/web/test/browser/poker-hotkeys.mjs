@@ -338,7 +338,7 @@ try {
     await amount.scrollIntoViewIfNeeded();
     const box = await amount.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= width, 'amount stays on screen');
-    await page.screenshot({ path: `${out}/amount-${width}.png` });
+    await page.screenshot({ quality: 85, path: `${out}/amount-${width}.jpg` });
     await amount.press('Escape');
     await page.getByRole('button', { name: 'Edit keyboard shortcuts', exact: true }).click();
     await dialog.getByLabel('Shortcut for Fold', { exact: true }).waitFor();
@@ -346,7 +346,7 @@ try {
       await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth),
       'dialog has no horizontal overflow',
     );
-    await page.screenshot({ path: `${out}/editor-${width}.png` });
+    await page.screenshot({ quality: 85, path: `${out}/editor-${width}.jpg` });
     await press('Escape');
   }
   console.log(

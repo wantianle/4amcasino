@@ -14,10 +14,10 @@ preview URL.
 
 Screenshots are captured at 1440×900 and 390×844 for every skin:
 
-- `gg-green-desktop.png`, `gg-green-mobile.png`
-- `sapphire-desktop.png`, `sapphire-mobile.png`
-- `burgundy-desktop.png`, `burgundy-mobile.png`
-- `classic-casino-desktop.png`, `classic-casino-mobile.png`
+- `gg-green-desktop.jpg`, `gg-green-mobile.jpg`
+- `sapphire-desktop.jpg`, `sapphire-mobile.jpg`
+- `burgundy-desktop.jpg`, `burgundy-mobile.jpg`
+- `classic-casino-desktop.jpg`, `classic-casino-mobile.jpg`
 
 Run the harness from this directory with `vite --config vite.config.mjs`.
 The production root is intentionally not assigned a skin yet, so an absent

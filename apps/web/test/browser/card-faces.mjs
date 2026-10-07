@@ -48,5 +48,5 @@ try {
     }
   }
   console.log(`card evidence: ${evidence.cards} cards, ${evidence.courts} courts, ${evidence.courtPaths} paths`);
-  await page.screenshot({ path: `${out}/all-presets-pod-board.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/all-presets-pod-board.jpg`, fullPage: true });
 } finally { await browser.close(); }

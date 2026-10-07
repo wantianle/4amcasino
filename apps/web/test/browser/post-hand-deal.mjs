@@ -275,7 +275,7 @@ try {
         before + 1,
         'Deal sends start_hand',
       );
-      if (kind === 'showdown') await page.screenshot({ path: `${out}/${viewport.width}.png` });
+      if (kind === 'showdown') await page.screenshot({ quality: 85, path: `${out}/${viewport.width}.jpg` });
       if (kind === 'showdown' && viewport.width === 1440) {
         // A settings dialog above the recap owns the first Escape.
         await page

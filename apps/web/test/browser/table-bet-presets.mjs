@@ -261,9 +261,10 @@ try {
     });
   });
 
-  await page.screenshot({ path: `${out}/desktop-1440x900.png` });
+  await page.screenshot({ quality: 85, path: `${out}/desktop-1440x900.jpg` });
   await page.locator('[data-testid="betting-panel"]').screenshot({
-    path: `${out}/desktop-1440x900-betting.png`,
+    quality: 85,
+    path: `${out}/desktop-1440x900-betting.jpg`,
   });
   await writeFile(
     `${out}/browser-result.json`,
@@ -280,7 +281,7 @@ try {
     ),
   );
   console.log(`pills: ${labels.join(' ')}`);
-  console.log(`shot: ${out}/desktop-1440x900.png`);
+  console.log(`shot: ${out}/desktop-1440x900.jpg`);
   await ctx.close();
 } finally {
   await browser.close();

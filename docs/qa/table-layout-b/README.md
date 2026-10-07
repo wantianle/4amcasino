@@ -8,13 +8,13 @@
 
 由 `apps/web/test/browser/table-baseline.mjs` 生成，使用 mock room / WebSocket：
 
-- `desktop-9p-myturn-1440x900.png`
-- `desktop-9p-myturn-1280x720.png`
-- `desktop-9p-myturn-390x844.png`
-- `desktop-9p-myturn-844x390.png`
-- `desktop-9p-showdown-1440x900.png`
-- `desktop-9p-multirun3-1440x900.png`
-- `idle-6p-1440x900.png`
+- `desktop-9p-myturn-1440x900.jpg`
+- `desktop-9p-myturn-1280x720.jpg`
+- `desktop-9p-myturn-390x844.jpg`
+- `desktop-9p-myturn-844x390.jpg`
+- `desktop-9p-showdown-1440x900.jpg`
+- `desktop-9p-multirun3-1440x900.jpg`
+- `idle-6p-1440x900.jpg`
 
 这些场景覆盖下注态、摊牌、多跑和空闲桌；截图生成结果为 `pageerror=0`。
 

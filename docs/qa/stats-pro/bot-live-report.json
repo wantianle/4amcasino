@@ -255,11 +255,11 @@
     }
   ],
   "screenshots": [
-    "docs/qa/stats-pro/01-room-entry.png",
-    "docs/qa/stats-pro/02-bots-dialog.png",
-    "docs/qa/stats-pro/03-bots-seated.png",
-    "docs/qa/stats-pro/04-playing.png",
-    "docs/qa/stats-pro/05-after-hands.png"
+    "docs/qa/stats-pro/01-room-entry.jpg",
+    "docs/qa/stats-pro/02-bots-dialog.jpg",
+    "docs/qa/stats-pro/03-bots-seated.jpg",
+    "docs/qa/stats-pro/04-playing.jpg",
+    "docs/qa/stats-pro/05-after-hands.jpg"
   ],
   "notes": [
     "The test account and room are left on the (ephemeral) server; storage resets on restart, and this script has no account-delete API.",

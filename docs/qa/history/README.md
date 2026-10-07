@@ -36,12 +36,12 @@ node --import tsx apps/server/test/historyE2E.mjs
 
 截图：
 
-- `01-history-list.png` — `/history` 列表：真实 `myHands=2`、`myNet=+40`，含「已归档」筛选。
-- `02-history-room-voided.png` — `/history/:roomId`：3 手全部列出，被作废的那手带「作废」徽标，本页净胜 `+40`（作废手不计入）。
-- `03-history-room-switch.png` — 从 21 手房间第 2 页切换到另一房间，offset 已重置。
-- `04-history-paged.png` — `/history` 第 2 页（服务端分页，与前页无重复）。
-- `05-history-archived-filter.png` — 点击「已归档」后的服务端筛选结果。
-- `06-history-active-filter.png` — 点击「进行中」后已归档房间被排除。
+- `01-history-list.jpg` — `/history` 列表：真实 `myHands=2`、`myNet=+40`，含「已归档」筛选。
+- `02-history-room-voided.jpg` — `/history/:roomId`：3 手全部列出，被作废的那手带「作废」徽标，本页净胜 `+40`（作废手不计入）。
+- `03-history-room-switch.jpg` — 从 21 手房间第 2 页切换到另一房间，offset 已重置。
+- `04-history-paged.jpg` — `/history` 第 2 页（服务端分页，与前页无重复）。
+- `05-history-archived-filter.jpg` — 点击「已归档」后的服务端筛选结果。
+- `06-history-active-filter.jpg` — 点击「进行中」后已归档房间被排除。
 
 ## 非真实 / mock（none）
 

@@ -227,7 +227,7 @@ console.log('A/B — buy-chips dialog: drag-select off-panel does NOT close; bac
 
   // B: opens at 100 BB of the current table (bb=20 -> 2000), not the old 500
   assert((await amount.inputValue()) === '2000', `buy dialog opens at 100 BB (got ${await amount.inputValue()})`);
-  await page.screenshot({ path: `${out}/01-buy-open-100bb.png` });
+  await page.screenshot({ quality: 85, path: `${out}/01-buy-open-100bb.jpg` });
 
   // A: reproduce the reported gesture on the amount field (a number input:
   // assert the dialog survives; selection itself is asserted on the text field).
@@ -242,7 +242,7 @@ console.log('A/B — buy-chips dialog: drag-select off-panel does NOT close; bac
   const peak = await dragSelectThenReleaseOnBackdrop(page, note, backdrop);
   assert(await dialog.isVisible(), 'note-field drag also does not close the dialog');
   assert(peak.end > peak.start, `text was really selected during the drag (start=${peak.start} end=${peak.end})`);
-  await page.screenshot({ path: `${out}/02-drag-off-panel-stays-open.png` });
+  await page.screenshot({ quality: 85, path: `${out}/02-drag-off-panel-stays-open.jpg` });
 
   // ... and a REAL backdrop click (press and release both on the overlay) closes
   await page.mouse.move(backdrop.x, backdrop.y);
@@ -250,7 +250,7 @@ console.log('A/B — buy-chips dialog: drag-select off-panel does NOT close; bac
   await page.mouse.up();
   await dialog.waitFor({ state: 'hidden' });
   assert(!(await dialog.isVisible()), 'backdrop click (press+release on overlay) still closes');
-  await page.screenshot({ path: `${out}/03-backdrop-click-closes.png` });
+  await page.screenshot({ quality: 85, path: `${out}/03-backdrop-click-closes.jpg` });
 
   // keyboard path intact: Esc closes
   await page.locator('[data-testid="chips-trigger"]').click();
@@ -293,7 +293,7 @@ console.log('C — bots add-chips row: prefilled 100 BB, preset selected, preset
     (await preset100.getAttribute('aria-pressed')) === 'true',
     '100 BB preset shows selected state on the prefilled row',
   );
-  await page.screenshot({ path: `${out}/04-bots-buyrow-100bb-selected.png` });
+  await page.screenshot({ quality: 85, path: `${out}/04-bots-buyrow-100bb-selected.jpg` });
 
   // presets still override, and the pressed state follows the value
   await botsDialog.getByRole('button', { name: '50 BB' }).first().click();
@@ -318,7 +318,7 @@ console.log('C — bots add-chips row: prefilled 100 BB, preset selected, preset
     (await botsDialog.getByRole('button', { name: '确认永久删除？' }).count()) === 1,
     'second tap arms the honest 确认永久删除？ confirmation',
   );
-  await page.screenshot({ path: `${out}/05-bots-delete-wording.png` });
+  await page.screenshot({ quality: 85, path: `${out}/05-bots-delete-wording.jpg` });
   await ctx.close();
 }
 
@@ -386,7 +386,7 @@ console.log('D — broke buy-in dialog: 100 BB default, follows a late-arriving 
     (await amount.inputValue()) === '4000',
     `broke dialog defaults to 100*bb of the live table, bb=40 -> 4000 (got ${await amount.inputValue()})`,
   );
-  await page.screenshot({ path: `${out}/06-broke-dialog-100bb.png` });
+  await page.screenshot({ quality: 85, path: `${out}/06-broke-dialog-100bb.jpg` });
   await ctx.close();
 }
 

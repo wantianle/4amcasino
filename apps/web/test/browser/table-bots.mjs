@@ -376,11 +376,11 @@ try {
       if (tag === 'phone' && sc.mode === 'approved') {
         await page.getByRole('button', { name: '更多牌桌控制' }).click();
         await page.getByRole('menuitem', { name: /机器人对手/ }).waitFor();
-        await page.screenshot({ path: `${out}/01-entry-${tag}-${vp.width}x${vp.height}.png` });
+        await page.screenshot({ quality: 85, path: `${out}/01-entry-${tag}-${vp.width}x${vp.height}.jpg` });
         await page.keyboard.press('Escape');
       } else if (tag === 'desktop' && sc.mode === 'approved') {
         await page.locator('button[title="机器人对手"]').waitFor();
-        await page.screenshot({ path: `${out}/01-entry-${tag}-${vp.width}x${vp.height}.png` });
+        await page.screenshot({ quality: 85, path: `${out}/01-entry-${tag}-${vp.width}x${vp.height}.jpg` });
       }
 
       // ── dialog: fill the create form ──────────────────────────────────────
@@ -429,7 +429,8 @@ try {
       await dialog.getByLabel('名字（可选）').fill(botName);
       if (sc.mode === 'approved' && tag === 'desktop') {
         await page.screenshot({
-          path: `${out}/02-dialog-open-${tag}-${vp.width}x${vp.height}.png`,
+          quality: 85,
+          path: `${out}/02-dialog-open-${tag}-${vp.width}x${vp.height}.jpg`,
         });
       }
       const startPosts = () =>
@@ -451,7 +452,8 @@ try {
         await page.waitForTimeout(300);
         if (tag === 'desktop') {
           await page.screenshot({
-            path: `${out}/03-dialog-started-${tag}-${vp.width}x${vp.height}.png`,
+            quality: 85,
+            path: `${out}/03-dialog-started-${tag}-${vp.width}x${vp.height}.jpg`,
           });
         }
         // back at the felt: the pod for the bot THIS run created, badge lit
@@ -461,7 +463,8 @@ try {
         );
         await page.waitForTimeout(400);
         await page.screenshot({
-          path: `${out}/04-bots-seated-${tag}-${vp.width}x${vp.height}.png`,
+          quality: 85,
+          path: `${out}/04-bots-seated-${tag}-${vp.width}x${vp.height}.jpg`,
         });
       } else {
         // ── pending branch: no auto-start, waiting prose, manual Start ──────
@@ -473,7 +476,8 @@ try {
           'waiting_buy_approval must not show Start yet',
         );
         await page.screenshot({
-          path: `${out}/05-pending-waiting-${tag}-${vp.width}x${vp.height}.png`,
+          quality: 85,
+          path: `${out}/05-pending-waiting-${tag}-${vp.width}x${vp.height}.jpg`,
         });
         // the mocked banker approves: the next GET flips the bot to ready
         const bot = bots.find((b) => b.id === 'botnew');
@@ -487,14 +491,16 @@ try {
         // the row reads 牌局中 once the reload lands
         await dialog.getByText('牌局中', { exact: true }).last().waitFor({ timeout: 10000 });
         await page.screenshot({
-          path: `${out}/06-pending-started-${tag}-${vp.width}x${vp.height}.png`,
+          quality: 85,
+          path: `${out}/06-pending-started-${tag}-${vp.width}x${vp.height}.jpg`,
         });
         await page.keyboard.press('Escape');
         await page.waitForFunction(
           () => document.querySelectorAll('.table-role-badge--bot').length >= 3,
         );
         await page.screenshot({
-          path: `${out}/07-pending-seated-${tag}-${vp.width}x${vp.height}.png`,
+          quality: 85,
+          path: `${out}/07-pending-seated-${tag}-${vp.width}x${vp.height}.jpg`,
         });
       }
 

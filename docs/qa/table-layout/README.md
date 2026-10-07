@@ -5,10 +5,10 @@ WebSocket，不连接真实账户或服务端。
 
 重点视口（`desktop-9p-myturn`，包含已断言的 live betting hand、可操作下注区与两项玩法按钮）：
 
-- `desktop-9p-myturn-1440x900.png`
-- `desktop-9p-myturn-1280x720.png`
-- `desktop-9p-myturn-390x844.png`
-- `desktop-9p-myturn-844x390.png`
+- `desktop-9p-myturn-1440x900.jpg`
+- `desktop-9p-myturn-1280x720.jpg`
+- `desktop-9p-myturn-390x844.jpg`
+- `desktop-9p-myturn-844x390.jpg`
 
 脚本以 `VIEWS=both UAT_OUTPUT=docs/qa/table-layout` 执行，生成桌面和手机各场景
 截图；本次运行 `pageerror` 为 **0**。
@@ -26,10 +26,10 @@ Playwright trial click 命中检查，并确认命中的正是当前 menuitem。
 
 对应菜单证据：
 
-- `desktop-9p-myturn-390x844-chips-menu.png`
-- `desktop-9p-myturn-390x844-more-menu.png`
-- `desktop-9p-myturn-1440x900-chips-menu.png`
-- `desktop-9p-myturn-1440x900-more-menu.png`
+- `desktop-9p-myturn-390x844-chips-menu.jpg`
+- `desktop-9p-myturn-390x844-more-menu.jpg`
+- `desktop-9p-myturn-1440x900-chips-menu.jpg`
+- `desktop-9p-myturn-1440x900-more-menu.jpg`
 
 账本入口对桌内成员可见；服务端仍以 `isMember` 限制访问，watch spectator 不在
 桌内成员范围内，会被服务端拒绝（403）。本次 mock 截图使用桌内成员身份。

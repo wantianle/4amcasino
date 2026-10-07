@@ -263,8 +263,8 @@ try {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
   });
   const shot = async (name) => {
-    const path = `${OUT}/${name}.png`;
-    await page.screenshot({ path });
+    const path = `${OUT}/${name}.jpg`;
+    await page.screenshot({ quality: 85, path });
     shots.push(path);
     log(`shot ${path}`);
   };

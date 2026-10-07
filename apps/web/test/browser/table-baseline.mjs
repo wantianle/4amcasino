@@ -608,7 +608,7 @@ try {
           throw new Error(`${sc.name}: bomb-pot intro text is missing`);
         if ((await page.locator('[data-dealing="true"]').count()) === 0)
           throw new Error(`${sc.name}: no deal animation was in progress`);
-        await page.screenshot({ path: `${out}/motion-in-progress.png` });
+        await page.screenshot({ quality: 85, path: `${out}/motion-in-progress.jpg` });
       }
       if (process.env.MOTION_REDUCED_EVIDENCE === '1' && sc.kind === 'myturn') {
         await page.evaluate(async () => {
@@ -625,7 +625,7 @@ try {
           throw new Error(`${sc.name}: bomb-pot prompt missing in reduced-motion mode`);
         if ((await page.locator('[data-dealing="true"]').count()) !== 0)
           throw new Error(`${sc.name}: reduced-motion still has an active deal animation`);
-        await page.screenshot({ path: `${out}/reduced-motion-static.png` });
+        await page.screenshot({ quality: 85, path: `${out}/reduced-motion-static.jpg` });
       }
       await page.waitForFunction(
         async ({ kind, mySeat }) => {
@@ -823,8 +823,8 @@ try {
         await page.keyboard.press('Escape');
       }
       await page.waitForTimeout(400);
-      const file = `${out}/${sc.name}-${vp.width}x${vp.height}.png`;
-      await page.screenshot({ path: file });
+      const file = `${out}/${sc.name}-${vp.width}x${vp.height}.jpg`;
+      await page.screenshot({ quality: 85, path: file });
       if (sc.kind === 'myturn') {
         const handStateAfterShot = await page.evaluate(async () => {
           const { useStore } = await import('/src/shared/store.ts');
@@ -849,13 +849,14 @@ try {
       if (menuCount > 0) {
         await menuTriggers.nth(0).click();
         await page.screenshot({
-          path: `${out}/${sc.name}-${vp.width}x${vp.height}-chips-menu.png`,
+          quality: 85,
+          path: `${out}/${sc.name}-${vp.width}x${vp.height}-chips-menu.jpg`,
         });
         await page.keyboard.press('Escape');
       }
       if (menuCount > 1) {
         await menuTriggers.nth(menuCount - 1).click();
-        await page.screenshot({ path: `${out}/${sc.name}-${vp.width}x${vp.height}-more-menu.png` });
+        await page.screenshot({ quality: 85, path: `${out}/${sc.name}-${vp.width}x${vp.height}-more-menu.jpg` });
         await page.keyboard.press('Escape');
       }
       console.log(`shot ${file}`);

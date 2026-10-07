@@ -1115,7 +1115,7 @@ try {
       console.log(
         `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx2}px² clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
       );
-      await page.screenshot({ path: `${out}/probe-${sc.name}-${vp.width}x${vp.height}.png` });
+      await page.screenshot({ quality: 85, path: `${out}/probe-${sc.name}-${vp.width}x${vp.height}.jpg` });
       const controls = page.locator(
         '.table-console .table-cluster button:not([disabled]), .table-console .table-cluster input:not([disabled])',
       );

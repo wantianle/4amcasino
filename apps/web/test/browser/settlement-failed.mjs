@@ -229,8 +229,8 @@ async function run(view, userId, { expectRetry }) {
   }
   const allOutgoing = outgoing.map((m) => m.t).join(',');
   console.log(`${view}: outgoing=[${allOutgoing}]`);
-  const path = `${out}/${view}.png`;
-  await page.screenshot({ path, fullPage: true });
+  const path = `${out}/${view}.jpg`;
+  await page.screenshot({ quality: 85, path, fullPage: true });
   await ctx.close();
   return path;
 }

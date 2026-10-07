@@ -1,7 +1,7 @@
 # 桌内动效批 QA
 
-本批新增证据由 browser fixture 输出到 `UAT_OUTPUT`：`motion-in-progress.png`
-（`MOTION_EVIDENCE=1 FEATURE=1`）和 `reduced-motion-static.png`
+本批新增证据由 browser fixture 输出到 `UAT_OUTPUT`：`motion-in-progress.jpg`
+（`MOTION_EVIDENCE=1 FEATURE=1`）和 `reduced-motion-static.jpg`
 （`MOTION_REDUCED_EVIDENCE=1 FEATURE=1`）。这两张进行中截图不提交到仓库，
 因为动画时间点无法稳定复现；fixture 会断言炸弹池提示、发牌进行中状态和
 reduced-motion 静态状态，并收集
@@ -9,8 +9,8 @@ reduced-motion 静态状态，并收集
 
 Desktop action-label comparison for the same 9-player / active-turn fixture:
 
-- Before: `before-action-labels.png` — existing baseline captured before the motion tuning.
-- After: `after-action-labels.png` — `table-baseline.mjs`, 1440×900, after the timing changes.
+- Before: `before-action-labels.jpg` — existing baseline captured before the motion tuning.
+- After: `after-action-labels.jpg` — `table-baseline.mjs`, 1440×900, after the timing changes.
 
 The fixture includes visible call action labels (the same label path used by check,
 bet, and raise). The screenshot fixture runs with reduced motion enabled, so these

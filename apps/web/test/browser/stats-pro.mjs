@@ -42,14 +42,14 @@ try {
     await page.getByRole('heading', { name: '我的本桌数据' }).waitFor();
     for (const [name, label] of [['overview', '总览'], ['position', '位置'], ['street', '街'], ['ip', 'IP / OOP']]) {
       await page.getByRole('button', { name: label, exact: true }).click();
-      await page.screenshot({ path: `${out}/${name}-${width}.png`, fullPage: true });
+      await page.screenshot({ quality: 85, path: `${out}/${name}-${width}.jpg`, fullPage: true });
     }
     for (const [name, n] of [['empty', 0], ['low-sample', 8]]) {
       sample = n;
       await page.getByRole('button', { name: '总览', exact: true }).click();
       await page.getByRole('button', { name: /刷新|Refresh/ }).click();
       await page.getByRole('heading', { name: '我的本桌数据' }).waitFor();
-      await page.screenshot({ path: `${out}/${name}-${width}.png`, fullPage: true });
+      await page.screenshot({ quality: 85, path: `${out}/${name}-${width}.jpg`, fullPage: true });
     }
     await page.goto(`${base}/room/baseline`);
     // The HUD opens per seat (there is no global HUD button): each seat avatar is
@@ -87,7 +87,7 @@ try {
       'Low sample player leaked stats',
     );
     await closeHud();
-    await page.screenshot({ path: `${out}/hud-${width}.png`, fullPage: true });
+    await page.screenshot({ quality: 85, path: `${out}/hud-${width}.jpg`, fullPage: true });
     await context.close();
   }
   assert(errors.length === 0, JSON.stringify(errors));

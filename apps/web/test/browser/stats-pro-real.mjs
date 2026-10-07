@@ -84,7 +84,7 @@ try {
   await page.getByRole('heading', { name: '我的本桌数据' }).waitFor();
   assert(await page.getByText(String(mainStats.sample), { exact: true }).count() > 0, 'real sample not rendered');
   assert(await page.getByText('VPIP', { exact: true }).count() > 0, 'real VPIP not rendered');
-  for (const [name, label] of [['overview', '总览'], ['position', '位置'], ['street', '街'], ['ip', 'IP / OOP']]) { await page.getByRole('button', { name: label, exact: true }).click(); await page.screenshot({ path: `${OUT}/real-${name}-1440.png`, fullPage: true }); }
+  for (const [name, label] of [['overview', '总览'], ['position', '位置'], ['street', '街'], ['ip', 'IP / OOP']]) { await page.getByRole('button', { name: label, exact: true }).click(); await page.screenshot({ quality: 85, path: `${OUT}/real-${name}-1440.jpg`, fullPage: true }); }
   // The HUD is now per-seat, so the hidden account must actually hold a seat for
   // its avatar button to exist. Sit it down from its own session, then let the
   // room broadcast reach the main page.
@@ -106,9 +106,9 @@ try {
   await page.getByRole('button', { name: `${hiddenName} · 玩家 HUD`, exact: true }).click();
   await page.getByRole('dialog', { name: '玩家 HUD' }).waitFor();
   await page.getByText('统计已隐藏', { exact: true }).waitFor();
-  await page.screenshot({ path: `${OUT}/real-hud-1440.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${OUT}/real-hud-1440.jpg`, fullPage: true });
   assert(!(await page.locator(`[data-hud-player="${hidden.userId}"]`).innerText()).includes('VPIP'), 'hidden HUD stats leaked');
-  await writeFile(`${OUT}/real-result.json`, JSON.stringify({ real: true, base: BASE, roomId: handoff.roomId, accounts: { main: main.userId, low: low.userId, hidden: hidden.userId }, apiAssertions: { sample: mainStats.sample, stats: { vpip: mainStats.stats.vpip, pfr: mainStats.stats.pfr }, byPosition: Object.keys(mainStats.byPosition), byStreet: Object.keys(mainStats.byStreet), byIpOop: Object.keys(mainStats.byIpOop), trendPoints: mainStats.trend.length, dataQuality: mainStats.dataQuality }, hud: hud.players.map((p) => ({ userId: p.userId, hidden: p.hidden, sample: p.sample, sufficient: p.sufficient, confidence: p.confidence })), pageErrors: errors, screenshots: ['real-overview-1440.png', 'real-position-1440.png', 'real-street-1440.png', 'real-ip-1440.png', 'real-hud-1440.png'] }, null, 2));
+  await writeFile(`${OUT}/real-result.json`, JSON.stringify({ real: true, base: BASE, roomId: handoff.roomId, accounts: { main: main.userId, low: low.userId, hidden: hidden.userId }, apiAssertions: { sample: mainStats.sample, stats: { vpip: mainStats.stats.vpip, pfr: mainStats.stats.pfr }, byPosition: Object.keys(mainStats.byPosition), byStreet: Object.keys(mainStats.byStreet), byIpOop: Object.keys(mainStats.byIpOop), trendPoints: mainStats.trend.length, dataQuality: mainStats.dataQuality }, hud: hud.players.map((p) => ({ userId: p.userId, hidden: p.hidden, sample: p.sample, sufficient: p.sufficient, confidence: p.confidence })), pageErrors: errors, screenshots: ['real-overview-1440.jpg', 'real-position-1440.jpg', 'real-street-1440.jpg', 'real-ip-1440.jpg', 'real-hud-1440.jpg'] }, null, 2));
   assert(errors.length === 0, `page errors: ${errors.join(' | ')}`);
   await context.close();
 } finally { await browser.close(); }

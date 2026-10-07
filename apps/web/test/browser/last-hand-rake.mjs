@@ -181,7 +181,7 @@ try {
     await rake.first().waitFor({ state: 'visible' });
     assert.equal(await rake.count(), 1, `${c.kind}: exactly one rake line`);
     assert.ok(await rake.first().isVisible(), `${c.kind}: rake line is visible`);
-    await page.screenshot({ path: `${out}/${c.kind}.png` });
+    await page.screenshot({ quality: 85, path: `${out}/${c.kind}.jpg` });
     console.log(
       `${c.kind}: commission=${c.commission}, commissionDeltas=${JSON.stringify(c.commissionDeltas ?? [])} -> strip shows "Rake ${c.commission}"`,
     );

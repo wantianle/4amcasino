@@ -129,7 +129,7 @@ async function run(view, width, height, mode = 'primary', capture = true) {
     if (intersects(eye, cards) || eye.y + eye.height > cards.y + 1) throw new Error(`${view}/${mode}: ${testid} overlaps or is below hand cards`);
     boxes.push({ testid, eye, cards });
   }
-  if (capture) await page.screenshot({ path: `${out}/${view}-eye.png`, fullPage: true });
+  if (capture) await page.screenshot({ quality: 85, path: `${out}/${view}-eye.jpg`, fullPage: true });
 
   const offers = (n) => Array.from({ length: n }, (_, i) => ({
     offerId: `offer-${i}`, fromUserId: 200 + i, fromName: `请求者${i + 1}`, amount: 20,
@@ -153,7 +153,7 @@ async function run(view, width, height, mode = 'primary', capture = true) {
     if (!expanded || !center) throw new Error(`${view}: missing expanded/banner rectangles`);
     if (expanded.height > 144) throw new Error(`${view}: banner exceeded max height`);
     if (intersects(expanded, center)) throw new Error(`${view}: banner overlaps center table column`);
-    if (capture) await page.screenshot({ path: `${out}/${view}-offers-${n}.png`, fullPage: true });
+    if (capture) await page.screenshot({ quality: 85, path: `${out}/${view}-offers-${n}.jpg`, fullPage: true });
     await banner.locator('summary').click();
   }
 
@@ -167,10 +167,10 @@ async function run(view, width, height, mode = 'primary', capture = true) {
   assert.equal(await page.locator('[data-testid="seat-pod-1"] .table-pod-holo [role="img"][data-card-face]').count(), 2);
   if (mode === 'nonparticipant') {
     console.log(`${view}/nonparticipant: direct state assertion passed`, JSON.stringify(stored[1]));
-    await page.screenshot({ path: `${out}/${view}-nonparticipant-state.png`, fullPage: true });
+    await page.screenshot({ quality: 85, path: `${out}/${view}-nonparticipant-state.jpg`, fullPage: true });
   }
   if (mode === 'seat-reuse') {
-    await page.screenshot({ path: `${out}/${view}-seat-reuse-before.png`, fullPage: true });
+    await page.screenshot({ quality: 85, path: `${out}/${view}-seat-reuse-before.jpg`, fullPage: true });
     await page.evaluate(async (room) => {
       const { handle } = await import('/src/shared/gameClient.ts');
       handle({ ...room, players: room.players.map((p) => p.seat === 1
@@ -180,12 +180,12 @@ async function run(view, width, height, mode = 'primary', capture = true) {
     assert.equal(await page.locator('[data-testid="seat-pod-1"] .table-pod-holo [role="img"][data-card-face]').count(), 0, 'replacement must not render old private cards');
     assert.equal(await page.locator('[data-testid="peek-eye-1"]').count(), 0);
     assert.equal(await page.locator('.table-peek-body b').innerText(), '玩家2', 'drawer must retain the original owner name');
-    await page.screenshot({ path: `${out}/${view}-seat-reuse-after.png`, fullPage: true });
+    await page.screenshot({ quality: 85, path: `${out}/${view}-seat-reuse-after.jpg`, fullPage: true });
     console.log(`${view}/seat-reuse: pre-reuse faces=2; replacement faces=0; drawer owner=玩家2`);
   }
   const revealed = await page.locator('[data-testid="peek-eye-1"]').count();
   if (revealed !== 0) throw new Error(`${view}: eye remained after private reveal`);
-  if (capture) await page.screenshot({ path: `${out}/${view}-result.png`, fullPage: true });
+  if (capture) await page.screenshot({ quality: 85, path: `${out}/${view}-result.jpg`, fullPage: true });
   console.log(`${view}/${mode}: targets=${JSON.stringify(boxes)} offers=1,3 bannerMax=144px centerOverlap=0 resultEyeCount=${revealed}`);
   await ctx.close();
 }

@@ -21,11 +21,11 @@ is stored here.
 
 ## Files
 
-- `think-glow-acting-phase-000ms.png` … `-900ms.png` — seven freeze-frames of
+- `think-glow-acting-phase-000ms.jpg` … `-900ms.jpg` — seven freeze-frames of
   the 1 s `table-pod-action-flash` cycle at 0 / 150 / 300 / 450 / 600 / 750 /
   900 ms, obtained by pausing the CSS animation and setting `currentTime`.
-- `think-glow-acting-pod-peak.png` — zoomed crop at 420 ms (brightest point).
-- `think-glow-reduced-motion.png` and `-pod.png` — the same table under
+- `think-glow-acting-pod-peak.jpg` — zoomed crop at 420 ms (brightest point).
+- `think-glow-reduced-motion.jpg` and `-pod.jpg` — the same table under
   `prefers-reduced-motion: reduce`, where the flash degrades to a static white
   highlight.
 

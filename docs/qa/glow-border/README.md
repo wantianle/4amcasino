@@ -52,24 +52,24 @@ the old 18px glow bled around their edges. The fix removes both sources.
 
 ## Files
 
-- `before-mask-acting-full.png` / `before-mask-acting-pod-peak.png` - the
+- `before-mask-acting-full.jpg` / `before-mask-acting-pod-peak.jpg` - the
   committed (pre-fix) build at flash peak: the pod surface is covered by a
   28% white fill (`background: rgba(255,255,255,0.28)`, `inset: -2px`) -
   the mask.
-- `after-acting-phase-000ms.png` ... `-900ms.png` (0/300/420/600/900) - the
+- `after-acting-phase-000ms.jpg` ... `-900ms.jpg` (0/300/420/600/900) - the
   new halo through one breathing cycle: ring fades out at the trough, bright
   at the 420ms peak; the interior stays dark and the cards stay crisp at
   every phase.
-- `after-acting-full-420ms.png` - full table: only the acting pod glows, all
+- `after-acting-full-420ms.jpg` - full table: only the acting pod glows, all
   idle pods are untouched, hero cards and both pills below the pod render
   normally.
-- `after-acting-pod-peak.png` / `-2x.png` / `after-acting-pod-trough-2x.png` -
+- `after-acting-pod-peak.jpg` / `-2x.jpg` / `after-acting-pod-trough-2x.jpg` -
   acting pod close-ups.
-- `after-idle-full.png` / `after-idle-pod.png` - same table with `toAct=null`
+- `after-idle-full.jpg` / `after-idle-pod.jpg` - same table with `toAct=null`
   (control): no ring anywhere.
-- `after-hero-acting-cards-peak.png` - the user's exact scenario: hero acting
+- `after-hero-acting-cards-peak.jpg` - the user's exact scenario: hero acting
   with face-up cards; cards are fully crisp, only the pod's outer edge glows.
-- `after-reduced-motion-full.png` / `after-reduced-motion-pod.png` - under
+- `after-reduced-motion-full.jpg` / `after-reduced-motion-pod.jpg` - under
   `prefers-reduced-motion: reduce` the halo degrades to a **static outline
   ring** (2px white at 0.72 + soft bloom), still zero interior fill.
 - `computed-style-assertions.json` - the raw `getComputedStyle(el,'::after')`

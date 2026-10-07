@@ -11,7 +11,7 @@
 ## 证据分层
 
 - `overview-*`、`position-*`、`street-*`、`ip-*`、`empty-*`、`low-sample-*`、`hud-*`：**mock 证据**，由 `stats-pro.mjs` 生成，用于稳定覆盖布局、空态和交互。
-- `real-overview-1440.png`、`real-position-1440.png`、`real-street-1440.png`、`real-ip-1440.png`、`real-hud-1440.png`：**真实 server 证据**，由 `stats-pro-real.mjs` 生成。真实请求没有 Playwright route interception，真实数据来自隔离 SQLite 的结算投影。
+- `real-overview-1440.jpg`、`real-position-1440.jpg`、`real-street-1440.jpg`、`real-ip-1440.jpg`、`real-hud-1440.jpg`：**真实 server 证据**，由 `stats-pro-real.mjs` 生成。真实请求没有 Playwright route interception，真实数据来自隔离 SQLite 的结算投影。
 - `real-result.json` 是真实 API 断言和 HUD 三态记录；`bot-live-report.json` 是造牌阶段的真实游戏报告。
 
 真实闭环本次结果：25 手已结算、0 abort、VPIP `83.33%`，PFR 及其他统计均有实际机会样本，`byPosition`、`byStreet`、`byIpOop`、`trend`、`dataQuality` 均非空；真实 HUD 共 5 个 roster 条目，覆盖足样本可见、低样本 `insufficient`、`hidden:true` 三态，page error 为 0。

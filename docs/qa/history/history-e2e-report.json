@@ -46,12 +46,12 @@
     "roomHasVoidBadge": true
   },
   "screenshots": [
-    "docs/qa/history/01-history-list.png",
-    "docs/qa/history/02-history-room-voided.png",
-    "docs/qa/history/03-history-room-switch.png",
-    "docs/qa/history/04-history-paged.png",
-    "docs/qa/history/05-history-archived-filter.png",
-    "docs/qa/history/06-history-active-filter.png"
+    "docs/qa/history/01-history-list.jpg",
+    "docs/qa/history/02-history-room-voided.jpg",
+    "docs/qa/history/03-history-room-switch.jpg",
+    "docs/qa/history/04-history-paged.jpg",
+    "docs/qa/history/05-history-archived-filter.jpg",
+    "docs/qa/history/06-history-active-filter.jpg"
   ],
   "pageErrors": [],
   "consoleErrors": []

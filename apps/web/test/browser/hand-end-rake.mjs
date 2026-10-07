@@ -195,7 +195,7 @@ try {
       0,
       'no dismissible recap was brought back',
     );
-    await page.screenshot({ path: `${out}/raked.png` });
+    await page.screenshot({ quality: 85, path: `${out}/raked.jpg` });
     // Transient: the result window steps aside on its own and takes the chip.
     await rakeNotice.first().waitFor({ state: 'hidden', timeout: 6000 });
     await reset();

@@ -55,23 +55,23 @@ try {
   const fullText = await page.locator('body').textContent();
   assert(/VPIP/.test(fullText) && /PFR/.test(fullText) && fullText.includes('42.86%') && fullText.includes('28.57%') && /42 public hands/.test(fullText), 'full player stats render VPIP/PFR values and sample');
   console.log('PLAYER full: PASS — textContent contains VPIP 42.86%, PFR 28.57%, 42 public hands');
-  await page.screenshot({ path: `${out}/player-full-stats.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/player-full-stats.jpg`, fullPage: true });
   statsMode = 'hidden'; await page.reload(); await page.getByText('This player has not made detailed statistics public.').waitFor();
   assert((await page.locator('body').textContent()).includes('This player has not made detailed statistics public.'), 'hidden player state');
   assert(!(await page.locator('body').textContent()).includes('VPIP'), 'hidden stats do not leak metrics');
   console.log('PLAYER hidden: PASS — hidden-state friendly text rendered');
-  await page.screenshot({ path: `${out}/player-hidden-stats.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/player-hidden-stats.jpg`, fullPage: true });
   statsMode = 'empty'; await page.reload(); await page.getByText('There is not enough public hand data yet.').waitFor();
   assert((await page.locator('body').textContent()).includes('There is not enough public hand data yet.'), 'no-sample state');
   console.log('PLAYER empty: PASS — no-sample text rendered');
-  await page.screenshot({ path: `${out}/player-empty-stats.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/player-empty-stats.jpg`, fullPage: true });
 
   await page.goto(`${base}/settings#account`);
   await page.getByText('Signed-in devices').waitFor();
   console.log('DEVICES DOM:', (await page.locator('body').textContent()).match(/current-device|laptop-session|Sign out everywhere else|Could not load signed-in devices\./g));
   assert((await page.locator('body').textContent()).includes('current-device') && (await page.locator('body').textContent()).includes('laptop-session') && (await page.locator('body').textContent()).includes('Sign out everywhere else'), 'session list and revoke control');
   console.log('DEVICES list: PASS — current-device, laptop-session, Sign out everywhere else');
-  await page.screenshot({ path: `${out}/settings-devices-list.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/settings-devices-list.jpg`, fullPage: true });
   await page.getByRole('button', { name: 'Sign out everywhere else' }).click();
   await page.getByText('Signed out 1 other session(s).').waitFor();
   assert(!(await page.locator('body').textContent()).includes('laptop-session'), 'other sessions removed after revoke');
@@ -79,7 +79,7 @@ try {
   sessionsMode = 'empty'; await page.reload(); await page.getByText('No signed-in devices found.').waitFor();
   assert((await page.locator('body').textContent()).includes('No signed-in devices found.'), 'empty devices state');
   console.log('DEVICES empty: PASS — empty-state text rendered');
-  await page.screenshot({ path: `${out}/settings-devices-empty.png`, fullPage: true });
+  await page.screenshot({ quality: 85, path: `${out}/settings-devices-empty.jpg`, fullPage: true });
   assert(errors.length === 0, `page errors: ${JSON.stringify(errors)}`);
   console.log('PAGE ERRORS: 0');
 } finally { await browser.close(); }

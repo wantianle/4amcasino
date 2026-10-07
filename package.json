@@ -23,7 +23,8 @@
     "check:build": "node scripts/check-build.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build && npm run check:i18n",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "shots:shrink": "node scripts/shrink-images.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

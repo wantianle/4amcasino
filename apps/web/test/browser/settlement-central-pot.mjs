@@ -232,7 +232,7 @@ try {
     console.log(
       `settlement: pill ${result.width.toFixed(0)}×${result.height.toFixed(0)} opacity=${result.opacity}`,
     );
-    await page.screenshot({ path: `${out}/settlement.png` });
+    await page.screenshot({ quality: 85, path: `${out}/settlement.jpg` });
   }
 
   // 3. Cross-hand leak: hand B starts, then a committed recovery produces a
@@ -274,7 +274,7 @@ try {
       0,
       "hand B recovery result with empty betting: no pill (A's freeze must be dropped)",
     );
-    await page.screenshot({ path: `${out}/cross-hand.png` });
+    await page.screenshot({ quality: 85, path: `${out}/cross-hand.jpg` });
     console.log('cross-hand: B recovery with betting:null shows no pill (A freeze dropped)');
   }
 
@@ -340,7 +340,7 @@ try {
   {
     const aborted = await measure();
     assert.equal(aborted.count, 0, 'hand D abort: no stale pill value remains');
-    await page.screenshot({ path: `${out}/abort.png` });
+    await page.screenshot({ quality: 85, path: `${out}/abort.jpg` });
     console.log('abort: pill removed after hand_abort (no stale value)');
   }
 
