@@ -8,7 +8,8 @@
  *  - boardCov  : fraction of the community-card row area (dealt cards + empty
  *                slots, center column) NOT covered by pods, pills, piles or
  *                any fixed control. 1 = clean.
- *  - podPairPx : summed pairwise intersection area between pod subtrees
+ *  - podPairPx2 : summed pairwise intersection area (px²) of pod card + pill
+ *    rectangles only; it is not a full subtree union and may double-count.
  *                (the structural 9p showdown/multirun overlap).
  *  - clusterVsSeats / dockVsCluster / clusterVsStageLeft : the corner-control
  *                collisions L4 flagged for phone.
@@ -38,10 +39,10 @@ const sharedPath = fileURLToPath(
 const MY_USER = 2;
 const LOCALE = process.env.LOCALE || 'zh-CN';
 /** ASSERT=1 turns the report into a gate (for CI):
- *  - desktop 1440x900 / 1280x720: podPairPx (pairwise pod overlap) must be 0;
+ *  - desktop 1440x900 / 1280x720: podPairPx2 (card + pill content overlap) must be 0;
  *  - primary phone 390x844 / 667x375: textCov/boardCov thresholds, dock-vs-cluster
  *    and touch-target sizes must pass.
- *  Phone podPairPx and short-landscape cluster-covered pods are retained as
+ *  Phone podPairPx2 and short-landscape cluster-covered pods are retained as
  *  explicit DIAGNOSTICS (reported in JSON/README), not zero-collision gates.
  *  `clusterVisible=1` on 390 means the cluster is not clipped by its ancestor,
  *  NOT that it never overlaps a seat pod. Secondary views stay informational. */
@@ -686,7 +687,10 @@ try {
             });
         }
 
-        // ── pod vs pod pairwise intersection (card boxes + pills)
+        // ── pod content vs content pairwise intersection (card + pills only;
+        // deliberately not the complete anchor subtree). The sum can count
+        // multiple rectangles from one pod more than once, so this is a
+        // diagnostic area, not a union area.
         let podPair = 0;
         const boxes = pods.map((p) => ({
           own: p.root,
@@ -817,18 +821,25 @@ try {
             document.querySelectorAll(`[data-seat-hand-mode="${mode}"]`).length,
           ]),
         );
-        const fanOverlap = [
+        const fanCards = [
           ...document.querySelectorAll(
             '[data-seat-hand-mode="hidden"] .table-pod-fan .table-dealt-card',
           ),
-        ]
-          .map((card) => {
-            const avatar = card.closest('[data-seat-anchor]')?.querySelector('.table-avatar-ring');
-            if (!avatar) return null;
-            const a = R(avatar);
-            const overlap = inter(R(card), a);
-            return +(overlap ? area(overlap) / area(a) : 0).toFixed(4);
-          })
+        ];
+        const fanDiagnostics = fanCards.map((card) => {
+          const avatar = card.closest('[data-seat-anchor]')?.querySelector('.table-avatar-ring');
+          if (!avatar) return { card: R(card), avatar: null, overlapPx2: null, ratio: null };
+          const a = R(avatar);
+          const overlap = inter(R(card), a);
+          return {
+            card: R(card),
+            avatar: a,
+            overlapPx2: +(overlap ? area(overlap) : 0).toFixed(2),
+            ratio: +(overlap ? area(overlap) / area(a) : 0).toFixed(4),
+          };
+        });
+        const fanOverlap = fanDiagnostics
+          .map((entry) => entry.ratio)
           .filter((value) => value !== null);
         const safeZoneOverlap = [
           ...document.querySelectorAll('[data-seat-hand-mode="showdown"] .table-pod-holo--side'),
@@ -851,27 +862,34 @@ try {
         const potAboveByPx =
           potRect && tableCenterY !== null ? tableCenterY - (potRect.y + potRect.h / 2) : null;
         const deckRect = rect(document.querySelector('[data-table-deck]'));
+        const deckNode = document.querySelector('[data-table-deck]');
+        const deckStyle = deckNode ? getComputedStyle(deckNode) : null;
         const deckVisible =
           !!deckRect &&
-          getComputedStyle(document.querySelector('[data-table-deck]')).visibility !== 'hidden';
+          deckStyle?.display !== 'none' &&
+          deckStyle?.visibility !== 'hidden' &&
+          deckStyle?.opacity !== '0';
         const gate = {
           seatCount: pods.length,
           seatCountPass: pods.length === 9,
-          podPairPx: Math.round(podPair),
+          podPairPx2: Math.round(podPair),
           podPairPass: podPair === 0,
           textCoverage: textDen ? +(textNum / textDen).toFixed(4) : null,
           textCoveragePass: textDen ? textNum / textDen >= 0.85 : false,
           boardCoverage: boardDen ? +(boardNum / boardDen).toFixed(4) : null,
-          boardCoveragePass: boardDen ? boardNum / boardDen >= 0.9 : true,
+          boardCoveragePass: boardDen !== 0 && boardNum / boardDen >= 0.9,
           heroBoardOverlapPx2: Math.round(heroBoardOverlapPx2),
           heroBoardPass: heroBoardOverlapPx2 === 0,
           k,
           kFloorPass: k !== null && k >= 0.55,
-          viewportVisiblePass: clusterVisible === null || clusterVisible >= 0.99,
+          viewportVisiblePass: clusterVisible !== null && clusterVisible >= 0.99,
           avatarCollision: null,
           textRectCollision: null,
-          fanAvatarEffectiveOverlap: null,
-          showdownSafeZone: null,
+          fanAvatarEffectiveOverlap:
+            fanDiagnostics.length > 0 &&
+            fanDiagnostics.every((entry) => entry.ratio !== null && entry.ratio >= 0.05),
+          showdownSafeZone:
+            safeZoneOverlap.length > 0 && safeZoneOverlap.every((value) => value === 0),
           potPosition: null,
           dCollision: null,
           note: 'avatar/text/pot/D metrics require the dedicated DOM gate follow-up; null is intentional, not a pass.',
@@ -889,7 +907,7 @@ try {
           boardCov: boardDen ? +(boardNum / boardDen).toFixed(4) : null,
           boardCardCount: boardEls.length,
           boardEls: boardEls.length,
-          podPairPx: Math.round(podPair),
+          podPairPx2: Math.round(podPair),
           clusterVsPodsPx: Math.round(clusterVsPods),
           clusterCoveredPods: clusterCovered,
           dockVsClusterPx: Math.round(dockVsCluster),
@@ -908,16 +926,25 @@ try {
             textRectPairPx: +textRectPairPx.toFixed(2),
             modes,
             fanAvatarOverlapRatios: fanOverlap,
+            fanDiagnostics,
             safeZoneOverlapPx2: safeZoneOverlap,
             potAboveByPx: potAboveByPx === null ? null : +potAboveByPx.toFixed(2),
+            preflopDeckPresent: !!deckNode,
             preflopDeckVisible: deckVisible,
+            preflopDeckLifecycle: !deckNode
+              ? 'absent-after-settle'
+              : deckNode.getAttribute('data-table-deck-state') === 'source' && !deckVisible
+                ? 'present-hidden-source'
+                : deckVisible
+                  ? 'present-visible'
+                  : 'present-hidden',
           },
         };
       });
 
       results.push({ scenario: sc.name, vp: `${vp.width}x${vp.height}`, scene, ...data });
       console.log(
-        `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx}px² clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
+        `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx2}px² clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
       );
       await page.screenshot({ path: `${out}/probe-${sc.name}-${vp.width}x${vp.height}.png` });
       await ctx.close();
@@ -953,8 +980,8 @@ if (ASSERT) {
       failures.push(`${r.scenario}@${r.vp} heroBoardOverlap=${r.heroBoardOverlapPx2}px²`);
     // Desktop hard gate, viewport-independent of ASSERTED_VPS: the desktop
     // geometry must have zero pairwise pod overlap.
-    if ((r.vp === '1440x900' || r.vp === '1280x720') && r.podPairPx > 0)
-      failures.push(`${r.scenario}@${r.vp} podPair=${r.podPairPx}`);
+    if ((r.vp === '1440x900' || r.vp === '1280x720') && r.podPairPx2 > 0)
+      failures.push(`${r.scenario}@${r.vp} podPairPx2=${r.podPairPx2}`);
     if (!ASSERTED_VPS.includes(r.vp)) continue;
     // a null metric means the DOM it reads is missing - treat as fail, not skip.
     if (r.textCov === null || r.textCov < 0.85)

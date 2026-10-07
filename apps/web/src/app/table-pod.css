@@ -26,7 +26,9 @@
   box-shadow: var(--shadow-table-pod);
   text-align: center;
 }
-.table-pod-visual { position: static; }
+.table-pod-visual {
+  position: static;
+}
 .table-peek-eye {
   position: absolute;
   z-index: 35;
@@ -44,18 +46,28 @@
   color: var(--table-gold-hi);
   font-size: 22px;
   line-height: 1;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
-  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 0.18s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 .table-peek-eye:hover:not(:disabled),
 .table-peek-eye:focus-visible {
   transform: translateX(-50%) scale(1.1);
   background: var(--table-gold);
   color: #201707;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--table-gold-hi) 30%, transparent), 0 6px 16px rgba(0, 0, 0, .4);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--table-gold-hi) 30%, transparent),
+    0 6px 16px rgba(0, 0, 0, 0.4);
 }
-.table-peek-eye:disabled { cursor: wait; opacity: .55; }
-.table-peek-eye span[aria-hidden] { transform: rotate(-18deg); }
+.table-peek-eye:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.table-peek-eye span[aria-hidden] {
+  transform: rotate(-18deg);
+}
 .table-canvas--narrow .table-peek-eye {
   /* Phone opponents lift their card fan much farther above the compact pod;
      keep the eye above that lifted fan too, rather than merely non-overlapping. */
@@ -93,10 +105,22 @@
   width: 100%;
   min-width: 0;
 }
-.table-pod-name-row .table-pname { flex: 1; min-width: 0; }
-.table-pod-detail-row .table-pstack { min-width: 0; flex-shrink: 1; }
-.table-pod-detail-row .table-paction { white-space: nowrap; }
-.table-seat-badges { display: inline-flex; flex: none; gap: 2px; }
+.table-pod-name-row .table-pname {
+  flex: 1;
+  min-width: 0;
+}
+.table-pod-detail-row .table-pstack {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.table-pod-detail-row .table-paction {
+  white-space: nowrap;
+}
+.table-seat-badges {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
 .table-vpip {
   font: 700 10px/15px var(--font-table-num);
   min-width: 18px;
@@ -105,12 +129,24 @@
   background: color-mix(in srgb, currentColor 15%, #10151c);
   text-align: center;
 }
-.table-vpip--red { color: #ff929b; }
-.table-vpip--yellow { color: #f7d975; }
-.table-vpip--green { color: #84e5ac; }
-.table-vpip--blue { color: #8cc8ff; }
-.table-vpip--purple { color: #d6a2ff; }
-.table-paction--check { color: #a5f3d2; }
+.table-vpip--red {
+  color: #ff929b;
+}
+.table-vpip--yellow {
+  color: #f7d975;
+}
+.table-vpip--green {
+  color: #84e5ac;
+}
+.table-vpip--blue {
+  color: #8cc8ff;
+}
+.table-vpip--purple {
+  color: #d6a2ff;
+}
+.table-paction--check {
+  color: #a5f3d2;
+}
 .table-check-feedback {
   position: absolute;
   z-index: 30;
@@ -131,21 +167,53 @@
   animation: table-check-ring 1.2s ease-out both;
 }
 @keyframes table-check-float {
-  0% { opacity: 0; transform: translate(-50%, 6px); }
-  12%, 88% { opacity: 1; transform: translate(-50%, 0); }
-  100% { opacity: 0; transform: translate(-50%, -4px); }
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  12%,
+  88% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
 }
 @keyframes table-check-ring {
-  0%, 70% { box-shadow: 0 0 0 3px #a5f3d2, 0 0 14px #79edba80; }
-  100% { box-shadow: var(--shadow-table-avatar); }
+  0%,
+  70% {
+    box-shadow:
+      0 0 0 3px #a5f3d2,
+      0 0 14px #79edba80;
+  }
+  100% {
+    box-shadow: var(--shadow-table-avatar);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .table-check-feedback { animation: none; transform: translateX(-50%); }
-  .table-pod-card:has(.table-check-feedback) .table-avatar-ring { animation: none; outline: 2px solid #a5f3d2; }
+  .table-check-feedback {
+    animation: none;
+    transform: translateX(-50%);
+  }
+  .table-pod-card:has(.table-check-feedback) .table-avatar-ring {
+    animation: none;
+    outline: 2px solid #a5f3d2;
+  }
 }
-.table-peek { position: relative; max-width: calc(100vw - 24px); }
-.table-peek > summary { cursor: pointer; list-style: none; font-size: 11px; }
-.table-peek > summary::-webkit-details-marker { display: none; }
+.table-peek {
+  position: relative;
+  max-width: calc(100vw - 24px);
+}
+.table-peek > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+}
+.table-peek > summary::-webkit-details-marker {
+  display: none;
+}
 .table-peek-body {
   width: min(300px, calc(100vw - 24px));
   margin-top: 6px;
@@ -162,14 +230,28 @@
   box-shadow: 0 6px 18px rgba(2, 6, 23, 0.28);
   max-height: 9rem;
 }
-.peek-incoming-banner button { min-height: 22px; }
-.peek-incoming-list { max-height: 7rem; overflow-y: auto; overscroll-behavior: contain; }
+.peek-incoming-banner button {
+  min-height: 22px;
+}
+.peek-incoming-list {
+  max-height: 7rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 @media (prefers-reduced-motion: no-preference) {
-  .peek-incoming-banner { animation: peek-incoming-in 180ms ease-out both; }
+  .peek-incoming-banner {
+    animation: peek-incoming-in 180ms ease-out both;
+  }
 }
 @keyframes peek-incoming-in {
-  from { opacity: 0; transform: translateY(-4px) scale(.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 .table-canvas--narrow .table-pod-info {
   /* Keep the phone plaque's original inline flow.  The two-row desktop
@@ -179,8 +261,14 @@
   display: contents;
 }
 .table-canvas--narrow .table-pod-name-row,
-.table-canvas--narrow .table-pod-detail-row { display: contents; }
-.table-canvas--narrow .table-vpip { font-size: 10px; min-width: 15px; padding: 0 1px; }
+.table-canvas--narrow .table-pod-detail-row {
+  display: contents;
+}
+.table-canvas--narrow .table-vpip {
+  font-size: 10px;
+  min-width: 15px;
+  padding: 0 1px;
+}
 .table-hero-cards {
   position: absolute;
   z-index: 25;
@@ -211,36 +299,36 @@
    scale: 13–14.5 design px ≈ 9–10 rendered px at 390×844, the same optical
    weight the desktop plaque has on a monitor. */
 .table-canvas--narrow {
-  --pod-name-size: 14.5px;
-  --pod-money-size: 13px;
-  --pod-caption-size: 12px;
-  --pod-micro-size: 11px;
-  --pod-pill-size: 11px;
-  --pod-betamt-size: 12.5px;
+  --pod-name-size: 12px;
+  --pod-money-size: 11px;
+  --pod-caption-size: 10px;
+  --pod-micro-size: 9px;
+  --pod-pill-size: 9px;
+  --pod-betamt-size: 10px;
   --disc-size: 24px;
   --disc-font: 11px;
   /* 78 < the 80.5 design-px gap between the hero and its ±40° ring points —
      the only ring clearance the 9-seat phone oval has, so the bottom-arc
      pods (and their fans/pills) never touch */
-  --table-pod-w: 78px;
-  --table-pod-pad-top: 10px;
-  --table-pod-pad-bottom: 6px;
+  --table-pod-w: 68px;
+  --table-pod-pad-top: 8px;
+  --table-pod-pad-bottom: 4px;
   --table-pod-name-gap: 2px;
   --table-pod-leading: 14px;
-  --table-fan-w: 48px;
-  --table-fan-shift: 18px;
-  --table-hole-h: 40px;
-  --table-holo-top: -9px;
-  --table-holo-top-side: -13px;
+  --table-fan-w: 44px;
+  --table-fan-shift: 16px;
+  --table-hole-h: 36px;
+  --table-holo-top: -7px;
+  --table-holo-top-side: -10px;
 }
 /* dense phone (7+ seats): RoundTable already swaps hole cards to xs; these
    tighten the fan/pair box to match the xs footprint */
 .table-canvas--dense {
-  --table-fan-w: 46px;
-  --table-fan-shift: 18px;
-  --table-hole-h: 40px;
-  --table-holo-top: -8px;
-  --table-holo-top-side: -4px;
+  --table-fan-w: 42px;
+  --table-fan-shift: 15px;
+  --table-hole-h: 36px;
+  --table-holo-top: 12px;
+  --table-holo-top-side: -3px;
 }
 .table-pod-card--bare {
   padding-top: var(--table-pod-pad-top-bare);
@@ -394,10 +482,12 @@
   top: var(--table-holo-top-side);
 }
 .table-canvas--narrow .table-pod-holo--side.table-pod-holo--hero {
-  top: calc(var(--table-holo-top-side) - 94px);
+  top: calc(var(--table-holo-top-side) - 72px);
 }
 .table-canvas--narrow .table-pod-holo--fan {
-  top: calc(var(--table-holo-top) - 62px);
+  /* Keep the fan above the plaque but let its lower edge enter the avatar.
+     The GG reference requires a real positive-area card/avatar overlap. */
+  top: calc(var(--table-holo-top) - 13px);
 }
 /* opponents: two burgundy backs, small-angle fan (GG), slight overlap.
    The rules stay scoped under .table-pod-fan for cascade robustness; note

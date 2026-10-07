@@ -14,22 +14,75 @@
  * draining (it is required information, not decor).
  * ══════════════════════════════════════════════════════════════════════════ */
 
-.table-deck { position: absolute; left: 34%; top: 39%; opacity: .7; pointer-events: none; transform: rotate(-8deg); }
-.table-deck::before { content: ''; position: absolute; inset: -3px 3px 3px -3px; border: 1px solid var(--table-gold-lo); border-radius: 6px; }
-.table-dealt-card { flex-shrink: 0; }
-.table-pod-fan > .table-dealt-card { position: absolute; inset: 0; }
+.table-deck {
+  position: absolute;
+  left: 34%;
+  top: 39%;
+  opacity: 0.7;
+  pointer-events: none;
+  transform: rotate(-8deg);
+}
+.table-deck[data-table-deck-state='source'] {
+  opacity: 0;
+}
+.table-deck::before {
+  content: '';
+  position: absolute;
+  inset: -3px 3px 3px -3px;
+  border: 1px solid var(--table-gold-lo);
+  border-radius: 6px;
+}
+.table-dealt-card {
+  flex-shrink: 0;
+}
+.table-pod-fan > .table-dealt-card {
+  position: absolute;
+  inset: 0;
+}
 .table-bomb-intro {
-  position: absolute; z-index: 25; left: 50%; top: 22%; transform: translateX(-50%);
-  width: max-content; max-width: 65%; pointer-events: none; text-align: center;
-  padding: 10px 22px; border: 1px solid var(--table-gold); border-radius: 12px;
-  background: var(--table-surface-pod); color: var(--table-gold-hi);
+  position: absolute;
+  z-index: 25;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 65%;
+  pointer-events: none;
+  text-align: center;
+  padding: 10px 22px;
+  border: 1px solid var(--table-gold);
+  border-radius: 12px;
+  background: var(--table-surface-pod);
+  color: var(--table-gold-hi);
   box-shadow: var(--shadow-table-pod);
   animation: table-bomb-arrive var(--table-dur-glow) var(--table-ease-decelerate) both;
 }
-.table-bomb-intro strong { display: block; font-family: var(--font-table-display); font-size: 20px; }
-.table-bomb-intro span { display: block; margin-top: 3px; color: var(--table-ink-soft); font-size: 12px; }
-@keyframes table-bomb-arrive { from { opacity: 0; transform: translate(-50%, -8px) scale(.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .table-bomb-intro { animation: none; } }
+.table-bomb-intro strong {
+  display: block;
+  font-family: var(--font-table-display);
+  font-size: 20px;
+}
+.table-bomb-intro span {
+  display: block;
+  margin-top: 3px;
+  color: var(--table-ink-soft);
+  font-size: 12px;
+}
+@keyframes table-bomb-arrive {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-bomb-intro {
+    animation: none;
+  }
+}
 
 /* ── acting / won / hot glow: entrance on a pseudo layer (spec row 1 & 6) ──
    The glow itself is a box-shadow, but it is never animated per-frame - the
@@ -108,11 +161,16 @@
    then it settles to a quiet hairline ring - decoration of information the
    pod already shows (牌型 line), never a full-felt effect. ── */
 @keyframes table-card-gold {
-  0%, 100% {
-    box-shadow: 0 0 0 1px rgba(245, 214, 123, 0.35), 0 0 6px rgba(211, 155, 37, 0.2);
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(245, 214, 123, 0.35),
+      0 0 6px rgba(211, 155, 37, 0.2);
   }
   50% {
-    box-shadow: 0 0 0 2.5px var(--table-gold-hi), 0 0 16px rgba(245, 214, 123, 0.55);
+    box-shadow:
+      0 0 0 2.5px var(--table-gold-hi),
+      0 0 16px rgba(245, 214, 123, 0.55);
   }
 }
 .table-card-gold {

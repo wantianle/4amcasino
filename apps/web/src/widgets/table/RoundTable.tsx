@@ -565,7 +565,12 @@ export function RoundTable({
             <span className="table-felt-watermark">4AM · CASINO</span>
           </div>
 
-          <div className="table-deck" data-table-deck aria-hidden="true">
+          <div
+            className="table-deck"
+            data-table-deck
+            data-table-deck-state="source"
+            aria-hidden="true"
+          >
             <PlayingCard faceDown size="xs" />
           </div>
           {/* pot, board, and status live at the center (A5: the pot row is the

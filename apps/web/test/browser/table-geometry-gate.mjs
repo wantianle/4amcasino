@@ -50,17 +50,23 @@ for (const result of report.results) {
     rimRatio: m.rimRatio !== null && m.rimRatio >= 1.38,
     avatarPair: m.avatarPairPx === 0,
     textRectPair: m.textRectPairPx === 0,
-    podPair: result.podPairPx === 0,
-    boardCoverage: result.boardCov === null || result.boardCov >= 0.9,
+    podPairContentPx2: result.podPairPx2 === 0,
+    boardCoverage: result.scene.faces === 0 || (result.boardCov !== null && result.boardCov >= 0.9),
     heroBoard: result.heroBoardOverlapPx2 === 0,
-    viewport: result.clusterVisible === null || result.clusterVisible >= 0.99,
+    viewport: result.clusterVisible !== null && result.clusterVisible >= 0.99,
     hiddenShowdownHero: m.modes.hidden + m.modes.showdown + m.modes.hero === result.pods,
     fanEffectiveOverlap:
-      m.fanAvatarOverlapRatios.length === 0 ||
-      m.fanAvatarOverlapRatios.every((ratio) => ratio >= 0.05),
+      m.modes.hidden === 0 ||
+      (m.fanDiagnostics.length > 0 &&
+        m.fanDiagnostics.every((entry) => entry.ratio !== null && entry.ratio >= 0.05)),
     showdownSafeZone:
-      m.safeZoneOverlapPx2.length === 0 || m.safeZoneOverlapPx2.every((area) => area === 0),
-    preflopDeck: !m.preflopDeckVisible,
+      result.scene.faces === 0 ||
+      (m.safeZoneOverlapPx2.length > 0 && m.safeZoneOverlapPx2.every((area) => area === 0)),
+    preflopDeck:
+      result.scene.faces === 0 &&
+      m.preflopDeckPresent === true &&
+      m.preflopDeckVisible === false &&
+      m.preflopDeckLifecycle === 'present-hidden-source',
   };
   console.log(
     JSON.stringify(
@@ -72,12 +78,13 @@ for (const result of report.results) {
           k: result.k,
           textCov: result.textCov,
           boardCov: result.boardCov,
-          podPairPx: result.podPairPx,
+          podPairPx2: result.podPairPx2,
           avatarPairPx: m.avatarPairPx,
           textRectPairPx: m.textRectPairPx,
           rimRatio: m.rimRatio,
           modes: m.modes,
           fanAvatarOverlapRatios: m.fanAvatarOverlapRatios,
+          fanDiagnostics: m.fanDiagnostics,
           safeZoneOverlapPx2: m.safeZoneOverlapPx2,
           heroBoardOverlapPx2: result.heroBoardOverlapPx2,
         },
@@ -88,7 +95,7 @@ for (const result of report.results) {
     ),
   );
   for (const [name, pass] of Object.entries(checks))
-    if (!pass) failures.push(`${result.scenario}@${result.vp} ${name}=FAIL`);
+    if (pass !== true) failures.push(`${result.scenario}@${result.vp} ${name}=FAIL (${pass})`);
 }
 console.log(`geometry-gate: ${failures.length ? 'FAIL' : 'PASS'}`);
 if (failures.length) {
