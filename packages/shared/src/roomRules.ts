@@ -44,7 +44,16 @@ export interface RoomGameplaySettings {
     /** When the next bomb pot fires. */
     schedule: { mode: 'hands' | 'duration'; value: number };
   };
-  /** Multi-run: run the board 2 or 3 times when all-in before the river. */
+  /** Multi-run: run the board 2 or 3 times on a heads-up all-in before the
+   *  river.
+   *
+   *  FIXED product config: this is no longer host-tunable. `enabled` is always
+   *  true and `maxRuns` is always `MULTI_RUN_MAX_RUNS` (the server's zod schema
+   *  pins both literals, so a hand-built PUT that tries to switch it off or
+   *  lower the cap is rejected with 400). The engine additionally forces a
+   *  single run whenever more than two players are live (see
+   *  `MULTI_RUN_HEADS_UP_SEATS`). The shape stays here because it is still part
+   *  of the room's settings object that clients read and render. */
   multiRun: {
     enabled: boolean;
     /** Always exactly 3: the cap allowed by the rules. */
@@ -119,6 +128,16 @@ export const BOMB_POT_DURATION_SECONDS_MIN = 60;
 export const BOMB_POT_DURATION_SECONDS_MAX = 604800;
 
 export const MULTI_RUN_MAX_RUNS = 3;
+
+/**
+ * Live-player count at which multi-run is offered: exactly heads-up.
+ *
+ * A pot with three or more live (non-folded) players is forced to a single
+ * run — the fixed product rule. The engine reads this constant in
+ * `beginMultiRunDecision`, so the threshold and the documented "non-heads-up
+ * deals once" rule can never drift.
+ */
+export const MULTI_RUN_HEADS_UP_SEATS = 2;
 
 /**
  * Recursively `Object.freeze` a plain-data object. Used once at module load to

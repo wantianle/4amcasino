@@ -22,6 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const PUBLIC_KEYS = [
+  'multiRunChoiceTimeoutMs',
   'stackLandMs',
   'tableDurDealMs',
   'tableDurDimMs',
@@ -40,6 +41,7 @@ const ENV_KEYS = [
   'FOURAM_BOT_HARD_STOP_MS',
   'FOURAM_AUTO_DEAL_INTERVAL_MS',
   'FOURAM_AUTO_DEAL_READY_CHECK_MS',
+  'MULTIRUN_CHOICE_TIMEOUT_MS',
   'TABLE_DUR_PULSE_MS',
   'TABLE_DUR_GLOW_MS',
   'TABLE_DUR_DIM_MS',
@@ -83,6 +85,7 @@ describe('GET /api/config', () => {
     const body = res.json() as { tunables: Record<string, number>; revision: string };
     expect(Object.keys(body.tunables).sort()).toEqual(PUBLIC_KEYS);
     expect(body.tunables).toMatchObject({
+      multiRunChoiceTimeoutMs: 5000,
       tableDurPulseMs: 1600,
       tableDurGlowMs: 450,
       tableDurDimMs: 550,
@@ -100,9 +103,19 @@ describe('GET /api/config', () => {
   it('reflects env overrides without a rebuild', async () => {
     process.env.TABLE_DUR_GLOW_MS = '777';
     process.env.WIN_FX_MS = '5000';
+    process.env.MULTIRUN_CHOICE_TIMEOUT_MS = '3000';
     const body = (await getConfig()).json() as { tunables: Record<string, number> };
     expect(body.tunables.tableDurGlowMs).toBe(777);
     expect(body.tunables.winFxMs).toBe(5000);
+    expect(body.tunables.multiRunChoiceTimeoutMs).toBe(3000);
+  });
+
+  it('publishes a 7000 MULTIRUN_CHOICE_TIMEOUT_MS override (E2E acceptance value)', async () => {
+    // The manual E2E changes `.env` to 7000 and expects `/api/config` to follow;
+    // pin that exact scenario so a regression in the public path is caught.
+    process.env.MULTIRUN_CHOICE_TIMEOUT_MS = '7000';
+    const body = (await getConfig()).json() as { tunables: Record<string, number> };
+    expect(body.tunables.multiRunChoiceTimeoutMs).toBe(7000);
   });
 
   it('never exposes server-only tunables', async () => {
@@ -267,6 +280,10 @@ describe('tunables parsing', () => {
       expect(defaultGameOpts({ FOURAM_AUTO_DEAL_READY_CHECK_MS: '800' })).toMatchObject({
         readyCheckMs: 800,
       });
+      // multi-run choice window: production default comes from the tunable and
+      // must equal the engine fallback constant (single source, 5s).
+      expect(defaultGameOpts({}).ritVoteMs).toBe(5_000);
+      expect(defaultGameOpts({ MULTIRUN_CHOICE_TIMEOUT_MS: '9000' }).ritVoteMs).toBe(9_000);
     });
   });
 
@@ -279,6 +296,7 @@ describe('tunables parsing', () => {
     expect(all.autoDealReadyCheckMs).toBe(1_500);
     const pub = publicTunables({});
     expect(pub).toEqual({
+      multiRunChoiceTimeoutMs: 5000,
       tableDurPulseMs: 1600,
       tableDurGlowMs: 450,
       tableDurDimMs: 550,

@@ -1,12 +1,13 @@
-// P2 Lane D — gameplay rules ("玩法规则") editor for squid / bomb pot / multi-run,
-// shared by the lobby create-room form and the table (later lane opens
+// P2 Lane D — gameplay rules ("玩法规则") editor for squid / bomb pot, shared by
+// the lobby create-room form and the table (later lane opens
 // GameplaySettingsDialog from the table menu). Values and bounds come from
 // @4am/shared/roomRules.ts so client and server can never drift; the server keeps
 // the final word on validation (host-only, and 409s while a hand is in play — the
 // dialog's save queue is what turns that hard boundary into an always-clickable
 // button). The time bank lives in the table's timer popover
 // (widgets/table/TableQuickControls.tsx), which reuses this file's Field / Switch
-// primitives and the useFeatureSaveQueue hook.
+// primitives and the useFeatureSaveQueue hook; multi-run is a fixed product rule
+// (heads-up only) no host can change, so neither appears in this editor.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   BOMB_POT_ANTE_BB_MAX,
@@ -33,7 +34,7 @@ import { useStore } from '../../shared/store.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Dialog, Input } from '../../shared/ui/index.tsx';
 import { cn } from '../../shared/lib/cn.ts';
-import { Bomb, CaretDown, Cards, Skull } from '@phosphor-icons/react';
+import { Bomb, CaretDown, Skull } from '@phosphor-icons/react';
 
 /**
  * UI-only default used when a host flips the bomb-pot cadence from hands to
@@ -114,17 +115,19 @@ export function normalizeGameplaySettings(s: RoomGameplaySettings): RoomGameplay
             : clampInt(rawValue, BOMB_POT_DURATION_SECONDS_MIN, BOMB_POT_DURATION_SECONDS_MAX),
       },
     },
-    multiRun: { enabled: !!s.multiRun?.enabled, maxRuns: MULTI_RUN_MAX_RUNS },
+    // multi-run is a fixed product rule: always on, cap 3, not host-editable
+    multiRun: { enabled: true, maxRuns: MULTI_RUN_MAX_RUNS },
   };
 }
 
 /**
- * Features the dialog owns: the time bank lives in the table's timer popover
- * now, so it is deliberately not counted or named here even though it stays
- * part of the room's settings object.
+ * Features the dialog owns: squid / bomb pot. The time bank lives in the
+ * table's timer popover now, and multi-run is a fixed product rule (heads-up
+ * only) no host can toggle, so neither is counted or named here even though
+ * both stay part of the room's settings object.
  */
 export function enabledFeatureCount(s: RoomGameplaySettings): number {
-  return [s.squid.enabled, s.bombPot.enabled, s.multiRun.enabled].filter(Boolean).length;
+  return [s.squid.enabled, s.bombPot.enabled].filter(Boolean).length;
 }
 
 /** Short names for the collapsed lobby header, e.g. 「鱿鱼游戏 · 炸弹池」. */
@@ -132,7 +135,6 @@ export function enabledFeatureNames(s: RoomGameplaySettings): string[] {
   const names: string[] = [];
   if (s.squid.enabled) names.push(t('Squid Game'));
   if (s.bombPot.enabled) names.push(t('Bomb pot'));
-  if (s.multiRun.enabled) names.push(t('Multi-run all-in'));
   return names;
 }
 
@@ -527,9 +529,6 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
         schedule: { ...value.bombPot.schedule, ...(schedule ?? {}) },
       },
     });
-  const setMultiRun = (p: Partial<RoomGameplaySettings['multiRun']>) =>
-    onChange({ ...value, multiRun: { ...value.multiRun, ...p } });
-
   const bombMode = value.bombPot.schedule.mode;
 
   return (
@@ -716,29 +715,6 @@ export function GameplaySettingsEditor({ value, onChange, disabled }: GameplaySe
           />
         )}
       </FeatureCard>
-
-      {/* B4 — Multi-run ------------------------------------------------------- */}
-      <FeatureCard
-        icon={<Cards size={18} weight="bold" className="text-emerald-600 dark:text-emerald-400" />}
-        iconClass="bg-emerald-50 dark:bg-emerald-950/50"
-        title={t('Multi-run all-in')}
-        pitch={t('Run the board up to {maxRuns} times', { maxRuns: MULTI_RUN_MAX_RUNS })}
-        enabled={value.multiRun.enabled}
-        disabled={disabled}
-        onToggle={(v) => setMultiRun({ enabled: v })}
-        toggleLabel={t('Enable multi-run all-in')}
-        previews={
-          <>
-            <Preview>
-              {t('Up to {maxRuns} runs when cards are still to come', {
-                maxRuns: MULTI_RUN_MAX_RUNS,
-              })}
-            </Preview>
-            <Preview>{t('The behind hand picks 1–3 runs; the ahead hand has to agree.')}</Preview>
-            <Preview>{t('More than two players all-in, or equal odds: it runs once.')}</Preview>
-          </>
-        }
-      />
     </div>
   );
 }
@@ -902,13 +878,13 @@ export function useFeatureSaveQueue(opts: {
 }
 
 /**
- * The dialog owns squid / bomb pot / multi-run. The time bank lives in the
- * timer popover, so it is deliberately NOT in this patch: the server deep-
- * merges what is absent, which keeps a bank change made after this dialog was
- * seeded from being silently overwritten by a stale copy.
+ * The dialog owns squid and bomb pot. The time bank lives in the timer popover
+ * and multi-run is a fixed product rule, so neither is in this patch: the
+ * server deep-merges what is absent, which keeps a bank change made after this
+ * dialog was seeded from being silently overwritten by a stale copy.
  */
 export function ownedFeaturePatch(s: RoomGameplaySettings): RoomFeaturesPatch {
-  return { squid: s.squid, bombPot: s.bombPot, multiRun: s.multiRun };
+  return { squid: s.squid, bombPot: s.bombPot };
 }
 
 // ── the dialog ───────────────────────────────────────────────────────────────

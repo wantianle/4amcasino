@@ -34,6 +34,10 @@ export function defaultGameOpts(env: NodeJS.ProcessEnv = process.env): GameOpts 
     actionTimeoutMs: 30_000,
     autoDealMs: readTunable('autoDealIntervalMs', env),
     readyCheckMs: readTunable('autoDealReadyCheckMs', env),
+    // The heads-up multi-run choice/agreement window is a fixed product value
+    // with an operator escape hatch; declared in `tunables.ts` (env
+    // `MULTIRUN_CHOICE_TIMEOUT_MS`) so a per-deployment tweak needs no rebuild.
+    ritVoteMs: readTunable('multiRunChoiceTimeoutMs', env),
   };
 }
 

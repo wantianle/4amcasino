@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { MULTI_RUN_MAX_RUNS } from '@4am/shared';
 import { createApp } from '../src/app.js';
 import { appendLedger } from '../src/ledger.js';
 import { activeHands } from '../src/liveHands.js';
-import { ROOM_FEATURE_DEFAULTS } from '../src/gameplaySettings.js';
+import { ROOM_FEATURE_DEFAULTS, migrateMultiRunFixed } from '../src/gameplaySettings.js';
 
 let ctx: ReturnType<typeof createApp>;
 beforeEach(() => {
@@ -200,6 +201,41 @@ describe('room gameplay settings', () => {
     expect(bankOf(host.userId)).toEqual({ ms: 30_000, hands: 0 });
   });
 
+  it('refuses any multi-run config change (fixed heads-up product rule)', async () => {
+    const host = await user('mr_host');
+    const room = await makeRoom(host.token);
+
+    // multi-run is always on with the fixed cap: no PUT can switch it off or
+    // lower the cap (a hand-built request would otherwise let a host disable
+    // the heads-up run-it-2/3 rule the engine now enforces).
+    for (const patch of [{ enabled: false }, { maxRuns: 2 }, { maxRuns: 1 }]) {
+      const res = await setFeatures(room.id, host.token, { multiRun: patch });
+      expect(res.statusCode).toBe(400);
+    }
+    const state = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/rooms/${room.id}`,
+        headers: auth(host.token),
+      })
+    ).json();
+    expect(state.features.multiRun).toEqual({ enabled: true, maxRuns: 3 });
+
+    // the canonical values are accepted but change nothing (idempotent)
+    const canonical = await setFeatures(room.id, host.token, {
+      multiRun: { enabled: true, maxRuns: 3 },
+    });
+    expect(canonical.statusCode).toBe(200);
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/rooms/${room.id}`,
+        headers: auth(host.token),
+      })
+    ).json();
+    expect(after.features.multiRun).toEqual({ enabled: true, maxRuns: 3 });
+  });
+
   it('fixes the turn clock at 30s: a host cannot set actionSecs', async () => {
     const host = await user('tm_host');
     // creation still accepts the legacy key, but the room reports no override
@@ -363,5 +399,56 @@ describe('squid-game reporting', () => {
     ).json();
     const hostPlayer = session.players.find((p: { username: string }) => p.username === 'sr_host');
     expect(hostPlayer).toMatchObject({ net: 50, handsPlayed: 2, biggestWin: 40, wins: 2 });
+  });
+});
+
+describe('migrateMultiRunFixed', () => {
+  it('normalizes a legacy room once, is marker-idempotent, and leaves player state alone', async () => {
+    const host = await user('mr_mig_host');
+    const guest = await user('mr_mig_guest');
+    const room = await makeRoom(host.token);
+    await join(room, guest.token);
+
+    // Simulate a pre-change file: the host had switched multi-run off with cap 2,
+    // and the one-time marker has not been written yet.
+    ctx.db
+      .prepare('UPDATE rooms SET multi_run_enabled = 0, multi_run_max_runs = 2 WHERE id = ?')
+      .run(room.id);
+    ctx.db.prepare('DELETE FROM meta WHERE key = ?').run('multi-run-fixed-1');
+
+    const multiRunRow = () =>
+      ctx.db
+        .prepare(
+          `SELECT multi_run_enabled AS enabled, multi_run_max_runs AS maxRuns
+           FROM rooms WHERE id = ?`,
+        )
+        .get(room.id);
+    // The pass must touch ONLY rooms.multi_run_*: money, bank and epochs stay put.
+    const playerSnapshot = () =>
+      ctx.db
+        .prepare(
+          `SELECT stack, time_bank_ms AS bankMs, time_bank_hands AS bankHands,
+                  time_bank_epoch AS bankEpoch
+           FROM room_players WHERE room_id = ? AND user_id = ?`,
+        )
+        .get(room.id, guest.userId);
+    const before = playerSnapshot();
+
+    migrateMultiRunFixed(ctx.db);
+
+    expect(multiRunRow()).toEqual({ enabled: 1, maxRuns: MULTI_RUN_MAX_RUNS });
+    expect(playerSnapshot()).toEqual(before);
+
+    // Second run is a no-op: same 1/3, no double-apply.
+    migrateMultiRunFixed(ctx.db);
+    expect(multiRunRow()).toEqual({ enabled: 1, maxRuns: MULTI_RUN_MAX_RUNS });
+
+    // Marker semantics: a later divergence is NOT re-normalized - the pass is
+    // genuinely once-only, not merely idempotent-looking.
+    ctx.db
+      .prepare('UPDATE rooms SET multi_run_enabled = 0, multi_run_max_runs = 2 WHERE id = ?')
+      .run(room.id);
+    migrateMultiRunFixed(ctx.db);
+    expect(multiRunRow()).toEqual({ enabled: 0, maxRuns: 2 });
   });
 });

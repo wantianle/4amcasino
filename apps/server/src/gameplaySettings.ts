@@ -47,10 +47,12 @@ export interface RoomFeatureColumns {
  * {@link mergeRoomFeatures} are unaffected.
  *
  * Every feature is ON by default: a new table is meant to have the new gameplay
- * (squid / time bank / bomb pot / multi-run) available out of the box. A host
- * can still switch any of them off through the settings dialog. The DB column
- * defaults in db.ts are kept as a safety fallback only; room creation always
- * writes the full normalized object through {@link applyRoomFeatures}.
+ * (squid / time bank / bomb pot / multi-run) available out of the box. Of these,
+ * squid and bomb pot are host-switchable in the settings dialog; the time bank
+ * and multi-run are fixed product rules a host cannot turn off (their schema
+ * fields below are pinned to literals). The DB column defaults in db.ts are kept
+ * as a safety fallback only; room creation always writes the full normalized
+ * object through {@link applyRoomFeatures}.
  */
 export const ROOM_FEATURE_DEFAULTS: RoomGameplaySettings = DEFAULT_GAMEPLAY_SETTINGS;
 
@@ -104,9 +106,16 @@ export const gameplayFeaturesSchema = z
       })
       .partial()
       .optional(),
+    // Multi-run: FIXED product rule. A heads-up all-in lets the player behind
+    // choose 2–3 runs; any pot with three or more live players always runs once.
+    // The host may not switch the feature off or lower the cap: pinning the
+    // schema to literals makes a hand-built PUT/POST carrying `enabled: false`
+    // or a divergent `maxRuns` fail validation (400) instead of silently
+    // writing a rule the engine no longer honours. Only the shared fixed values
+    // written by room creation are accepted.
     multiRun: z
       .object({
-        enabled: z.boolean(),
+        enabled: z.literal(true),
         maxRuns: z.literal(MULTI_RUN_MAX_RUNS),
       })
       .partial()
@@ -338,6 +347,32 @@ export function migrateTimeBankFixed(db: DB): void {
            SELECT time_bank_epoch FROM rooms WHERE rooms.id = room_players.room_id
          )`,
     ).run(TIME_BANK_INITIAL_SECONDS * 1000);
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
+  }).immediate();
+}
+
+/**
+ * One-time normalization of every room's stored multi-run config to the fixed
+ * product rule (enabled, cap 3).
+ *
+ * Multi-run is no longer host-tunable. Rooms created before this change can
+ * store `multi_run_enabled = 0` (a host turned it off) and any
+ * `multi_run_max_runs`, and the HTTP surface no longer accepts a divergent
+ * value at all, so without this pass those rows would keep running the old
+ * choice forever. Rather than masking the columns at read time, we normalize
+ * them once, exactly like `migrateTimeBankFixed`: the DB stays the single
+ * canonical source.
+ *
+ * Idempotent through the `multi-run-fixed-1` marker, in one write-locked
+ * transaction so two servers opening the same file cannot double-apply.
+ */
+export function migrateMultiRunFixed(db: DB): void {
+  const MARKER = 'multi-run-fixed-1';
+  db.transaction(() => {
+    if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MARKER)) return;
+    db.prepare('UPDATE rooms SET multi_run_enabled = 1, multi_run_max_runs = ?').run(
+      MULTI_RUN_MAX_RUNS,
+    );
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(MARKER, '1');
   }).immediate();
 }

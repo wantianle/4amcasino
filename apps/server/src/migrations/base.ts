@@ -4,7 +4,7 @@ import {
   initializePlatformSettings,
   migrateRoomCommissionDefaults,
 } from '../platformSettings.js';
-import { migrateRoomFeatureDefaults, migrateTimeBankFixed } from '../gameplaySettings.js';
+import { migrateRoomFeatureDefaults, migrateMultiRunFixed, migrateTimeBankFixed } from '../gameplaySettings.js';
 import { ensureColumn } from './util.js';
 import { migrateBetRatios } from './betRatios.js';
 
@@ -477,6 +477,9 @@ export function migrate(db: DB): void {
   // hands"); normalize rooms that still store legacy values (and reset their
   // players' banks onto the new epoch) exactly once.
   migrateTimeBankFixed(db);
+  // Multi-run became a fixed product rule (heads-up only, cap 3); normalize
+  // rooms that a host had switched off or given a divergent cap, once.
+  migrateMultiRunFixed(db);
 }
 
 /**

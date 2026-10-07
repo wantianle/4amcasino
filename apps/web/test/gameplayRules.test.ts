@@ -1,7 +1,8 @@
 // Unit guards for the gameplay-ux lane: the bomb-pot ante is a free whole-BB
 // number now (shared BOMB_POT_ANTE_BB_MIN..MAX, not the old 1/2/3 enum), and
-// the time bank left the gameplay feature set - the table's timer popover owns
-// it, so the dialog must neither count, name, nor write it.
+// both the time bank and multi-run have left the gameplay feature set - the
+// table's timer popover owns the bank, multi-run is a fixed product rule, so
+// the dialog must neither count, name, nor write either.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BOMB_POT_ANTE_BB_MAX, BOMB_POT_ANTE_BB_MIN, DEFAULT_GAMEPLAY_SETTINGS } from '@4am/shared';
 import {
@@ -39,19 +40,23 @@ describe('bomb-pot ante: free numeric range', () => {
   });
 });
 
-describe('time bank is no longer a gameplay-dialog feature', () => {
+describe('time bank and multi-run are no longer gameplay-dialog features', () => {
   it('is excluded from the enabled count and the lobby summary names', () => {
     const allOn = cloneGameplaySettings(DEFAULT_GAMEPLAY_SETTINGS);
     expect(allOn.timeBank.enabled).toBe(true); // still ON in the room's settings
-    // squid + bomb pot + multi-run only - the bank has its own home now
-    expect(enabledFeatureCount(allOn)).toBe(3);
+    expect(allOn.multiRun.enabled).toBe(true); // fixed product rule, always on
+    // squid + bomb pot only - the bank and multi-run have their own homes now
+    expect(enabledFeatureCount(allOn)).toBe(2);
     const names = enabledFeatureNames(allOn);
-    expect(names).toHaveLength(3);
+    expect(names).toHaveLength(2);
     expect(names).not.toContain('计时银行');
+    expect(names).not.toContain('多次发牌');
   });
 
-  it('is never part of the dialog save patch (so a stale copy cannot overwrite the popover)', () => {
+  it('is never part of the dialog save patch (so a stale copy cannot overwrite it)', () => {
     const patch = ownedFeaturePatch(cloneGameplaySettings(DEFAULT_GAMEPLAY_SETTINGS));
-    expect(Object.keys(patch).sort()).toEqual(['bombPot', 'multiRun', 'squid']);
+    expect(Object.keys(patch).sort()).toEqual(['bombPot', 'squid']);
+    expect(patch).not.toHaveProperty('multiRun');
+    expect(patch).not.toHaveProperty('timeBank');
   });
 });

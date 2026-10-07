@@ -79,6 +79,13 @@ export const TUNABLE_DEFAULTS = {
   tableDurFlopStaggerMs: 300,
   winFxMs: 3_800,
   stackLandMs: 1_950,
+  // ---- multi-run choice window (added by the multirun-default lane) --------
+  // Per-stage budget for the heads-up multi-run negotiation: how long the
+  // player behind has to pick 2–3 runs, and how long the player ahead then has
+  // to agree. Overrun (or no answer) falls back to a single run. Published by
+  // GET /api/config (see the `public` spec below) so the window is observable
+  // to clients/deployments, not just server-internal.
+  multiRunChoiceTimeoutMs: 5_000,
 } as const;
 
 export interface TunableSpec {
@@ -256,6 +263,24 @@ export const TUNABLES = [
     max: 60_000,
     public: true,
     describe: 'Delay before the winner stack number reveals (--stack-land-ms).',
+  },
+  // ---- multi-run choice window (added by the multirun-default lane) ---------
+  {
+    key: 'multiRunChoiceTimeoutMs',
+    env: 'MULTIRUN_CHOICE_TIMEOUT_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.multiRunChoiceTimeoutMs,
+    // Positive only: it is handed straight to `setTimeout`, and a 0/negative
+    // value would resolve (or immediately overflow) the choice the instant the
+    // offer appears, turning every negotiation into a one-run fallback.
+    min: 1,
+    // Same `setTimeout` ceiling as the other timer tunables.
+    max: MAX_TIMER_MS,
+    // Public: the requirement is that the 5s choice window is a readable
+    // deployment value, so `/api/config` publishes it alongside the animation
+    // timings. It carries no secret.
+    public: true,
+    describe: 'Multi-run choice/agreement window per stage (ms); timeout = one run.',
   },
 ] as const satisfies readonly TunableSpec[];
 

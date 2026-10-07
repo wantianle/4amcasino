@@ -70,7 +70,9 @@ export interface GameOpts {
   /** How long the run-it-twice vote stays open when everyone is all-in. Each
    *  stage (the behind player's run-count choice, then the ahead player's
    *  agreement) gets this full budget, so a slow-but-valid negotiation can take
-   *  up to 2x. Default `RIT_VOTE_MS` (7.5s per stage). */
+   *  up to 2x. Defaults to the `multiRunChoiceTimeoutMs` tunable (env
+   *  `MULTIRUN_CHOICE_TIMEOUT_MS`, 5s per stage); `RIT_VOTE_MS` is the engine
+   *  fallback when no option is supplied (tests). */
   ritVoteMs?: number;
   /** Pre-betting reconnect grace before a dropped player's hand is aborted
    *  (default `GONE_ABORT_GRACE_MS`). The timer is cancelled on reconnect, so
@@ -228,12 +230,15 @@ export const SHUTDOWN_DRAIN_MS = 3_000;
 export const GONE_ABORT_GRACE_MS = 4_000;
 
 /**
- * How long an all-in run-it-twice offer/vote stays open. Run-it-twice is off by
- * default; when enabled this only bounds the negotiation - it resolves the
- * instant both players respond. Kept short (7.5s) so an ignored offer cannot
- * stall the hand. Overridable via `GameOpts.ritVoteMs`.
+ * How long a heads-up all-in multi-run offer/vote stays open, per stage. Multi-
+ * run is ON by default (a fixed product rule); this only bounds the negotiation
+ * - it resolves the instant the player answers - so an ignored offer cannot
+ * stall the hand. Shares its value with the `multiRunChoiceTimeoutMs` tunable
+ * (env `MULTIRUN_CHOICE_TIMEOUT_MS`): production reads the tunable through
+ * `defaultGameOpts()`, and this constant is the engine fallback for callers that
+ * supply no `GameOpts.ritVoteMs` (tests).
  */
-export const RIT_VOTE_MS = 7_500;
+export const RIT_VOTE_MS = TUNABLE_DEFAULTS.multiRunChoiceTimeoutMs;
 
 /**
  * A known, expected game-level failure (a business rule or a bad client

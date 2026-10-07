@@ -24,6 +24,7 @@ import {
   computePots,
   commissionForPot,
   MAX_TIME_BANK_MS,
+  MULTI_RUN_HEADS_UP_SEATS,
   nextStreet,
   startBombPot,
   startHand,
@@ -3505,7 +3506,10 @@ class Hand {
     const remaining = this.remainingRunoutCount();
     const live = st.seats.filter((s) => !s.folded);
     if (!this.features.multiRun.enabled) return this.finishMultiRun(1, 'disabled');
-    if (live.length !== 2) return this.finishMultiRun(1, 'ineligible');
+    // Fixed product rule: multi-run exists only for a heads-up all-in. A pot
+    // with three or more live players always runs the board exactly once.
+    if (live.length !== MULTI_RUN_HEADS_UP_SEATS)
+      return this.finishMultiRun(1, 'ineligible');
     if (remaining <= 0) return this.finishMultiRun(1, 'ineligible');
     const a = live[0]!;
     const b = live[1]!;
