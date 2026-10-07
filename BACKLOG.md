@@ -29,14 +29,15 @@
 | B5 | C 类其它：`client.ts` / `handProjection.ts` / `RoundTable.tsx` / `TablePage.tsx` / `rooms.ts` | 重构 | 技术债 | 各文件行数；单测绿；浏览器探针通过 | 按 `repo-refactor-plan` §3/§4 边界拆分；旧入口 re-export；协议/布局/时序不变 | 功能 lane 全部合并 |
 | B6 | 同名文件消歧：`equity` / `house` / `pokerHotkeys` | 重构 | 审查 | 同名不同职责文件数（3→0） | 按 plan §2.3 改名 + façade re-export；算法/协议不变 | 暂缓（oracle：收益不够）；功能 lane |
 | B7 | `settlement-refactor.md` S0–B9c 分批迁移 | 重构 | 审查 | reject 数；duplicate settle / 事务不变量测试通过数 | 按 §6.2 批次独立提交回滚；invariants I1–I10 全绿；M/S/B 不混提 | 功能 lane 合并 + 基线冻结 |
-| B8 | DROPS 掉线恢复（deal-time escrow / 阈值恢复） | 改进 | 事故 | 掉线致 hand abort 率（⚠️ 需先补基线） | 设计落地；2+ live 且 board 未完成时不再必然 abort；fold-key 与隐秘边界不变 | 设计评审 |
+| B8a | **abort 埋点**（掉线恢复的基线上游） | 清理 | 编排者 | 结构化 abort 日志行数 > 0；**不含**任何日志刷屏（只在 abort 打 1 行） | 在每个 abort 调用点加一行 `{event:'hand_abort', reason, handId, seatsLive, boardComplete, msSinceDisconnect}`；`reason` 能区分 `player_disconnected` / `shutdown` / `operator` | 无（可与 A2 并行） |
+| B8b | DROPS 掉线恢复（deal-time escrow / 阈值恢复） | 改进 | 事故 | 掉线致 hand abort 率（**基线由 B8a 提供**；无基线不开工） | 设计落地；2+ live 且 board 未完成时不再必然 abort；fold-key 与隐秘边界不变 | **B8a 跑出基线** 后 + 设计评审 |
 | B9 | `tools/visual` 预览归位（`table-skins` / `table-faces` 移出 `docs/qa`） | 清理 | 编排者 | `docs/qa` 中 preview app 数（2→0）；`tools/` 存在 | 迁移并更新 README + Vite root/import；`check:links` 通过 | 无 |
 | B10 | gates 手机三跑 3 FAIL | 改进 | 审查 | gate 矩阵 PASS 数（当前 3 FAIL） | 3 个 FAIL 各自修复或明确豁免并注释；矩阵全 PASS 或全部有理由 | 无 |
 | B11 | 平台费率歧义 | 改进 | 审查 | 检查脚本 violations（→0） | `check-commission-rate-invariant.mjs` 在真实 DB 上 0 violation；决定是否改 SQL/加 MIN/MAX 并记录 | 无 |
 | B12 | HUD 两个补强测试（PlayerHud 结算重拉 / RoundTable closeHud） | 改进 | 审查 | 回归用例数（0→2） | 两测试落地并覆盖对应行为；非阻断 | 无 |
 | B13 | 防御性编程收尾（agent-core 2 处 fallback） | 清理 | 审查 | fallback 处数（2→0） | 2 处删除或标注为有意；A 级审计维持 0 项 | 无 |
 | B14 | 短筹码路径无场景 | 改进 | 审查 | 覆盖短筹码/破产线的端到端场景数（0→≥1） | 至少 1 个短筹码路径场景落地 | 无 |
-| B15 | `docs/qa` 体积（8.5M） | 清理 | 技术债 | 目录体积 / 文件数 | 按期清理旧批次并保留被引用 fixture；**不 gitignore**（被引用） | 无 |
+| B15 | `docs/qa` 证据时效性（体积 8.5M 不是问题） | 清理 | 技术债 | **被引用的图片路径缺失数 = 0**（可自动检查）+ 非当前批次的旧 before/after 已清 | 加一个 `check`（扫描 `docs/qa/**/*.json` 与 README 中的路径，验证文件存在）；删除已被新结论取代的旧批次目录；**不 gitignore**（被引用）；**不再做有损压缩**（用户已否决） | 无 |
 | B16 | `positiveInt` 重复定义 | 清理 | 技术债 | 定义处数（2→1） | `botPolicy.ts` / `botSupervisor.ts` 收敛到单一实现；server 测试绿 | 无 |
 | B17 | agent-core 生产侧 `clamp01` 三副本 | 清理 | 技术债 | 生产侧定义处数（3→1） | 收敛到单一来源；core 测试绿；fixture 副本保留（刻意 oracle） | 无 |
 | B18 | `TODO(rules-v2)`：`seatOrder` 迁移 | 清理 | 技术债 | 该 TODO 处数（2→0） | 所有 caller 填充 `DecisionView.seatOrder`；删 TODO + baseline fallback | rules-v2 |
