@@ -5,8 +5,12 @@
  *
  * Two post-hand presentations exist (f03ada3 phase-1 table refactor):
  *  - a normal result is announced in a screen-reader live region, and the payoff
- *    is on the cards/winner tag, so there is NO dismissible pill on the felt;
- *  - a voided hand still renders the recap pill with its Dismiss result button.
+ *    is on the cards/winner tag, so there is NO dismissible recap pill on the
+ *    felt; the hand's rake is the ONE figure shown on screen at that instant, as
+ *    a small non-dismissible chip (RakeNotice) that leaves with the result
+ *    window;
+ *  - a voided hand still renders the recap pill with its Dismiss result button
+ *    (and no rake chip).
  * This harness drives both and checks the Deal control stays usable meanwhile.
  */
 import assert from 'node:assert/strict';
@@ -179,9 +183,11 @@ try {
             head: 'qa',
             commission: 2,
             stacks: s.room.players.map((p) => ({ seat: p.seat, stack: 2000 })),
+            // Winner +878, eight losers -110: sum(deltas) === -commission (-2),
+            // the wsProtocol invariant the rake chip derives its figure from.
             deltas: s.room.players.map((p) => ({
               seat: p.seat,
-              delta: p.seat === winner ? 880 : -110,
+              delta: p.seat === winner ? 878 : -110,
             })),
           },
         },
@@ -218,23 +224,40 @@ try {
         return list;
       };
       const dismiss = page.getByRole('button', { name: 'Dismiss result', exact: true });
+      const rakeNotice = page.getByTestId('rake-notice');
       const winStatus = page.locator('p[role="status"][aria-live="polite"]');
       // A normal result is no longer a dismissible pill on the felt: TablePage
-      // announces the winners in a screen-reader live region and shows the payoff
-      // on the cards themselves. Only a voided hand still renders the recap pill
-      // with its Dismiss result button. `resultShown()` is the one marker both
-      // kinds share, so the Escape assertions below stay meaningful for each.
+      // announces the winners in a screen-reader live region, shows the payoff
+      // on the cards themselves, and puts the hand's rake on a small
+      // non-dismissible chip for the instant the result window is up. Only a
+      // voided hand still renders the recap pill with its Dismiss result
+      // button. `resultShown()` is the one marker both kinds share, so the
+      // Escape assertions below stay meaningful for each.
       const resultShown = async () =>
         kind === 'abort'
           ? (await visible(dismiss)).length === 1
-          : (await winStatus.count()) === 1 && (await winStatus.innerText()).includes('+880');
+          : (await winStatus.count()) === 1 && (await winStatus.innerText()).includes('+878');
       assert.ok(await resultShown(), `${viewport.width}/${kind}: post-hand result is on screen`);
-      if (kind !== 'abort')
+      if (kind !== 'abort') {
         assert.equal(
           (await visible(dismiss)).length,
           0,
           'a normal result renders no dismissible recap',
         );
+        // The new behaviour: commission 2 (>0) is visible IMMEDIATELY, in this
+        // result window - not only in the next hand's last-hand strip.
+        const rakes = await visible(rakeNotice);
+        assert.equal(rakes.length, 1, `${viewport.width}/${kind}: one visible rake chip`);
+        assert.match(
+          await rakes[0].innerText(),
+          /Rake\s+2/,
+          `${viewport.width}/${kind}: rake chip shows the hand's -Σdeltas`,
+        );
+      } else {
+        // A voided hand keeps the ResultFlash pill untouched and never shows a
+        // rake (there is no settled pot to rake).
+        assert.equal((await visible(rakeNotice)).length, 0, 'aborted hand shows no rake');
+      }
       const buttons = await visible(page.getByRole('button', { name: /^(Deal hand|Start hand)$/ }));
       assert.equal(
         buttons.length,

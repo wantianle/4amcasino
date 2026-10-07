@@ -1,9 +1,11 @@
 // Hand-history inline detail (HandsPage expand + shared/replay.ts summarizeHand
-// / summaryActionLabel) and the table result flash (TablePage / ResultFlash).
+// / summaryActionLabel), the table result flash (TablePage / ResultFlash) and
+// the end-of-hand rake chip (RakeNotice).
 // Glossary per docs/zh-i18n.md §2.1: 底牌 / 公共牌 / 底池 / 翻牌前·翻牌·转牌·河牌.
-// 抽水: the task's wording for the rake line in the hand recap. The ledger and
-// the table commission badges keep 台费 (house cut, §2.1) - same money, and the
-// two words never appear side by side on one screen. Seat word: N 号位.
+// 抽水: the wording for the rake line both on the just-ended hand's chip and in
+// the last-hand recap (LastHandStrip). The ledger and the table commission
+// badges keep 台费 (house cut, §2.1) - same money, and the two words never
+// appear side by side on one screen. Seat word: N 号位.
 // Reused keys owned elsewhere: 'POT {n}' / 'Run 2' (replay), 'Community cards'
 // (landing), 'ran it twice' / 'showed after folding' (table), 'Hand history' /
 // 'Seat {n}' / 'blinds {sb}/{bb}' / 'Dealer button' / 'voided' / 'Dismiss result'.

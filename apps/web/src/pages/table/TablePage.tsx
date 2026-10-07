@@ -72,7 +72,8 @@ import { bbValue } from '../../shared/lib/bb.ts';
 import { BombPotIntro } from '../../widgets/table/BombPotIntro.tsx';
 import { ribbonFitsRail } from '../../widgets/table/geometry.ts';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
-import { LastHandStrip } from '../../widgets/table/LastHandStrip.tsx';
+import { LastHandStrip, rakeTakenOf } from '../../widgets/table/LastHandStrip.tsx';
+import { RakeNotice } from '../../widgets/table/RakeNotice.tsx';
 import { ResultFlash } from '../../widgets/table/ResultFlash.tsx';
 import { TableDock } from '../../widgets/table/TableDock.tsx';
 import { TableQuickControls } from '../../widgets/table/TableQuickControls.tsx';
@@ -843,6 +844,10 @@ export function TablePage() {
   // (see WinnerFx / RoundTable). This pill remains for voided hands. The
   // full story lives in the last-hand strip and in hand history (出牌记录).
   const resultWinners = (hand.result?.deltas ?? []).filter((d) => d.delta > 0);
+  // The rake this hand took, shown for the instant the result window is up (not
+  // the next hand): the very same `-sum(deltas)` figure the last-hand strip
+  // reads, so the two surfaces can never disagree.
+  const resultRake = hand.result ? rakeTakenOf(hand.result.deltas) : 0;
   const showdownCollectors = hand.showdown
     ? (hand.showdown.multiRun?.awards.flat() ?? hand.showdown.runTwice?.awards.flat() ?? hand.showdown.awards)
         .filter((a) => a.amount > 0)
@@ -2032,9 +2037,21 @@ export function TablePage() {
           </div>
         )}
         {showResult && !hand.abort && hand.result && (
-          <p className="sr-only" role="status" aria-live="polite">
-            {winnersLine}
-          </p>
+          <>
+            <p className="sr-only" role="status" aria-live="polite">
+              {winnersLine}
+            </p>
+            {/* Rake for the hand that just ended, at the moment it ends - the
+                one figure the player asked to see here instead of waiting for
+                the next hand's strip. Deliberately not a recap: a single muted
+                chip that leaves with this result window (RakeNotice renders
+                nothing for an unraked hand). */}
+            {resultRake > 0 && (
+              <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4">
+                <RakeNotice amount={resultRake} />
+              </div>
+            )}
+          </>
         )}
         {floats.map((reaction) => (
           <span
