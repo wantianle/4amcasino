@@ -23,6 +23,7 @@ const env = {
   ...process.env,
   VIEWS: 'phone',
   VIEWPORTS: '320x568,390x844',
+  NINE_ONLY: '1',
   UAT_OUTPUT: output,
 };
 
@@ -53,11 +54,18 @@ for (const result of report.results) {
     podPairContentPx2: result.podPairPx2 === 0,
     clusterOverPodContentPx2: result.semantic.clusterOverPodContentPx2 === 0,
     controlsUsable:
-      result.scene.faces === 0 ||
-      (result.semantic.controls.visible &&
-        result.semantic.controls.clickableVisible > 0 &&
-        result.semantic.controls.allVisible),
+      result.initialControls.visible &&
+      result.initialControls.clickableCount > 0 &&
+      (result.initialControls.allVisible || result.initialControls.scrollable) &&
+      result.postScrollControlTrials.length === result.initialControls.clickableCount &&
+      result.postScrollControlTrials.every((trial) => trial.pass),
     boardCoverage: result.scene.faces === 0 || (result.boardCov !== null && result.boardCov >= 0.9),
+    primaryCardPixels:
+      result.scene.faces === 0 ||
+      (result.semantic.primaryCardMinWidth !== null &&
+        result.semantic.primaryCardMinHeight !== null &&
+        result.semantic.primaryCardMinWidth >= 20 &&
+        result.semantic.primaryCardMinHeight >= 28),
     additionalRuns:
       result.scene.faces < 15 ||
       (result.semantic.runCoverage.length >= 3 &&
@@ -78,10 +86,10 @@ for (const result of report.results) {
       result.scene.faces === 0 ||
       (m.safeZoneOverlapPx2.length > 0 && m.safeZoneOverlapPx2.every((area) => area === 0)),
     preflopDeck:
-      result.scene.faces === 0 &&
-      m.preflopDeckPresent === true &&
-      m.preflopDeckVisible === false &&
-      m.preflopDeckLifecycle === 'present-hidden-source',
+      result.scene.faces !== 0 ||
+      (m.preflopDeckPresent === true &&
+        m.preflopDeckVisible === false &&
+        m.preflopDeckLifecycle === 'present-hidden-source'),
   };
   console.log(
     JSON.stringify(
@@ -103,6 +111,8 @@ for (const result of report.results) {
           safeZoneOverlapPx2: m.safeZoneOverlapPx2,
           heroBoardOverlapPx2: result.heroBoardOverlapPx2,
           semantic: result.semantic,
+          initialControls: result.initialControls,
+          postScrollControlTrials: result.postScrollControlTrials,
         },
         checks,
       },

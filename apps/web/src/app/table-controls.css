@@ -350,9 +350,9 @@ a.table-dock-chip {
 @media (max-width: 767px) and (orientation: portrait) {
   .table-console {
     min-height: 0;
-    height: min(38vh, 17rem);
-    max-height: min(38vh, 17rem);
-    flex: 0 0 auto;
+    height: auto;
+    max-height: 6rem;
+    flex: 0 1 auto;
     overflow-y: auto;
     overscroll-behavior: contain;
     align-items: flex-start;
@@ -364,6 +364,11 @@ a.table-dock-chip {
   }
   .table-console .table-cluster--phone {
     width: min(17rem, calc(100vw - var(--table-phone-dock-w) - 0.25rem));
+  }
+}
+@media (max-width: 767px) and (orientation: portrait) and (max-height: 600px) {
+  .table-console {
+    max-height: 3rem;
   }
 }
 @media (orientation: landscape) and (max-height: 479px) {

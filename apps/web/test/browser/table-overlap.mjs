@@ -884,7 +884,7 @@ try {
         // Semantic content excludes transparent wrapper space. Keep shell-area
         // diagnostics separate; never relabel shell intersection as content.
         const contentSelector =
-          '.table-avatar-ring, [data-card-size], .table-pname, .table-pstack, .table-paction, .table-pstrength, .table-pstate, .table-pill, button';
+          '.table-avatar-ring, [data-card-size], .table-pname, .table-pstack, .table-paction, .table-pstrength, .table-pstate, .table-pill, .table-check-feedback, .table-timer-track, .table-role-badge, .table-pod-pills > *, button';
         const content = pods.flatMap((p, owner) =>
           [...p.root.querySelectorAll(contentSelector)]
             .map((el) => ({ owner, cls: el.className, r: R(el) }))
@@ -894,11 +894,29 @@ try {
           const hit = inter(a, b);
           return hit ? area(hit) : 0;
         };
+        const unionArea = (rects) => {
+          const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.w]))].sort((a, b) => a - b);
+          let sum = 0;
+          for (let i = 1; i < xs.length; i++) {
+            const spans = rects
+              .filter((r) => r.x < xs[i] && r.x + r.w > xs[i - 1])
+              .map((r) => [r.y, r.y + r.h])
+              .sort((a, b) => a[0] - b[0]);
+            let end = -Infinity;
+            let height = 0;
+            for (const [lo, hi] of spans) {
+              height += Math.max(0, hi - Math.max(lo, end));
+              end = Math.max(end, hi);
+            }
+            sum += (xs[i] - xs[i - 1]) * height;
+          }
+          return sum;
+        };
         const clusterContentHits = clusterR
           ? content.map((c) => ({ ...c, px2: hitArea(c.r, clusterR) })).filter((c) => c.px2 > 0)
           : [];
         const clusterOverPodContentPx2 = clusterR
-          ? clusterContentHits.reduce((n, c) => n + c.px2, 0)
+          ? unionArea(content.map((c) => inter(c.r, clusterR)).filter(Boolean))
           : null;
         const clusterOverPodBgPx2 = clusterR
           ? pods.reduce((n, p, owner) => {
@@ -917,11 +935,14 @@ try {
           : null;
         const boardFaces = [...(col?.querySelectorAll('[data-card-size][role="img"]') ?? [])];
         const runRows = [
-          ...new Set(
+          ...new Map(
             boardFaces
-              .map((face) => face.closest('.table-dealt-card')?.parentElement)
-              .filter(Boolean),
-          ),
+              .map((face) => [
+                face.closest('[data-table-board-run]')?.getAttribute('data-table-board-run'),
+                face.closest('[data-table-board-run]'),
+              ])
+              .filter(([key, row]) => key !== null && row),
+          ).values(),
         ];
         const statusEls = [
           ...(col?.querySelectorAll(
@@ -959,10 +980,21 @@ try {
             0,
           ),
         }));
+        const primaryRow = document.querySelector('[data-table-board-run="0"]');
+        const primaryCardRects = primaryRow
+          ? [...primaryRow.querySelectorAll('[data-card-size][role="img"]')].map(R)
+          : [];
         const semantic = {
           clusterOverPodBgPx2,
           clusterOverPodContentPx2,
           clusterContentHits,
+          primaryCardRects,
+          primaryCardMinWidth: primaryCardRects.length
+            ? Math.min(...primaryCardRects.map((r) => r.w))
+            : null,
+          primaryCardMinHeight: primaryCardRects.length
+            ? Math.min(...primaryCardRects.map((r) => r.h))
+            : null,
           runCoverage,
           statusHits,
           statusCollisionPx2: statusHits.reduce((sum, h) => sum + h.px2, 0),
@@ -986,7 +1018,7 @@ try {
           clickableCount: controlButtons.length,
           clickableVisible: controlButtons.filter((el) => {
             const r = R(el);
-            return r.w > 0 && r.h > 0;
+            return r.w > 0 && r.h > 0 && clusterR && !!inter(r, clusterR);
           }).length,
           allVisible:
             controlButtons.length > 0 &&
@@ -1089,6 +1121,8 @@ try {
         }
       }
       results[results.length - 1].controlTrials = controlTrials;
+      results[results.length - 1].initialControls = results[results.length - 1].semantic.controls;
+      results[results.length - 1].postScrollControlTrials = controlTrials;
       await ctx.close();
     }
   }
