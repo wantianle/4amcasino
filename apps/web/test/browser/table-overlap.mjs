@@ -32,9 +32,9 @@ const chromium = pw.chromium ?? pw.default?.chromium;
 const base = process.env.BASE_URL || 'http://localhost:5173';
 const out = process.env.UAT_OUTPUT || '/tmp/4am-table-overlap';
 await mkdir(out, { recursive: true });
-const sharedPath = fileURLToPath(
-  new URL('../../../../packages/shared/src/index.ts', import.meta.url),
-);
+const sharedPath =
+  process.env.SHARED_PATH ||
+  fileURLToPath(new URL('../../../../packages/shared/src/index.ts', import.meta.url));
 
 const MY_USER = 2;
 const LOCALE = process.env.LOCALE || 'zh-CN';
@@ -141,13 +141,18 @@ const browser = await chromium.launch({
 const errors = [];
 const results = [];
 try {
-  for (const sc of SCENARIOS) {
+  for (const sc of SCENARIOS.filter((s) => !process.env.NINE_ONLY || s.count === 9)) {
     const room = makeRoom(sc.count, sc.mySeat);
     for (const vp of VIEWPORTS) {
       const ctx = await browser.newContext({
         viewport: { width: vp.width, height: vp.height },
         reducedMotion: 'reduce',
       });
+      if (process.env.PIXEL_FIXED === '1') {
+        await ctx.addInitScript(() => {
+          Date.now = () => 1800000000000;
+        });
+      }
       await ctx.addInitScript(
         (uid) =>
           localStorage.setItem(
@@ -725,7 +730,14 @@ try {
               .filter((b) => b.closest('.pointer-events-none'))
               .map(R),
           );
-        const clusterR = cluster ? R(cluster) : null;
+        // A portrait console is a scrollport. Its off-screen descendants are
+        // not painted over seats; measure the clipped, visible cluster only.
+        const consoleEl = cluster?.closest('.table-console');
+        const clusterR = cluster
+          ? consoleEl
+            ? inter(R(cluster), R(consoleEl))
+            : R(cluster)
+          : null;
         const podBoxes = podSubtreeRects().filter((r, i) => i % 2 === 0);
         let clusterVsPods = 0;
         const clusterCovered = [];
@@ -869,6 +881,120 @@ try {
           deckStyle?.display !== 'none' &&
           deckStyle?.visibility !== 'hidden' &&
           deckStyle?.opacity !== '0';
+        // Semantic content excludes transparent wrapper space. Keep shell-area
+        // diagnostics separate; never relabel shell intersection as content.
+        const contentSelector =
+          '.table-avatar-ring, [data-card-size], .table-pname, .table-pstack, .table-paction, .table-pstrength, .table-pstate, .table-pill, button';
+        const content = pods.flatMap((p, owner) =>
+          [...p.root.querySelectorAll(contentSelector)]
+            .map((el) => ({ owner, cls: el.className, r: R(el) }))
+            .filter(({ r }) => r.w > 0 && r.h > 0),
+        );
+        const hitArea = (a, b) => {
+          const hit = inter(a, b);
+          return hit ? area(hit) : 0;
+        };
+        const clusterContentHits = clusterR
+          ? content.map((c) => ({ ...c, px2: hitArea(c.r, clusterR) })).filter((c) => c.px2 > 0)
+          : [];
+        const clusterOverPodContentPx2 = clusterR
+          ? clusterContentHits.reduce((n, c) => n + c.px2, 0)
+          : null;
+        const clusterOverPodBgPx2 = clusterR
+          ? pods.reduce((n, p, owner) => {
+              const shell = inter(p.r, clusterR);
+              return (
+                n +
+                (shell
+                  ? area(shell) -
+                    unionInter(
+                      shell,
+                      content.filter((c) => c.owner === owner).map((c) => c.r),
+                    )
+                  : 0)
+              );
+            }, 0)
+          : null;
+        const boardFaces = [...(col?.querySelectorAll('[data-card-size][role="img"]') ?? [])];
+        const runRows = [
+          ...new Set(
+            boardFaces
+              .map((face) => face.closest('.table-dealt-card')?.parentElement)
+              .filter(Boolean),
+          ),
+        ];
+        const statusEls = [
+          ...(col?.querySelectorAll(
+            '.table-run-chip, .table-outcome, .table-squid-summary, .table-ribbon, .table-prompt',
+          ) ?? []),
+        ];
+        const runCoverage = runRows.map((row, run) => {
+          const faces = [...row.querySelectorAll('[data-card-size][role="img"]')].map(R);
+          const foreign = [
+            ...content.map((c) => c.r),
+            ...(clusterR ? [clusterR] : []),
+            ...statusEls.filter((s) => !row.contains(s)).map(R),
+          ];
+          const total = faces.reduce((sum, r) => sum + area(r), 0);
+          const covered = faces.reduce((sum, r) => sum + unionInter(r, foreign), 0);
+          const otherRunsPx2 = faces.reduce(
+            (sum, r) =>
+              sum +
+              boardFaces.filter((f) => !row.contains(f)).reduce((v, f) => v + hitArea(r, R(f)), 0),
+            0,
+          );
+          return {
+            run,
+            faceCount: faces.length,
+            coverage: total ? (total - covered) / total : null,
+            otherRunsPx2,
+            faces,
+          };
+        });
+        const statusHits = statusEls.map((el) => ({
+          cls: el.className,
+          r: R(el),
+          px2: [...content.map((c) => c.r), ...boardFaces.map(R)].reduce(
+            (sum, r) => sum + hitArea(R(el), r),
+            0,
+          ),
+        }));
+        const semantic = {
+          clusterOverPodBgPx2,
+          clusterOverPodContentPx2,
+          clusterContentHits,
+          runCoverage,
+          statusHits,
+          statusCollisionPx2: statusHits.reduce((sum, h) => sum + h.px2, 0),
+          contentPairPx2: content.reduce(
+            (sum, a, i) =>
+              sum +
+              content
+                .slice(i + 1)
+                .filter((b) => b.owner !== a.owner)
+                .reduce((n, b) => n + hitArea(a.r, b.r), 0),
+            0,
+          ),
+        };
+        const controlButtons = cluster
+          ? [...cluster.querySelectorAll('button:not([disabled]), input:not([disabled])')]
+          : [];
+        semantic.controls = {
+          nodePresent: !!cluster,
+          visible: !!cluster && !!clusterR && clusterR.w > 0 && clusterR.h > 0,
+          scrollable: !!cluster && cluster.scrollHeight > cluster.clientHeight,
+          clickableCount: controlButtons.length,
+          clickableVisible: controlButtons.filter((el) => {
+            const r = R(el);
+            return r.w > 0 && r.h > 0;
+          }).length,
+          allVisible:
+            controlButtons.length > 0 &&
+            controlButtons.every((el) => {
+              const r = R(el);
+              return r.w > 0 && r.h > 0;
+            }),
+        };
         const gate = {
           seatCount: pods.length,
           seatCountPass: pods.length === 9,
@@ -920,6 +1046,7 @@ try {
           clusterRect: clusterR,
           dockRects: dockRects.slice(0, 10),
           gate,
+          semantic,
           l3Metrics: {
             rimRatio: rimRect ? +(rimRect.h / rimRect.w).toFixed(4) : null,
             avatarPairPx: +avatarPairPx.toFixed(2),
@@ -947,6 +1074,21 @@ try {
         `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx2}px² clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
       );
       await page.screenshot({ path: `${out}/probe-${sc.name}-${vp.width}x${vp.height}.png` });
+      const controls = page.locator(
+        '.table-console .table-cluster button:not([disabled]), .table-console .table-cluster input:not([disabled])',
+      );
+      const controlTrials = [];
+      for (let index = 0; index < (await controls.count()); index++) {
+        try {
+          // Trial performs Playwright's visibility, enabled and receives-events
+          // checks and scrolls into view without placing a bet.
+          await controls.nth(index).click({ trial: true, timeout: 1000 });
+          controlTrials.push({ index, pass: true });
+        } catch (error) {
+          controlTrials.push({ index, pass: false, reason: String(error).split('\n')[0] });
+        }
+      }
+      results[results.length - 1].controlTrials = controlTrials;
       await ctx.close();
     }
   }

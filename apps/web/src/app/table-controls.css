@@ -147,11 +147,7 @@
   color: var(--table-gold-hi);
 }
 .table-btn--raise {
-  background: linear-gradient(
-    var(--table-gold-pale),
-    var(--table-gold) 55%,
-    var(--table-gold-mid)
-  );
+  background: linear-gradient(var(--table-gold-pale), var(--table-gold) 55%, var(--table-gold-mid));
   color: var(--table-gold-ink);
   box-shadow: var(--shadow-table-gold-cta);
 }
@@ -218,11 +214,7 @@
   font-size: 15px;
   letter-spacing: 0.12em;
   color: var(--table-gold-ink);
-  background: linear-gradient(
-    var(--table-gold-pale),
-    var(--table-gold) 55%,
-    var(--table-gold-mid)
-  );
+  background: linear-gradient(var(--table-gold-pale), var(--table-gold) 55%, var(--table-gold-mid));
   box-shadow: var(--shadow-table-gold-cta);
 }
 .table-deal-btn:hover {
@@ -354,6 +346,25 @@ a.table-dock-chip {
   --table-phone-hit: 2.25rem;
   --table-phone-dock-w: 9.25rem;
   width: min(17rem, calc(100vw - var(--table-phone-dock-w)));
+}
+@media (max-width: 767px) and (orientation: portrait) {
+  .table-console {
+    min-height: 0;
+    height: min(38vh, 17rem);
+    max-height: min(38vh, 17rem);
+    flex: 0 0 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    align-items: flex-start;
+  }
+  .table-console .table-cluster-host,
+  .table-console .table-cluster--phone {
+    max-height: none;
+    overflow: visible;
+  }
+  .table-console .table-cluster--phone {
+    width: min(17rem, calc(100vw - var(--table-phone-dock-w) - 0.25rem));
+  }
 }
 @media (orientation: landscape) and (max-height: 479px) {
   .table-cluster--phone {

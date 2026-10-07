@@ -51,7 +51,22 @@ for (const result of report.results) {
     avatarPair: m.avatarPairPx === 0,
     textRectPair: m.textRectPairPx === 0,
     podPairContentPx2: result.podPairPx2 === 0,
+    clusterOverPodContentPx2: result.semantic.clusterOverPodContentPx2 === 0,
+    controlsUsable:
+      result.scene.faces === 0 ||
+      (result.semantic.controls.visible &&
+        result.semantic.controls.clickableVisible > 0 &&
+        result.semantic.controls.allVisible),
     boardCoverage: result.scene.faces === 0 || (result.boardCov !== null && result.boardCov >= 0.9),
+    additionalRuns:
+      result.scene.faces < 15 ||
+      (result.semantic.runCoverage.length >= 3 &&
+        result.semantic.runCoverage
+          .slice(1)
+          .every((run) => run.coverage !== null && run.coverage >= 0.9 && run.otherRunsPx2 === 0)),
+    statusLayer:
+      result.scene.faces < 15 ||
+      (result.semantic.statusHits.length > 0 && result.semantic.statusCollisionPx2 === 0),
     heroBoard: result.heroBoardOverlapPx2 === 0,
     viewport: result.clusterVisible !== null && result.clusterVisible >= 0.99,
     hiddenShowdownHero: m.modes.hidden + m.modes.showdown + m.modes.hero === result.pods,
@@ -87,6 +102,7 @@ for (const result of report.results) {
           fanDiagnostics: m.fanDiagnostics,
           safeZoneOverlapPx2: m.safeZoneOverlapPx2,
           heroBoardOverlapPx2: result.heroBoardOverlapPx2,
+          semantic: result.semantic,
         },
         checks,
       },
