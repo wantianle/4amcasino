@@ -150,11 +150,24 @@ export const COLD_3BET_COLD: RangeEntry[] = [
 
 /**
  * Flat-call ranges versus a single open, keyed by the hero's own group. Empty
- * for `EP`/`BB`: from EP a cold call is rare (3-bet or fold), and the BB is
- * handled by `BB_DEFEND`.
+ * only for `BB`, which is handled by `BB_DEFEND`.
+ *
+ * `EP` is the earliest non-blind defender (in a 9-max game only UTG1 can face
+ * an open, since UTG acts first). It used to be empty — a data hole that made
+ * the engine "3-bet or fold" versus every early open. It is now a deliberate
+ * *subset* of the `MP` flat range, tightened because the hero still has the
+ * whole field behind:
+ *
+ *   - basis: the Rust `MP-vs-open-UTG` solve (`charts_rust_gg.json`), the
+ *     closest positional analog (2nd-earliest 6-max seat). Its meaningful flats
+ *     are `55`, `KJs`, `AJo`, `AQo`; `66-99`/`AQo+` it mostly 3-bets, but our
+ *     `COLD_3BET_VALUE.EP` bracket is only `QQ+`/`AK`, so the medium pairs and
+ *     `ATs+` are carried as flats instead of being folded outright.
+ *   - it drops `KQs` (that class is our `COLD_3BET_BLUFF.EP` anchor) and the
+ *     `JTs`/`T9s` tail of `MP`, so it stays strictly tighter than `MP`.
  */
 export const CALL_VS_OPEN: Record<PositionGroup, string> = {
-  EP: '',
+  EP: '55-JJ, ATs+, KJs, QJs, AJo, AQo',
   MP: '55-JJ, ATs+, KQs, KJs, QJs, JTs, T9s, AQo',
   LP: '22-JJ, A2s+, KTs+, QTs+, JTs, T9s, 98s, AQo+, KJo+',
   SB: '22-JJ, A2s+, KTs+, QTs+, JTs, T9s, 98s, AQo+',
