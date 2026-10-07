@@ -989,8 +989,22 @@ export function RoundTable({
                               size={isMe ? 'md' : 'sm'}
                               className={cn(
                                 'rounded-full',
-                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
-                                !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                                // gg-polish #3 (slim portrait prototype):
+                                // desktop rides the mockup's portrait head for
+                                // EVERY seated player (was hero 48 / opp 40
+                                // in the sideways plaque). 64, not the
+                                // mockup's 74: at 9 seats the ±40° ring points
+                                // sit 178 design px apart and a 74 head makes
+                                // the plaque 134 tall - the strength+pills
+                                // stack under it then lands on the NEIGHBOUR'S
+                                // plaque (measured podPair 881px², seat 6↔7).
+                                // 64 keeps the worst pair ≥3px clear AND the
+                                // plaque ≤ ~124 inside the podWorstPx=150
+                                // budget. Phone keeps its compact tiers (hero
+                                // 42 / opp 32) - the phone ring has no room
+                                // for any portrait head.
+                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[64px]! w-[64px]!'),
+                                !isMe && !narrow && 'h-[64px]! w-[64px]!',
                               )}
                             />
                           </button>
@@ -1003,8 +1017,10 @@ export function RoundTable({
                               size={isMe ? 'md' : 'sm'}
                               className={cn(
                                 'rounded-full',
-                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[48px]! w-[48px]!'),
-                                !isMe && !narrow && 'h-[40px]! w-[40px]!',
+                                // gg-polish #3: desktop portrait head, see the
+                                // 64-not-74 note on the HUD-button branch.
+                                isMe && (narrow ? 'h-[42px]! w-[42px]!' : 'h-[64px]! w-[64px]!'),
+                                !isMe && !narrow && 'h-[64px]! w-[64px]!',
                               )}
                             />
                           </div>
@@ -1120,7 +1136,19 @@ export function RoundTable({
                           )}
                         </div>
                         <CheckFeedback action={lastAction} handId={handId} />
-                        {strength && <div className="table-pstrength">{strength}</div>}
+                        {/* gg-polish #3 (slim portrait): the strength line
+                            leaves the plaque on desktop (it would make the
+                            worst plaque ~140 and its pill row then reaches
+                            into the neighbouring seat's card — the 9-seat
+                            ring gives plates + anything under them only
+                            ~30 design px of pitch). It rides the pills row
+                            instead (below, absolutely, ONE row high). The
+                            phone keeps its in-flow line inside the compact
+                            plaque - its ring never hangs a pill row into a
+                            neighbour at these heights. */}
+                        {narrow && strength && (
+                          <div className="table-pstrength">{strength}</div>
+                        )}
                         {(p.broke || !p.connected || p.sittingOut) && (
                           <div
                             className={cn(
@@ -1143,8 +1171,11 @@ export function RoundTable({
                       </div>
                     </div>
                     {/* pills ride BELOW the unit (rev-3); wrapped so the
-                            phone rule can collapse them to one capped row */}
-                    {(p.isToAct ||
+                            phone rule can collapse them to one capped row.
+                            gg-polish #3: on desktop the strength chip joins
+                            this row (its plaque has no spare line for it). */}
+                    {(!narrow && strength) ||
+                      p.isToAct ||
                       (p.won && !p.isToAct) ||
                       (readyCheck &&
                         !p.won &&
@@ -1152,8 +1183,13 @@ export function RoundTable({
                         readyCheck.eligible.includes(p.userId)) ||
                       (handLive && p.inHand && !p.folded && p.bankMs !== undefined) ||
                       p.pendingBuy > 0 ||
-                      (!!p.bot && p.bot.status !== 'running')) && (
+                      (!!p.bot && p.bot.status !== 'running') ? (
                       <div className="table-pod-pills">
+                        {!narrow && strength && (
+                          <span className="table-pill table-pod-strength" title={strength}>
+                            {strength}
+                          </span>
+                        )}
                         {p.isToAct && (
                           <span
                             className={cn(
@@ -1225,7 +1261,7 @@ export function RoundTable({
                           </span>
                         )}
                       </div>
-                    )}
+                    ) : null}
                     {canKick && !isMe && (
                       <button
                         onClick={() => {

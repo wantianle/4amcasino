@@ -71,7 +71,7 @@ import { RoundTable } from '../../widgets/table/RoundTable.tsx';
 import { DealCard } from '../../widgets/table/DealCard.tsx';
 import { ChipStack } from '../../widgets/table/ChipStack.tsx';
 import { goldFive } from '../../widgets/table/goldFive.ts';
-import { bbValue } from '../../shared/lib/bb.ts';
+import { bbValue, fmtBB } from '../../shared/lib/bb.ts';
 import { BombPotIntro } from '../../widgets/table/BombPotIntro.tsx';
 import { ribbonFitsRail } from '../../widgets/table/geometry.ts';
 import { BankControls } from '../../widgets/table/BankControls.tsx';
@@ -98,7 +98,6 @@ import { holeStrengthLabel } from './holeStrengthLabel.ts';
 import { useUrgentAt } from './hooks/useUrgentAt.ts';
 import { useViewportSize } from './hooks/useViewportSize.ts';
 import { useEquityBubbles } from './hooks/useEquityBubbles.ts';
-import { CountdownChip } from './ui/CountdownChip.tsx';
 import { RunTwicePrompt } from './ui/RunTwicePrompt.tsx';
 import { MultiRunPrompt } from './ui/MultiRunPrompt.tsx';
 import { DesktopIconButton, desktopIconClass } from './ui/DesktopIconButton.tsx';
@@ -1156,8 +1155,9 @@ export function TablePage() {
       case 'timer': {
         // The turn clock is a FIXED product setting (30s; the host can no longer
         // tune it and the server strips a stale actionSecs), so this row is a
-        // read-only readout - matching the desktop TimerControl popover - rather
-        // than a select that silently no-ops on change.
+        // read-only readout rather than a select that silently no-ops on change.
+        // (The persistent top-bar timer chip was removed by user request; this
+        // menu row keeps the value discoverable on phones.)
         const timerMs = room.room.actionTimeoutMs ?? ACTION_TIMEOUT_MS;
         return (
           <div className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -1798,7 +1798,6 @@ export function TablePage() {
                   {room.room.joinCode}
                 </button>
               )}
-              <span>{t('blinds {sb}/{bb}', { sb: room.room.sb, bb: room.room.bb })}</span>
               <span className="flex items-center gap-1" title={t('Seated players / in this hand')}>
                 <UsersThree size={13} /> {seatViews.length}
                 {handLive ? ` · ${t('{n} in hand', { n: hand.seats.length })}` : ''}
@@ -1822,9 +1821,6 @@ export function TablePage() {
           <span title={t('The banker voided this table: results do not count anywhere')}>
             <Badge tone="rose">{t('void table')}</Badge>
           </span>
-        )}
-        {!isPhone && handLive && hand.deadline !== null && (
-          <CountdownChip deadline={hand.deadline} urgent={urgent} />
         )}
 
         {isPhone && (
@@ -2279,6 +2275,13 @@ export function TablePage() {
               {/* the felt keeps its layout while a result flashes over it */}
               <>
                 {runTwice}
+                {/* gg-polish #2: run rows keep the ORIGINAL gap-2 column.
+                    A wider gap was tried and had to be walked back: the
+                    center column's height budget (RoundTable centerBudget)
+                    is spent almost entirely by three xs rows, and every
+                    pixel of extra air makes colScale shrink the board
+                    below its pre-polish size. Same reason the run label
+                    rides inline in its row (below) instead of on top. */}
                 <div className="flex flex-col items-center gap-2">
                   {(() => {
                     // P2 B4: render hand.boards - run 1 owns the felt's geometry
@@ -2304,8 +2307,14 @@ export function TablePage() {
                     // Non-effective hands (single run, or a single run with a
                     // legacy empty extra, banners included) keep the yPct anchor
                     // and the untouched full/md tier.
-                    const [first, ...rest] = boardRuns;
                     const boardSmall = narrowCanvas || centerCompact;
+                    // gg-polish #2: a run's own pot slice, read off the per-run
+                    // awards the server sends with a multi-run showdown. Until
+                    // the runs resolve there is nothing to label, so the row
+                    // simply shows its label - never a fake 0.
+                    const runAwards = hand.showdown?.multiRun?.awards ?? null;
+                    const runTotal = (runIdx: number) =>
+                      (runAwards?.[runIdx] ?? []).reduce((sum, a) => sum + a.amount, 0);
                     // L3 tiers (mockup board = 84×120 'board'; desktop compact
                     // falls to 'sm' 40×56; multi-run 'xs'). L6 measured the
                     // phone 'md' idea and REVERTED it: five md cards span 359
@@ -2332,9 +2341,15 @@ export function TablePage() {
                         : boardSmall || multiRunBoard
                           ? 'h-14 w-10 rounded-lg'
                           : 'h-30 w-21 rounded-[13px]';
-                    const runLabel = (n: number) => (
-                      <span className="table-run-chip">{t('Run {n}', { n })}</span>
-                    );
+                    // The run label rides INLINE at its row's left edge — a
+                    // quiet letter-spaced text plus the run's pot slice in
+                    // gold, not a pill. (A "label above the cards" mockup
+                    // layout was tried and reverted: three extra label lines
+                    // push colScale down and shrink the board itself.) The
+                    // class name stays `.table-run-chip`: the overlap gate
+                    // counts it (3 runs = 3 chips) and requires it INSIDE the
+                    // [data-table-board-run] row so it is not read as an
+                    // occluder of its own row.
                     const emptySlot = (key: string, index: number) => (
                       <div
                         key={key}
@@ -2343,57 +2358,94 @@ export function TablePage() {
                         aria-label={t('Empty community card {n}', { n: index + 1 })}
                       />
                     );
-                    return (
-                      <>
-                        {first && first.length > 0 && <div className={cn('flex items-center justify-center', runGap)} data-table-board-run="0">
-                          {multiRunBoard && runLabel(1)}
-                           {/* the flop is PULLED OUT sideways (平移): the 1st
-                               card from the deck, the 2nd/3rd from under it
-                               (slideFrom = the 1st card), so they never drop
-                               from the deck above; the turn and river arrive
-                               ALONE and flip over in place */}
-                           {[0, 1, 2, 3, 4].map((index) =>
-                             first![index] !== undefined ? (
-                                <DealCard key={boardMotionKey(hand.handId, 0, first![index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, 0, first![index]!))} motionKey={boardMotionKey(hand.handId, 0, first![index]!)}
-                                   mode={index < 3 ? 'slide' : 'flip'} staggerIndex={index} slideFrom={index === 0 ? undefined : boardMotionKey(hand.handId, 0, first![0]!)}><PlayingCard
-                                 card={first![index]}
-                                 size={runSize}
-                                 className={goldByRun[0]?.has(first![index]!) ? 'table-card-gold' : undefined}
-                               /></DealCard>
+                    const runLabel = (n: number, runIdx: number) => {
+                      const total = runTotal(runIdx);
+                      return (
+                        <span className="table-run-chip">
+                          {t('Run {n}', { n })}
+                          {/* the pot slice rides the label on DESKTOP only. On
+                              the phone ring the wider label pushes the card row
+                              sideways into the side pods (measured: multirun3
+                              boardCov 0.825→0.806 @390, 0.822→0.788 @667 vs the
+                              baseline pill), and the phone three-run column is
+                              already INSIDE the budget clamp (measured
+                              colScale 0.9196 @390 — above, not at, the 0.72
+                              floor) — the label must not spend the width the
+                              cards need. */}
+                          {!narrowCanvas && total > 0 && (
+                            <span className="table-run-amt">
+                              {' · '}
+                              {prefs.stackUnit === 'bb'
+                                ? `${fmtBB(total, room?.room.bb ?? 1)} BB`
+                                : fmt(total)}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    };
+                    // One run = one row: the label (multi-run only) then five
+                    // slots, vertically centred like before. The row element
+                    // carries data-table-board-run, so every tier - single
+                    // run included, minus its label - shares the geometry the
+                    // overlap gate measures. There is deliberately no per-run
+                    // chip pile: the amount rides in the label (desktop; the
+                    // phone label stays a bare "Run N"), and a pile
+                    // under each row would eat the vertical budget the board
+                    // itself needs (it also pushed run 3 onto the hero's
+                    // cards). Each row is keyed by its run index: the array
+                    // root needs a stable React key, and the DealCard keys
+                    // inside do not provide one.
+                    const renderRun = (runIdx: number) => {
+                      const cards = boardRuns[runIdx];
+                      if (!cards || cards.length === 0) return null;
+                      return (
+                        <div
+                          key={`run-${runIdx}`}
+                          className={cn('flex items-center justify-center', runGap)}
+                          data-table-board-run={runIdx}
+                        >
+                          {multiRunBoard && runLabel(runIdx + 1, runIdx)}
+                          {/* the flop is PULLED OUT sideways (平移): the 1st
+                              card from the deck, the 2nd/3rd from under it
+                              (slideFrom = the 1st card), so they never drop
+                              from the deck above; the turn and river arrive
+                              ALONE and flip over in place */}
+                          {[0, 1, 2, 3, 4].map((index) =>
+                            cards[index] !== undefined ? (
+                              <DealCard
+                                key={boardMotionKey(hand.handId, runIdx, cards[index]!)}
+                                handId={hand.handId}
+                                epoch={dealMotionEpoch(
+                                  hand.handId,
+                                  boardMotionKey(hand.handId, runIdx, cards[index]!),
+                                )}
+                                motionKey={boardMotionKey(hand.handId, runIdx, cards[index]!)}
+                                mode={index < 3 ? 'slide' : 'flip'}
+                                staggerIndex={index}
+                                slideFrom={
+                                  index === 0 || cards[0] === undefined
+                                    ? undefined
+                                    : boardMotionKey(hand.handId, runIdx, cards[0]!)
+                                }
+                              >
+                                <PlayingCard
+                                  card={cards[index]!}
+                                  size={runSize}
+                                  className={
+                                    goldByRun[runIdx]?.has(cards[index]!)
+                                      ? 'table-card-gold'
+                                      : undefined
+                                  }
+                                />
+                              </DealCard>
                             ) : (
-                              emptySlot(`r0-slot-${index}`, index)
+                              emptySlot(`r${runIdx}-slot-${index}`, index)
                             ),
                           )}
-                        </div>}
-                        {/* a run that has not opened a single card renders NO row
-                          (legacy rit_result leaves a `[]` placeholder behind when
-                          the ahead player declined - never show it as a ghost
-                          row); a partly-dealt run pads to the same 5 slots as
-                          run 1 so the visible rows stay equal width */}
-                        {rest.map((run, runIdx) =>
-                          run.length === 0 ? null : (
-                            <div
-                              key={`run-${runIdx}`}
-                              className={cn('flex items-center justify-center', runGap)}
-                              data-table-board-run={runIdx + 1}
-                            >
-                              {runLabel(runIdx + 2)}
-                               {[0, 1, 2, 3, 4].map((index) =>
-                                 run[index] !== undefined ? (
-                                    <DealCard key={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} handId={hand.handId} epoch={dealMotionEpoch(hand.handId, boardMotionKey(hand.handId, runIdx + 1, run[index]!))} motionKey={boardMotionKey(hand.handId, runIdx + 1, run[index]!)} mode={index < 3 ? 'slide' : 'flip'} staggerIndex={index} slideFrom={index === 0 || run[0] === undefined ? undefined : boardMotionKey(hand.handId, runIdx + 1, run[0]!)}><PlayingCard
-                                     card={run[index]}
-                                     size={runSize}
-                                     className={goldByRun[runIdx + 1]?.has(run[index]!) ? 'table-card-gold' : undefined}
-                                   /></DealCard>
-                                ) : (
-                                  emptySlot(`r${runIdx}-slot-${index}`, index)
-                                ),
-                              )}
-                            </div>
-                          ),
-                        )}
-                      </>
-                    );
+                        </div>
+                      );
+                    };
+                    return <>{boardRuns.map((_, runIdx) => renderRun(runIdx))}</>;
                   })()}
                 </div>
                 {multiRunOutcome}

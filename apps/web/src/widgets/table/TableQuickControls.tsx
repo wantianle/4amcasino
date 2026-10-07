@@ -1,119 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  CardsThree,
-  GearSix,
-  Play,
-  Robot,
-  Sliders,
-  Timer,
-} from '@phosphor-icons/react';
+import { CardsThree, GearSix, Play, Robot, Sliders } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../shared/lib/cn.ts';
 import { t } from '../../shared/i18n/index.ts';
 
 /** The switches you actually touch between hands, moved out of the ⋮ menu and
- *  onto the top bar: auto-deal on/off, the timer chip, the two record pages
- *  you always reach for (出牌记录 and 账本) and a gear straight to Settings.
+ *  onto the top bar: auto-deal on/off, the two record pages you always reach
+ *  for (出牌记录 and 账本) and a gear straight to Settings.
  *  P1 redesign: sit-out moved to the table-area dock (A9); when the top bar
  *  runs out of room (A1) labels drop and only icons stay.
- *  P2 follow-up: the timer chip opens a compact panel. The turn clock and the
- *  time bank are now FIXED product settings (30s per turn; 5 time cards of 30s
- *  each, one more every 20 hands), so the panel is a read-only readout rather
- *  than a bank editor. */
+ *  The timer chip was removed by user request (「去掉右上角的时间牌」): the turn
+ *  clock and time bank are fixed product settings, so the corner readout was
+ *  pure decoration. The per-seat acting ring + drain bar still carry the live
+ *  clock where it matters. */
 
 const chipClass =
   'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-semibold text-slate-600 transition-[color,background-color,transform] duration-200 hover:bg-slate-200/70 hover:text-slate-900 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white';
 
 const iconOnlyClass = 'w-8 justify-center px-0';
-
-/** The fixed turn clock, in seconds. The engine default is 30s and the host
- *  can no longer tune it (see hub.ts `defaultGameOpts`), so the popover is a
- *  display-only readout. */
-const TURN_SECONDS = 30;
-/** The fixed time bank: five 30s cards, refilled one per 20 hands. */
-const TIME_BANK_CARDS = 5;
-const TIME_BANK_REFILL_HANDS = 20;
-
-/** The Timer chip + its popover. Both the per-turn clock and the time bank are
- *  fixed product settings now, so this is purely informational: no timer
- *  select, no bank fields, nothing to save - and therefore no room props to
- *  read the old `actionSecs` from. */
-function TimerControl({
-  compact,
-}: {
-  compact: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  // outside click / Escape dismiss the panel
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    const onDown = (event: Event) => {
-      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('pointerdown', onDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('pointerdown', onDown);
-    };
-  }, [open]);
-
-  return (
-    <div className="relative" ref={wrapRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        title={t('Turn timer')}
-        className={cn(chipClass, compact && 'px-1.5', 'text-amber-600 dark:text-amber-400')}
-      >
-        <Timer size={14} />
-        <span className="tabular-nums">{t('{n}s', { n: TURN_SECONDS })}</span>
-      </button>
-
-      {open && (
-        <div
-          role="dialog"
-          aria-label={t('Turn timer')}
-          className="absolute left-0 top-full z-40 mt-1.5 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900"
-        >
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              {t('Turn timer')}
-            </span>
-            <span className="font-display text-sm font-semibold tabular-nums">
-              {t('{n}s', { n: TURN_SECONDS })}
-            </span>
-          </div>
-          <p className="mt-1 text-[0.65rem] leading-snug text-slate-400 dark:text-slate-500">
-            {t('Fixed at {n}s - the host cannot change it.', { n: TURN_SECONDS })}
-          </p>
-
-          <div aria-hidden className="my-3 h-px bg-slate-100 dark:bg-slate-800" />
-
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="block font-display text-sm font-semibold">{t('Time bank')}</span>
-            <span className="font-display text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-              {t('{cards} × {n}s', { cards: TIME_BANK_CARDS, n: TURN_SECONDS })}
-            </span>
-          </div>
-          <p className="mt-1 text-[0.65rem] leading-snug text-slate-400 dark:text-slate-500">
-            {t(
-              '{cards} time cards of {n}s: one to start, one more every {hands} hands. An empty bank folds for you.',
-              { cards: TIME_BANK_CARDS, n: TURN_SECONDS, hands: TIME_BANK_REFILL_HANDS },
-            )}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function TableQuickControls({
   roomId,
@@ -175,10 +78,6 @@ export function TableQuickControls({
           <span className="sr-only">{t('Auto-deal')}</span>
         </button>
       )}
-
-      {/* 计时 chip: a read-only readout of the fixed 30s turn clock and the
-          fixed time bank (hosts can no longer change either). */}
-      {!amSpectator && <TimerControl compact={compact} />}
 
       {/* P2 玩法规则: the host edits squid / bomb pot / multi-run between
           hands - same rail as the switches you touch every hand. */}

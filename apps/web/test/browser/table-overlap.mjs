@@ -790,13 +790,21 @@ try {
           : null;
 
         const hero = document.querySelector('[data-testid="hero-hole-cards"]');
-        // Hero hole cards live outside the center column. Only community-board
-        // faces are part of this check; generic card-size selectors also catch
-        // center-column run/placeholder art and made clean HEAD report a false
-        // hero overlap.
-        const slots = [
-          ...(col?.querySelectorAll('[data-card-size="board"][role="img"]') ?? []),
-        ].map(R);
+        // gg-polish gate fix (ora-17): the hero<->board check must measure
+        // EVERY dealt community face, not just the `board` tier. Multi-run
+        // rows render `xs` (desktop) / `sm` (phone), so the old
+        // [data-card-size="board"]-only selector sampled an EMPTY set in
+        // those scenarios and the intersection reduce passed on nothing -
+        // a run-3 chip pile sitting on the hero cards shipped with
+        // heroBoardOverlapPx2=0. This is the same selector the
+        // scene-readiness probe uses (faces === 5 / 15), and it is exactly
+        // the dealt-face set: empty slots carry role="img" but NO
+        // data-card-size, the deck's face-down card DOES carry both but
+        // lives in .table-deck, a sibling ABOVE .table-center-col, and the
+        // hero pair itself is outside the column. heroBoardSample below
+        // turns an empty sample into a FAILURE so a future tier rename
+        // cannot silently reopen the blind spot.
+        const slots = [...(col?.querySelectorAll('[data-card-size][role="img"]') ?? [])].map(R);
         const heroRect = hero ? R(hero) : null;
         const boardBottom = slots.length ? Math.max(...slots.map((r) => r.y + r.h)) : null;
         // This is an intersection area, not a linear distance: units are px².
@@ -1048,6 +1056,7 @@ try {
           boardCoveragePass: boardDen !== 0 && boardNum / boardDen >= 0.9,
           heroBoardOverlapPx2: Math.round(heroBoardOverlapPx2),
           heroBoardPass: heroBoardOverlapPx2 === 0,
+          heroBoardSample: slots.length,
           k,
           kFloorPass: k !== null && k >= 0.55,
           viewportVisiblePass: clusterVisible !== null && clusterVisible >= 0.99,
@@ -1067,6 +1076,7 @@ try {
           boardBottom,
           heroBoardGap: heroRect && boardBottom !== null ? heroRect.y - boardBottom : null,
           heroBoardOverlapPx2,
+          heroBoardSample: slots.length,
           pods: pods.length,
           k,
           canvasW: canvasEl ? parseFloat(canvasEl.style.width) : null,
@@ -1111,9 +1121,9 @@ try {
         };
       });
 
-      results.push({ scenario: sc.name, vp: `${vp.width}x${vp.height}`, scene, ...data });
+      results.push({ scenario: sc.name, kind: sc.kind, vp: `${vp.width}x${vp.height}`, scene, ...data });
       console.log(
-        `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx2}px² clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
+        `${sc.name} @${vp.width}x${vp.height}: pods=${data.pods} k=${data.k} canvas=${data.canvasW}x${data.canvasH} textCov=${data.textCov} boardCov=${data.boardCov} podPair=${data.podPairPx2}px² heroBoard=${data.heroBoardOverlapPx2}px²/${data.heroBoardSample}f clusterCovers=${data.clusterVsPodsPx}px² docks=${data.dockVsClusterPx}px²`,
       );
       await page.screenshot({ quality: 85, path: `${out}/probe-${sc.name}-${vp.width}x${vp.height}.jpg` });
       const controls = page.locator(
@@ -1182,6 +1192,12 @@ if (ASSERT) {
   for (const r of results) {
     if (r.heroBoardOverlapPx2 > 0)
       failures.push(`${r.scenario}@${r.vp} heroBoardOverlap=${r.heroBoardOverlapPx2}px²`);
+    // An empty hero<->board sample is a blind spot, not a pass: both
+    // board-bearing scenarios must always resolve dealt faces (ora-17 —
+    // the old board-tier-only selector sampled 0 rects on xs/sm rows and
+    // the reduce "passed" on nothing).
+    if ((r.kind === 'showdown' || r.kind === 'multirun') && !(r.heroBoardSample > 0))
+      failures.push(`${r.scenario}@${r.vp} heroBoardSample=${r.heroBoardSample} (empty)`);
     // Desktop hard gate, viewport-independent of ASSERTED_VPS: the desktop
     // geometry must have zero pairwise pod overlap.
     if ((r.vp === '1440x900' || r.vp === '1280x720') && r.podPairPx2 > 0)

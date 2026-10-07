@@ -97,6 +97,127 @@
 .table-pod-info .table-pstack {
   padding-left: 0;
 }
+/* gg-polish #3 (user ruling: A · slim portrait) — PROTOTYPE, single revert
+   point (this block + three JSX touchpoints in RoundTable.tsx: the 64px
+   desktop avatar classes, the narrow-only in-flow strength line, the pills
+   gate + strength chip).
+   The desktop seat unit goes portrait like the mockup pods (s2/s3 are the
+   9-seat portrait reference: avatar on top, plate below, cards riding
+   the plaque's top edge). Three adaptations to OUR system:
+   - width 120, not the mockup's 150: side-flip pods (|cos|>0.7) and the
+     bottom-arc pods beside them have a 182 design-px x-gap, so overlap is
+     unavoidable once 1.5×W > 182 (W>121). 120 keeps the pairs clear.
+   - strength AND pills move OUT of the plaque's FLOW into ONE absolute row
+     under its bottom edge (the phone keeps both in flow). Not cosmetic: any
+     in-flow content under a hanging plaque lifts the plaque toward the
+     board (bottom-arc pods hang by the WRAPPER, ty calc(-100% - 12px)),
+     and any second row under a CENTRE-anchoured side pod lands on the
+     neighbour's plaque (ring pitch measured). Out of flow, plaque bottom =
+     anchor - hangGapPx, exactly what centerColumnBudgetPx assumes.
+   - worst-case plaque (name+stack+action/state lines, acting +13 drain
+     padding, strength+pill row out of flow) measures 124 (showdown) to
+     135.2 (myturn, acting scale included) design px, inside the
+     podWorstPx=150 budget with 14.8 to spare. Avatar 64, not the mockup's
+     74: at 74 the plaque measured 134 and the strength+pills stack under
+     a side pod landed on its lower neighbour (probe: podPair 881 then 433
+     design px², seat 6<->7) - only the one-row merge below clears it. */
+.table-canvas:not(.table-canvas--narrow) {
+  --table-pod-w: 120px;
+  /* ── PAIRED CONTRACT (maintain these two together) ───────────────────
+     --pod-underhang-h: felt the plaque reserves BELOW its own box for the
+       absolute strength+pills row. The plaque carries it as margin-bottom,
+       so the SEAT WRAPPER grows by it: hanging seats' plaque bottom lifts
+       to the landscape pill-bottom (keeps name/stack out of the action-bar
+       band), centre-anchoured seats shift their whole unit h/2 up (pairwise
+       geometry unchanged).
+     --pod-row-gap: felt between plaque bottom edge and the row.
+     The pills row is absolutely positioned against the WRAPPER's bottom
+     edge (top: 100%), which INCLUDES the margin — so its top must subtract
+     --pod-underhang-h and re-add --pod-row-gap to land at
+     "plaque bottom + gap". Any change to one side (plaque padding, acting
+     padding, pill height, wrapper structure) must be re-checked against
+     BOTH: (a) row bottom = plaque bottom + gap + rowH must stay inside the
+     ~30.7 design-px side-pod ring pitch (measured: 2 + 21 = 23, 7.7 clear;
+     a second stacked row measured 433px² collision), and (b) the hanging
+     plaque must not rise into the board budget (hero pair rides 34 above
+     the plaque; showdown clearance measured 10 design px). Re-run
+     test/browser/pod-height-probe.mjs + the desktop gate after touching. */
+  --pod-underhang-h: 24px;
+  --pod-row-gap: 2px;
+}
+.table-canvas:not(.table-canvas--narrow) .table-pod-card {
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-height: 0;
+  padding: 9px 8px 7px;
+  margin-bottom: var(--pod-underhang-h); /* see PAIRED CONTRACT above */
+}
+.table-canvas:not(.table-canvas--narrow) .table-pod-card--acting {
+  padding-bottom: 13px; /* keep the TurnProgress drain bar off the last line */
+}
+/* the plate: name + stack lines centred under the head (phone flow keeps
+   its own compact block untouched) */
+.table-canvas:not(.table-canvas--narrow) .table-pod-info {
+  flex: none;
+  width: 100%;
+  align-items: center;
+  text-align: center;
+}
+.table-canvas:not(.table-canvas--narrow) .table-pod-name-row,
+.table-canvas:not(.table-canvas--narrow) .table-pod-detail-row {
+  justify-content: center;
+}
+/* strength + status pills ride the plaque's bottom edge as ONE row
+   (absolute, out of flow — in flow it would lift the whole hanging unit
+   toward the board, see the block comment). One row is not a style choice:
+   centre-anchoured side pods sit only ~30.7 design px plaque-edge to
+   plaque-edge apart on the 9-seat ring, so the row may spend at most that
+   (gap 2 + 21px chip = 23, 7.7 clear). Two stacked rows (a strength LINE
+   over a pill row) measured 433px² of pill-over-neighbour-plaque.
+   The phone keeps both in flow: its ring never hangs a pill row into a
+   neighbour at compact-pod heights. */
+.table-canvas:not(.table-canvas--narrow) .table-pod-pills {
+  position: absolute;
+  z-index: 21;
+  /* PAIRED CONTRACT: top:100% is the WRAPPER's bottom edge, which already
+     includes the plaque's --pod-underhang-h margin — subtract that margin,
+     then add the felt we want under the plaque. Net = plaque bottom + gap. */
+  top: calc(100% - var(--pod-underhang-h) + var(--pod-row-gap));
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  align-items: center;
+  white-space: nowrap;
+}
+/* the strength chip wears the pill geometry so the row stays one line high */
+.table-pod-strength {
+  color: var(--table-gold-hi);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+}
+/* the opponent card sets ride INSIDE the plaque top edge in portrait (the
+   mockup language: cards over the head), NOT floating 38 above it. The
+   landscape plaque (67 tall) was short enough that the -38/-x hanging band
+   cleared the row under the neighbour above; a 124-tall plaque puts that
+   row exactly inside the band (probe: seat 6 holo covered 47% of seat 7's
+   pills row, hidden fans 8% of the myturn one). 6px of overhang keeps the
+   cards readable over the avatar and keeps the band off every row. */
+.table-canvas:not(.table-canvas--narrow) .table-pod-holo--fan,
+.table-canvas:not(.table-canvas--narrow) .table-pod-holo--side {
+  top: -6px;
+}
+/* the hero pair rides the plaque's top edge OVER its avatar (mockup
+   hero-fan overlap), instead of floating on its own pill above the unit:
+   visually one stack, and it stops spending board clearance on air. */
+.table-canvas:not(.table-canvas--narrow) .table-hero-cards {
+  bottom: auto;
+  top: -34px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  pointer-events: none;
+}
 .table-pod-name-row,
 .table-pod-detail-row {
   display: flex;

@@ -46,18 +46,6 @@ const gameplay: Record<string, string> = {
   'The host triggers it by hand. Penalties come off table stakes; short stacks pay only what they have.':
     '由房主手动触发，罚金从桌面筹码里扣；筹码不够的只付得出多少赔多少。',
 
-  // ── Time bank (timer popover, TableQuickControls) ────────────────────────
-  // The turn clock and the time bank are FIXED product settings now: the host
-  // cannot change either one, so the popover is a read-only readout. The legacy
-  // "Starting bank / Refill every / Refill amount" editor keys are gone with
-  // the editor. 'Turn timer' / 'No limit' / '{n}s' are reused from the lobby /
-  // table-page dictionaries.
-  'Fixed at {n}s - the host cannot change it.': '固定 {n} 秒，房主无法修改。',
-  'Time bank': '计时银行',
-  '{cards} × {n}s': '{cards} × {n} 秒',
-  '{cards} time cards of {n}s: one to start, one more every {hands} hands. An empty bank folds for you.':
-    '共 {cards} 张 {n} 秒时间卡：开局 1 张，每 {hands} 手补 1 张；卡用完就自动弃牌。',
-
   // ── B3 Bomb pot ──────────────────────────────────────────────────────────
   'Bomb pot': '炸弹池',
   'Ante up, straight to the flop': '每人交前注，直接开翻牌',

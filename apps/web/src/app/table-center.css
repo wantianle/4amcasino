@@ -100,19 +100,43 @@
   padding: 2px 10px;
 }
 
-/* ── run chip (第 N 跑) — dark + gold, replaces the fuchsia pill ── */
+/* ── run row (multi-run) — ONE row per run: the label rides inline at its
+   left edge, then the five card slots. The row element carries
+   [data-table-board-run] so the overlap gate resolves faces per run.
+
+   A "label above, chips centred underneath" block layout was tried here
+   first (it matches the mockup). It had to be reverted: the center column
+   is height-budgeted (RoundTable centerBudget → colScale), and three extra
+   label lines plus three chip piles pushed the column past the clamp floor
+   (colScale 0.94 → 0.72) — the whole multi-run stack, board cards
+   included, ~23% below the pre-polish multi-run size — and the run-3 pile
+   sat against the hero's hole cards. CAVEAT on that 0.72: it is DERIVED
+   (the budget constants + the minScale=0.72 clamp arithmetic, corroborated
+   by the shrunken screenshot), not a DOM measurement — the harness never
+   sampled colScale for that build. The label already carries the
+   per-run amount on desktop (the phone label stays a bare "Run N" — the
+   wider label pushed the card row sideways into the side pods), so the
+   pile was redundant information spending vertical budget the cards
+   themselves need. Keep the row flat. ── */
+/* run label (第 N 跑) — quiet letter-spaced text, NOT a pill: the pill read
+   as UI chrome competing with the cards. Inline keeps the row's natural
+   height at the card height. */
 .table-run-chip {
   font-family: var(--font-table-num);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--table-gold-hi);
-  background: var(--table-surface-label);
-  border: 1px solid color-mix(in srgb, var(--table-gold) 40%, transparent);
-  border-radius: var(--radius-table-pill);
-  padding: 2px 9px;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
   white-space: nowrap;
+  padding-left: 1px;
+}
+/* the run's own pot slice rides on the same line, in the gold the table
+   already uses for money, so the two read as one label */
+.table-run-amt {
+  letter-spacing: 0.04em;
+  color: var(--table-gold-hi);
 }
 
 /* ── empty community-card slot — faint gold dashes (mockup .slot.void) ── */
