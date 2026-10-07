@@ -4,6 +4,14 @@
 // class renamed to BaselinePostflopPolicy, and this header comment added. The
 // decision logic body is byte-for-byte the f4a5904 engine; it exists so a test can
 // run "current policy with all P2 switches off" against the true baseline per input.
+//
+// SIZING OVERLAY (2026-10-07): the per-street size grids and the nearest-snap
+// helper are **imported from `src/betSizing.ts`** (single source of truth) and
+// the call sites pass the street; only the P0 raw-pick heuristic is duplicated
+// here. This keeps the P2 differential sensitive to P2 regressions while the
+// sizing standard has exactly one definition shared with the policy. A future
+// sizing regression is covered by dedicated sizing unit tests, not this diff.
+//
 // DO NOT EDIT BY HAND - regenerate from git if the baseline ever changes.
 
 import {
@@ -15,6 +23,13 @@ import {
   suitOf,
   type CardId,
 } from '@4am/shared';
+import {
+  POSTFLOP_SIZE_GRIDS,
+  nearestStreetSize,
+  postflopStreetOf,
+  streetSupportsOverbet,
+  type PostflopStreet,
+} from '../../src/betSizing.js';
 import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from '../../src/decisionView.js';
 import {
   estimateEquity,
@@ -534,30 +549,45 @@ export interface SizingContext {
   maxOverbetFrequency?: number;
 }
 
+// The per-street grids + nearest-neighbour snap are imported from
+// `src/betSizing.ts` (single source of truth) rather than copied, so this
+// fixture cannot drift from the policy on the *sizing standard itself*. Only
+// the P0 raw-pick heuristic below is duplicated.
+
 /**
- * Pick one of `33% / 50% / 75% / 125% (overbet)`.
+ * Pick the bot's own bet size from the **street's** grid.
  *
- *  - wet boards: 75% (50% at low SPR, to avoid bloating with marginal equity);
+ *  - wet boards: 75% (50% at low SPR);
  *  - dry ace-high / range-advantage boards: 33% range bet;
  *  - dry disadvantaged spots: 50%;
- *  - overbet only on dry, high-SPR, clear-advantage boards and within the
- *    style's `maxOverbetFrequency`.
+ *  - overbet → the top of the street's grid (150% turn/river; flop has no
+ *    overbet tier, so `maxOverbetFrequency` is ignored there).
+ *
+ * The raw heuristic pick is snapped to the nearest size the street allows.
  */
-export function chooseBetFraction(texture: BoardTexture, ctx: SizingContext): number {
+export function chooseBetFraction(
+  texture: BoardTexture,
+  ctx: SizingContext,
+  street: PostflopStreet = 'river',
+): number {
+  const grid = POSTFLOP_SIZE_GRIDS[street];
   const overbetFreq = ctx.maxOverbetFrequency ?? 0;
   if (
+    streetSupportsOverbet(street) &&
     !texture.wet &&
     ctx.rangeAdvantage >= 0.4 &&
     ctx.spr >= 4 &&
     overbetFreq > 0 &&
     (ctx.overbetRoll ?? 1) < overbetFreq
   ) {
-    return 1.25;
+    return grid[grid.length - 1]!;
   }
-  if (texture.wet) return ctx.spr < 2.5 ? 0.5 : 0.75;
-  if (ctx.rangeAdvantage >= 0.3) return 0.33;
-  if (ctx.rangeAdvantage <= -0.3) return 0.5;
-  return texture.aceHigh ? 0.33 : 0.5;
+  let raw: number;
+  if (texture.wet) raw = ctx.spr < 2.5 ? 0.5 : 0.75;
+  else if (ctx.rangeAdvantage >= 0.3) raw = 0.33;
+  else if (ctx.rangeAdvantage <= -0.3) raw = 0.5;
+  else raw = texture.aceHigh ? 0.33 : 0.5;
+  return nearestStreetSize(raw, grid);
 }
 
 /** Heuristic range/nut-advantage score in [-1, 1] (positive = hero favours). */
@@ -1307,7 +1337,7 @@ export class BaselinePostflopPolicy {
         return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
       }
       if (bluffCandidate) {
-        const fraction = chooseBetFraction(texture, sizingCtx);
+        const fraction = chooseBetFraction(texture, sizingCtx, postflopStreetOf(view.hand?.street));
         const active = Math.max(1, view.opponents.filter((o) => !o.folded).length);
         const prob = bluffBetProbability(
           this.params,
@@ -1450,7 +1480,7 @@ export class BaselinePostflopPolicy {
       return { action: { type: 'bet', amount: la.maxRaiseTo }, reason: `${reason} all-in` };
     }
     const pot = view.potOdds?.pot ?? 0;
-    const fraction = chooseBetFraction(texture, ctx);
+    const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
     const raw = Math.round(pot * fraction);
     const amount = clamp(raw, la.minRaiseTo, la.maxRaiseTo);
     return { action: { type: 'bet', amount: Math.max(1, amount) }, reason };
@@ -1468,7 +1498,7 @@ export class BaselinePostflopPolicy {
     }
     const pot = view.potOdds?.pot ?? 0;
     const currentBet = view.hand?.currentBet ?? 0;
-    const fraction = chooseBetFraction(texture, ctx);
+    const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
     const minDelta = Math.max(1, la.minRaiseTo - currentBet);
     const target = currentBet + Math.max(minDelta, Math.round(pot * fraction));
     const amount = clamp(target, la.minRaiseTo, la.maxRaiseTo);

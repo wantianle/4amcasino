@@ -3,7 +3,21 @@ import type { DecisionLegalActions, DecisionView } from './decisionView.js';
 import { mulberry32 } from './equity.js';
 import type { Policy, PolicyDecision } from './policy.js';
 import type { PolicyKind } from './policyStyles.js';
-import { PostflopPolicy, type P2Options } from './postflopPolicy.js';
+import {
+  PostflopPolicy,
+  heroIsIPToOpener,
+  lastPreflopRaiserSeat,
+  type P2Options,
+} from './postflopPolicy.js';
+import {
+  PREFLOP_3BET_IP_MULT,
+  PREFLOP_3BET_OOP_MULT,
+  PREFLOP_4BET_IP_MULT,
+  PREFLOP_4BET_OOP_MULT,
+  PREFLOP_OPEN_BB,
+  PREFLOP_SB_OPEN_BB,
+  PREFLOP_SHORT_STACK_BB,
+} from './betSizing.js';
 import { choosePreflopIntent, type PreflopChoice } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import { RULE_PRESETS, type RuleParams } from './ruleStyles.js';
@@ -247,16 +261,32 @@ export class RulePolicy implements Policy {
     const bb = view.room?.bb && view.room.bb > 0 ? view.room.bb : 1;
     const situation = choice.context.situation;
 
-    if (choice.context.stackBB < 20) return { amount: la.maxRaiseTo, allIn: true };
+    // Short-stack override: below the threshold the sizing standard is ignored
+    // entirely and the raise is a deliberate shove to the whole stack. This runs
+    // BEFORE every standard size below, so a short stack never gets "3x but
+    // capped" — the adapter can tell a shove from a capped raise.
+    if (choice.context.stackBB < PREFLOP_SHORT_STACK_BB) {
+      return { amount: la.maxRaiseTo, allIn: true };
+    }
+
+    // Hero's position relative to the aggressor being faced (the last preflop
+    // raiser): the opener on a 3-bet, the 3-bettor on a 4-bet. Explicit
+    // relative-position test — NOT `heroInPosition`, which is a postflop
+    // "last to act among all active players" concept and is wrong here when a
+    // third player is still active behind hero.
+    const isIP = heroIsIPToOpener(view, lastPreflopRaiserSeat(view));
 
     let target: number;
     if (situation === 'unopened') {
-      // SB opens larger (out of position); everyone else uses a ~2.5x standard.
-      target = choice.context.position === 'SB' ? bb * 3 : bb * 2.5;
+      // Standard opens: 2.5bb, with the small blind opening 3bb (out of position).
+      target = choice.context.position === 'SB' ? bb * PREFLOP_SB_OPEN_BB : bb * PREFLOP_OPEN_BB;
     } else if (situation === 'facing3Bet') {
-      target = currentBet * 2.2; // 4-bet
+      // 4-bet: a fixed multiple of the 3-bet — 2.2x in position, 2.5x out of
+      // position. (`currentBet` is the 3-bet amount here.)
+      target = currentBet * (isIP ? PREFLOP_4BET_IP_MULT : PREFLOP_4BET_OOP_MULT);
     } else {
-      target = currentBet * 3; // 3-bet
+      // 3-bet: a fixed multiple of the open — 3x in position, 4x out of position.
+      target = currentBet * (isIP ? PREFLOP_3BET_IP_MULT : PREFLOP_3BET_OOP_MULT);
     }
     target = Math.round(target);
     target = Math.max(target, la.minRaiseTo);

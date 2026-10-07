@@ -28,6 +28,7 @@ import {
   handBucket,
   opponentModelStats,
   snapBetFraction,
+  snapOpponentRead,
   type P2Options,
 } from '../src/postflopPolicy.js';
 import { estimateEquity } from '../src/equity.js';
@@ -281,6 +282,25 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     }
   });
 
+  it('snaps a junk read to the street grid, never to a size the street lacks', () => {
+    // Blocker 2: the neutral fallback must exist ON the street's own grid. The
+    // flop has no 0.5 tier, so a non-finite/non-positive read is 0.33 there.
+    for (const junk of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      expect(snapBetFraction(junk, false, 'flop')).toBe(0.33);
+      expect(snapBetFraction(junk, false, 'turn')).toBe(0.5);
+      expect(snapBetFraction(junk, false, 'river')).toBe(0.5);
+    }
+    // And an ordinary 0.5-pot observation snaps down on the flop too.
+    expect(snapBetFraction(0.5, false, 'flop')).toBe(0.33);
+    expect(snapBetFraction(0.9, false, 'flop')).toBe(0.75);
+    // Turn/river: 0.9 is nearer 1.0 than 0.75; 0.4 is nearer each grid's low tier.
+    expect(snapBetFraction(0.9, false, 'turn')).toBe(1.0);
+    expect(snapBetFraction(0.9, false, 'river')).toBe(1.0);
+    expect(snapBetFraction(0.4, false, 'flop')).toBe(0.33);
+    expect(snapBetFraction(0.4, false, 'turn')).toBe(0.5); // turn has no 0.33 tier
+    expect(snapBetFraction(0.4, false, 'river')).toBe(0.33);
+  });
+
   it('rounds just below / above a midpoint to the nearer side, and is idempotent', () => {
     expect(snapBetFraction(0.414)).toBe(0.33);
     expect(snapBetFraction(0.416)).toBe(0.5);
@@ -310,6 +330,33 @@ describe('postflop P2: bet-size grid + nearest-neighbour translation', () => {
     // Grid read: 0.9 snaps to 1.0 pot -> value-heavy. This is the intentional
     // behaviour change of the sizeGrid switch (on by default since 2026-10-06).
     expect(chooseVillainModel({ ...base, betFraction: 0.9 }, true)).toBe('value-heavy');
+  });
+
+  it('snaps the opponent read to the global grid, never a per-street one', () => {
+    // The opponent is not bound by our action abstraction, so the same observed
+    // size must read the same on every street. `snapOpponentRead` uses the
+    // global read grid: 0.9 -> 1.0 (0.1) not 0.75 (0.15); 0.4 -> 0.33 (0.07)
+    // not 0.5 (0.1).
+    expect(snapOpponentRead(0.9)).toBe(1.0);
+    expect(snapOpponentRead(0.4)).toBe(0.33);
+    expect(snapOpponentRead(0.5)).toBe(0.5);
+    expect(gridFraction(snapOpponentRead(0.9))).toBe(1.0);
+    // Junk reads as the neutral half-pot, which is on the global grid.
+    for (const junk of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      expect(snapOpponentRead(junk)).toBe(0.5);
+    }
+    expect(snapOpponentRead(0.33, true)).toBe('all-in');
+  });
+
+  it('classifies an opponent size identically on every street (global read)', () => {
+    const base = { allIn: false, heroWasAggressor: false, wet: false };
+    // `street` is no longer an input to the read. A per-street read made a
+    // 0.9-pot bet `balanced` on the flop (snapped to 0.75) but `value-heavy` on
+    // turn/river (snapped to 1.0) purely because our own action grid differed.
+    expect(chooseVillainModel({ ...base, betFraction: 0.9 })).toBe('value-heavy');
+    expect(chooseVillainModel({ ...base, betFraction: 0.4 })).toBe('bluff-heavy');
+    // Turn/river-sized reads are unchanged from the old default (river grid).
+    expect(chooseVillainModel({ ...base, betFraction: 0.5 })).toBe('balanced');
   });
 
   it('does not change the P0 size buckets for the canonical sizes', () => {
@@ -538,9 +585,14 @@ describe('postflop P2: decision-level on-vs-off', () => {
 
   it('sizeGrid changes the villain model, range weights and the action rate', () => {
     // call/potBefore = 90/100 = 0.9 pot: raw-continuous reads balanced, the grid
-    // snaps it to 1.0 pot and reads value-heavy.
+    // snaps it to 1.0 pot and reads value-heavy. A **river** board is used
+    // because the grid is per-street since 2026-10-07: on the flop 0.9 would
+    // snap to 0.75 (balanced), so the read only discriminates on the river/turn
+    // ladder that actually contains a 1.0 tier.
     const view = (seq: number) =>
-      facingView([c('3s'), c('3d')], [c('Kh'), c('9c'), c('4d')], 190, 90, { actionSeq: seq });
+      facingView([c('3s'), c('3d')], [c('Kh'), c('9c'), c('4d'), c('2s'), c('7h')], 190, 90, {
+        actionSeq: seq,
+      });
     expect(facingVillainModel(view(0), 100, 90, OFF)).toBe('balanced');
     expect(facingVillainModel(view(0), 100, 90, { ...OFF, sizeGrid: true })).toBe('value-heavy');
 

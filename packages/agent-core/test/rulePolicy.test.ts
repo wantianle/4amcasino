@@ -26,6 +26,7 @@ import {
   type CompiledMix,
 } from '../src/rangeParser.js';
 import { RulePolicy } from '../src/rulePolicy.js';
+import { heroIsIPToOpener, heroInPosition, lastPreflopRaiserSeat } from '../src/postflopPolicy.js';
 import { RULE_PRESETS, parseRuleConfig, type RuleParams } from '../src/ruleStyles.js';
 import { resolvePolicy } from '../src/stylePolicy.js';
 
@@ -1035,5 +1036,238 @@ describe('resolvePolicy rules-v1 opt-in', () => {
     );
     assertLegal(d, legal);
     assertSharedLegal(d, legal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// preflop relative position (IP/OOP to the aggressor) and 3-bet/4-bet sizing
+// ---------------------------------------------------------------------------
+
+/** A bare view with a custom seat order, for the relative-position unit tests. */
+function positionView(opts: {
+  heroSeat: number;
+  order: number[];
+  folded?: number[];
+  allIn?: number[];
+}): DecisionView {
+  const { heroSeat, order } = opts;
+  const folded = opts.folded ?? [];
+  const allIn = opts.allIn ?? [];
+  return view({
+    hand: hand([c('Ac'), c('Kd')], { mySeat: heroSeat }),
+    me: seat({ seat: heroSeat, isMe: true, userId: 1 }),
+    opponents: order
+      .filter((s) => s !== heroSeat)
+      .map((s) => seat({ seat: s, userId: 100 + s, folded: folded.includes(s), allIn: allIn.includes(s) })),
+    seatOrder: order,
+  });
+}
+
+describe('preflop relative position: heroIsIPToOpener', () => {
+  it('heads-up: BTN/SB is IP to the BB, BB is OOP to the BTN/SB', () => {
+    // Heads-up preflop order is [button/SB, BB] (SB acts first), but postflop
+    // the BB acts first and the button/SB acts last. The BB is therefore OOP to
+    // the button/SB, and the button/SB is IP to the BB.
+    const hu = [0, 1];
+    expect(heroIsIPToOpener(positionView({ heroSeat: 1, order: hu }), 0)).toBe(false); // BB vs BTN/SB
+    expect(heroIsIPToOpener(positionView({ heroSeat: 0, order: hu }), 1)).toBe(true); // BTN/SB vs BB
+  });
+
+  it('does not flip when a third player is still active behind hero (the heroInPosition bug)', () => {
+    const order = [0, 1, 2, 3, 4, 5];
+    const v = positionView({ heroSeat: 4, order }); // hero CO-ish, opener seat 2, seat 5 behind
+    expect(heroIsIPToOpener(v, 2)).toBe(true); // acts after the opener
+    // The old postflop helper is false here because seat 5 is still active —
+    // exactly the multiway mis-read this replaces.
+    expect(heroInPosition(v)).toBe(false);
+  });
+
+  it('ignores an all-in third party and a folded opener state', () => {
+    const order = [0, 1, 2, 3, 4, 5];
+    // Third player all-in: still IP relative to the opener.
+    expect(heroIsIPToOpener(positionView({ heroSeat: 4, order, allIn: [5] }), 2)).toBe(true);
+    // Opener already all-in: the seat still exists in the order, so the
+    // comparison stands (all-in does not erase position).
+    expect(heroIsIPToOpener(positionView({ heroSeat: 4, order, allIn: [2] }), 2)).toBe(true);
+    // Opener folded: same — position is about seat order, not liveness.
+    expect(heroIsIPToOpener(positionView({ heroSeat: 4, order, folded: [2] }), 2)).toBe(true);
+  });
+
+  it('falls back to OOP when hero/opener is unknown or the opener is absent', () => {
+    const order = [0, 1, 2, 3];
+    expect(heroIsIPToOpener(positionView({ heroSeat: 3, order }), null)).toBe(false); // no opener
+    expect(heroIsIPToOpener(positionView({ heroSeat: 3, order }), 3)).toBe(false); // opener == hero
+    expect(heroIsIPToOpener(positionView({ heroSeat: 3, order }), 99)).toBe(false); // absent seat
+    // Hero seat itself absent from the order.
+    const v = view({ hand: hand([c('Ac'), c('Kd')], { mySeat: 42 }), seatOrder: order });
+    expect(heroIsIPToOpener(v, 0)).toBe(false);
+  });
+
+  it('handles the blind boundaries', () => {
+    const order = [0, 1, 2, 3, 4, 5];
+    expect(heroIsIPToOpener(positionView({ heroSeat: 1, order }), 0)).toBe(true); // BB IP to SB
+    expect(heroIsIPToOpener(positionView({ heroSeat: 0, order }), 1)).toBe(false); // SB OOP to BB
+    expect(heroIsIPToOpener(positionView({ heroSeat: 0, order }), 5)).toBe(false); // SB OOP to BTN
+    expect(heroIsIPToOpener(positionView({ heroSeat: 5, order }), 1)).toBe(true); // BTN IP to BB
+  });
+
+  it('lastPreflopRaiserSeat returns the aggressor hero is responding to', () => {
+    const v0 = view({ actionHistory: [publicCall(4, 0), publicRaise(2, 250, 1)] });
+    expect(lastPreflopRaiserSeat(v0)).toBe(2);
+    // A later raise overrides the opener -> the 3-bettor.
+    const v1 = view({
+      actionHistory: [publicRaise(2, 250, 0), publicCall(4, 1), publicRaise(6, 750, 2)],
+    });
+    expect(lastPreflopRaiserSeat(v1)).toBe(6);
+    // No raise at all.
+    expect(lastPreflopRaiserSeat(view({ actionHistory: [publicCall(4, 0)] }))).toBeNull();
+    expect(lastPreflopRaiserSeat(view())).toBeNull();
+  });
+});
+
+describe('preflop 3-bet / 4-bet sizing (IP 3x/2.2x, OOP 4x/2.5x)', () => {
+  const tag = legacyParams('tight-aggressive');
+  const policy = new RulePolicy({ kind: 'tight-aggressive', seed: 1, params: tag });
+  const AA = [c('Ac'), c('Ad')];
+
+  /** Facing-open / facing-3bet view with a controlled preflop history. */
+  function sizingView(heroPos: Pos, history: PublicAction[], currentBet: number): DecisionView {
+    const mySeat = POS_INDEX[heroPos];
+    return preflopView(heroPos, AA, {
+      actionHistory: history,
+      actionSeq: history.length,
+      hand: hand(AA, {
+        street: 'preflop',
+        buttonSeat: BUTTON,
+        board: [],
+        pot: 150 + currentBet,
+        currentBet,
+        toAct: mySeat,
+        mySeat,
+      }),
+    });
+  }
+
+  it('3-bets 3x in position even with players still to act behind', () => {
+    // Hero CO (seat 7) vs a UTG (seat 2) open; BTN (seat 8) is still active, so
+    // the old `heroInPosition` would have wrongly called this OOP.
+    const v = sizingView('CO', [publicRaise(2, 250, 0)], 250);
+    expect(heroInPosition(v)).toBe(false);
+    const d = policy.decide(v);
+    expect(d.action).toEqual({ type: 'raise', amount: 750 }); // 3 x 250
+  });
+
+  it('3-bets 4x out of position', () => {
+    // Hero BB (seat 1) vs a BTN (seat 8) open.
+    const v = sizingView('BB', [publicRaise(8, 250, 0)], 250);
+    expect(heroIsIPToOpener(v, 8)).toBe(false);
+    const d = policy.decide(v);
+    expect(d.action).toEqual({ type: 'raise', amount: 1000 }); // 4 x 250
+  });
+
+  it('4-bets 2.2x in position', () => {
+    // Hero BTN (seat 8) opened; BB (seat 1) 3-bet to 750. BTN is IP to the BB.
+    const v = sizingView('BTN', [publicRaise(8, 250, 0), publicRaise(1, 750, 1)], 750);
+    expect(heroIsIPToOpener(v, 1)).toBe(true);
+    const d = policy.decide(v);
+    expect(d.action).toEqual({ type: 'raise', amount: 1650 }); // 2.2 x 750
+  });
+
+  it('4-bets 2.5x out of position', () => {
+    // Hero SB (seat 0) opened to 300; BB (seat 1) 3-bet to 900. SB is OOP.
+    const v = sizingView('SB', [publicRaise(0, 300, 0), publicRaise(1, 900, 1)], 900);
+    expect(heroIsIPToOpener(v, 1)).toBe(false);
+    const d = policy.decide(v);
+    expect(d.action).toEqual({ type: 'raise', amount: 2250 }); // 2.5 x 900
+  });
+});
+
+// ---------------------------------------------------------------------------
+// heads-up: the 3-bet / 4-bet size is keyed on *postflop* position, so the BB
+// (which acts first postflop) is OOP and the button/SB (which acts last) is IP.
+// ---------------------------------------------------------------------------
+
+describe('preflop heads-up 3-bet / 4-bet sizing (postflop position)', () => {
+  const tag = legacyParams('tight-aggressive');
+  const policy = new RulePolicy({ kind: 'tight-aggressive', seed: 1, params: tag });
+  const AA = [c('Ac'), c('Ad')];
+  const HU_ORDER = [0, 1]; // seat 0 = button/SB, seat 1 = BB
+
+  /** HU view: seat 0 is the button/SB, seat 1 the BB. AA always raises. */
+  function huView(heroSeat: 0 | 1, history: PublicAction[], currentBet: number): DecisionView {
+    const villainSeat = heroSeat === 0 ? 1 : 0;
+    const heroCommitted = heroSeat === 0 ? 50 : 100;
+    const callAmount = currentBet - heroCommitted;
+    return view({
+      room: { id: 'r1', name: 'hu', sb: 50, bb: 100, minSettleHands: 0, sevenDeuceBonus: 0 },
+      hand: hand(AA, {
+        street: 'preflop',
+        buttonSeat: 0,
+        board: [],
+        pot: 150 + currentBet,
+        currentBet,
+        toAct: heroSeat,
+        mySeat: heroSeat,
+      }),
+      me: seat({
+        seat: heroSeat,
+        userId: 1,
+        displayName: 'hero',
+        isMe: true,
+        stack: 10_000,
+        committed: heroCommitted,
+        total: heroCommitted,
+      }),
+      opponents: [
+        seat({
+          seat: villainSeat,
+          userId: 2,
+          stack: 10_000,
+          committed: currentBet,
+          total: currentBet,
+        }),
+      ],
+      legalActions: la({
+        canCheck: false,
+        canCall: true,
+        callAmount,
+        canRaise: true,
+        minRaiseTo: currentBet * 2,
+        maxRaiseTo: 10_000,
+      }),
+      potOdds: odds({
+        callAmount,
+        pot: 150 + currentBet,
+        potOdds: callAmount / (150 + currentBet),
+        breakEvenEquity: callAmount / (150 + currentBet),
+      }),
+      actionHistory: history,
+      actionSeq: history.length,
+      seatOrder: HU_ORDER,
+    });
+  }
+
+  it('BB is OOP postflop and 3-bets 4x versus a BTN/SB open', () => {
+    const v = huView(1, [publicRaise(0, 300, 0)], 300);
+    expect(heroIsIPToOpener(v, 0)).toBe(false);
+    expect(policy.decide(v).action).toEqual({ type: 'raise', amount: 1200 }); // 4 x 300
+  });
+
+  it('BTN/SB is IP postflop and 3-bets 3x versus a BB raise over its limp', () => {
+    const v = huView(0, [publicCall(0, 0), publicRaise(1, 300, 1)], 300);
+    expect(heroIsIPToOpener(v, 1)).toBe(true);
+    expect(policy.decide(v).action).toEqual({ type: 'raise', amount: 900 }); // 3 x 300
+  });
+
+  it('BB is OOP postflop and 4-bets 2.5x', () => {
+    const v = huView(1, [publicCall(0, 0), publicRaise(1, 300, 1), publicRaise(0, 900, 2)], 900);
+    expect(heroIsIPToOpener(v, 0)).toBe(false);
+    expect(policy.decide(v).action).toEqual({ type: 'raise', amount: 2250 }); // 2.5 x 900
+  });
+
+  it('BTN/SB is IP postflop and 4-bets 2.2x', () => {
+    const v = huView(0, [publicRaise(0, 300, 0), publicRaise(1, 900, 1)], 900);
+    expect(heroIsIPToOpener(v, 1)).toBe(true);
+    expect(policy.decide(v).action).toEqual({ type: 'raise', amount: 1980 }); // 2.2 x 900
   });
 });

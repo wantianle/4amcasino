@@ -8,6 +8,16 @@ import {
   suitOf,
   type CardId,
 } from '@4am/shared';
+import {
+  DEFAULT_SIZE_STREET,
+  POSTFLOP_SIZE_GRIDS,
+  gridFraction,
+  nearestStreetSize,
+  postflopStreetOf,
+  snapOpponentRead,
+  streetSupportsOverbet,
+  type PostflopStreet,
+} from './betSizing.js';
 import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from './decisionView.js';
 import {
   estimateEquity,
@@ -16,7 +26,7 @@ import {
   type VillainRange,
 } from './equity.js';
 import type { PolicyDecision } from './policy.js';
-import { seatsInDealingOrder } from './preflopPolicy.js';
+import { postflopActionOrder } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import type { RuleParams } from './ruleStyles.js';
 
@@ -53,9 +63,10 @@ import type { RuleParams } from './ruleStyles.js';
  *     trips / straight / flush / boat / quads / straight flush built by the
  *     board itself), the made hand is no longer treated as an automatic value
  *     hand (only a real equity edge / the normal check-bluff flow is).
- *  3. **Bet sizing** — `33% / 50% / 75% / overbet` chosen heuristically from
- *     board texture (dry/wet, high/low, connected/suited) and SPR / position /
- *     range advantage.
+ *  3. **Bet sizing** — per-street grid (`flop 33/75`, `turn 50/75/100/150`,
+ *     `river 33/50/75/100/150`, plus all-in); the heuristic picks from texture
+ *     (dry/wet, high/low, connected/suited) and SPR / position / range
+ *     advantage, then snaps to the street's allowed sizes.
  *  4. **Value:bluff ratio** — approximates bluffs ≈ `f/(1+f)` × value for an
  *     `f`-pot bet.
  *  5. **Blockers** — a hand-built score preferring bluffs that block the
@@ -860,83 +871,69 @@ export interface SizingContext {
 }
 
 /**
- * Pick one of `33% / 50% / 75% / 125% (overbet)`.
+ * Pick the bot's own bet size from the **street's** grid.
  *
  *  - wet boards: 75% (50% at low SPR, to avoid bloating with marginal equity);
  *  - dry ace-high / range-advantage boards: 33% range bet;
  *  - dry disadvantaged spots: 50%;
  *  - overbet only on dry, high-SPR, clear-advantage boards and within the
- *    style's `maxOverbetFrequency`.
+ *    style's `maxOverbetFrequency` — mapped to the top of the street's grid
+ *    (150% on turn/river).
+ *
+ * The flop standard has **no overbet tier**, so `maxOverbetFrequency` is
+ * ignored on `street === 'flop'` (see {@link streetSupportsOverbet}); the flop
+ * top legal size is 75%.
+ *
+ * The heuristic picks a raw fraction and snaps it to the nearest point the
+ * street actually allows (e.g. a 0.5-pot pick on the flop becomes 0.33), so the
+ * returned value is always a legal size for `street`. Turn and river differ by
+ * design: turn has no 33% tier.
  */
-export function chooseBetFraction(texture: BoardTexture, ctx: SizingContext): number {
+export function chooseBetFraction(
+  texture: BoardTexture,
+  ctx: SizingContext,
+  street: PostflopStreet = DEFAULT_SIZE_STREET,
+): number {
+  const grid = POSTFLOP_SIZE_GRIDS[street];
   const overbetFreq = ctx.maxOverbetFrequency ?? 0;
   if (
+    streetSupportsOverbet(street) &&
     !texture.wet &&
     ctx.rangeAdvantage >= 0.4 &&
     ctx.spr >= 4 &&
     overbetFreq > 0 &&
     (ctx.overbetRoll ?? 1) < overbetFreq
   ) {
-    return 1.25;
+    return grid[grid.length - 1]!;
   }
-  if (texture.wet) return ctx.spr < 2.5 ? 0.5 : 0.75;
-  if (ctx.rangeAdvantage >= 0.3) return 0.33;
-  if (ctx.rangeAdvantage <= -0.3) return 0.5;
-  return texture.aceHigh ? 0.33 : 0.5;
+  let raw: number;
+  if (texture.wet) raw = ctx.spr < 2.5 ? 0.5 : 0.75;
+  else if (ctx.rangeAdvantage >= 0.3) raw = 0.33;
+  else if (ctx.rangeAdvantage <= -0.3) raw = 0.5;
+  else raw = texture.aceHigh ? 0.33 : 0.5;
+  return nearestStreetSize(raw, grid);
 }
 
 // ---------------------------------------------------------------------------
-// P2: bet-size grid + nearest-neighbour translation of opponent sizes
+// P2: per-street bet-size grid (single source: ./betSizing.ts)
 // ---------------------------------------------------------------------------
-
-/**
- * The discrete postflop sizing grid our decisions and reads share. `0.33/0.5/
- * 0.75/1/1.25/1.5` pot plus the `'all-in'` sentinel mirrors the Slumbot /
- * Gilpin-Sandholm style action abstraction (a small, fixed set of sizes). It is
- * intentionally NOT extended to more fractions: the point is a stable coordinate
- * system for reading an opponent's weird size, not finer resolution for its own
- * sake.
- */
-export const POSTFLOP_SIZE_GRID = [0.33, 0.5, 0.75, 1.0, 1.25, 1.5] as const;
-
-export type PostflopSize = (typeof POSTFLOP_SIZE_GRID)[number] | 'all-in';
-
-/**
- * Translate an observed bet fraction to the nearest grid point ("nearest
- * neighbour" action translation): a 0.42-pot bet reads as 0.5, a 0.62-pot bet
- * reads as 0.75, an oversized 3-pot bet reads as the top grid point, and a
- * flagged all-in always reads as `'all-in'` regardless of its chip fraction.
- *
- * Nearest is measured on the fraction itself (absolute distance), matching the
- * `Target*PotFracs` / `Opp*PotFracs` translation in Slumbot `nlt5`. On an exact
- * midpoint between two grid points (`0.415`, `0.625`, `0.875`, ...) the strict
- * `<` comparison keeps the **earlier, smaller** point, so the translation biases
- * ties toward the lower size by design; callers that need round-half-up must
- * jitter the input. A non-finite / non-positive fraction has no meaningful size
- * and reads as the neutral half-pot (`0.5`).
- */
-export function snapBetFraction(fraction: number, allIn = false): PostflopSize {
-  if (allIn) return 'all-in';
-  if (!Number.isFinite(fraction) || fraction <= 0) return 0.5;
-  let best: (typeof POSTFLOP_SIZE_GRID)[number] = POSTFLOP_SIZE_GRID[0];
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const point of POSTFLOP_SIZE_GRID) {
-    const distance = Math.abs(point - fraction);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = point;
-    }
-  }
-  return best;
-}
-
-/**
- * Numeric pot-fraction a grid size represents; `'all-in'` reports the top grid
- * point (`1.5`) as a stand-in, since its real fraction is stack-dependent.
- */
-export function gridFraction(size: PostflopSize): number {
-  return size === 'all-in' ? POSTFLOP_SIZE_GRID[POSTFLOP_SIZE_GRID.length - 1]! : size;
-}
+//
+// The grid data and the read helpers live in `./betSizing.ts` so the policy and
+// the frozen baseline fixtures share one definition — a sizing edit cannot
+// silently diverge between a policy and its differential baseline. Re-exported
+// here for existing importers (`postflopPolicy.POSTFLOP_SIZE_GRID`, etc.).
+export {
+  POSTFLOP_SIZE_GRID,
+  POSTFLOP_SIZE_GRIDS,
+  OPPONENT_READ_GRID,
+  DEFAULT_SIZE_STREET,
+  streetSupportsOverbet,
+  gridFraction,
+  snapBetFraction,
+  snapOpponentRead,
+  postflopStreetOf,
+} from './betSizing.js';
+export type { PostflopSize, PostflopStreet } from './betSizing.js';
 
 /** Heuristic range/nut-advantage score in [-1, 1] (positive = hero favours). */
 export function rangeAdvantage(input: {
@@ -1256,8 +1253,10 @@ export function chooseVillainModel(
     // P2: read the size on the discrete grid, so a weird size (0.42, 0.62, 3.0)
     // is translated to its nearest abstract size instead of being read as an
     // exact continuous value. `sizeGrid` is on by default since 2026-10-06; with
-    // it off the raw thresholds are used.
-    const size = sizeGrid ? gridFraction(snapBetFraction(input.betFraction)) : input.betFraction;
+    // it off the raw thresholds are used. The read uses the **global** opponent
+    // grid ({@link OPPONENT_READ_GRID}), not our per-street action standard: the
+    // same observed size must mean the same thing on every street.
+    const size = sizeGrid ? gridFraction(snapOpponentRead(input.betFraction)) : input.betFraction;
     if (size >= 1) score += 1.5;
     else if (size <= 0.4) score -= 1;
     else if (size <= 0.6) score -= 0.3;
@@ -1613,16 +1612,64 @@ export function heroWasAggressor(view: DecisionView): boolean {
   return false;
 }
 
-/** True when hero is the last active seat to act postflop (i.e. on the button). */
+/**
+ * True when hero is the last active seat to act postflop (i.e. on the button).
+ *
+ * Uses {@link postflopActionOrder}, not the preflop dealing order: heads-up the
+ * button/SB acts **last** postflop (the BB acts first), while the dealing order
+ * lists the button/SB first.
+ */
 export function heroInPosition(view: DecisionView): boolean {
   const mySeat = view.hand?.mySeat ?? view.me?.seat ?? null;
   if (mySeat === null) return false;
-  const order = seatsInDealingOrder(view);
+  const order = postflopActionOrder(view);
   if (order.length === 0) return false;
   const active = order.filter(
     (seat) => seat === mySeat || view.opponents.some((o) => o.seat === seat && !o.folded),
   );
   return active.length > 0 && active[active.length - 1] === mySeat;
+}
+
+/**
+ * Seat of the aggressor hero is responding to: the **last** preflop bet/raise in
+ * the observed history, or `null` when none is visible. For an opening decision
+ * that is the opener; for a 4-bet it is the 3-bettor — i.e. the reference
+ * opponent for preflop IP/OOP sizing.
+ */
+export function lastPreflopRaiserSeat(view: DecisionView): number | null {
+  const pre = view.actionHistory.filter((a) => a.street === 'preflop');
+  for (let i = pre.length - 1; i >= 0; i--) {
+    const a = pre[i]!;
+    if (a.action.type === 'bet' || a.action.type === 'raise') return a.seat;
+  }
+  return null;
+}
+
+/**
+ * True when hero acts **after** the given opponent in **postflop** order, i.e.
+ * hero is in position relative to that opponent. This is the position that
+ * matters for the preflop 3-bet / 4-bet sizing standard (smaller in position,
+ * larger out of position, to compensate for playing later streets OOP). Unlike
+ * {@link heroInPosition} (which asks whether hero is last to act among *all*
+ * active players), this compares hero to one specific opponent, so a third
+ * active player behind hero does not flip the answer, and an all-in third party
+ * is irrelevant.
+ *
+ * Uses {@link postflopActionOrder}, **not** the preflop dealing order: heads-up
+ * they are opposites (button/SB first preflop, last postflop), so reusing the
+ * dealing-order index would mark the BB as in position. Unknown hero /
+ * opponent, or an opponent not present in the order, falls back to `false`
+ * (treated as out of position, the larger sizing) rather than guessing — a
+ * conservative, risk-averse default, not a claim that hero *is* OOP.
+ */
+export function heroIsIPToOpener(view: DecisionView, opponentSeat: number | null): boolean {
+  const mySeat = view.hand?.mySeat ?? view.me?.seat ?? null;
+  if (mySeat === null || opponentSeat === null || opponentSeat === mySeat) return false;
+  const order = postflopActionOrder(view);
+  const myIdx = order.indexOf(mySeat);
+  const oppIdx = order.indexOf(opponentSeat);
+  if (myIdx < 0 || oppIdx < 0) return false;
+  return myIdx > oppIdx;
 }
 
 // ---------------------------------------------------------------------------
@@ -1808,7 +1855,11 @@ export class PostflopPolicy {
         return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
       }
       if (bluffCandidate) {
-        const fraction = chooseBetFraction(texture, sizingCtx);
+        const fraction = chooseBetFraction(
+          texture,
+          sizingCtx,
+          postflopStreetOf(view.hand?.street),
+        );
         const active = Math.max(1, view.opponents.filter((o) => !o.folded).length);
         const prob = bluffBetProbability(
           this.params,
@@ -1949,13 +2000,15 @@ export class PostflopPolicy {
     ctx: SizingContext,
     reason: string,
   ): { action: { type: 'bet'; amount: number }; reason: string } {
-    // Sub-20BB: an unopened bet is a deliberate shove to the stack, matching the
-    // raise() convention (and the shared engine's "bet up to stack" rule).
+    // Short-stack override: below 20BB an unopened bet is a deliberate shove to
+    // the stack, taking precedence over every standard grid size below. It
+    // matches the raise() convention (and the shared engine's "bet up to stack"
+    // rule), so a short stack never gets a "standard size, capped" instead.
     if (this.effectiveStackBB(view) < 20) {
       return { action: { type: 'bet', amount: la.maxRaiseTo }, reason: `${reason} all-in` };
     }
     const pot = view.potOdds?.pot ?? 0;
-    const fraction = chooseBetFraction(texture, ctx);
+    const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
     const raw = Math.round(pot * fraction);
     const amount = clamp(raw, la.minRaiseTo, la.maxRaiseTo);
     return { action: { type: 'bet', amount: Math.max(1, amount) }, reason };
@@ -1968,12 +2021,13 @@ export class PostflopPolicy {
     ctx: SizingContext,
     reason: string,
   ): { action: { type: 'raise'; amount: number }; reason: string } {
+    // Short-stack override: see bet(); a sub-20BB raise is a deliberate shove.
     if (this.effectiveStackBB(view) < 20) {
       return { action: { type: 'raise', amount: la.maxRaiseTo }, reason: `${reason} all-in` };
     }
     const pot = view.potOdds?.pot ?? 0;
     const currentBet = view.hand?.currentBet ?? 0;
-    const fraction = chooseBetFraction(texture, ctx);
+    const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
     const minDelta = Math.max(1, la.minRaiseTo - currentBet);
     const target = currentBet + Math.max(minDelta, Math.round(pot * fraction));
     const amount = clamp(target, la.minRaiseTo, la.maxRaiseTo);

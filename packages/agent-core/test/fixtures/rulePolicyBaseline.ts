@@ -8,6 +8,15 @@
 // those changes, the decision-logic body is byte-for-byte the 5f9b12a file. It
 // exists so a test can compare the final `PolicyDecision` of the current
 // `RulePolicy` with `adaptivePreflop` off against the pre-step-3 baseline.
+//
+// SIZING OVERLAY (2026-10-07): `raiseTo` uses the **shared** sizing constants
+// (`src/betSizing.ts`) and the shared `heroIsIPToOpener` / `lastPreflopRaiserSeat`
+// helpers (2.5bb open / 3bb SB open / 3x-4x 3-bet / 2.2x-2.5x 4-bet), so this
+// fixture still isolates the `adaptivePreflop` flag rather than the orthogonal
+// sizing change, without copying the standard. A sizing regression is covered by
+// dedicated sizing unit tests, not this diff. This is the one deliberate
+// exception to "byte-for-byte".
+//
 // DO NOT EDIT BY HAND - regenerate from git if the baseline ever changes.
 
 import type { PlayerAction } from '@4am/shared';
@@ -15,7 +24,15 @@ import type { DecisionLegalActions, DecisionView } from '../../src/decisionView.
 import { mulberry32 } from '../../src/equity.js';
 import type { Policy, PolicyDecision } from '../../src/policy.js';
 import type { PolicyKind } from '../../src/policyStyles.js';
-import { PostflopPolicy } from '../../src/postflopPolicy.js';
+import { PostflopPolicy, heroIsIPToOpener, lastPreflopRaiserSeat } from '../../src/postflopPolicy.js';
+import {
+  PREFLOP_3BET_IP_MULT,
+  PREFLOP_3BET_OOP_MULT,
+  PREFLOP_4BET_IP_MULT,
+  PREFLOP_4BET_OOP_MULT,
+  PREFLOP_OPEN_BB,
+  PREFLOP_SB_OPEN_BB,
+} from '../../src/betSizing.js';
 import { choosePreflopIntent, type PreflopChoice } from './preflopPolicyBaseline.js';
 import { deriveRulesSeed } from '../../src/rulesSeed.js';
 import { RULE_PRESETS, type RuleParams } from '../../src/ruleStyles.js';
@@ -255,12 +272,24 @@ export class RulePolicy implements Policy {
 
     let target: number;
     if (situation === 'unopened') {
-      // SB opens larger (out of position); everyone else uses a ~2.5x standard.
-      target = choice.context.position === 'SB' ? bb * 3 : bb * 2.5;
+      // Standard opens: 2.5bb, small blind 3bb (out of position).
+      target = choice.context.position === 'SB' ? bb * PREFLOP_SB_OPEN_BB : bb * PREFLOP_OPEN_BB;
     } else if (situation === 'facing3Bet') {
-      target = currentBet * 2.2; // 4-bet
+      // 4-bet: fixed multiple of the 3-bet — 2.2x IP, 2.5x OOP.
+      target =
+        currentBet *
+        (heroIsIPToOpener(view, lastPreflopRaiserSeat(view))
+          ? PREFLOP_4BET_IP_MULT
+          : PREFLOP_4BET_OOP_MULT);
     } else {
-      target = currentBet * 3; // 3-bet
+      // 3-bet: fixed multiple of the open — 3x IP, 4x OOP. Shared sizing
+      // constants + shared relative-position helper, so the fixture cannot
+      // drift from the policy on the standard itself.
+      target =
+        currentBet *
+        (heroIsIPToOpener(view, lastPreflopRaiserSeat(view))
+          ? PREFLOP_3BET_IP_MULT
+          : PREFLOP_3BET_OOP_MULT);
     }
     target = Math.round(target);
     target = Math.max(target, la.minRaiseTo);

@@ -197,6 +197,33 @@ export function seatsInDealingOrder(view: DecisionView): number[] {
   return fallbackSeatOrder(view);
 }
 
+/**
+ * Seats in **postflop** action order (first to act first, button last).
+ *
+ * The dealing order and the postflop order coincide for 3+ players (SB first,
+ * button last), but **heads-up they are opposites**: preflop the button/SB acts
+ * first and the BB last, so `seatsInDealingOrder` returns the *preflop* order
+ * `[button/SB, BB]`; postflop the BB acts first and the button/SB last. Never
+ * reuse the dealing-order index as a postflop position for heads-up — that
+ * silently reverses IP/OOP and mis-sizes the preflop 3-bet/4-bet.
+ *
+ * Uses `buttonSeat` to place the button last when it is known, and falls back
+ * to reversing the two-seat order otherwise: when `buttonSeat` is unknown we
+ * rely on the contract that a supplied / short-handed two-seat dealing order is
+ * `[SB, BB]`, so reversing it yields the postflop `[BB, SB]`.
+ *
+ * LIMITATION: `fallbackSeatOrder()` with no supplied order *and* no button
+ * returns the seats in ascending order rather than a dealing order, so
+ * reversing that ascending pair cannot actually determine position — it is a
+ * best-effort assumption, not a determination. Such a view must not be trusted
+ * for heads-up IP/OOP until every caller populates `buttonSeat`/`seatOrder`.
+ */
+export function postflopActionOrder(view: DecisionView): number[] {
+  const order = seatsInDealingOrder(view);
+  if (order.length !== 2) return order;
+  return view.hand?.buttonSeat === order[1] ? order : [order[1]!, order[0]!];
+}
+
 function positionForSeat(seat: number, seatOrder: number[]): Position {
   const table = POSITIONS_BY_COUNT[seatOrder.length];
   const idx = seatOrder.indexOf(seat);

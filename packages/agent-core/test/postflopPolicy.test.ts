@@ -536,7 +536,55 @@ describe('postflop: board texture & sizing', () => {
         overbetRoll: 0,
         maxOverbetFrequency: 0.2,
       }),
-    ).toBe(1.25);
+    ).toBe(1.5);
+  });
+
+  it('sizes from the per-street grid and never leaves it', () => {
+    const dry = classifyTexture([c('Ac'), c('7d'), c('2h')]);
+    const wet = classifyTexture([c('Th'), c('9h'), c('8h')]);
+    const GRIDS = {
+      flop: [0.33, 0.75],
+      turn: [0.5, 0.75, 1.0, 1.5],
+      river: [0.33, 0.5, 0.75, 1.0, 1.5],
+    } as const;
+    const ctxs = [
+      { spr: 6, inPosition: true, rangeAdvantage: 0.4 },
+      { spr: 6, inPosition: true, rangeAdvantage: 0 },
+      { spr: 2, inPosition: false, rangeAdvantage: 0 },
+      { spr: 6, inPosition: false, rangeAdvantage: -0.5 },
+      { spr: 6, inPosition: true, rangeAdvantage: 0.5, overbetRoll: 0, maxOverbetFrequency: 0.2 },
+    ];
+    for (const street of ['flop', 'turn', 'river'] as const) {
+      const allowed = GRIDS[street] as readonly number[];
+      for (const ctx of ctxs) {
+        for (const texture of [dry, wet]) {
+          const f = chooseBetFraction(texture, ctx, street);
+          expect(allowed).toContain(f);
+        }
+      }
+    }
+    // Street-specific consequences of the standard:
+    // - a 0.5-pot pick on the flop has no 0.5 tier, so it snaps down to 0.33;
+    // - a 0.33 range bet on the turn has no 0.33 tier, so it snaps to 0.5;
+    // - the overbet gate is a no-op on the flop (no overbet tier), so a
+    //   high-advantage dry board still range-bets 0.33 there; on turn/river it
+    //   returns the top of the grid (1.5).
+    expect(chooseBetFraction(wet, { spr: 2, inPosition: false, rangeAdvantage: 0 }, 'flop')).toBe(0.33);
+    expect(chooseBetFraction(dry, { spr: 6, inPosition: true, rangeAdvantage: 0.4 }, 'turn')).toBe(0.5);
+    const overbet = {
+      spr: 6,
+      inPosition: true,
+      rangeAdvantage: 0.5,
+      overbetRoll: 0,
+      maxOverbetFrequency: 0.2,
+    };
+    // Flop: maxOverbetFrequency is ignored, so this equals the non-overbet pick.
+    expect(chooseBetFraction(dry, overbet, 'flop')).toBe(0.33);
+    expect(
+      chooseBetFraction(dry, { spr: 6, inPosition: true, rangeAdvantage: 0.5 }, 'flop'),
+    ).toBe(0.33);
+    expect(chooseBetFraction(dry, overbet, 'turn')).toBe(1.5);
+    expect(chooseBetFraction(dry, overbet, 'river')).toBe(1.5);
   });
 
   it('scores range advantage from aggressor / position / texture', () => {
@@ -860,6 +908,93 @@ describe('postflop: RulePolicy integration & fail-closed', () => {
     const d = p.decide(v);
     expect(d.reason).toMatch(/rules-v1 postflop/);
     assertLegal(d, v.legalActions!);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// postflop IP/OOP: `heroInPosition` must use the **postflop** action order, not
+// the preflop dealing order, or heads-up it reverses the seats. These are the
+// persistence tests for that fix: they call `heroInPosition` (not the preflop
+// `heroIsIPToOpener`) and fail if it reverts to `seatsInDealingOrder`.
+// ---------------------------------------------------------------------------
+describe('postflop: heroInPosition uses postflop action order', () => {
+  // Board Jh 7d 2c / hero Ah Ad (ids 42,21,0 / 50,49): a made overpair on a dry,
+  // non-ace-high, rainbow flop, so the value-bet decision is live.
+  const HU_BOARD = [c('Jh'), c('7d'), c('2c')];
+  const HU_HOLE = [c('Ah'), c('Ad')];
+  const tagHu = () => new PostflopPolicy({ params: TAG, seed: 5 });
+
+  /**
+   * Unopened heads-up flop, BTN/SB = seat 0, BB = seat 1, `seatOrder [0, 1]`,
+   * pot 600, both stacks 10,000, no preflop aggression. The fixed `actionSeq`
+   * selects a seed roll (0.9655) that sits between the in-position and
+   * out-of-position value-bet probabilities, so the decision is decisive:
+   * IP bets, OOP checks.
+   */
+  function huFlop(heroSeat: 0 | 1): DecisionView {
+    const villainSeat = heroSeat === 0 ? 1 : 0;
+    return view({
+      room: { id: 'r', name: 'hu', sb: 50, bb: 100, minSettleHands: 0, sevenDeuceBonus: 0 },
+      hand: hand(HU_HOLE, HU_BOARD, { buttonSeat: 0, toAct: heroSeat, mySeat: heroSeat, pot: 600 }),
+      me: seat({ seat: heroSeat, stack: 10_000, committed: 0, total: 0 }),
+      opponents: [seat({ seat: villainSeat, userId: 2, isMe: false, stack: 10_000 })],
+      legalActions: la({
+        canCheck: true,
+        canCall: false,
+        callAmount: 0,
+        canBet: true,
+        canRaise: true,
+        minRaiseTo: 100,
+        maxRaiseTo: 10_000,
+      }),
+      potOdds: { callAmount: 0, pot: 600, potOdds: 0, breakEvenEquity: 0 },
+      seatOrder: [0, 1],
+      actionSeq: 17,
+    });
+  }
+
+  it('BTN/SB hero is IP postflop and value-bets the flop 33% (198)', () => {
+    const v = huFlop(0);
+    expect(heroInPosition(v)).toBe(true);
+    // Out of position the same hand checks, so this asserts far more than the
+    // position helper: it pins the decision the dealing-order regression flips.
+    expect(tagHu().decide(v).action).toEqual({ type: 'bet', amount: 198 });
+  });
+
+  it('BB hero is OOP postflop', () => {
+    expect(heroInPosition(huFlop(1))).toBe(false);
+  });
+
+  it('3+ handed table folded down to two still ranks the button last', () => {
+    const order = [0, 1, 2, 3, 4, 5];
+    // Only the BB (seat 1) and the BTN (seat 5) remain after folds. The button
+    // still acts last postflop, so the BB is OOP and the BTN is IP — the
+    // 3+-handed path must not be dragged into the heads-up reversal.
+    const base = view({
+      hand: hand(HU_HOLE, HU_BOARD, { buttonSeat: 5, toAct: 1, mySeat: 1, pot: 600 }),
+      me: seat({ seat: 1, stack: 10_000 }),
+      opponents: [0, 2, 3, 4, 5].map((s) =>
+        seat({ seat: s, userId: 100 + s, isMe: false, stack: 10_000, folded: s !== 5 }),
+      ),
+      legalActions: la({
+        canCheck: true,
+        canCall: false,
+        callAmount: 0,
+        canBet: true,
+        canRaise: true,
+        minRaiseTo: 100,
+        maxRaiseTo: 10_000,
+      }),
+      potOdds: { callAmount: 0, pot: 600, potOdds: 0, breakEvenEquity: 0 },
+      seatOrder: order,
+    });
+    expect(heroInPosition(base)).toBe(false);
+    const btn = {
+      ...base,
+      hand: { ...base.hand!, mySeat: 5, toAct: 5 },
+      me: seat({ seat: 5, stack: 10_000 }),
+    };
+    expect(heroInPosition(btn)).toBe(true);
   });
 });
 
