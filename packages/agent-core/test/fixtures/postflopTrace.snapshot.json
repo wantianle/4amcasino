@@ -1,0 +1,1945 @@
+{
+  "meta": {
+    "params": "constrained-random",
+    "seed": 2654435769,
+    "p2": {
+      "sizeGrid": true,
+      "buckets": true
+    },
+    "note": "Live PostflopPolicy.decide() internal state (via onTrace) PLUS the exported-helper reconstruction, frozen side by side. Do not edit by hand; regenerate with UPDATE_SNAPSHOTS=1. Cross-assertions in postflopTrace.test.ts must hold for every entry."
+  },
+  "scenarios": {
+    "checkedTo/flop-dry-83o/air": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.08)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.0818686401480111
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.06666666666666665,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": false,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "check",
+        "rng": {
+          "overbetRoll": 0.3980966645758599,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": null,
+          "overbetRoll": 0.3980966645758599,
+          "maxOverbetFrequency": 0.25,
+          "amount": null,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "check"
+        },
+        "reason": "rules-v1 postflop check (pct 0.08)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.198613
+        }
+      }
+    },
+    "checkedTo/flop-dry-AA/value": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 33
+      },
+      "reason": "rules-v1 postflop value (pct 0.97)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.9662349676225717
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.7999999999999999,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": true,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "value-bet",
+        "rng": {
+          "overbetRoll": 0.9973860941827297,
+          "valueRoll": 0.7736416291445494,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.9973860941827297,
+          "maxOverbetFrequency": 0.25,
+          "amount": 33,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "bet",
+          "amount": 33
+        },
+        "reason": "rules-v1 postflop value (pct 0.97)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.966235
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.65856
+        }
+      }
+    },
+    "checkedTo/flop-dry-set77/value": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 33
+      },
+      "reason": "rules-v1 postflop value (pct 1.00)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 3,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.9972247918593895
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.19999999999999998,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": true,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "value-bet",
+        "rng": {
+          "overbetRoll": 0.0617181989364326,
+          "valueRoll": 0.625023381318897,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.0617181989364326,
+          "maxOverbetFrequency": 0.25,
+          "amount": 33,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "bet",
+          "amount": 33
+        },
+        "reason": "rules-v1 postflop value (pct 1.00)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 3,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.997225
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.2,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.28224
+        }
+      }
+    },
+    "checkedTo/flop-monotone-AA/exposed-overpair": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.92)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.9246068455134135
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "opponentModel": {},
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "booleans": {
+          "value": true,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "check",
+        "rng": {
+          "overbetRoll": 0.17717642104253173,
+          "valueRoll": 0.8998236819170415,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": null,
+          "overbetRoll": 0.17717642104253173,
+          "maxOverbetFrequency": 0.25,
+          "amount": null,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.5880000000000001,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "check"
+        },
+        "reason": "rules-v1 postflop check (pct 0.92)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.924607
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.75,
+          "bluffBetProbability": 0.68544
+        }
+      }
+    },
+    "checkedTo/flop-twoTone-JTh/combo-draw": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.26)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.2631822386679001
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.43333333333333335,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": false,
+          "bluffCandidate": true,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "check",
+        "rng": {
+          "overbetRoll": 0.7841549215372652,
+          "valueRoll": null,
+          "bluffRoll": 0.8669534425716847,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.7841549215372652,
+          "maxOverbetFrequency": 0.25,
+          "amount": null,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": 0.31902315789473684,
+          "defend": null
+        },
+        "action": {
+          "type": "check"
+        },
+        "reason": "rules-v1 postflop check (pct 0.26)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.428587
+        }
+      }
+    },
+    "checkedTo/flop-twoTone-JTh/draw-multiway": {
+      "node": "checkedTo",
+      "action": {
+        "type": "check"
+      },
+      "reason": "rules-v1 postflop check (pct 0.26)",
+      "trace": {
+        "node": "unopened",
+        "street": "flop",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 2,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.2631822386679001
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.43333333333333335,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": false,
+          "bluffCandidate": true,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "check",
+        "rng": {
+          "overbetRoll": 0.7841549215372652,
+          "valueRoll": null,
+          "bluffRoll": 0.8669534425716847,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.7841549215372652,
+          "maxOverbetFrequency": 0.25,
+          "amount": null,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": 0.22331621052631578,
+          "defend": null
+        },
+        "action": {
+          "type": "check"
+        },
+        "reason": "rules-v1 postflop check (pct 0.26)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 2,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.300011
+        }
+      }
+    },
+    "checkedTo/river-dry-AA/aggressor-overbet": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 33
+      },
+      "reason": "rules-v1 postflop value (pct 0.89)",
+      "trace": {
+        "node": "unopened",
+        "street": "river",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": true,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.6000000000000001,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.8934343434343435
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.7999999999999999,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": true,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "value-bet",
+        "rng": {
+          "overbetRoll": 0.25081182504072785,
+          "valueRoll": 0.9418846929911524,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.25081182504072785,
+          "maxOverbetFrequency": 0.25,
+          "amount": 33,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 1,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "bet",
+          "amount": 33
+        },
+        "reason": "rules-v1 postflop value (pct 0.89)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.893434
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": true
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.6,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 1,
+          "betFraction": 1.5,
+          "bluffBetProbability": 1
+        }
+      }
+    },
+    "checkedTo/turn-dry-AA/aggressor-overbet": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop value (pct 0.94)",
+      "trace": {
+        "node": "unopened",
+        "street": "turn",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": true,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.6000000000000001,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.9357487922705314
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.7999999999999999,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": true,
+          "bluffCandidate": false,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "value-bet",
+        "rng": {
+          "overbetRoll": 0.7054042581003159,
+          "valueRoll": 0.4477755571715534,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.5,
+          "overbetRoll": 0.7054042581003159,
+          "maxOverbetFrequency": 0.25,
+          "amount": 50,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 1,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "bet",
+          "amount": 50
+        },
+        "reason": "rules-v1 postflop value (pct 0.94)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.935749
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": true
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.6,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 1,
+          "betFraction": 1.5,
+          "bluffBetProbability": 1
+        }
+      }
+    },
+    "checkedTo/turn-twoTone-JTh/combo-draw": {
+      "node": "checkedTo",
+      "action": {
+        "type": "bet",
+        "amount": 50
+      },
+      "reason": "rules-v1 postflop bluff (blocker 0.43)",
+      "trace": {
+        "node": "unopened",
+        "street": "turn",
+        "context": {
+          "spr": 10,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.18985507246376812
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.43333333333333335,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": false,
+          "bluffCandidate": true,
+          "defend": null,
+          "strong": null
+        },
+        "branch": "bluff-bet",
+        "rng": {
+          "overbetRoll": 0.0071442690677940845,
+          "valueRoll": null,
+          "bluffRoll": 0.05323844985105097,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.5,
+          "overbetRoll": 0.0071442690677940845,
+          "maxOverbetFrequency": 0.25,
+          "amount": 50,
+          "allIn": false
+        },
+        "facing": null,
+        "probabilities": {
+          "valueBet": 0.9800000000000001,
+          "bluffBet": 0.4285866666666666,
+          "defend": null
+        },
+        "action": {
+          "type": "bet",
+          "amount": 50
+        },
+        "reason": "rules-v1 postflop bluff (blocker 0.43)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.189855
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 10,
+        "exploitMultiplier": 1,
+        "checkedTo": {
+          "reconstructedWithOverbetRollZero": true,
+          "valueBetProbability": 0.98,
+          "betFraction": 0.5,
+          "bluffBetProbability": 0.428587
+        }
+      }
+    },
+    "facingBet/flop-dry-83o/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "fold"
+      },
+      "reason": "rules-v1 postflop fold (equity 0.07 < pot odds 0.25, pct 0.08)",
+      "trace": {
+        "node": "facingBet",
+        "street": "flop",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.0818686401480111
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": null,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": false,
+          "strong": null
+        },
+        "branch": "fold",
+        "rng": {
+          "overbetRoll": null,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": null,
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.0703125,
+          "samples": 128,
+          "margin": 0.05,
+          "villainModel": "balanced",
+          "villainCombos": 1081
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "fold"
+        },
+        "reason": "rules-v1 postflop fold (equity 0.07 < pot odds 0.25, pct 0.08)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.070313,
+          "margin": 0.05,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/flop-dry-83o/half-pot-station": {
+      "node": "facingBet",
+      "action": {
+        "type": "fold"
+      },
+      "reason": "rules-v1 postflop fold (equity 0.02 < pot odds 0.25, pct 0.08)",
+      "trace": {
+        "node": "facingBet",
+        "street": "flop",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 0.6
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.0818686401480111
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {
+          "vpip": 0.6,
+          "pfr": 0.1,
+          "aggression": 0.1388888888888889
+        },
+        "blocker": null,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": false,
+          "strong": null
+        },
+        "branch": "fold",
+        "rng": {
+          "overbetRoll": null,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": null
+        },
+        "sizing": null,
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.0234375,
+          "samples": 128,
+          "margin": 0.05,
+          "villainModel": "value-heavy",
+          "villainCombos": 1081
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "fold"
+        },
+        "reason": "rules-v1 postflop fold (equity 0.02 < pot odds 0.25, pct 0.08)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.081869
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {
+            "vpip": 0.6,
+            "pfr": 0.1,
+            "aggression": 0.1388888888888889
+          }
+        },
+        "blocker": 0.066667,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 0.6,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.023438,
+          "margin": 0.05,
+          "villainModel": "value-heavy",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/flop-dry-KQ/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 100
+      },
+      "reason": "rules-v1 postflop value raise (pct 0.96, eq 0.71)",
+      "trace": {
+        "node": "facingBet",
+        "street": "flop",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.9583718778908418
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.39999999999999997,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": true,
+          "strong": true
+        },
+        "branch": "value-raise",
+        "rng": {
+          "overbetRoll": 0.6835214961320162,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": 0.08606289583258331,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.33,
+          "overbetRoll": 0.6835214961320162,
+          "maxOverbetFrequency": 0.25,
+          "amount": 100,
+          "allIn": false
+        },
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.71484375,
+          "samples": 128,
+          "margin": 0.07821644916267101,
+          "villainModel": "balanced",
+          "villainCombos": 1081
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "raise",
+          "amount": 100
+        },
+        "reason": "rules-v1 postflop value raise (pct 0.96, eq 0.71)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.958372
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.4,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.714844,
+          "margin": 0.078216,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/flop-monotone-AA/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 163
+      },
+      "reason": "rules-v1 postflop semibluff raise (blocker 0.60)",
+      "trace": {
+        "node": "facingBet",
+        "street": "flop",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.9246068455134135
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "opponentModel": {},
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": true,
+          "strong": true
+        },
+        "branch": "semibluff-raise",
+        "rng": {
+          "overbetRoll": 0.17717642104253173,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": 0.8998236819170415,
+          "semiBluffRoll": 0.1444146221037954
+        },
+        "sizing": {
+          "fraction": 0.75,
+          "overbetRoll": 0.17717642104253173,
+          "maxOverbetFrequency": 0.25,
+          "amount": 163,
+          "allIn": false
+        },
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.64453125,
+          "samples": 128,
+          "margin": 0.08292276778530304,
+          "villainModel": "balanced",
+          "villainCombos": 1081
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "raise",
+          "amount": 163
+        },
+        "reason": "rules-v1 postflop semibluff raise (blocker 0.60)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.924607
+        },
+        "texture": {
+          "maxSuit": 3,
+          "suited": true,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 6,
+          "lowConnected": false,
+          "wet": true
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.6,
+        "madeHandSuppressed": false,
+        "exposedOverpair": true,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.644531,
+          "margin": 0.082923,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/flop-twoTone-JTh/combo-draw": {
+      "node": "facingBet",
+      "action": {
+        "type": "call"
+      },
+      "reason": "rules-v1 postflop call (equity 0.64 vs pot odds 0.25, pct 0.26)",
+      "trace": {
+        "node": "facingBet",
+        "street": "flop",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.2631822386679001
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.43333333333333335,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": true,
+          "strong": false
+        },
+        "branch": "call",
+        "rng": {
+          "overbetRoll": 0.7841549215372652,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": null,
+          "semiBluffRoll": 0.8669534425716847
+        },
+        "sizing": {
+          "fraction": null,
+          "overbetRoll": 0.7841549215372652,
+          "maxOverbetFrequency": 0.25,
+          "amount": null,
+          "allIn": false
+        },
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.63671875,
+          "samples": 128,
+          "margin": 0.08331945062076204,
+          "villainModel": "balanced",
+          "villainCombos": 1081
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "call"
+        },
+        "reason": "rules-v1 postflop call (equity 0.64 vs pot odds 0.25, pct 0.26)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 0,
+          "flushDraw": true,
+          "straightDraw": 2,
+          "overcards": 2,
+          "percentile": 0.263182
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 7,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.433333,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.636719,
+          "margin": 0.083319,
+          "villainModel": "balanced",
+          "villainCombos": 1081,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/river-dry-KQ/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 125
+      },
+      "reason": "rules-v1 postflop value raise (pct 0.89, eq 0.77)",
+      "trace": {
+        "node": "facingBet",
+        "street": "river",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.8909090909090909
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.39999999999999997,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": true,
+          "strong": true
+        },
+        "branch": "value-raise",
+        "rng": {
+          "overbetRoll": 0.8715661228634417,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": 0.5986543481703848,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.5,
+          "overbetRoll": 0.8715661228634417,
+          "maxOverbetFrequency": 0.25,
+          "amount": 125,
+          "allIn": false
+        },
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.76953125,
+          "samples": 128,
+          "margin": 0.07295754977738111,
+          "villainModel": "balanced",
+          "villainCombos": 990
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "raise",
+          "amount": 125
+        },
+        "reason": "rules-v1 postflop value raise (pct 0.89, eq 0.77)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 0,
+          "percentile": 0.890909
+        },
+        "texture": {
+          "maxSuit": 2,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.4,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.769531,
+          "margin": 0.072958,
+          "villainModel": "balanced",
+          "villainCombos": 990,
+          "samples": 128
+        }
+      }
+    },
+    "facingBet/turn-dry-AA/half-pot": {
+      "node": "facingBet",
+      "action": {
+        "type": "raise",
+        "amount": 125
+      },
+      "reason": "rules-v1 postflop value raise (pct 0.94, eq 0.76)",
+      "trace": {
+        "node": "facingBet",
+        "street": "turn",
+        "context": {
+          "spr": 6.666666666666667,
+          "inPosition": true,
+          "wasAggressor": false,
+          "activeOpponents": 1,
+          "rangeAdvantage": 0.2,
+          "exploitMultiplier": 1
+        },
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.9357487922705314
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "opponentModel": {},
+        "blocker": 0.7999999999999999,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "booleans": {
+          "value": null,
+          "bluffCandidate": null,
+          "defend": true,
+          "strong": true
+        },
+        "branch": "value-raise",
+        "rng": {
+          "overbetRoll": 0.7054042581003159,
+          "valueRoll": null,
+          "bluffRoll": null,
+          "defendRoll": null,
+          "raiseRoll": 0.4477755571715534,
+          "semiBluffRoll": null
+        },
+        "sizing": {
+          "fraction": 0.5,
+          "overbetRoll": 0.7054042581003159,
+          "maxOverbetFrequency": 0.25,
+          "amount": 125,
+          "allIn": false
+        },
+        "facing": {
+          "priceTrusted": true,
+          "potBefore": 100,
+          "requiredEquity": 0.25,
+          "requiredMdf": 0.6666666666666666,
+          "equity": 0.7578125,
+          "samples": 128,
+          "margin": 0.07421775801146277,
+          "villainModel": "balanced",
+          "villainCombos": 1035
+        },
+        "probabilities": {
+          "valueBet": null,
+          "bluffBet": null,
+          "defend": null
+        },
+        "action": {
+          "type": "raise",
+          "amount": 125
+        },
+        "reason": "rules-v1 postflop value raise (pct 0.94, eq 0.76)"
+      },
+      "reconstructed": {
+        "hand": {
+          "category": 1,
+          "flushDraw": false,
+          "straightDraw": 0,
+          "overcards": 2,
+          "percentile": 0.935749
+        },
+        "texture": {
+          "maxSuit": 1,
+          "suited": false,
+          "connected": false,
+          "paired": false,
+          "aceHigh": false,
+          "highCard": 11,
+          "lowConnected": false,
+          "wet": false
+        },
+        "position": {
+          "inPosition": true,
+          "wasAggressor": false
+        },
+        "opponents": {
+          "count": 1,
+          "model": {}
+        },
+        "blocker": 0.8,
+        "madeHandSuppressed": false,
+        "exposedOverpair": false,
+        "rangeAdvantage": 0.2,
+        "spr": 6.666667,
+        "exploitMultiplier": 1,
+        "facing": {
+          "call": 50,
+          "price": {
+            "trusted": true,
+            "potBefore": 100,
+            "requiredEquity": 0.25,
+            "requiredMdf": 0.666667
+          },
+          "equity": 0.757813,
+          "margin": 0.074218,
+          "villainModel": "balanced",
+          "villainCombos": 1035,
+          "samples": 128
+        }
+      }
+    }
+  },
+  "blindSpots": {
+    "covered": [
+      "real overbetRoll actually drawn in SizingContext (not the fixed 0 reference)",
+      "real valueBet probability actually used, INCLUDING the exposedOverpair 0.6 discount that the reconstruction records unmasked",
+      "the real bet fraction after the street-specific grid snap (the reconstruction is street-less and reads the river grid)",
+      "intermediate booleans value / bluffCandidate / defend / strong and the exposedOverpair / madeHandSuppressed flags as computed",
+      "selected branch (value-bet / bluff-bet / check / fold / call / value-raise / semibluff-raise)",
+      "final sizing amount + all-in flag",
+      "real equity / villain model / villain combos / price margin used facing a bet"
+    ],
+    "stillUncovered": [
+      "lastPreflopRaiserSeat / heroIsIPToOpener (preflop sizing only; not on the postflop path) - covered by rulePolicy.test.ts unit tests + preflop telemetry, not by this postflop trace",
+      "difficultyPolicy.medium forced routing - covered by difficultyPolicy.test.ts, not by this postflop trace",
+      "the engine-wide preflop decision trace (exists separately as onPreflopDecision)"
+    ]
+  }
+}

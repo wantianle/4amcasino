@@ -1,5 +1,5 @@
 import { HAND_CATEGORY, type CardId } from '@4am/shared';
-import { postflopStreetOf } from './betSizing.js';
+import { postflopStreetOf, type PostflopStreet } from './betSizing.js';
 import type { DecisionLegalActions, DecisionView } from './decisionView.js';
 import { estimateEquity, mulberry32 } from './equity.js';
 import type { PolicyDecision } from './policy.js';
@@ -23,7 +23,14 @@ import { classifyTexture, type BoardTexture } from './postflopTexture.js';
 import { blockerScore, isExposedOverpair, madeHandSuppressedByBoard } from './postflopBlockers.js';
 import { DEFAULT_P2, type P2Options } from './postflopP2.js';
 import { handPercentile } from './postflopPercentile.js';
-import { facingBetMargin, facingBetSamples, facingVillainRange } from './postflopVillain.js';
+import {
+  facingBetMargin,
+  facingBetSamples,
+  facingVillainModel,
+  facingVillainRange,
+  opponentModelStats,
+  type VillainRangeModel,
+} from './postflopVillain.js';
 
 // Price helpers moved to `potPrice.ts`; re-exported so existing importers keep
 // their `postflopPolicy` import path.
@@ -206,6 +213,113 @@ export interface PostflopOptions {
   seed?: number;
   /** P2 behaviour switches; omitted fields keep `DEFAULT_P2`. */
   p2?: Partial<P2Options>;
+  /**
+   * Optional, strictly read-only sink for one decision's INTERNAL state, called
+   * once per `decide()` with the values the engine actually computed (not a
+   * reconstruction from the exported helpers). This is what lets a behaviour
+   * snapshot read `decide()`'s real `overbetRoll`, equity/model, intermediate
+   * booleans, selected branch and final sizing.
+   *
+   * NEVER affects a decision: the trace is emitted after the action is resolved,
+   * every `rng()` draw keeps its exact position in the seeded sequence (the
+   * trace only *records* the value the draw returned), and any exception the
+   * sink throws is swallowed. Omitted by default, in which case no trace object
+   * is allocated and the emit helper returns on its first line.
+   */
+  onTrace?: (trace: PostflopTrace) => void;
+}
+
+/** The top-level branch `decide()` took. */
+export type PostflopNode = 'unopened' | 'facingBet' | 'no-context';
+
+/** RNG draws a decision may make, in the order `decide()` can consume them. */
+export type PostflopRollKey =
+  | 'overbetRoll'
+  | 'valueRoll'
+  | 'bluffRoll'
+  | 'defendRoll'
+  | 'raiseRoll'
+  | 'semiBluffRoll';
+
+/**
+ * One `PostflopPolicy.decide()` call's internal decision state, emitted through
+ * {@link PostflopOptions.onTrace}.
+ *
+ * This is the first-class trace the phase-0 behaviour snapshots had to
+ * reconstruct: instead of recomputing `valueBetProbability` / `chooseBetFraction`
+ * outside the policy (and risking a silent divergence), a snapshot can now pin
+ * the exact numbers the engine used. Every field is computed on the real path;
+ * `null` means that branch never produced the value (e.g. `defend` on an
+ * unopened node, or a probability whose gate short-circuited past it).
+ *
+ * Purely observational, so it is safe to enable anywhere.
+ */
+export interface PostflopTrace {
+  /** Which top-level branch produced the action. */
+  node: PostflopNode;
+  /** Resolved grid street for sizing. */
+  street: PostflopStreet;
+  context: {
+    spr: number;
+    inPosition: boolean;
+    wasAggressor: boolean;
+    /** `max(1, live opponents)` — the headcount the engine used. */
+    activeOpponents: number;
+    rangeAdvantage: number;
+    exploitMultiplier: number;
+  };
+  hand: {
+    category: number;
+    flushDraw: boolean;
+    straightDraw: number;
+    overcards: number;
+    percentile: number;
+  };
+  texture: BoardTexture;
+  opponentModel: ReturnType<typeof opponentModelStats>;
+  /** `blockerScore(hole, board)`; null on the no-context early return. */
+  blocker: number | null;
+  madeHandSuppressed: boolean;
+  exposedOverpair: boolean;
+  /** The intermediate booleans, as computed (null when not reached). */
+  booleans: {
+    value: boolean | null;
+    bluffCandidate: boolean | null;
+    defend: boolean | null;
+    strong: boolean | null;
+  };
+  /** Named branch that returned the action. */
+  branch: string;
+  /** The real seeded draws, by gate. */
+  rng: Record<PostflopRollKey, number | null>;
+  /** Resolved sizing context + the size actually used (null when no bet/raise). */
+  sizing: {
+    fraction: number | null;
+    overbetRoll: number | null;
+    maxOverbetFrequency: number;
+    amount: number | null;
+    allIn: boolean;
+  } | null;
+  /** Facing-bet price + real equity/model (null on the unopened node). */
+  facing: {
+    priceTrusted: boolean;
+    potBefore: number;
+    requiredEquity: number;
+    requiredMdf: number;
+    equity: number;
+    samples: number;
+    margin: number;
+    villainModel: VillainRangeModel;
+    villainCombos: number;
+  } | null;
+  /** The probabilities the gates compared their roll against (null when unused). */
+  probabilities: {
+    valueBet: number | null;
+    bluffBet: number | null;
+    defend: number | null;
+  };
+  action: { type: string; amount?: number };
+  reason: string;
 }
 
 /** A legitimate, always-legal fallback action. */
@@ -213,16 +327,58 @@ function onlyLegal(la: DecisionLegalActions, reason: string): PolicyDecision {
   return { action: guaranteedLegalAction(la), reason };
 }
 
+/** The draw recorder passed into the branch methods instead of a bare `rng`. */
+type PostflopRoll = (key: PostflopRollKey) => number;
+
+/** Skeleton for a trace; branch methods fill it in. */
+function emptyTrace(view: DecisionView): PostflopTrace {
+  return {
+    node: 'no-context',
+    street: postflopStreetOf(view.hand?.street ?? null),
+    context: {
+      spr: 0,
+      inPosition: false,
+      wasAggressor: false,
+      activeOpponents: 1,
+      rangeAdvantage: 0,
+      exploitMultiplier: 1,
+    },
+    hand: { category: 0, flushDraw: false, straightDraw: 0, overcards: 0, percentile: 0 },
+    texture: classifyTexture(view.hand?.board ?? []),
+    opponentModel: {},
+    blocker: null,
+    madeHandSuppressed: false,
+    exposedOverpair: false,
+    booleans: { value: null, bluffCandidate: null, defend: null, strong: null },
+    branch: 'no-context',
+    rng: {
+      overbetRoll: null,
+      valueRoll: null,
+      bluffRoll: null,
+      defendRoll: null,
+      raiseRoll: null,
+      semiBluffRoll: null,
+    },
+    sizing: null,
+    facing: null,
+    probabilities: { valueBet: null, bluffBet: null, defend: null },
+    action: { type: 'check' },
+    reason: '',
+  };
+}
+
 export class PostflopPolicy {
   readonly name = 'rules-v1-postflop';
   private readonly params: RuleParams;
   private readonly seed: number;
   private readonly p2: P2Options;
+  private readonly onTrace?: (trace: PostflopTrace) => void;
 
   constructor(options: PostflopOptions) {
     this.params = options.params;
     this.seed = options.seed ?? 0x9e3779b9;
     this.p2 = { ...DEFAULT_P2, ...options.p2 };
+    this.onTrace = options.onTrace;
   }
 
   decide(view: DecisionView): PolicyDecision {
@@ -231,41 +387,99 @@ export class PostflopPolicy {
     const la = normalizeLegalActions(raw);
     const hole = view.hand?.myCards ?? [];
     const board = view.hand?.board ?? [];
+    // Allocate the trace only when observed: with no sink the policy runs the
+    // exact same code path and allocates nothing.
+    const trace = this.onTrace ? emptyTrace(view) : undefined;
     if (!view.hand || view.hand.street === 'preflop' || hole.length < 2 || board.length < 3) {
-      return onlyLegal(la, 'rules-v1 postflop: no card context');
+      const decision = onlyLegal(la, 'rules-v1 postflop: no card context');
+      this.finishTrace(trace, decision, 'no-context');
+      return decision;
     }
 
     const rng = mulberry32(deriveRulesSeed(this.seed, view));
+    // Records the value `rng()` returned without adding, reordering or skipping
+    // a single draw: `rng()` is still called exactly where it was, and the trace
+    // assignment is pure bookkeeping that cannot affect the sequence.
+    const roll: PostflopRoll = (key) => {
+      const value = rng();
+      if (trace) trace.rng[key] = value;
+      return value;
+    };
+
     const ev = evaluateHand(hole, board);
     const percentile = handPercentile(hole, board);
     const texture = classifyTexture(board);
     const inPosition = heroInPosition(view);
-    const adv = rangeAdvantage({
-      heroWasAggressor: heroWasAggressor(view),
-      inPosition,
-      texture,
-    });
+    const wasAggressor = heroWasAggressor(view);
+    const adv = rangeAdvantage({ heroWasAggressor: wasAggressor, inPosition, texture });
     const spr = this.spr(view);
     const active = Math.max(1, view.opponents.filter((o) => !o.folded).length);
     const call = la.callAmount;
 
-    if (la.canCheck) {
-      return this.decideUnopened(view, la, hole, board, ev, percentile, texture, adv, spr, rng);
+    if (trace) {
+      trace.context = {
+        spr,
+        inPosition,
+        wasAggressor,
+        activeOpponents: active,
+        rangeAdvantage: adv,
+        exploitMultiplier: this.exploitMultiplier(view),
+      };
+      trace.hand = {
+        category: ev.category,
+        flushDraw: ev.flushDraw,
+        straightDraw: ev.straightDraw,
+        overcards: ev.overcards,
+        percentile,
+      };
+      trace.texture = texture;
+      trace.opponentModel = opponentModelStats(view);
     }
-    return this.decideFacingBet(
-      view,
-      la,
-      hole,
-      board,
-      ev,
-      percentile,
-      texture,
-      adv,
-      spr,
-      active,
-      call,
-      rng,
-    );
+
+    const decision = la.canCheck
+      ? this.decideUnopened(view, la, hole, board, ev, percentile, texture, adv, spr, roll, trace)
+      : this.decideFacingBet(
+          view,
+          la,
+          hole,
+          board,
+          ev,
+          percentile,
+          texture,
+          adv,
+          spr,
+          active,
+          call,
+          roll,
+          trace,
+        );
+    this.finishTrace(trace, decision, la.canCheck ? 'unopened' : 'facingBet');
+    return decision;
+  }
+
+  /**
+   * Stamp the resolved action/reason onto a trace and emit it. Strictly
+   * fail-open: the decision is already final, and a throwing or absent sink can
+   * never change it. Returns on the first line when there is nothing to do.
+   */
+  private finishTrace(
+    trace: PostflopTrace | undefined,
+    decision: PolicyDecision,
+    node: PostflopNode,
+  ): void {
+    if (!trace || !this.onTrace) return;
+    trace.node = node;
+    const action = decision.action;
+    trace.action =
+      action.type === 'bet' || action.type === 'raise'
+        ? { type: action.type, amount: action.amount }
+        : { type: action.type };
+    trace.reason = decision.reason;
+    try {
+      this.onTrace(trace);
+    } catch {
+      // Telemetry must never affect a live decision.
+    }
   }
 
   private spr(view: DecisionView): number {
@@ -323,7 +537,8 @@ export class PostflopPolicy {
     texture: BoardTexture,
     adv: number,
     spr: number,
-    rng: () => number,
+    roll: PostflopRoll,
+    trace?: PostflopTrace,
   ): PolicyDecision {
     const blocker = blockerScore(hole, board);
     const draw = ev.flushDraw || ev.straightDraw >= 1;
@@ -339,17 +554,37 @@ export class PostflopPolicy {
     // often. The discount is deliberately scoped to exposed overpairs only -
     // sets, two pair, straights and strong draws keep their normal frequency.
     const exposedOverpair = isExposedOverpair(hole, board, ev);
+    if (trace) {
+      trace.blocker = blocker;
+      trace.madeHandSuppressed = boardSuppressed;
+      trace.exposedOverpair = exposedOverpair;
+      trace.booleans.value = value;
+      trace.booleans.bluffCandidate = bluffCandidate;
+    }
 
     if (la.canBet) {
+      const overbetRoll = roll('overbetRoll');
       const sizingCtx: SizingContext = {
         spr,
         inPosition: heroInPosition(view),
         rangeAdvantage: adv,
-        overbetRoll: rng(),
+        overbetRoll,
         maxOverbetFrequency: this.params.maxOverbetFrequency,
       };
-      if (value && rng() < valueBetProbability(this.params, adv) * (exposedOverpair ? 0.6 : 1)) {
-        return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
+      if (trace) {
+        trace.sizing = {
+          fraction: null,
+          overbetRoll,
+          maxOverbetFrequency: this.params.maxOverbetFrequency,
+          amount: null,
+          allIn: false,
+        };
+      }
+      const valueProb = valueBetProbability(this.params, adv) * (exposedOverpair ? 0.6 : 1);
+      if (trace) trace.probabilities.valueBet = valueProb;
+      if (value && roll('valueRoll') < valueProb) {
+        if (trace) trace.branch = 'value-bet';
+        return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop value (pct ${percentile.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`, trace);
       }
       if (bluffCandidate) {
         const fraction = chooseBetFraction(
@@ -366,11 +601,17 @@ export class PostflopPolicy {
           active >= 2 ? this.params.multiwayBluffScale : 1,
           this.exploitMultiplier(view),
         );
-        if (rng() < prob) {
-          return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop bluff (blocker ${blocker.toFixed(2)})`);
+        if (trace && trace.sizing) {
+          trace.sizing.fraction = fraction;
+          trace.probabilities.bluffBet = prob;
+        }
+        if (roll('bluffRoll') < prob) {
+          if (trace) trace.branch = 'bluff-bet';
+          return this.bet(view, la, texture, sizingCtx, `rules-v1 postflop bluff (blocker ${blocker.toFixed(2)})`, trace);
         }
       }
     }
+    if (trace) trace.branch = 'check';
     return { action: { type: 'check' }, reason: `rules-v1 postflop check (pct ${percentile.toFixed(2)})` };
   }
 
@@ -386,7 +627,8 @@ export class PostflopPolicy {
     spr: number,
     active: number,
     call: number,
-    rng: () => number,
+    roll: PostflopRoll,
+    trace?: PostflopTrace,
   ): PolicyDecision {
     // Resolve the price from the snapshot (pure, unit-tested): a malformed
     // field, a mismatched call amount or a pot below the call is never clamped
@@ -406,16 +648,19 @@ export class PostflopPolicy {
     // snapshot was inconsistent.
     const samples = facingBetSamples(active);
     let equity = requiredEquity;
+    let villainCombos = 0;
     try {
       const knownValid = new Set([...hole, ...board]).size === hole.length + board.length;
       if (knownValid) {
+        const villainRange = facingVillainRange(view, hole, potBefore, call, this.p2);
+        villainCombos = villainRange.combos?.length ?? 0;
         const estimate = estimateEquity({
           hole,
           board,
           opponents: active,
           samples,
           seed: deriveRulesSeed(this.seed, view),
-          villainRange: facingVillainRange(view, hole, potBefore, call, this.p2),
+          villainRange,
         });
         equity = Number.isFinite(estimate.equity) ? clamp01(estimate.equity) : 0;
       }
@@ -423,39 +668,68 @@ export class PostflopPolicy {
       equity = requiredEquity;
     }
 
+    const margin = facingBetMargin(equity, samples);
     let defend: boolean;
     if (!priceTrusted) {
       // Conservative neutral path: the price mirror is unusable, so never fold
       // solely on its account. Defend by hand percentile against the MDF of the
       // authoritative pot/call price (or a neutral 0.5 when the pot is bad too).
-      defend = rng() < defendProbability(percentile, required);
+      const p = defendProbability(percentile, required);
+      if (trace) trace.probabilities.defend = p;
+      defend = roll('defendRoll') < p;
     } else {
       // The band is the estimator's own ~2 standard errors, so a decision only
       // counts as clear when the observed edge exceeds sampling noise; inside
       // the band the former MDF/percentile mix still sets the frequency.
-      const margin = facingBetMargin(equity, samples);
       if (equity > requiredEquity + margin) {
         defend = true;
       } else if (equity < requiredEquity - margin) {
         defend = false;
       } else {
-        defend = rng() < defendProbability(percentile, required);
+        const p = defendProbability(percentile, required);
+        if (trace) trace.probabilities.defend = p;
+        defend = roll('defendRoll') < p;
       }
     }
+    if (trace) {
+      trace.booleans.defend = defend;
+      trace.facing = {
+        priceTrusted,
+        potBefore,
+        requiredEquity,
+        requiredMdf: required,
+        equity,
+        samples,
+        margin,
+        villainModel: facingVillainModel(view, potBefore, call, this.p2),
+        villainCombos,
+      };
+    }
     if (!defend) {
+      if (trace) trace.branch = 'fold';
       return {
         action: { type: 'fold' },
         reason: `rules-v1 postflop fold (equity ${equity.toFixed(2)} < pot odds ${requiredEquity.toFixed(2)}, pct ${percentile.toFixed(2)})`,
       };
     }
 
+    const overbetRoll = roll('overbetRoll');
     const sizingCtx: SizingContext = {
       spr,
       inPosition: heroInPosition(view),
       rangeAdvantage: adv,
-      overbetRoll: rng(),
+      overbetRoll,
       maxOverbetFrequency: this.params.maxOverbetFrequency,
     };
+    if (trace) {
+      trace.sizing = {
+        fraction: null,
+        overbetRoll,
+        maxOverbetFrequency: this.params.maxOverbetFrequency,
+        amount: null,
+        allIn: false,
+      };
+    }
 
     // `equity` is already available; a clear equity edge also counts as value.
     // P1: only an **overpair** with no card of the flush suit is a bluff-catcher
@@ -471,8 +745,15 @@ export class PostflopPolicy {
     const strong =
       (!boardSuppressed && (ev.category >= HAND_CATEGORY.trips || percentile >= 0.85)) ||
       equity >= (exposedOverpair ? 0.86 : 0.8);
-    if (strong && la.canRaise && rng() < (exposedOverpair ? 0.2 : 0.6)) {
-      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);
+    if (trace) {
+      trace.blocker = blockerScore(hole, board);
+      trace.madeHandSuppressed = boardSuppressed;
+      trace.exposedOverpair = exposedOverpair;
+      trace.booleans.strong = strong;
+    }
+    if (strong && la.canRaise && roll('raiseRoll') < (exposedOverpair ? 0.2 : 0.6)) {
+      if (trace) trace.branch = 'value-raise';
+      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`, trace);
     }
 
     const blocker = blockerScore(hole, board);
@@ -480,10 +761,12 @@ export class PostflopPolicy {
     if (
       la.canRaise &&
       (draw || blocker >= 0.5) &&
-      rng() < 0.35 * (exposedOverpair ? 0.5 : 1) * this.aggressionMultiplier(view, blocker, active)
+      roll('semiBluffRoll') < 0.35 * (exposedOverpair ? 0.5 : 1) * this.aggressionMultiplier(view, blocker, active)
     ) {
-      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop semibluff raise (blocker ${blocker.toFixed(2)})`);
+      if (trace) trace.branch = 'semibluff-raise';
+      return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop semibluff raise (blocker ${blocker.toFixed(2)})`, trace);
     }
+    if (trace) trace.branch = 'call';
     return {
       action: { type: 'call' },
       reason: `rules-v1 postflop call (equity ${equity.toFixed(2)} vs pot odds ${requiredEquity.toFixed(2)}, pct ${percentile.toFixed(2)})`,
@@ -496,12 +779,17 @@ export class PostflopPolicy {
     texture: BoardTexture,
     ctx: SizingContext,
     reason: string,
+    trace?: PostflopTrace,
   ): { action: { type: 'bet'; amount: number }; reason: string } {
     // Short-stack override: below 20BB an unopened bet is a deliberate shove to
     // the stack, taking precedence over every standard grid size below. It
     // matches the raise() convention (and the shared engine's "bet up to stack"
     // rule), so a short stack never gets a "standard size, capped" instead.
     if (this.effectiveStackBB(view) < 20) {
+      if (trace?.sizing) {
+        trace.sizing.amount = la.maxRaiseTo;
+        trace.sizing.allIn = true;
+      }
       return { action: { type: 'bet', amount: la.maxRaiseTo }, reason: `${reason} all-in` };
     }
     const pot = view.potOdds?.pot ?? 0;
@@ -512,6 +800,10 @@ export class PostflopPolicy {
       minRaiseTo: la.minRaiseTo,
       maxRaiseTo: la.maxRaiseTo,
     });
+    if (trace?.sizing) {
+      trace.sizing.fraction = fraction;
+      trace.sizing.amount = amount;
+    }
     return { action: { type: 'bet', amount }, reason };
   }
 
@@ -521,9 +813,14 @@ export class PostflopPolicy {
     texture: BoardTexture,
     ctx: SizingContext,
     reason: string,
+    trace?: PostflopTrace,
   ): { action: { type: 'raise'; amount: number }; reason: string } {
     // Short-stack override: see bet(); a sub-20BB raise is a deliberate shove.
     if (this.effectiveStackBB(view) < 20) {
+      if (trace?.sizing) {
+        trace.sizing.amount = la.maxRaiseTo;
+        trace.sizing.allIn = true;
+      }
       return { action: { type: 'raise', amount: la.maxRaiseTo }, reason: `${reason} all-in` };
     }
     const pot = view.potOdds?.pot ?? 0;
@@ -536,6 +833,10 @@ export class PostflopPolicy {
       minRaiseTo: la.minRaiseTo,
       maxRaiseTo: la.maxRaiseTo,
     });
+    if (trace?.sizing) {
+      trace.sizing.fraction = fraction;
+      trace.sizing.amount = amount;
+    }
     return { action: { type: 'raise', amount }, reason };
   }
 }
