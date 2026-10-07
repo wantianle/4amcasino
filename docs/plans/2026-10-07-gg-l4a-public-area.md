@@ -39,6 +39,93 @@
 场景），并通过 typecheck/test/build；既有 probe 尚未接入上述四个 L4a gate，
 所以本文件不把 pot y、完整 pot 结构或 per-run 顺序宣称为已测通过。
 
+### centerPreflop 可达性判断
+
+不增加防御代码。`TablePage` 的 `boardRuns` 是 `hand.boards.length > 0 ?
+hand.boards : [hand.board]`。服务端 `game.ts` 的 multi-run 写入使用
+`Array.from({ length: runs }, (_, i) => this.boardForRun(i + 1))`，并且 server
+integration tests 断言每个 run 都是完整五张牌、共享 flop；普通 `board_open`
+也按当前 run 追加牌。因此生产协议不会产生 `boards = [[], 非空]`。空 extra
+placeholder 只出现在 legacy rit 的客户端迁移/兼容状态，且渲染层已按规范隐藏。
+若未来协议允许该状态，gate 必须先规范化 boardRuns 语义再决定锚点，不能把它
+偷偷变成一个客户端守卫。
+
+不新增独立 runner。`gg-collide2` 已合入 `458c2a2`，其
+`apps/web/test/browser/table-overlap.mjs` / `table-geometry-gate.mjs` 是唯一
+canonical runner；本轮交付为下面的 L4a assertion patch/checklist，直接 rebase
+到 canonical runner，不复制采集逻辑，也不新增第二套 PASS/FAIL 报告。
+
+### Canonical runner 的 L4a assertion patch
+
+以下是应直接加到 canonical `table-overlap.mjs` 的同一份 DOM evaluate 返回值
+（不是本 worktree 的独立文件）。它沿用 canonical 的 `R`/`rect`/fixture 上下文：
+
+```js
+const visibleRects = (selector) => [...document.querySelectorAll(selector)]
+  .map((el) => ({ el, r: R(el) }))
+  .filter(({ r }) => r.w > 0 && r.h > 0);
+const boardRuns = [...document.querySelectorAll('[data-table-board-run]')];
+const dealtByRun = boardRuns.map((row) => [...row.querySelectorAll('.table-dealt-card')]);
+const cardIdOf = (card) => {
+  const face = card.querySelector('[data-card-rank][data-card-suit]');
+  if (!face) return null;
+  const rank = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
+    .indexOf(face.getAttribute('data-card-rank'));
+  return rank >= 0 ? rank * 4 + Number(face.getAttribute('data-card-suit')) : null;
+};
+// The canonical card probe must expose the original CardId on the face (or
+// derive it from an equivalent canonical data attribute), never display text.
+const l4a = {
+  A: {
+    dealt: dealtByRun.map((cards) => cards.length),
+    slots: visibleRects('.table-center-col .table-slot').length,
+    emptyLegacyExtraRows: [...document.querySelectorAll('[data-table-board-run]')]
+      .filter((row) => row.querySelectorAll('.table-dealt-card').length === 0).length,
+  },
+  B: {
+    pot: (() => {
+      const el = document.querySelector('[data-table-pot]');
+      const r = el?.getBoundingClientRect();
+      return el && r && r.width > 0 && r.height > 0 ? r : null;
+    })(),
+    chipsRects: visibleRects('.table-pot-chips').length,
+    valueRects: visibleRects('.table-pot-val').length,
+    // Assert these per viewport: phone => chips=1/value=1; desktop => chips=0/value=1.
+    expectedChipsRects: innerWidth < 768 ? 1 : 0,
+    expectedValueRects: 1,
+    valueText: document.querySelector('.table-pot-val')?.textContent?.trim() ?? null,
+  },
+  C: (() => {
+    const pot = document.querySelector('[data-table-pot]')?.getBoundingClientRect();
+    const rim = document.querySelector('.table-rail-top')?.getBoundingClientRect();
+    const valid = pot && rim && pot.width > 0 && pot.height > 0 && rim.width > 0 && rim.height > 0;
+    return {
+      potCenterY: valid ? pot.y + pot.height / 2 : null,
+      rimCenterY: valid ? rim.y + rim.height / 2 : null,
+      threshold: valid ? rim.y + rim.height / 2 - 0.05 * rim.height : null,
+      pass: !!valid && pot.y + pot.height / 2 < rim.y + rim.height / 2 - 0.05 * rim.height,
+    };
+  })(),
+  D: dealtByRun.map((cards, i) => ({
+    domRun: boardRuns[i]?.getAttribute('data-table-board-run'),
+    cardIds: cards.map(cardIdOf),
+  })),
+};
+```
+
+The final assertion layer must compare `A.dealt` and `D[*].cardIds` to the fixture
+`boards` per group. It must permit a first visible run of `data-table-board-run="1"`
+when `boards[0]` is empty; it must not require labels to begin at zero or be
+continuous. For C, missing node, missing rim, or any zero-sized rectangle is a hard
+FAIL, never `null`/skip. The thresholds come from L4a §1–§4 and L0/L1a: exact board
+counts, visible-rect count, and `pot.centerY < rim.centerY - 0.05 * rim.height`.
+
+The canonical fixtures must cover A no-card/flop/turn/river and empty legacy extra;
+B phone/desktop with stack-unit `bb` and `chips`; C no-card/flop/turn/river/multi-run
+at `1440×900`, `1280×720`, `390×844`, `320×568`, including a fixture where the
+ribbon is in the center column; D one/two/three runs, partial dealing, empty primary
+plus non-empty extra, and empty legacy extra.
+
 ## 并发改动清单
 
 - `TablePage.tsx`：新增手机 ChipStack、隐藏 preflop/legacy 空 run、传递
