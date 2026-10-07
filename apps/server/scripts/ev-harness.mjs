@@ -325,10 +325,13 @@ function makePolicy(spec, seed) {
 // top out near 24% VPIP at 6-max even at preflopScale=2. So this profile is
 // built the only faithful way available from the data: **rank the 169 hand
 // classes by preflop equity vs 5 random opponents once, then open / 3-bet /
-// continue the top-X% of hands per node, with X taken from the human's own
-// measured per-position frequencies**. Aggregate VPIP/PFR therefore match by
-// construction, and hand selection is strength-ordered (a real loose-aggressive
-// opens its best hands, not random ones).
+// continue the top-X% of the 1326 preflop combinations per node, with X taken
+// from the human's own measured per-position frequencies**. The ranking is
+// combination-weighted (AA 6/1326, AKs 4/1326, AKo 12/1326), so X is a
+// deal-frequency. The preflop class thresholds target the measured frequencies;
+// aggregate VPIP/PFR are expected to approximate them, subject to action-node
+// mix and legal-action constraints. Hand selection is strength-ordered (a real
+// loose-aggressive opens its best hands, not random ones).
 //
 // ⚠️ DOCUMENTED APPROXIMATION: POSTFLOP this profile delegates to the production
 // `constrained-random/medium` rules-v1 engine. The human's postflop frequencies
@@ -360,16 +363,27 @@ const HUMAN_VS_3BET = { raise: 0.4, call: 0.3 };
 const HUMAN_BB_RAISE = 0.3;
 
 /**
- * Static 169-class strength ranking (percentile 0 = strongest), computed once.
+ * Static 169-class strength ranking, **weighted by real combination counts**.
+ * Value = cumulative share of the 1326 preflop combinations (0 = strongest),
+ * computed once per process.
  *
- * ⚠️ NAMING: this is a **preflop strength-ranked frequency proxy**, NOT a
- * reproduction of a human's hand-selection policy. The reviewer's first critique
- * — 169 classes ranked equally — is fixed here: equity is averaged over every
- * concrete combo of the class (1326 combinations in total), so pairs / suited /
- * offsuit classes contribute in the correct proportion and card-removal / suit
- * effects are not ignored. It is still only a
- * *strength ordering*; the frequencies layered on top are the measured human
- * ones, not a fitted range.
+ * Two distinct things were conflated in the earlier comment; both are required
+ * and both are now actually true:
+ *   1. EQUITY per class is the mean over every concrete combo of the class
+ *      (suit/blocker aware), so a pair is not scored off one arbitrary suit.
+ *   2. PERCENTILE is the cumulative combo mass, so pairs / suited / offsuit
+ *      classes carry their real deal frequency (AA 6/1326, AKs 4/1326,
+ *      AKo 12/1326). Ranking the 169 classes equally (i/169) treated AA as
+ *      common as 72o — that held the equity average correct while leaving the
+ *      actual selection weighting uniform, and is the defect this replaces.
+ *
+ * It is still only a *strength ordering*; the frequencies layered on top are the
+ * measured human ones, not a fitted range.
+ *
+ * ⚠️ KNOWN LIMITATION: each combo's equity is only 24 Monte-Carlo samples vs 5
+ * random opponents, so near-tie classes can invert on sampling noise. This makes
+ * the ranking a coarse-grained frequency proxy, not a precise model that could be
+ * used as a solver range.
  */
 let classRankPercentile = null;
 function classRanking() {
@@ -391,7 +405,26 @@ function classRanking() {
     return { key, eq: sum / combos.length, combos: combos.length };
   });
   ranked.sort((x, y) => y.eq - x.eq); // strongest first
-  classRankPercentile = new Map(ranked.map((e, i) => [e.key, i / ranked.length]));
+
+  // REAL-DEAL WEIGHTING (the fix): a class's share of the 1326 preflop
+  // combinations is its combo count — AA=6, AKs=4, AKo=12 — NOT 1/169. Assign
+  // each class the cumulative combo mass of every stronger-or-equal class (block
+  // start), so `rank < width` selects class blocks whose cumulative combination
+  // start is below `width`, approximately the top `width` of concrete
+  // combinations, instead of the top `width` of 169 equal classes.
+  //
+  // Block start (not block midpoint) is kept to preserve the old `i/169`
+  // class-start convention. Because whole classes are atomic, a class straddling
+  // the threshold enters entirely, so the covered mass can exceed `width` by up
+  // to one class (max 12/1326 ≈ 0.9pp); a midpoint would centre the choice but is
+  // not used.
+  const totalCombos = ranked.reduce((acc, e) => acc + e.combos, 0); // 1326
+  classRankPercentile = new Map();
+  let cumulative = 0;
+  for (const e of ranked) {
+    classRankPercentile.set(e.key, cumulative / totalCombos);
+    cumulative += e.combos;
+  }
   return classRankPercentile;
 }
 
@@ -1322,8 +1355,8 @@ function printPaired(rows, o) {
 }
 
 function printMultiseed(res, o) {
-  console.log(`EV multiseed — hero=${o.heroSpec.label} vs villain=${o.villainSpec.label} seats=${o.seats} hands/seed=${o.hands}`);
-  console.log(`seeds=${res.seeds.join(',')}`);
+  console.log(`EV multiseed — hero=${o.heroSpec.label} vs villain=${o.villainSpecs.map((s) => s.label).join(' + ')} seats=${o.seats} hands/seed=${o.hands}`);
+  console.log(`seeds=${res.seeds.join(',')}  sessionMemory=${o.memory ? 'ON' : 'OFF'}  stack=${o.stackBb}bb`);
   console.log('');
   console.log('  seed         hero bb/100   hero VPIP/PFR   showdown%');
   for (const row of res.rows) {
@@ -1446,7 +1479,7 @@ if (o.mode === 'bench') {
   const rows = [];
   let totalMs = 0;
   for (const seed of seeds) {
-    const r = runMatchup({ ...o, seed, heroSpec: o.heroSpec, villainSpecs: [o.villainSpec], collectMs: true, returnHandDeltas: true });
+    const r = runMatchup({ ...o, seed, heroSpec: o.heroSpec, villainSpecs: o.villainSpecs, collectMs: true, returnHandDeltas: true });
     totalMs += r.elapsedMs;
     rows.push(r);
   }
