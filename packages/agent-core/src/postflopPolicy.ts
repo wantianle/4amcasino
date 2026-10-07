@@ -1,27 +1,14 @@
-import {
-  ALL_CARDS,
-  HAND_CATEGORY,
-  rankOf,
-  suitOf,
-  type CardId,
-} from '@4am/shared';
+import { HAND_CATEGORY, type CardId } from '@4am/shared';
 import {
   DEFAULT_SIZE_STREET,
   POSTFLOP_SIZE_GRIDS,
-  gridFraction,
   nearestStreetSize,
   postflopStreetOf,
-  snapOpponentRead,
   streetSupportsOverbet,
   type PostflopStreet,
 } from './betSizing.js';
 import type { DecisionLegalActions, DecisionView } from './decisionView.js';
-import {
-  estimateEquity,
-  mulberry32,
-  type VillainCombo,
-  type VillainRange,
-} from './equity.js';
+import { estimateEquity, mulberry32 } from './equity.js';
 import type { PolicyDecision } from './policy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import type { RuleParams } from './ruleStyles.js';
@@ -35,19 +22,12 @@ import {
   postflopActionOrder,
 } from './tableContext.js';
 import { clamp, clamp01 } from './postflopMath.js';
-import { lruGet, lruSet } from './postflopCache.js';
-import { bestScore, evaluateHand, type HandEval } from './postflopStrength.js';
-import { bucketStrength, handBucket } from './postflopBuckets.js';
+import { evaluateHand, type HandEval } from './postflopStrength.js';
 import { classifyTexture, type BoardTexture } from './postflopTexture.js';
-import {
-  boardFlushInfo,
-  blockerScore,
-  FLUSH_TIER,
-  flushLayerOf,
-  heroFlushBlockFactor,
-  isExposedOverpair,
-  madeHandSuppressedByBoard,
-} from './postflopBlockers.js';
+import { blockerScore, isExposedOverpair, madeHandSuppressedByBoard } from './postflopBlockers.js';
+import { DEFAULT_P2, type P2Options } from './postflopP2.js';
+import { handPercentile } from './postflopPercentile.js';
+import { facingBetMargin, facingBetSamples, facingVillainRange } from './postflopVillain.js';
 
 // Price helpers moved to `potPrice.ts`; re-exported so existing importers keep
 // their `postflopPolicy` import path.
@@ -270,486 +250,31 @@ export function rangeAdvantage(input: {
   return clamp(a, -1, 1);
 }
 
-// ---------------------------------------------------------------------------
-// hand percentile (empirical CDF vs all *opponent* combos: board + hero removed)
-// ---------------------------------------------------------------------------
+// Postflop signal layer: hand percentile (uniform prior) and the P0
+// villain/range model moved into dedicated pure modules; re-exported so the
+// historical public surface of `postflopPolicy.js` is unchanged.
+export { unknownComboCount, handPercentile } from './postflopPercentile.js';
+export {
+  P0_FACING_BET_MARGIN,
+  P0_BET_CONFIDENCE,
+  P0_EQUITY_SAMPLES,
+  P0_MULTIWAY_EQUITY_SAMPLES,
+  facingBetSamples,
+  facingBetMargin,
+  chooseVillainModel,
+  villainStrengthTier,
+  villainModelWeight,
+  buildVillainRange,
+  opponentModelStats,
+  facingVillainModel,
+  facingVillainRange,
+  type VillainRangeModel,
+  type VillainModelInput,
+} from './postflopVillain.js';
 
-interface BoardDist {
-  /** Sorted scores of every board-remaining two-card combo (includes hero cards). */
-  scores: number[];
-  /** Per-card sorted scores of the combos containing that card. */
-  byCard: Map<CardId, number[]>;
-}
-
-const distCache = new Map<string, BoardDist>();
-
-/** All cards not on the board and not in hero's hand. */
-function unknownDeck(hole: readonly CardId[], board: readonly CardId[]): CardId[] {
-  const known = new Set<CardId>([...board, ...hole]);
-  return ALL_CARDS.filter((card) => !known.has(card));
-}
-
-/** Number of opponent combos in the prior: C(52 - board - hole, 2). */
-export function unknownComboCount(hole: readonly CardId[], board: readonly CardId[]): number {
-  const n = unknownDeck(hole, board).length;
-  return (n * (n - 1)) / 2;
-}
-
-/** Number of entries `< target` (strict) or `<= target` in a sorted list. */
-function countLess(list: readonly number[], target: number, strict: boolean): number {
-  let lo = 0;
-  let hi = list.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    const v = list[mid]!;
-    const less = strict ? v < target : v <= target;
-    if (less) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-/**
- * Board-level combo distribution, computed once per board (all C(49,2) combos
- * of the board-remaining deck, hero's cards included). Hero-card exclusion for a
- * specific hand is then handled analytically in `handPercentile`, so the
- * expensive `evaluate7` sweep is NOT repeated per decision.
- */
-function boardDist(board: readonly CardId[]): BoardDist {
-  const key = [...board].sort((a, b) => a - b).join(',');
-  const cached = lruGet(distCache, key);
-  if (cached) return cached;
-  const boardSet = new Set(board);
-  const deck = ALL_CARDS.filter((card) => !boardSet.has(card));
-  const scores: number[] = [];
-  const byCard = new Map<CardId, number[]>();
-  for (const card of deck) byCard.set(card, []);
-  for (let i = 0; i < deck.length; i++) {
-    for (let j = i + 1; j < deck.length; j++) {
-      const a = deck[i]!;
-      const b = deck[j]!;
-      const s = bestScore([a, b, ...board]);
-      scores.push(s);
-      byCard.get(a)!.push(s);
-      byCard.get(b)!.push(s);
-    }
-  }
-  scores.sort((a, b) => a - b);
-  for (const list of byCard.values()) list.sort((a, b) => a - b);
-  const dist = { scores, byCard };
-  lruSet(distCache, key, dist);
-  return dist;
-}
-
-/**
- * Approximate percentile of our hand versus a uniform prior over all opponent
- * combos with **both** board and hero's cards removed (C(47,2) = 1081 on a
- * flop). Ties are counted with their mid-rank so the value is unbiased under
- * equal scores. Derived from the per-board distribution by subtracting the
- * combos that use either of hero's cards (their shared combo added back once).
- */
-export function handPercentile(hole: readonly CardId[], board: readonly CardId[]): number {
-  if (hole.length < 2 || board.length < 3) return 0.5;
-  const [a, b] = hole;
-  if (a === undefined || b === undefined) return 0.5;
-  const total = unknownComboCount(hole, board);
-  if (total <= 0) return 0.5;
-  const dist = boardDist(board);
-  const s = bestScore([...hole, ...board]);
-
-  const aList = dist.byCard.get(a) ?? [];
-  const bList = dist.byCard.get(b) ?? [];
-  const less = countLess(dist.scores, s, true) - countLess(aList, s, true) - countLess(bList, s, true);
-  const equalOrLess =
-    countLess(dist.scores, s, false) -
-    countLess(aList, s, false) -
-    countLess(bList, s, false) +
-    1; // the {a,b} combo equals our score and is counted in both card lists
-  const equal = equalOrLess - less;
-  return (less + 0.5 * equal) / total;
-}
-
-// ---------------------------------------------------------------------------
-// P0: conditional (range-weighted) opponent model for facing-a-bet decisions
-// ---------------------------------------------------------------------------
-
-/**
- * P0 replaces the old "uniform unknown-combo percentile + MDF short-circuit"
- * defence with a **conditional range equity vs pot odds** decision:
- *
- *  1. classify the bettor's likely continuing range into one of three coarse
- *     tiers - value-heavy / balanced / bluff-heavy - from public information
- *     only (bet size relative to the pot, all-in, board wetness, whether hero
- *     was the preflop aggressor, and observed VPIP/PFR/postflop aggression);
- *  2. weight every board-remaining opponent combo by a heuristic hand-strength
- *     tier under that model, and estimate hero equity against that weighted
- *     range (rather than against uniform unknown combos);
- *  3. call when `equity > potOdds + margin`, fold when
- *     `equity < potOdds - margin`, and only inside the band fall back to the
- *     former MDF/percentile randomisation. `margin` is the estimator's own
- *     `~2` standard errors, so a spot is only treated as "clear" when the
- *     observed edge exceeds sampling noise.
- *
- * This is intentionally a small, explainable approximation: it rebuilds the
- * weighted range from public information on every facing-a-bet decision and does
- * not propagate a range across streets (the experimental `rangePropagation`
- * capability was evaluated and deleted outright - see {@link P2Options}). The
- * weighted range is applied to every still-active opponent (a multiway
- * simplification); when a tiny range cannot fill every opponent without
- * replacement, `estimateEquity` fills the overflow uniformly and reports
- * `uniformFallbacks`.
- */
-export type VillainRangeModel = 'value-heavy' | 'balanced' | 'bluff-heavy';
-
-/**
- * Floor of the equity/pot-odds decision band. The band itself is adaptive (see
- * `facingBetMargin`), this only keeps a small tolerance for a near-certain
- * estimate where the standard error vanishes.
- */
-export const P0_FACING_BET_MARGIN = 0.05;
-
-/** Confidence multiplier applied to the estimator's standard error for the band. */
-export const P0_BET_CONFIDENCE = 1.96;
-
-/**
- * Monte-Carlo samples for one heads-up facing-a-bet equity estimate. At
- * `p = 0.5` the standard error is `sqrt(0.25/128) = 4.4%`, so a 95% decision
- * band (`1.96 * SE`) is ~8.7% — an edge that large is a real edge, not seed
- * noise. The band is still derived from the actual sample count via
- * `facingBetMargin` rather than being a fixed cutoff, so no decision claims a
- * sharper boundary than its samples support.
- */
-export const P0_EQUITY_SAMPLES = 128;
-
-/**
- * Samples for the multiway facing-a-bet estimate. Multiway already applies one
- * heuristic continuing range to every opponent (a documented simplification),
- * so it spends half the heads-up budget to bound the worst-case per-decision
- * cost; its error-matched band is correspondingly wider.
- */
-export const P0_MULTIWAY_EQUITY_SAMPLES = 64;
-
-/** Sample budget for a facing-bet decision against `opponents` active hands. */
-export function facingBetSamples(opponents: number): number {
-  return opponents <= 1 ? P0_EQUITY_SAMPLES : P0_MULTIWAY_EQUITY_SAMPLES;
-}
-
-/**
- * Half-width of the equity/pot-odds decision band for an observed `equity`:
- * `max(P0_FACING_BET_MARGIN, 1.96 * sqrt(e(1-e)/samples))`. Near `e = 0.5` this
- * is ~0.123 at 64 samples; it narrows as the estimate approaches 0/1. Comparing
- * the point estimate against `requiredEquity ± facingBetMargin(equity)` means
- * the "clear call / clear fold" zones account for the estimator's own sampling
- * error, and spots inside the band deliberately mix via the MDF/percentile
- * fallback instead of pretending the point estimate is exact.
- */
-export function facingBetMargin(equity: number, samples = P0_EQUITY_SAMPLES): number {
-  const e = clamp01(equity);
-  const se = Math.sqrt(Math.max(0, (e * (1 - e)) / Math.max(1, samples)));
-  return Math.max(P0_FACING_BET_MARGIN, P0_BET_CONFIDENCE * se);
-}
-
-// `FacingBetPrice` / `resolveFacingBetPrice` moved to `potPrice.ts` and
-// re-exported above.
-
-export interface VillainModelInput {
-  /** The bettor's bet as a fraction of the pot *before* the bet (1 = pot). */
-  betFraction: number;
-  /** Any still-active opponent is all-in. */
-  allIn: boolean;
-  /** Hero made the last preflop aggressive action. */
-  heroWasAggressor: boolean;
-  /** Board is flush/straight heavy (polarises a betting range). */
-  wet: boolean;
-  /** Observed opponents' average VPIP / PFR / postflop aggression, if known. */
-  opponentVpip?: number;
-  opponentPfr?: number;
-  opponentAggression?: number;
-}
-
-/**
- * Map public bet/opponent information onto one of the three coarse range tiers.
- *
- * Bet size drives the baseline: all-in / large are value-leaning, small bets
- * bluff-leaning, medium sits in the (explicitly defined) neutral zone that maps
- * to `balanced`. Wet boards and hero holding the preflop aggression shade the
- * baseline a further half-step toward bluff-heavy, because both make a bet less
- * likely to be pure value.
- *
- * Opponent type then overrides the size read, because it changes what a bet of
- * that size means:
- *  - a **maniac** (loose, aggressive) bets/shoves a wide, bluff-heavy range, so
- *    any bet is `bluff-heavy`;
- *  - a **station** (loose, passive preflop) or a **nit** (very tight) rarely
- *    bluffs, so any bet is `value-heavy`.
- * With no usable read ("normal" opponent) the size/texture baseline stands.
- */
-export function chooseVillainModel(
-  input: VillainModelInput,
-  sizeGrid: boolean = DEFAULT_P2.sizeGrid,
-): VillainRangeModel {
-  let score = 0;
-  if (input.allIn) {
-    score += 2;
-  } else {
-    // P2: read the size on the discrete grid, so a weird size (0.42, 0.62, 3.0)
-    // is translated to its nearest abstract size instead of being read as an
-    // exact continuous value. `sizeGrid` is on by default since 2026-10-06; with
-    // it off the raw thresholds are used. The read uses the **global** opponent
-    // grid ({@link OPPONENT_READ_GRID}), not our per-street action standard: the
-    // same observed size must mean the same thing on every street.
-    const size = sizeGrid ? gridFraction(snapOpponentRead(input.betFraction)) : input.betFraction;
-    if (size >= 1) score += 1.5;
-    else if (size <= 0.4) score -= 1;
-    else if (size <= 0.6) score -= 0.3;
-  }
-  if (input.wet) score -= 0.5;
-  if (input.heroWasAggressor) score -= 0.5;
-
-  const { opponentVpip: vpip, opponentPfr: pfr, opponentAggression: aggression } = input;
-  const maniac = vpip !== undefined && vpip > 0.55 && (aggression ?? 0) > 0.5 && (pfr ?? 1) > 0.25;
-  const station = vpip !== undefined && vpip > 0.45 && (pfr ?? 1) < 0.18;
-  const nit = vpip !== undefined && vpip < 0.22;
-  if (maniac) {
-    // A maniac's bet is mostly bluffs regardless of size; cap the score into the
-    // bluff-heavy band.
-    score = Math.min(score, -1.5);
-  } else if (station || nit) {
-    // A station/nit bets for value; cap the score into the value-heavy band.
-    score = Math.max(score, 1.5);
-  }
-
-  if (score >= 1) return 'value-heavy';
-  if (score <= -1) return 'bluff-heavy';
-  return 'balanced';
-}
-
-/**
- * Heuristic strength tier in [0, 1] for one opponent combo on the current board:
- * made hands dominate, strong draws sit in the middle, air at the bottom. Purely
- * a ranking aid for range weighting - never used to compare hero's hand.
- *
- * P1: a made flush is no longer a flat 1.0 - it is stratified into nut / second
- * / middle / low from the combo's own same-suit ranks (see `flushLayerOf`), so a
- * value-heavy continuing range is weighted by flush percentile rather than
- * treating every flush as equally strong.
- */
-export function villainStrengthTier(
-  hole: readonly CardId[],
-  board: readonly CardId[],
-): number {
-  return strengthTierFromEval(evaluateHand(hole, board), hole, board);
-}
-
-/** Tier from an already-computed `HandEval` (avoids a second board sweep). */
-function strengthTierFromEval(
-  ev: HandEval,
-  hole: readonly CardId[],
-  board: readonly CardId[],
-): number {
-  if (ev.category >= HAND_CATEGORY.fullHouse) return 1; // full house / quads / straight flush
-  if (ev.category === HAND_CATEGORY.flush) {
-    // P1 flush stratification: nut 1.0, second .97, middle .93, low .88.
-    return FLUSH_TIER[flushLayerOf(hole, board) ?? 'low'];
-  }
-  // On a four-flush board every non-flush made hand loses to any flush, so it
-  // cannot be part of a value-heavy continuing range.
-  const boardSuits = [0, 0, 0, 0];
-  for (const card of board) boardSuits[suitOf(card)] = boardSuits[suitOf(card)]! + 1;
-  if (Math.max(0, ...boardSuits) >= 4) return 0.35;
-  if (ev.category === HAND_CATEGORY.straight) return 0.95; // straight
-  if (ev.category === HAND_CATEGORY.trips) return 0.9; // three of a kind / set
-  if (ev.category === HAND_CATEGORY.twoPair) return 0.8; // two pair
-  if (ev.category === HAND_CATEGORY.pair) {
-    const boardRanks = board.map(rankOf);
-    const maxBoard = boardRanks.length ? Math.max(...boardRanks) : -1;
-    const pairedWithBoard = hole.find((card) => boardRanks.includes(rankOf(card)));
-    if (pairedWithBoard !== undefined) {
-      // Top/middle pair vs a weak pair: compare the paired rank to the second
-      // highest board rank (a coarse "top pair or better" split).
-      const sorted = [...new Set(boardRanks)].sort((a, b) => b - a);
-      const second = sorted[1] ?? maxBoard;
-      return rankOf(pairedWithBoard) >= second ? 0.62 : 0.4;
-    }
-    const pocket = rankOf(hole[0]!) === rankOf(hole[1]!);
-    if (pocket) return rankOf(hole[0]!) > maxBoard ? 0.55 : 0.25; // overpair / underpair
-    return 0.3; // playing the board's pair
-  }
-  if (ev.flushDraw || ev.straightDraw >= 2) return 0.4; // strong draw
-  if (ev.straightDraw === 1) return 0.25;
-  if (ev.overcards >= 1) return 0.15;
-  return 0.05; // air
-}
-
-/** Weight a combo's strength tier under a range model. */
-export function villainModelWeight(tier: number, model: VillainRangeModel): number {
-  const t = clamp01(tier);
-  switch (model) {
-    case 'value-heavy':
-      // Steep: on a made-hand board the bettor's range is close to their
-      // strongest tier, so draws/air are all but removed (a value-heavy range
-      // still keeps a trace of everything, hence the floor).
-      return 0.01 + t * t * t * t * t;
-    case 'bluff-heavy':
-      return 1 - 0.55 * t; // air up-weighted, value still present but discounted
-    case 'balanced':
-    default:
-      return 0.25 + 0.75 * t;
-  }
-}
-
-interface VillainBaseCombo {
-  a: CardId;
-  b: CardId;
-  tier: number;
-  /** P1: combo makes a flush on this board (gets hero's flush-block factor). */
-  isFlush: boolean;
-}
-
-const villainTierCache = new Map<string, VillainBaseCombo[]>();
-
-/**
- * Board-keyed cache of every board-remaining combo's strength tier. The expensive
- * `evaluateHand` sweep runs once per board, not once per decision; per-decision
- * hero-card exclusion and model weights are then cheap O(combos) passes.
- */
-function villainBaseCombos(board: readonly CardId[]): VillainBaseCombo[] {
-  const key = [...board].sort((a, b) => a - b).join(',');
-  const cached = lruGet(villainTierCache, key);
-  if (cached) return cached;
-  const boardSet = new Set(board);
-  const deck = ALL_CARDS.filter((card) => !boardSet.has(card));
-  const combos: VillainBaseCombo[] = [];
-  for (let i = 0; i < deck.length; i++) {
-    for (let j = i + 1; j < deck.length; j++) {
-      const a = deck[i]!;
-      const b = deck[j]!;
-      const ev = evaluateHand([a, b], board);
-      combos.push({
-        a,
-        b,
-        tier: strengthTierFromEval(ev, [a, b], board),
-        isFlush: ev.category === HAND_CATEGORY.flush,
-      });
-    }
-  }
-  lruSet(villainTierCache, key, combos);
-  return combos;
-}
-
-/**
- * Weighted villain combos for the board, excluding hero's own cards. Returned as
- * an explicit `VillainRange` so `estimateEquity` samples it without re-running
- * any hand evaluation.
- *
- * P1: hero's flush holding is folded in as an equity correction - every villain
- * flush combo is scaled by `heroFlushBlockFactor`, so a nut/second-nut blocker
- * lightens the opponent's flush range (hero defends more) while holding no card
- * of the suit makes it relatively heavier (hero's unprotected made hands are
- * discounted). When hero holds **no** card of the board's flush suit, every
- * villain flush is additionally pinned to `villainModelWeight(1, ...)` instead
- * of its P1 layer weight. That is a deliberately **conservative prior specific
- * to the no-suit hero** - it is NOT a general statement that all flushes are
- * nuts, and it must not be read as one; it exists only so an unprotected made
- * hand is evaluated against a flush-saturated range. This is a heuristic range
- * tilt, not a solved conditional range.
- */
-export function buildVillainRange(
-  hole: readonly CardId[],
-  board: readonly CardId[],
-  model: VillainRangeModel,
-  opts: Readonly<Pick<P2Options, 'buckets'>> = DEFAULT_P2,
-): VillainCombo[] {
-  const heroSet = new Set(hole);
-  const info = boardFlushInfo(board);
-  const exposed = info ? !hole.some((card) => suitOf(card) === info.suit) : false;
-  const flushFactor = info && !exposed ? heroFlushBlockFactor(hole, info) : 1;
-  const exposedFlushFactor = info && exposed ? heroFlushBlockFactor(hole, info) : 1;
-  const out: VillainCombo[] = [];
-  for (const combo of villainBaseCombos(board)) {
-    if (heroSet.has(combo.a) || heroSet.has(combo.b)) continue;
-    let weight = villainModelWeight(combo.tier, model);
-    if (combo.isFlush && info) {
-      // Hero holds no card of the suit: do not apply the flush stratification
-      // (which would under-weight the many low flushes and inflate hero's
-      // unprotected made hands); keep the flush range at full value and tilt it
-      // slightly heavier, the blocker correction against hero.
-      weight = exposed
-        ? villainModelWeight(1, model) * exposedFlushFactor
-        : weight * flushFactor;
-    }
-    // P2 buckets (on by default since 2026-10-06): tilt by the 24-bucket
-    // strength, so the range/nut-advantage read has one more independent signal
-    // than the ad-hoc P0/P1 tier. A documented heuristic, not a solved range.
-    if (opts.buckets) {
-      weight *= 0.5 + bucketStrength(handBucket([combo.a, combo.b], board));
-    }
-    out.push({ cards: [combo.a, combo.b], weight });
-  }
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// P2: feature toggles
-// ---------------------------------------------------------------------------
-
-/**
- * The P2 behaviour switches that remain after the 2026-10-06 prune. Each is
- * independently injectable so a caller (or a test) can A/B or enable one without
- * touching the other.
- *
- * History: the product briefly ran P2 all-on (commit `5e8566a`); the first A/B
- * eval (`docs/plans/2026-10-06-bot-ab-eval-results.md`) judged all-four-on
- * `worse` than the all-off baseline in its narrow rig (3-handed, `always-call`
- * anchor, mirror strategy): `p2:all` cluster CI `[-85.8, -17.1]`, so it was
- * reverted to all-off on 2026-10-06. The fairer follow-up
- * (`docs/plans/2026-10-06-bot-ab-eval-v2-fair.md`, real tendentious opponents
- * TAG/station/LAG + `always-call`) then found `rangePropagation` significantly
- * harmful under two opponents (TAG -43.7 bb/100, station -55.3) and `shrinkage`
- * harmful under station (-32.0), with consistent sign; **both switches were
- * therefore deleted outright** (capability permanently off, no toggle). Only
- * `sizeGrid` / `buckets` survive.
- *
- * **Not byte-for-byte identical to the pre-P2 baseline**: this file also carries
- * an always-on `evaluateHand` fix (exclude straight draws with no hero-only rank
- * contribution; clear the draw flag at `category >= 4`), which applies to hero
- * and villain-combo evaluation regardless of the switches. See
- * `docs/plans/postflop-p2-report.md` §3 for the exact scope.
- */
-export interface P2Options {
-  /** Snap an observed bet size to the discrete `POSTFLOP_SIZE_GRID`. */
-  sizeGrid: boolean;
-  /** Tilt villain combo weights by their 24-bucket strength. */
-  buckets: boolean;
-}
-
-/**
- * Default P2 configuration. **`sizeGrid` / `buckets` are ON by default.**
- *
- * ⚠️ Risk, recorded explicitly: the fair v2 A/B
- * (`docs/plans/2026-10-06-bot-ab-eval-v2-fair.md`) measured a positive mean for
- * `buckets` across all four opponents (+3.8 / +6.6 / +20.1 / +4.5 bb/100) but
- * **every interval was inconclusive** (sample too small - this is NOT proof it
- * helps), and `sizeGrid` is ≈0 against betting opponents and exactly 0 against
- * non-betting ones. **Defaulting them on is a product decision, not a
- * statistical conclusion — do not describe it as "validated".** Set
- * `FOURAM_P2_ALL_OFF=1` for the all-off fallback.
- *
- * History: this constant was all-off after the 2026-10-06 revert (commit
- * `5e8566a` had briefly made it all-on, and
- * `docs/plans/2026-10-06-bot-ab-eval-results.md` judged all-four-on `worse` in
- * its narrow rig). `rangePropagation` / `shrinkage` were subsequently deleted
- * (see {@link P2Options}); the two survivors become product-default on.
- *
- * `Object.freeze` + `Readonly<P2Options>` keep the default immutable: a runtime
- * write (`DEFAULT_P2.sizeGrid = false`) neither compiles nor takes effect, so
- * the default parameters that read this constant cannot be silently flipped.
- * Callers that want a switch off must pass their own explicit `p2` option.
- */
-export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
-  sizeGrid: true,
-  buckets: true,
-});
+// P2 toggle type + frozen default moved into a neutral leaf module (the signal
+// layer reads `DEFAULT_P2`, the policy reads both); `P2_ALL_OFF` stays here.
+export { DEFAULT_P2, type P2Options } from './postflopP2.js';
 
 /**
  * Frozen explicit all-off configuration: the pre-P2 decision path
@@ -764,80 +289,6 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
   sizeGrid: false,
   buckets: false,
 });
-
-/**
- * Observed average VPIP / PFR / postflop aggression of the active opponents,
- * using the raw ratios of every opponent with at least 10 observed hands
- * (`sampleHands < 10` is discarded). This is the permanent post-prune behaviour:
- * the former `shrinkage` alternative (Beta posterior mean) was deleted together
- * with its switch, so a small sample can no longer contribute. An all-short-
- * sample table yields `{}` (a neutral, no-read result).
- */
-export function opponentModelStats(view: DecisionView): {
-  vpip?: number;
-  pfr?: number;
-  aggression?: number;
-} {
-  const bySeat = new Map(view.sessionMemory.opponents.map((o) => [o.seat, o]));
-  let vpip = 0;
-  let pfr = 0;
-  let aggression = 0;
-  let n = 0;
-  for (const o of view.opponents) {
-    if (o.folded) continue;
-    const stats = bySeat.get(o.seat);
-    if (!stats) continue;
-    if (stats.sampleHands < 10) continue;
-    vpip += stats.vpipHands / stats.sampleHands;
-    pfr += stats.pfrHands / stats.sampleHands;
-    aggression +=
-      stats.postflopBetsRaises / (stats.postflopBetsRaises + stats.postflopCalls + 1);
-    n++;
-  }
-  if (n === 0) return {};
-  return { vpip: vpip / n, pfr: pfr / n, aggression: aggression / n };
-}
-
-/**
- * The coarse range model the P0/P2 decision assigns to the current bettor,
- * derived only from the public `DecisionView`. Exported so tests can reproduce
- * the decision's own equity estimate exactly.
- */
-export function facingVillainModel(
-  view: DecisionView,
-  potBefore: number,
-  call: number,
-  opts: Readonly<P2Options> = DEFAULT_P2,
-): VillainRangeModel {
-  const board = view.hand?.board ?? [];
-  const texture = classifyTexture(board);
-  const activeOpponents = view.opponents.filter((o) => !o.folded);
-  const stats = opponentModelStats(view);
-  return chooseVillainModel(
-    {
-      betFraction: potBefore > 0 ? call / potBefore : 1,
-      allIn: activeOpponents.some((o) => o.allIn),
-      heroWasAggressor: heroWasAggressor(view),
-      wet: texture.wet,
-      opponentVpip: stats.vpip,
-      opponentPfr: stats.pfr,
-      opponentAggression: stats.aggression,
-    },
-    opts.sizeGrid,
-  );
-}
-
-/** Weighted range the P0/P2 decision samples against for this view. */
-export function facingVillainRange(
-  view: DecisionView,
-  hole: readonly CardId[],
-  potBefore: number,
-  call: number,
-  opts: Readonly<P2Options> = DEFAULT_P2,
-): VillainRange {
-  const board = view.hand?.board ?? [];
-  return { combos: buildVillainRange(hole, board, facingVillainModel(view, potBefore, call, opts), opts) };
-}
 
 // ---------------------------------------------------------------------------
 // positional / aggression helpers
