@@ -23,7 +23,8 @@
     "check:build": "node scripts/check-build.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:docs-fixtures": "node docs/fixtures/audit-docs.mjs",
-    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build && npm run check:i18n && npm run check:docs-fixtures",
+    "check:doc-assets": "node scripts/check-doc-assets.mjs",
+    "check:all": "npm run check:diff && npm run check:tracked && npm run check:links && npm run check:clean-tree && npm run check:build && npm run check:i18n && npm run check:docs-fixtures && npm run check:doc-assets",
     "format": "prettier --write .",
     "shots:shrink": "node scripts/shrink-images.mjs"
   },
