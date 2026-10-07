@@ -1,4 +1,5 @@
 import type { DecisionPotOdds } from './decisionView.js';
+import { clamp01 } from './postflopMath.js';
 
 /**
  * Pot-price layer (phase 1 of the "A plan" strategy refactor).
@@ -20,9 +21,6 @@ export function bluffToValueRatio(fraction: number): number {
   const f = Math.max(0, Number.isFinite(fraction) ? fraction : 0);
   return f / (1 + f);
 }
-
-const clamp01 = (x: number): number =>
-  Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
 
 /**
  * Approximate MDF defence probability for a bet requiring `requiredMdf`.
