@@ -667,11 +667,13 @@ describe('HUD hot/cold streak badge', () => {
     expect(entryFor(res.json(), ups.userId).streak).toEqual({
       tier: null,
       netBB: STREAK_WINSOR_BB,
+      realNetBB: 1000,
       sample: 20,
     });
     expect(entryFor(res.json(), downs.userId).streak).toEqual({
       tier: null,
       netBB: -STREAK_WINSOR_BB,
+      realNetBB: -1000,
       sample: 20,
     });
   });
@@ -689,7 +691,7 @@ describe('HUD hot/cold streak badge', () => {
     const entry = entryFor(res.json(), host.userId);
     expect(STREAK_WINDOW).toBe(50);
     expect(entry.sample).toBe(60); // the HUD sample still sees all 60
-    expect(entry.streak).toEqual({ tier: 'hot1', netBB: 50, sample: 50 });
+    expect(entry.streak).toEqual({ tier: 'hot1', netBB: 50, realNetBB: 50, sample: 50 });
   });
 
   it('excludes voided hands from the streak window', async () => {
@@ -712,7 +714,7 @@ describe('HUD hot/cold streak badge', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
     const entry = entryFor(res.json(), host.userId);
     expect(entry.sample).toBe(20);
-    expect(entry.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, sample: 20 });
+    expect(entry.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, realNetBB: STREAK_SMALL_BB, sample: 20 });
   });
 
   it('withholds the streak entirely below the 20-hand floor', async () => {
@@ -820,7 +822,7 @@ describe('HUD hot/cold streak badge', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
     const entry = entryFor(res.json(), host.userId);
     expect(entry.sample).toBe(51);
-    expect(entry.streak).toEqual({ tier: null, netBB: 0, sample: 50 });
+    expect(entry.streak).toEqual({ tier: null, netBB: 0, realNetBB: 0, sample: 50 });
   });
 
   it('excludes a hand voided by its settlement head (ref=head) from the streak net/tier', async () => {
@@ -843,7 +845,7 @@ describe('HUD hot/cold streak badge', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
     const entry = entryFor(res.json(), host.userId);
     expect(entry.sample).toBe(20);
-    expect(entry.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, sample: 20 });
+    expect(entry.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, realNetBB: STREAK_SMALL_BB, sample: 20 });
   });
 
   it('hides the streak from a non-owner on /api/users/:id/stats but keeps it for the owner', async () => {
@@ -867,7 +869,149 @@ describe('HUD hot/cold streak badge', () => {
       headers: auth(bob.token),
     });
     expect(asBob.statusCode).toBe(200);
-    expect(asBob.json().streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, sample: 20 });
+    expect(asBob.json().streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, realNetBB: STREAK_SMALL_BB, sample: 20 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7b. REAL (unwinsorized) net win over the same 50-hand window
+//
+// `streak.realNetBB` is the true sum of per-hand `poker_delta / that hand's bb`;
+// `streak.netBB` stays the winsorized hot/cold score. These tests pin the
+// user-facing number (the +1057.3bb production window whose capped score was
+// +32.3bb) and the per-hand big-blind normalisation.
+// ---------------------------------------------------------------------------
+
+describe('HUD streak real net win (unwinsorized)', () => {
+  /** Seed hands with an explicit per-hand `bb` (unlike seedStreak's single
+   *  stake). `settledAt` ascends with the array so the window order is fixed. */
+  function seedMixedBb(
+    db: DB,
+    roomId: string,
+    userId: number,
+    specs: { delta: number; bb: number }[],
+    tag: string,
+    opponent = 99,
+  ): void {
+    specs.forEach((s, i) => {
+      addHand(db, {
+        id: `${tag}_${i}`,
+        roomId,
+        bb: s.bb,
+        settledAt: 1000 + i,
+        players: [
+          P(0, userId, { position: 'BTN', postflopOrder: 1, pokerDelta: s.delta }),
+          P(1, opponent, { position: 'BB', postflopOrder: 0, pokerDelta: -s.delta }),
+        ],
+      });
+    });
+  }
+
+  it('reproduces the production case: real net +1057.3bb while the hot/cold score is +32.3bb', async () => {
+    const host = await register('realnet_host');
+    makeRoom(ctx.db, 'r1', host.userId);
+    joinRoom(ctx.db, 'r1', host.userId, 0);
+    // 50 hands at bb=10 - one monster (+901.6bb, the user's hand), one +153.4bb,
+    // one +2.3bb, 47 break-even. Uncapped sum: 1057.3bb. Winsorized:
+    // 15 + 15 + 2.3 = 32.3bb -> hot1.
+    const specs: { delta: number; bb: number }[] = [
+      { delta: 9016, bb: 10 },
+      { delta: 1534, bb: 10 },
+      { delta: 23, bb: 10 },
+      ...Array.from({ length: 47 }, () => ({ delta: 0, bb: 10 })),
+    ];
+    seedMixedBb(ctx.db, 'r1', host.userId, specs, 'realnet');
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
+    expect(entryFor(res.json(), host.userId).streak).toEqual({
+      tier: 'hot1',
+      netBB: 32.3,
+      realNetBB: 1057.3,
+      sample: 50,
+    });
+  });
+
+  it('keeps a single +901.6bb hand fully in realNetBB but caps its hot/cold contribution at 15bb', async () => {
+    const host = await register('monster_host');
+    makeRoom(ctx.db, 'r1', host.userId);
+    joinRoom(ctx.db, 'r1', host.userId, 0);
+    // bb=20: +18032 chips = +901.6bb, plus 19 break-even hands to clear the floor.
+    seedMixedBb(
+      ctx.db,
+      'r1',
+      host.userId,
+      [{ delta: 18032, bb: 20 }, ...Array.from({ length: 19 }, () => ({ delta: 0, bb: 20 }))],
+      'monster',
+    );
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
+    expect(entryFor(res.json(), host.userId).streak).toEqual({
+      tier: null,
+      netBB: 15,
+      realNetBB: 901.6,
+      sample: 20,
+    });
+  });
+
+  it('normalises EACH hand by its OWN big blind (a shared bb would misprice the window)', async () => {
+    const host = await register('mixedbb_host');
+    makeRoom(ctx.db, 'r1', host.userId);
+    joinRoom(ctx.db, 'r1', host.userId, 0);
+    // The same +200 chips at two stakes: 200/10 = 20bb and 200/20 = 10bb.
+    // Per-hand divisors -> realNetBB 30, netBB 15 + 10 = 25. A single shared
+    // bb=10 would instead give realNetBB 40, netBB 30 - both assertions red.
+    seedMixedBb(
+      ctx.db,
+      'r1',
+      host.userId,
+      [
+        { delta: 200, bb: 10 },
+        { delta: 200, bb: 20 },
+        ...Array.from({ length: 18 }, () => ({ delta: 0, bb: 10 })),
+      ],
+      'mixedbb',
+    );
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
+    expect(entryFor(res.json(), host.userId).streak).toEqual({
+      tier: null,
+      netBB: 25,
+      realNetBB: 30,
+      sample: 20,
+    });
+  });
+
+  it('excludes bb=0, unsettled and voided hands from realNetBB too', async () => {
+    const host = await register('boundary_host');
+    makeRoom(ctx.db, 'r1', host.userId);
+    joinRoom(ctx.db, 'r1', host.userId, 0);
+    // 20 clean +1bb hands -> realNetBB 20, netBB 20, eligible sample 20.
+    seedStreak(ctx.db, 'r1', host.userId, Array.from({ length: 20 }, () => 10));
+    const monster = (id: string, bb: number, settledAt: number) =>
+      addHand(ctx.db, {
+        id,
+        roomId: 'r1',
+        bb,
+        settledAt,
+        players: [
+          P(0, host.userId, { position: 'BTN', postflopOrder: 1, pokerDelta: 100_000 }),
+          P(1, 99, { position: 'BB', postflopOrder: 0, pokerDelta: -100_000 }),
+        ],
+      });
+    // Each of these three would add +10000bb if the scope leaked.
+    monster('bd_zero', 0, 5000); // bb<=0 cannot be normalised
+    monster('bd_pending', 10, 5001); // not settled
+    ctx.db.prepare("UPDATE hands SET status = 'pending' WHERE hand_id = 'bd_pending'").run();
+    monster('bd_void', 10, 5002); // voided via ledger
+    voidLedgerHand(ctx.db, 'bd_void');
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/rooms/r1/hud', headers: auth(host.token) });
+    expect(entryFor(res.json(), host.userId).streak).toEqual({
+      tier: null,
+      netBB: 20,
+      realNetBB: 20,
+      sample: 20,
+    });
   });
 });
 
@@ -949,6 +1093,6 @@ describe('hot/cold streak badge on /api/me/stats and /api/users/:id/stats', () =
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.sample).toBe(20);
-    expect(body.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, sample: 20 });
+    expect(body.streak).toEqual({ tier: 'hot1', netBB: STREAK_SMALL_BB, realNetBB: STREAK_SMALL_BB, sample: 20 });
   });
 });

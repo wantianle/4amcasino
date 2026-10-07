@@ -73,8 +73,15 @@ export type StreakTier = 'cold1' | 'cold2' | 'hot1' | 'hot2';
 
 export interface StreakResult {
   tier: StreakTier | null;
-  /** Winsorized sum of the window's `poker_delta / bb`, in big blinds. */
+  /** Winsorized sum of the window's `poker_delta / bb`, in big blinds. This is
+   *  the HOT/COLD score only (each hand is capped to +/-{@link STREAK_WINSOR_BB}bb
+   *  so one cooler cannot dominate); it is NOT the true net win and must never be
+   *  presented to a user as one. */
   netBB: number;
+  /** TRUE (unwinsorized) sum of the window's `poker_delta / bb`, in big blinds.
+   *  Each hand is divided by its OWN big blind, so a mix of stakes aggregates
+   *  correctly. Eligible hands only (same `bb > 0` set as `netBB`/`sample`). */
+  realNetBB: number;
   /** Eligible hands (known positive nominal bb) actually inside the window. */
   sample: number;
 }
@@ -628,6 +635,15 @@ export function streakTier(netBB: number, sample: number): StreakTier | null {
  * sum. Hands without a known positive nominal bb cannot be normalised and are
  * skipped from both the sum and the sample.
  *
+ * Two outputs share the SAME eligible-hand window and the SAME per-hand
+ * `poker_delta / bb` normalisation:
+ *   - `netBB`: the winsorized HOT/COLD score (drives `tier`), and
+ *   - `realNetBB`: the true, uncapped net win in big blinds for display.
+ * Never swap them: a +900bb hand contributes only +15 to `netBB` but its full
+ * +900 to `realNetBB` (see STREAK_WINSOR_BB). Dividing by a single shared bb
+ * would misprice a window whose hands have different blinds, so the per-hand
+ * divisor is load-bearing.
+ *
  * The caller hands over the ALREADY-WINDOWED streak facts: the SQL target set
  * applies `ORDER BY settled_at DESC, hand_id DESC LIMIT 50` (binary collation,
  * the same order as the outer fetch), so this function neither re-sorts nor
@@ -636,15 +652,17 @@ export function streakTier(netBB: number, sample: number): StreakTier | null {
  */
 export function streakFor(facts: HandFacts[]): StreakResult {
   let net = 0;
+  let real = 0;
   let sample = 0;
   for (const f of facts) {
     if (f.bb <= 0) continue;
     sample++;
     const raw = f.pokerDelta / f.bb;
+    real += raw;
     net += Math.max(-STREAK_WINSOR_BB, Math.min(STREAK_WINSOR_BB, raw));
   }
   const netBB = round2(net);
-  return { tier: streakTier(netBB, sample), netBB, sample };
+  return { tier: streakTier(netBB, sample), netBB, realNetBB: round2(real), sample };
 }
 
 function dataQualityFor(rows: BaseRow[]): DataQuality {

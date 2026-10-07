@@ -7,7 +7,7 @@ export interface Metric {
 }
 export interface MetricBucket { sample: number; stats: Record<string, Metric> }
 export type StreakTier = 'hot2' | 'hot1' | 'cold1' | 'cold2';
-export interface StreakResult { tier: StreakTier | null; netBB: number; sample: number }
+export interface StreakResult { tier: StreakTier | null; netBB: number; realNetBB: number; sample: number }
 export interface HandStats extends MetricBucket {
   userId: number;
   hidden?: false;

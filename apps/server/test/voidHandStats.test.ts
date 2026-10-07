@@ -120,7 +120,7 @@ async function hudStreak(
   token: string,
   roomId: string,
   userId: number,
-): Promise<{ tier: string | null; netBB: number; sample: number } | null> {
+): Promise<{ tier: string | null; netBB: number; realNetBB: number; sample: number } | null> {
   const res = await ctx.app.inject({
     method: 'GET',
     url: `/api/rooms/${roomId}/hud`,
@@ -128,7 +128,7 @@ async function hudStreak(
   });
   expect(res.statusCode).toBe(200);
   const p = (
-    res.json() as { players: { userId: number; streak: { tier: string | null; netBB: number; sample: number } | null }[] }
+    res.json() as { players: { userId: number; streak: { tier: string | null; netBB: number; realNetBB: number; sample: number } | null }[] }
   ).players.find((x) => x.userId === userId)!;
   return p.streak;
 }
@@ -277,6 +277,7 @@ describe('void-hand excludes a hand from every global stats read model', () => {
     expect(await hudStreak(host.token, 'r1', bob.userId)).toEqual({
       tier: null,
       netBB: 22.5,
+      realNetBB: -962.5,
       sample: 26,
     });
 
@@ -295,6 +296,7 @@ describe('void-hand excludes a hand from every global stats read model', () => {
     expect(await hudStreak(host.token, 'r1', bob.userId)).toEqual({
       tier: 'hot1',
       netBB: 37.5,
+      realNetBB: 37.5,
       sample: 25,
     });
   });
