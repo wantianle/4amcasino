@@ -23,9 +23,8 @@
  *   required     : css-rule + dom count must be >= min (live features).
  *   whitelist    : seat-name slots (.pname) must match an allow-list
  *                  (Player N / End of Demo). This is the honest fix for the
- *                  blacklist blind spot: an unregistered real name like
- *                  "PhilIvey" passes a 22-name blacklist but fails a
- *                  whitelist. SCOPE BOUNDARY: the whitelist covers .pname
+ *                  blacklist blind spot: an unregistered real
+ *                  handle passes a 22-name blacklist but fails a whitelist. SCOPE BOUNDARY: the whitelist covers .pname
  *                  name slots only; other text areas are covered by the
  *                  spacing-tolerant brand blacklist, not by arbitrary-name
  *                  detection (there is no such thing as a generic
@@ -103,8 +102,8 @@ const REQUIRED = [
 ];
 // whitelist: seat-name slots (.pname) — see header SCOPE BOUNDARY note.
 // Captures slot content loosely and STRIPS inline tags before the allow test,
-// so <b>PhilIvey</b> inside a .pname cannot hide from extraction (a tag-wrapped
-// name that failed extraction would silently drop the slot from the check).
+// so a tag-wrapped unregistered handle inside a .pname cannot hide from
+// extraction (a name that failed extraction would silently drop the slot).
 const NAME_SLOT_RE = /<div class="pname">([\s\S]*?)<\/div>/g;
 const NAME_ALLOW = /^(?:Player \d+|End of Demo)$/;
 const NAME_MIN = 60; // ~92 slots in the current deck
@@ -184,7 +183,7 @@ function selftest(html) {
     { name: 'inject class="wheel" into dom', html: html.replace('<div class="topbar">', '<div class="wheel"><div class="topbar">'), wantPass: false, mustFlag: 'wheel' },
     { name: 'inject brand token (concat) into dom', html: html.replace('<div class="topbar">', `<div class="topbar">${C('G', 'G')} style</div><div`), wantPass: false, mustFlag: '双G' },
     { name: 'inject real handle back in', html: html.replace('tb-title">Cash Table<', `tb-title">${C('Lo', 'Show', '85')}<`), wantPass: false, mustFlag: 'L-85' },
-    { name: 'inject RUN 1 label', html: html.replace('runlbl">POT 1', 'runlbl">RUN 1'), wantPass: false, mustFlag: 'RUN n' },
+    { name: 'inject RUN-n label', html: html.replace('runlbl">POT 1', 'runlbl">' + C('RUN', ' ', '1')), wantPass: false, mustFlag: 'RUN n' },
     { name: 'inject external URL', html: html.replace('<div class="wrap">', '<link rel="stylesheet" href="https://evil.example/x.css"><div class="wrap">'), wantPass: false, mustFlag: '零外链' },
     { name: 'break a REQUIRED feature (kill fxring)', html: html.replaceAll('fxring', 'zzring'), wantPass: false, mustFlag: 'fxring' },
     { name: 'edge: banned-rule words in css-COMMENT only stay green (bucketing proof)', html: html.replace('/* rev2 #1', `/* wheel rimtext punder note\n   rev2 #1`), wantPass: true },
@@ -193,8 +192,8 @@ function selftest(html) {
     { name: 'inject letter-spaced brand deco into rim (rev4 rimtext bypass)', html: html.replace('<div class="felt">', `<div class="rimtext">${SPACED(C('R', 'U', 'S', 'H'))}</div><div class="felt">`), wantPass: false, mustFlag: '顶栏专有玩法名' },
     { name: 'inject spaced handle into .pname (spacing bypass)', html: html.replace('pname">Player 1<', `pname">${SPACED(C('Lo', 'Show', '85'))}<`), wantPass: false, mustFlag: 'L-85' },
     { name: 'inject rimtext dead style back', html: html.replace('.felt{', '.rimtext{opacity:.5}\n.felt{'), wantPass: false, mustFlag: 'rimtext' },
-    { name: 'inject UNREGISTERED name PhilIvey into .pname (blacklist blind spot)', html: html.replace('pname">Player 1<', 'pname">PhilIvey<'), wantPass: false, mustFlag: '白名单' },
-    { name: 'wrap unregistered name in <b> tag inside .pname (tag-wrap bypass)', html: html.replace('pname">Player 1<', 'pname"><b>PhilIvey</b><'), wantPass: false, mustFlag: '白名单' },
+    { name: 'inject UNREGISTERED real handle into .pname (blacklist blind spot)', html: html.replace('pname">Player 1<', 'pname">' + C('Phil', 'Ivey') + '<'), wantPass: false, mustFlag: '白名单' },
+    { name: 'wrap unregistered name in <b> tag inside .pname (tag-wrap bypass)', html: html.replace('pname">Player 1<', 'pname"><b' + C('Phil', 'Ivey') + '</b><'), wantPass: false, mustFlag: '白名单' },
     { name: 'edge: benign word ending in -ush must NOT trip spaced brand rule', html: html.replace('dc-title">Split Options<', 'dc-title">Hush Options<'), wantPass: true },
     { name: 'spaced double-G in spec prose (banned-any covers prose too)', html: html.replace('<div class="spec">', `<div class="spec">${SPACED(C('G', 'G'))}</div>`), wantPass: false, mustFlag: '双G' },
   ];
