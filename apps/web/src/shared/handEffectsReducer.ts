@@ -39,8 +39,7 @@ export type HandEffectsResult = {
 /** Pure reducer for the "unconditional sound + pure patch" frames.
  *
  *  A pure function of `(state, msg)`: every remaining frame is decided from the
- *  message payload alone (the previous `peek_offer` append was the only branch
- *  that read `state`), and it never reads the clock. The returned effects are
+ *  message payload alone, and it never reads the clock. The returned effects are
  *  data, not calls. */
 export function handEffectsReducer(_state: HandView, msg: HandEffectsMsg): HandEffectsResult {
   switch (msg.t) {
