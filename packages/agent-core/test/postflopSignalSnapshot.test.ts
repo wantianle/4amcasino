@@ -630,7 +630,18 @@ function buildSnapshot(): Snapshot {
       params: 'constrained-random',
       seed: SEED,
       p2: P2,
-      note: 'Frozen postflop decision + reconstructed signals. Do not edit by hand; regenerate with UPDATE_SNAPSHOTS=1.',
+      note:
+        'Frozen postflop decision + reconstructed signals. Do not edit by hand; ' +
+        'regenerate with UPDATE_SNAPSHOTS=1. Regenerated 2026-10-07 to absorb the ' +
+        'b25877d (bet-sizes) sizing rework, whose phase-0 baseline was never refreshed. ' +
+        'Only sizing explains the diff: (1) per-street flop grid [0.33,0.75] turns the ' +
+        'old raw 0.50 value pick into 0.33 (value bets 50->33) and snaps the bluff ' +
+        'fraction 0.50->0.33, which lowers bluffBetProbability 0.4265->0.3175 so the ' +
+        'fixed bluff roll 0.4024 flips two JTh flop bluffs to check; (2) the 1.25 ' +
+        'overbet tier was removed and the overbet branch now maps to the street top, ' +
+        'so the reconstructed checkedTo betFraction (no-street default = river grid) ' +
+        'moves 1.25->1.5. No HU-position or non-sizing behaviour change appears in ' +
+        'this matrix.',
     },
     scenarios: Object.fromEntries(
       Object.keys(scenarios)
