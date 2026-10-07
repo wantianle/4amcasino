@@ -36,6 +36,7 @@ import {
   rawSpotWidth,
   rescaleRangeMix,
   rfiChartForSlot,
+  rustVsOpenRaiseTable,
   slotsForDealtCount,
   taperRawSpot,
   worstCellDeviation,
@@ -627,6 +628,74 @@ describe('adaptive preflop cache key', () => {
       expect(got.legacy).toBeCloseTo(legacyWidth, 9);
     }
   });
+
+  it('isolates the opener name, so build order cannot poison BB / vs-3bet / vs-4bet mixes', async () => {
+    // 9-max: MP (behind 6) and LJ (behind 5) share `openerGroup === 'MP'` and
+    // the sixMax slot 4, but only LJ maps onto a Rust seat (UTG). Before the
+    // cache key carried `ctx.opener`, a `facingOpen` mix built for one poisoned
+    // the other's cached entry, so the result depended on which was asked first
+    // — and the same key shape is used by the BB / vs-3bet / vs-4bet routes.
+    const cards = [c('Ac'), c('Kd')];
+    const coVsMp = faceOpenView(9, 7, 4, cards); // CO hero, MP opener -> unmapped
+    const coVsLj = faceOpenView(9, 7, 5, cards); // CO hero, LJ opener -> Rust UTG
+    const mpCtx = derivePreflopContext(coVsMp);
+    const ljCtx = derivePreflopContext(coVsLj);
+    expect(mpCtx.openerGroup).toBe('MP');
+    expect(ljCtx.openerGroup).toBe('MP');
+    expect(mpCtx.openerSlot).toBe(4);
+    expect(ljCtx.openerSlot).toBe(4);
+    expect(mpCtx.opener).not.toBe(ljCtx.opener);
+    // Only the opener *name* separates the two keys.
+    expect(preflopMixCacheKey(mpCtx, ADAPTIVE)).not.toBe(preflopMixCacheKey(ljCtx, ADAPTIVE));
+
+    // The rest of the auction routes that also carry an opener: BB defence
+    // against each opener, and a hero who opened and now faces a 3-bet / 4-bet.
+    const views: Record<string, DecisionView> = {
+      coVsMp,
+      coVsLj,
+      bbVsMp: faceOpenView(9, 1, 4, cards),
+      bbVsLj: faceOpenView(9, 1, 5, cards),
+      vs3bet: auctionView({
+        n: 9,
+        heroSeat: 4,
+        history: [act(4, 'raise', 250), act(8, 'raise', 750)],
+        pending: [4],
+        currentBet: 750,
+      }),
+      vs4bet: auctionView({
+        n: 9,
+        heroSeat: 4,
+        history: [act(4, 'raise', 250), act(8, 'raise', 750), act(0, 'raise', 2000)],
+        pending: [4],
+        currentBet: 2000,
+      }),
+    };
+    const names = Object.keys(views);
+
+    async function run(order: readonly string[]): Promise<Record<string, number>> {
+      vi.resetModules();
+      const policy: Policy = await import('../src/preflopPolicy.js');
+      const out: Record<string, number> = {};
+      for (const name of order) out[name] = measuredWidthWith(policy, views[name]!, ADAPTIVE);
+      return out;
+    }
+
+    // Forward: legacy (early opener) first, then the Rust-mapped opener.
+    const forward = await run(names);
+    // Reverse build order must reproduce every mix.
+    const reverse = await run([...names].reverse());
+    for (const name of names) {
+      expect(reverse[name], `${name} depends on build order`).toBeCloseTo(forward[name]!, 12);
+    }
+    // Each mix also matches a fresh, single-context build.
+    for (const name of names) {
+      const solo = await run([name]);
+      expect(solo[name], `${name} poisoned by an earlier context`).toBeCloseTo(forward[name]!, 12);
+    }
+    // Guard against a vacuous pass: the mapped and unmapped opener really do
+    // resolve to different mixes (Rust active only for LJ).
+    expect(Math.abs(forward['coVsLj']! - forward['coVsMp']!)).toBeGreaterThan(1e-6);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1082,15 +1151,60 @@ describe('step 2: deterministic effective-frequency assertions', () => {
     expect(w.call).toBeGreaterThan(t.call);
   });
 
-  it('keeps a 3-bet bluff raise alive while the flat call narrows', () => {
-    const cards = [c('Ks'), c('Qs')]; // COLD_3BET_BLUFF.EP includes KQs
-    const wideBase = faceOpenView(6, 5, 2, cards);
+  it('keeps the legacy KQs bluff alive when Rust has no mapping (COLD_3BET_BLUFF_WEIGHT)', () => {
+    // 9-max UTG (behind 8) has no 6-max equivalent, so the Rust provider
+    // refuses the pair and the legacy `COLD_3BET_BLUFF.EP` anchor — KQs at
+    // `COLD_3BET_BLUFF_WEIGHT` (0.55) — is the entire raise side. This is the
+    // path the Rust integration replaced for mapped 6-max seats (at
+    // BTN-vs-UTG Rust raises KQs 100%, so the old 6-max legacy assertion no
+    // longer holds and must be exercised where the legacy anchor still rules).
+    expect(rustVsOpenRaiseTable(2, 8)).toBeNull(); // hero BTN behind 2, opener UTG behind 8
+    const cards = [c('Ks'), c('Qs')];
+    const wideBase = faceOpenView(9, 8, 2, cards); // BTN
+    const wide: DecisionView = { ...wideBase, needToActSeats: [8] }; // B0
+    const tight = faceOpenView(9, 6, 2, cards); // HJ, four behind -> B4
+    const w = eff(wide, ADAPTIVE, cards);
+    const t = eff(tight, ADAPTIVE, cards);
+    expect(w.raise).toBeGreaterThan(0); // legacy bluff raise, not swallowed
+    expect(t.raise).toBeGreaterThan(0);
+    expect(t.call).toBeLessThan(w.call); // only the legacy flat call narrows
+  });
+
+  it('hands KQs to the Rust raise at a mapped spot (BTN-vs-UTG, the old 6-max test)', () => {
+    // The *mapped* counterpart of the test above, and the replacement for the
+    // old 6-max KQs assertion that can no longer hold. At BTN-vs-UTG the Rust
+    // export raises KQs 100%, and the merge writes that exact frequency: the
+    // legacy `COLD_3BET_BLUFF` 0.55 bluff and its 0.45 flat call are both
+    // consumed by the Rust raise. Pin the new contract so the old spot keeps
+    // its regression coverage; the old behaviour (raise 0.3548…, call 0.6451…)
+    // is asserted absent at the bottom.
+    expect(rustVsOpenRaiseTable(2, 5)!.raise.get('KQs')).toBe(1); // Rust provider
+    const cards = [c('Ks'), c('Qs')];
+    const wideBase = faceOpenView(6, 5, 2, cards); // BTN vs UTG
     const wide: DecisionView = { ...wideBase, needToActSeats: [5] }; // B0
-    const tight = faceOpenView(6, 3, 2, cards); // B4
+    const w = eff(wide, ADAPTIVE, cards);
+    expect(w.raise).toBe(1); // merged: Rust raise survives untouched
+    expect(w.call).toBe(0); // ...and consumes the legacy flat call
+    // Discrimination guard: the assertion above really does catch the old
+    // legacy mix rather than passing against anything.
+    const legacy = eff(wide, LEGACY, cards);
+    expect(legacy.raise).not.toBe(1);
+    expect(legacy.raise).toBeGreaterThan(0);
+  });
+
+  it('uses the Rust mixed raise for KJs and keeps it independent of behindUnacted', () => {
+    // KJs is a *mixed* Rust cold 3-bet: 32% at BTN-vs-UTG, 89% at MP-vs-UTG, and
+    // a legacy flat call (CALL_VS_OPEN.LP). The raise comes from the Rust
+    // provider and must be independent of `behindUnacted`; only the legacy call
+    // narrows as more players remain to act behind the hero.
+    const cards = [c('Ks'), c('Js')];
+    const wideBase = faceOpenView(6, 5, 2, cards); // BTN, hero last
+    const wide: DecisionView = { ...wideBase, needToActSeats: [5] }; // B0
+    const tight = faceOpenView(6, 3, 2, cards); // HJ, four behind -> B4
     const w = eff(wide, ADAPTIVE, cards);
     const t = eff(tight, ADAPTIVE, cards);
     expect(w.raise).toBeGreaterThan(0);
-    expect(t.raise).toBeGreaterThan(0); // the bluff raise is not swallowed
+    expect(t.raise).toBeGreaterThan(0); // the Rust raise is not swallowed
     expect(t.call).toBeLessThan(w.call); // only the flat call narrows
   });
 });

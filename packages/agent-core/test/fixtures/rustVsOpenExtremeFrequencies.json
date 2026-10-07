@@ -1,0 +1,581 @@
+{
+  "threshold": 0.99,
+  "premiumExcluded": [
+    "AA",
+    "KK",
+    "QQ",
+    "JJ",
+    "TT",
+    "AKs",
+    "AKo",
+    "AQs",
+    "AQo"
+  ],
+  "entries": [
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "22",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "33",
+      "raise": 0.994
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "44",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "55",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "76s",
+      "raise": 0.992
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "87s",
+      "raise": 0.991
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "88",
+      "raise": 0.995
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "98s",
+      "raise": 0.993
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "99",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A2s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A3s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A4s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A5s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A6s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A7s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A8s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "A9s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "AJo",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "AJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "ATs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "J9s",
+      "raise": 0.994
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "K6s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "K7s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "K8s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "K9s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "KJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "KQo",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "KTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "Q9s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "QTs",
+      "raise": 0.994
+    },
+    {
+      "spot": "BTN-vs-open-CO",
+      "hand": "T9s",
+      "raise": 0.994
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "33",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "44",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "55",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "88",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "98s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "99",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "A5s",
+      "raise": 0.992
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "AJs",
+      "raise": 0.992
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "ATs",
+      "raise": 0.991
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "KJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "KTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "QTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-MP",
+      "hand": "T9s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "55",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "88",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "99",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "A4s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "A5s",
+      "raise": 0.994
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "A9s",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "AJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "ATs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "BTN-vs-open-UTG",
+      "hand": "T9s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "44",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "55",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "88",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "99",
+      "raise": 0.992
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A2s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A3s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A4s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A5s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A7s",
+      "raise": 0.992
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A8s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "A9s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "AJs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "ATs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "KJs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "QTs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-MP",
+      "hand": "T9s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "55",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "88",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "99",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "A5s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "A9s",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "AJs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "ATs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "CO-vs-open-UTG",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "66",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "88",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "99",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "A5s",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "AJs",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "ATs",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "JTs",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "KQs",
+      "raise": 1
+    },
+    {
+      "spot": "MP-vs-open-UTG",
+      "hand": "QJs",
+      "raise": 1
+    },
+    {
+      "spot": "SB-vs-open-BTN",
+      "hand": "77",
+      "raise": 1
+    },
+    {
+      "spot": "SB-vs-open-BTN",
+      "hand": "KQs",
+      "raise": 1
+    }
+  ]
+}

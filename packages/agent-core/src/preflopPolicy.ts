@@ -32,7 +32,9 @@ import {
   preflopActionOrder,
   rescaleRangeMix,
   rfiChartForSlot,
+  rustVsOpenRaiseTable,
   type PreflopChart,
+  type RustVsOpenRaiseTable,
 } from './preflopCharts/index.js';
 import {
   compileRangeMix,
@@ -258,6 +260,22 @@ function sixMaxSlotForPosition(pos: Position): number {
     default:
       return 0;
   }
+}
+
+/**
+ * Number of seats that still act after `pos` in preflop action order at a
+ * `dealtCount`-handed table. This is the **action-order suffix length**, the key
+ * the Rust vs-open mapping uses (`preflopCharts/rustVsOpen.ts`): once the
+ * players before a seat have folded, that suffix is the same 6-max subgame
+ * whatever the dealt table size. `-1` when the table size / position is unknown.
+ */
+function positionBehindCount(pos: Position, dealtCount: number): number {
+  const table = POSITIONS_BY_COUNT[dealtCount];
+  if (!table) return -1;
+  const action =
+    table.length <= 2 ? [...table] : [...table.slice(2), table[0]!, table[1]!];
+  const idx = action.indexOf(pos);
+  return idx < 0 ? -1 : action.length - 1 - idx;
 }
 
 /** Classify the preflop spot / position / stack from the view. */
@@ -584,13 +602,77 @@ export function adaptivePreflopAvailable(ctx: PreflopContext, params: RuleParams
 }
 
 /**
- * Non-BB cold 3-bet / cold-call versus a single open. No solver subset exists
- * for these seats, so the existing `COLD_3BET_*` / `CALL_VS_OPEN` tables are the
- * anchor and `behindUnacted` narrows them: the more players still to act behind
- * the hero, the tighter the continue. The opener group (from the opener's
- * position) already picks the 3-bet value/bluff brackets.
+ * Non-BB cold 3-bet / cold-call versus a single open.
+ *
+ * The **call** side is always the legacy anchor: `CALL_VS_OPEN` narrowed by
+ * `behindUnacted` (`rescaleRangeMix` scales only the call frequency, so value /
+ * bluff raises are preserved). The **raise** side comes from the Rust vs-open
+ * provider where the hero / opener seats map exactly onto the 6-max export
+ * (see `preflopCharts/rustVsOpen.ts`); elsewhere the legacy `COLD_3BET_*`
+ * anchor is used unchanged.
+ *
+ * Merge (`mergeRustVsOpenRaise`): a mapped class's Rust raise becomes the
+ * `valueRaise` verbatim — it is **not** re-weighted by
+ * `COLD_3BET_BLUFF_WEIGHT` or `CONTINUE_WIDTH_SLOPE` — the legacy bluff is
+ * dropped, and the legacy call keeps `legacyContinue - rustRaise`, so a hand the
+ * legacy anchor never folds (AA, QQ, ...) cannot fold merely because Rust raises
+ * it less than 100%. A class the export leaves `na`/absent falls back to the
+ * legacy raise untouched (three-state). Malformed input from an external caller
+ * follows the same rule: a non-finite raise is unknown (legacy untouched),
+ * while a finite out-of-range one is clamped to `[0, 1]`.
  */
-function buildColdAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> {
+export function mergeRustVsOpenRaise(
+  legacy: ReadonlyMap<string, CompiledMix>,
+  rust: ReadonlyMap<string, number | null>,
+): Map<string, CompiledMix> {
+  const out = new Map<string, CompiledMix>();
+  const keys = new Set<string>([...legacy.keys(), ...rust.keys()]);
+  for (const key of keys) {
+    const l = legacy.get(key);
+    const legacyValue = l?.valueRaise ?? 0;
+    const legacyBluff = l?.bluffRaise ?? 0;
+    const legacyCall = l?.call ?? 0;
+    const r = rust.get(key);
+    // Three-state contract, extended to malformed input. `undefined`/`null`
+    // mean "no Rust data"; a non-finite value (`NaN`/`Infinity`) can only reach
+    // here from a hand-built external map (the provider maps them to `null`),
+    // and is treated the same way: unknown -> the legacy raise is the whole
+    // story. Reading it as a known "do not raise" would let a corrupt map
+    // silently delete a legacy bluff / flat call.
+    if (r === undefined || r === null || !Number.isFinite(r)) {
+      // No Rust data for this class: the legacy raise is the whole story.
+      if (!l) continue;
+      out.set(key, {
+        valueRaise: legacyValue,
+        bluffRaise: legacyBluff,
+        marginalRaise: 0,
+        call: legacyCall,
+      });
+      continue;
+    }
+    // Rust carries the exact raise; the legacy anchor still decides how often
+    // the class continues at all. The Rust raise consumes that continuation
+    // budget first, so a hand the legacy table never folds (legacyContinue == 1)
+    // cannot fold here.
+    //
+    // `mergeRustVsOpenRaise` is part of the exported policy surface, so a
+    // caller can hand it a raw map that bypasses `normalizeRustTriple`. A
+    // finite out-of-range value is clamped here rather than trusted, so
+    // `raise + call <= 1` holds for every class no matter the entry point.
+    const raise = clamp01(r);
+    const legacyContinue = clamp01(legacyValue + legacyBluff + legacyCall);
+    out.set(key, {
+      valueRaise: raise,
+      bluffRaise: 0,
+      marginalRaise: 0,
+      call: clamp01(legacyContinue - raise),
+    });
+  }
+  return out;
+}
+
+/** The legacy non-BB continuing anchor, narrowed by the headcount. */
+function buildColdLegacyAnchor(ctx: PreflopContext): Map<string, CompiledMix> {
   const openerGroup: PositionGroup = ctx.openerGroup ?? 'EP';
   const entries: RangeEntry[] = [
     { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
@@ -604,6 +686,22 @@ function buildColdAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> {
     { range: CALL_VS_OPEN[ctx.positionGroup], action: 'call', weight: 1 },
   ];
   return rescaleRangeMix(entries, continueWidthScale(ctx.behindUnacted));
+}
+
+/** The Rust raise table for a context, or null when the seats do not map. */
+function rustRaiseForContext(ctx: PreflopContext): RustVsOpenRaiseTable | null {
+  if (ctx.opener === null) return null;
+  return rustVsOpenRaiseTable(
+    positionBehindCount(ctx.position, ctx.dealtCount),
+    positionBehindCount(ctx.opener, ctx.dealtCount),
+  );
+}
+
+function buildColdAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> {
+  const legacy = buildColdLegacyAnchor(ctx);
+  const rust = rustRaiseForContext(ctx);
+  if (!rust) return legacy;
+  return mergeRustVsOpenRaise(legacy, rust.raise);
 }
 
 /** Anchor for a derived (no-solver-subset) adaptive spot. */
@@ -815,7 +913,12 @@ export function preflopMixCacheKey(ctx: PreflopContext, params: RuleParams): str
   return [
     ctx.spot,
     ctx.position,
+    // The opener's *group* is too coarse for the Rust vs-open mapping: MP and
+    // LJ share the `MP` group and the sixMax slot 4, yet map to different Rust
+    // seats (behind 6 -> unmapped, behind 5 -> UTG). The position name keeps
+    // those two contexts from poisoning each other's cached mix.
     openerKey,
+    ctx.opener ?? 'n',
     ctx.dealtCount,
     ctx.actorSlot,
     ctx.openerSlot ?? 'n',

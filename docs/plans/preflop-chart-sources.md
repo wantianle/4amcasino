@@ -375,3 +375,22 @@
 ### 附：一句话取舍
 
 免费数据能覆盖 8-max MTT 与 6-max，**唯一缺的就是 9-max cash 100bb**；而这块恰好是 RangeConverter 几十到几百美元就能合法买断、Pio/GTO+ 原生读取的结构化数据。**用钱买断法律与工程上的确定性，比抓 GTOWizard 划算得多**；GTOW 抓取只保留为「授权下、本地、绝不分发」的最后手段。
+
+---
+
+## 8. 已采用（方案 C）：Rust GG `round3=true` 展示图
+
+> 追加于 2026-10-07。这是**生产输入的实际来源**，与上文「待获取」的方向不同，供后续维护者查阅。
+
+**裁决**：接受当前 `charts_rust_gg.json` 作为 non-BB cold-3bet `raise` 的生产输入，**附本声明合入**。
+
+- **数据源**：`~/dev/gto-trainer/data/preflop/charts_rust_gg.json`，是 `round3=true` 的**展示图**；`round3=false` 的外循环原始快照（`raw_<k>.json`，`outer_loop.py:445-470`）**未采用**，仅用于 solver 诊断。
+- **求解器性质**：proxy leaves（`builtin_proxy_fill` 代理叶）+ mean-field CFR + 2000 迭代 + 近似 EV → **approximate，不是 GTO 基准**。
+- **round3 展示层裁剪代价**：丢弃 ≤0.5% 的动作（`main.rs:1454`）；只存 3 位小数（显示的 `1.0` 真值可能 0.995–1.0）；`reach < 1e-4` 写成 `na`（`main.rs:1437`）。
+- **`na` 语义**：`reach[h] < 1e-4` → 该手在该节点几乎不可达，策略无意义；**不是"没求解"，绝不能当 fold**，应视为"不在该节点范围"。
+- **`na` vs 全零合法 cell**：二者靠三元组 `[0,0,0]` 无法区分；转换层必须保留来源 `reach`/`na` 语义。今日生成器已将 `na` 省略，行为正确；**接入 raw snapshot 时为必办事项**。
+- **已知口径事实**：γ=1.70 / erf=0.16 在 rake=0 标定却用于 rake 0.05；叶子是代理（IP 53 类 / OOP 57 类）。
+- **接入范围（方案 C）**：只补 non-BB cold-3bet 的 `raise`；RFI / BB 防守 / vs-3bet / vs-4bet 一律不动；不替换整体基准、不拼旧表；`call` 仍用 legacy。
+- **已知极端值**：113 个 non-premium >0.99 高频（10 个 non-BB vs-open spot × 非 premium × normalized raise 严格 >0.99）是近似的典型症状，watch-list 在 `test/fixtures/rustVsOpenExtremeFrequencies.json`，原样透传、不过滤不平滑。
+- **修法方向**：真实叶子 + 收敛迭代，届时换数据源。
+- 代码内声明见 `packages/agent-core/src/preflopCharts/rustVsOpen.ts` 与 `data/rustVsOpen.ts` 文件头；self-play harness `apps/server/scripts/preflop-selfplay.mjs` 输入同一份 round3 数据。

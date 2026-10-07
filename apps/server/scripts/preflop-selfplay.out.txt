@@ -1,0 +1,22 @@
+preflop self-play harness (3-arm attribution)
+seed=987654321 trials=20000 params=tight-aggressive
+denominator = non-BB first action facing exactly one raise with no caller (the facingOpen spot)
+arms: legacy(adaptivePreflop:false) | norust(adaptive, Rust provider disabled) | rust(adaptive + Rust)
+
+6-max
+  legacy : facing-open 3bet = 1119/26282 = 4.26%   (per non-BB player-hand: 1.40%)
+           by position: SB 4.68%  HJ 2.32%  CO 3.95%  BTN 4.37%
+  norust : facing-open 3bet = 1123/26822 = 4.19%   (per non-BB player-hand: 1.40%)
+           by position: SB 4.71%  HJ 2.76%  CO 3.92%  BTN 4.07%
+  rust   : facing-open 3bet = 2175/26411 = 8.24%   (per non-BB player-hand: 2.72%)
+           by position: SB 2.85%  HJ 8.27%  CO 10.39%  BTN 14.32%
+  attribution: adaptive routing (legacy -> norust) = -0.07pt; Rust provider (norust -> rust) = 4.05pt
+
+9-max
+  legacy : facing-open 3bet = 1776/49400 = 3.60%   (per non-BB player-hand: 1.27%)
+           by position: SB 4.56%  UTG1 2.65%  MP 2.68%  LJ 3.05%  HJ 2.81%  CO 3.57%  BTN 4.06%
+  norust : facing-open 3bet = 1798/51067 = 3.52%   (per non-BB player-hand: 1.28%)
+           by position: SB 4.38%  UTG1 2.72%  MP 2.91%  LJ 3.18%  HJ 2.90%  CO 3.21%  BTN 3.99%
+  rust   : facing-open 3bet = 2462/50751 = 4.85%   (per non-BB player-hand: 1.76%)
+           by position: SB 2.89%  UTG1 2.80%  MP 2.91%  LJ 3.19%  HJ 3.95%  CO 5.87%  BTN 9.41%
+  attribution: adaptive routing (legacy -> norust) = -0.07pt; Rust provider (norust -> rust) = 1.33pt
