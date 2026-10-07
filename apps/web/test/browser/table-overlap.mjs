@@ -45,7 +45,12 @@ const LOCALE = process.env.LOCALE || 'zh-CN';
  *  Phone podPairPx2 and short-landscape cluster-covered pods are retained as
  *  explicit DIAGNOSTICS (reported in JSON/README), not zero-collision gates.
  *  `clusterVisible=1` on 390 means the cluster is not clipped by its ancestor,
- *  NOT that it never overlaps a seat pod. Secondary views stay informational. */
+ *  NOT that it never overlaps a seat pod. `heroBoardOverlapPx2` and its exact
+ *  dealt-face sample are NOT confined to the primary set: they are hard gates
+ *  on EVERY viewport (desktop and the degraded 320/568 included) - an empty
+ *  OR wrong-count sample is a failure, never "informational". Only the
+ *  per-viewport textCov/boardCov/touch-target metrics are scoped to
+ *  ASSERTED_VPS below. */
 const ASSERT = process.env.ASSERT === '1';
 const EXPECT_HERO = process.env.EXPECT_HERO === '1';
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -1185,8 +1190,14 @@ if (errors.length) {
 }
 
 if (ASSERT) {
-  // Gate viewports: 390 (primary portrait) + 667 (short landscape). 320 and
-  // 568 are degraded targets whose residuals are reported in the JSON only.
+  // Gate viewports for the PER-VIEWPORT metrics (textCov/boardCov,
+  // dock-vs-cluster, touch targets, clusterVisibility): 390 (primary
+  // portrait) + 667 (short landscape). 320 and 568 are degraded targets whose
+  // *per-viewport* residuals are reported in the JSON only. This scope does
+  // NOT cover the hero<->board checks above: heroBoardOverlapPx2 and the
+  // exact dealt-face sample are viewport-independent hard gates, which is why
+  // a 320x568 heroBoard residual (see the known 320 failure) is a real
+  // failure rather than JSON-only.
   const ASSERTED_VPS = ['390x844', '667x375'];
   const failures = [];
   for (const r of results) {
@@ -1196,8 +1207,17 @@ if (ASSERT) {
     // board-bearing scenarios must always resolve dealt faces (ora-17 —
     // the old board-tier-only selector sampled 0 rects on xs/sm rows and
     // the reduce "passed" on nothing).
-    if ((r.kind === 'showdown' || r.kind === 'multirun') && !(r.heroBoardSample > 0))
-      failures.push(`${r.scenario}@${r.vp} heroBoardSample=${r.heroBoardSample} (empty)`);
+    // Exact dealt-face counts, not `> 0` (ora-4): the two board-bearing
+    // scenarios have fixed, different expectations and must be asserted
+    // separately - showdown deals ONE board (5 faces), multirun deals three
+    // (3 x 5 = 15 faces). An empty sample AND a wrong count are both
+    // failures, so a future tier/selector change cannot silently shrink the
+    // sampled set and still "pass".
+    const expectedFaces = r.kind === 'showdown' ? 5 : r.kind === 'multirun' ? 15 : null;
+    if (expectedFaces !== null && r.heroBoardSample !== expectedFaces)
+      failures.push(
+        `${r.scenario}@${r.vp} heroBoardSample=${r.heroBoardSample} (expected ${expectedFaces})`,
+      );
     // Desktop hard gate, viewport-independent of ASSERTED_VPS: the desktop
     // geometry must have zero pairwise pod overlap.
     if ((r.vp === '1440x900' || r.vp === '1280x720') && r.podPairPx2 > 0)
