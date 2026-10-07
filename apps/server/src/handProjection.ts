@@ -321,6 +321,37 @@ export function perHandNetSelect(alias: string, opts: PerHandNetSelectOptions = 
   );
 }
 
+/**
+ * The rivals "other legs" scan behind `GET /api/users/:id/profile`: every
+ * game-net ledger leg that is NOT the profile user's, carrying its canonical
+ * hand id so the caller can join it against the user's own per-hand rows.
+ *
+ * AVAILABILITY-CRITICAL (commit 787ee1c). `ledgerHandIdSql` is two correlated
+ * subqueries (`hand_settlements` / `transcripts`). Written straight into a
+ * JOIN's `ON` clause, SQLite re-evaluates it once per candidate pair
+ * (`mine x ledger-in-room`, ~1.5M pairs on live data); better-sqlite3 is a
+ * synchronous call, so the event loop wedges for minutes and the whole server
+ * dies (CPU 90%+, every request times out, SIGTERM unanswered). Both sides are
+ * therefore MATERIALIZED CTEs that resolve the canonical id ONCE per row, and
+ * the outer join matches plain columns. Do NOT inline the canonical-id
+ * expression back into the join condition.
+ *
+ * Bind order is `(mineUserId, otherUserId)` - the `mine` CTE's `?` is first.
+ */
+export function rivalsOtherLegsSql(): string {
+  return `WITH mine AS MATERIALIZED (
+             ${perHandNetSelect('m', { filter: 'm.user_id = ? AND m.ref IS NOT NULL' })}
+           ),
+           other_legs AS MATERIALIZED (
+             SELECT l.user_id AS userId, l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref
+             FROM ledger l
+             WHERE ${perHandNetWhere('l', { filter: 'l.user_id != ?' })}
+           )
+           SELECT DISTINCT o.userId, o.roomId, o.ref
+           FROM other_legs o
+           JOIN mine ON mine.room_id = o.roomId AND mine.ref = o.ref`;
+}
+
 export interface ProjectHandArgs {
   handId: string;
   roomId: string;

@@ -10,7 +10,7 @@ import {
   gameNetLedgerKindSql,
   ledgerHandIdSql,
   perHandNetSelect,
-  perHandNetWhere,
+  rivalsOtherLegsSql,
   settlementNotVoidedSql,
   voidHandExclusionSql,
   voidHandExistsSql,
@@ -408,26 +408,12 @@ export function registerProfileRoutes(app: FastifyInstance, db: DB): void {
     const myDelta = new Map(mine.map((m) => [rivalKey(m.roomId, m.ref), m.delta]));
     const rivalAgg = new Map<number, { handsTogether: number; netVs: number }>();
     if (mine.length > 0) {
-      // `ledgerHandIdSql` resolves the canonical hand id with two correlated
-      // subqueries (hand_settlements / transcripts). Written straight into the
-      // JOIN's ON clause it is re-evaluated once per (mine x ledger-in-room)
-      // candidate pair - ~1.5M evaluations on live data - which wedges the
-      // event loop for minutes and kills the whole server. Resolve it once per
-      // ledger row in a MATERIALIZED CTE, then join on the plain columns.
+      // Availability-critical: the SQL lives in `rivalsOtherLegsSql` so the
+      // regression test can EXPLAIN it. See that builder's doc for why the
+      // canonical hand id must stay in a MATERIALIZED CTE (commit 787ee1c),
+      // never inline in the JOIN's ON clause. Bind order stays (id, id).
       const others = db
-        .prepare(
-          `WITH mine AS MATERIALIZED (
-             ${perHandNetSelect('m', { filter: 'm.user_id = ? AND m.ref IS NOT NULL' })}
-           ),
-           other_legs AS MATERIALIZED (
-             SELECT l.user_id AS userId, l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref
-             FROM ledger l
-             WHERE ${perHandNetWhere('l', { filter: 'l.user_id != ?' })}
-           )
-           SELECT DISTINCT o.userId, o.roomId, o.ref
-           FROM other_legs o
-           JOIN mine ON mine.room_id = o.roomId AND mine.ref = o.ref`,
-        )
+        .prepare(rivalsOtherLegsSql())
         .all(id, id) as { userId: number; roomId: string; ref: string }[];
       for (const o of others) {
         const agg = rivalAgg.get(o.userId) ?? { handsTogether: 0, netVs: 0 };
