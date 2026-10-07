@@ -54,7 +54,12 @@ export function ResultFlash({
       {detail && (
         <span
           className={cn(
-            'shrink-0 truncate text-xs',
+            // min-w-0 + shrink let the flex item take a bounded width so truncate
+            // really ellipsizes; shrink-[2] makes the secondary detail yield to the
+            // headline (and, above all, to the shrink-0 action buttons) when both
+            // are long. A shrink-0 here pushed the pill past max-w-full and threw
+            // the Dismiss/Share buttons off-screen.
+            'min-w-0 shrink-[2] truncate text-xs',
             dark ? 'text-white/60' : 'text-slate-500 dark:text-slate-400',
           )}
         >
