@@ -902,6 +902,66 @@ describe('step 2: fallback', () => {
 });
 
 // ---------------------------------------------------------------------------
+// facing-open frequency budget: raise + call <= 1 on every preset
+// ---------------------------------------------------------------------------
+
+describe('facing-open frequency budget: raise + call <= 1 for every preset', () => {
+  /**
+   * Every `facingOpen` spot that carries both a 3-bet raise and a flat call:
+   * all ten Rust vs-open mappings (6-max hero/opener behind-count pairs) plus
+   * the BB defence open. These are the spots where `raiseScale > 1` (LAG's
+   * `threeBetScale`) can outgrow the continuation budget.
+   */
+  const spots: Array<[name: string, heroSeat: number, openerSeat: number]> = [
+    ['HJ-vs-UTG', 3, 2],
+    ['CO-vs-UTG', 4, 2],
+    ['BTN-vs-UTG', 5, 2],
+    ['SB-vs-UTG', 0, 2],
+    ['CO-vs-HJ', 4, 3],
+    ['BTN-vs-HJ', 5, 3],
+    ['SB-vs-HJ', 0, 3],
+    ['BTN-vs-CO', 5, 4],
+    ['SB-vs-CO', 0, 4],
+    ['SB-vs-BTN', 0, 5],
+    ['BB-vs-UTG', 1, 2],
+  ];
+
+  it('keeps raise + call <= 1 for every preset across every facing-open spot', () => {
+    for (const [name, hero, opener] of spots) {
+      const view = faceOpenView(6, hero, opener, [c('Ac'), c('Kd')]);
+      for (const kind of Object.keys(RULE_PRESETS) as PolicyKind[]) {
+        const params: RuleParams = { ...RULE_PRESETS[kind], adaptivePreflop: true };
+        for (const cards of COMBOS) {
+          const f = choosePreflopIntent(
+            { ...view, hand: { ...view.hand!, myCards: cards } },
+            params,
+            () => 0.5,
+          ).frequencies;
+          expect(f.raise + f.call, `${kind} ${name}`).toBeLessThanOrEqual(1 + 1e-9);
+        }
+      }
+    }
+  });
+
+  it('exercises the amplification path (LAG 3-bet scale > 1 and raises wider)', () => {
+    // Non-vacuity: `loose-aggressive` is the only preset whose `threeBetScale`
+    // exceeds 1, so it is the one that drives the scaled value raise past the
+    // raw continuation anchor. Pin that it really amplifies, so the budget guard
+    // above is measured on a preset that takes the >1 branch.
+    expect(RULE_PRESETS['loose-aggressive'].threeBetScale).toBeGreaterThan(1);
+    const view = faceOpenView(6, 5, 2, [c('Ac'), c('Kd')]); // BTN vs UTG
+    const lag: RuleParams = { ...RULE_PRESETS['loose-aggressive'], adaptivePreflop: true };
+    const tight: RuleParams = { ...RULE_PRESETS['tight-aggressive'], adaptivePreflop: true };
+    const cards = [c('Kc'), c('Jc')]; // KJs: the class the old budget overflowed on
+    const freqs = (p: RuleParams) =>
+      choosePreflopIntent({ ...view, hand: { ...view.hand!, myCards: cards } }, p, () => 0)
+        .frequencies;
+    // The LAG 3-bets this class more often than the tight reference (style kept).
+    expect(freqs(lag).raise).toBeGreaterThan(freqs(tight).raise);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // real state-machine fixtures (startHand / applyAction) for the step-2 gate
 // ---------------------------------------------------------------------------
 

@@ -1019,8 +1019,16 @@ function effectiveFrequencies(
   const unopenedLike = ctx.spot === 'unopened' || ctx.spot === 'limped';
   const raiseScale = unopenedLike ? params.preflopScale : params.threeBetScale;
 
-  const valueContinue = clamp01(c.valueRaise);
+  // `valueContinue` is the absolute continuation floor the extras budget off.
+  // It must cover the *scaled* value raise, not the raw one: when
+  // `raiseScale > 1` the amplified raise exceeds `c.valueRaise`, so budgeting
+  // from the raw value would hand the extras (bluff/marginal/flat call) a slice
+  // that does not exist and push `raise + call > 1`. The scaled raise is
+  // authoritative and the extras absorb the cap; for `raiseScale <= 1` the raw
+  // value is already the floor (a discounted raise becomes a call, never a
+  // fold), so this is unchanged.
   const vRaise = clamp01(c.valueRaise * raiseScale);
+  const valueContinue = Math.max(clamp01(c.valueRaise), vRaise);
   const valueCall = clamp01(valueContinue - vRaise); // never a fold
 
   let rawBluff = clamp01(
