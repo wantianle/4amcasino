@@ -29,3 +29,6 @@ arena-results.json
 .codex/
 .cursor/
 .grok/
+
+# 参考图目录的编辑器/工具元数据
+docs/media/gg-reference/**/.comments/
