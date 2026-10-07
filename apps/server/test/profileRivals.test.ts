@@ -90,14 +90,17 @@ describe('rivalsOtherLegsSql - SQL structure', () => {
   });
 
   it('keeps the canonical-id resolution out of the outer join clause', () => {
-    const outerStart = sql.indexOf('SELECT DISTINCT o.userId');
-    // The old buggy shape selected `l.user_id` in the outer query, so this
-    // marker is absent and the test fails on a revert.
-    expect(outerStart).toBeGreaterThan(-1);
-    const outer = sql.slice(outerStart);
-    expect(outer).toContain('JOIN mine ON mine.room_id = o.roomId AND mine.ref = o.ref');
-    // No correlated lookup may sit in the join condition.
-    expect(outer).not.toMatch(/hand_settlements|transcripts|COALESCE/);
+    // The plain-column join is asserted verbatim. The old buggy shape selected
+    // `l.user_id` and put `ledgerHandIdSql` in the ON clause, so this fails on a
+    // revert.
+    expect(sql).toContain('JOIN mine ON mine.room_id = o.roomId AND mine.ref = o.ref');
+
+    // Scope the negative check to the JOIN condition only - from `JOIN mine ON`
+    // to the end of its (terminal) clause - so an unrelated `COALESCE(...)` or a
+    // `transcripts` column added elsewhere in the outer SELECT cannot trip it.
+    const joinCondition = /JOIN mine ON ([\s\S]*)$/.exec(sql)?.[1];
+    expect(joinCondition).toBeDefined();
+    expect(joinCondition).not.toMatch(/hand_settlements|transcripts|COALESCE/);
   });
 
   it('keeps the (mine, other) bind order with exactly two placeholders', () => {
