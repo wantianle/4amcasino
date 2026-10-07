@@ -751,27 +751,6 @@ export class GameRoom {
   }
 
   /**
-   * Best-effort unicast sender - the per-socket counterpart of {@link publish}.
-   * A unicast delivery failure belongs to the SAME notification-only class as a
-   * broadcast failure: it is logged through the shared tiered logger and
-   * swallowed, so a committed money move whose follow-up frame cannot reach one
-   * recipient can never unwind through the caller and bubble to the hub, where an escaping error
-   * would mark the whole room unhealthy. `send` is already a no-op when the
-   * user has no socket (`?.`); only an existing-but-broken transport throws,
-   * which is exactly the loss we swallow. Returns whether the frame was handed
-   * to the transport.
-   */
-  sendSafe(userId: number, msg: ServerMsg, label = 'unicast send failed'): boolean {
-    try {
-      this.send(userId, msg);
-      return true;
-    } catch (err) {
-      logBroadcastFailure(this.roomId, label, msg.t, err);
-      return false;
-    }
-  }
-
-  /**
    * Best-effort `broadcastRoomState`, the room-state half of {@link publish}.
    * Routed through the same tiered logger so a committed money move whose
    * follow-up `room_state` fails still cannot mark the room unhealthy.
