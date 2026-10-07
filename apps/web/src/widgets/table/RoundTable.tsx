@@ -14,10 +14,11 @@ import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { ChipStack } from './ChipStack.tsx';
 import {
   BetFlight,
-  ChipFlight,
   COLLECT_REVEAL_LEAD_MS,
+  SettlementFlight,
   StackValue,
   WinBadge,
+  useWinnerBadge,
   useWinnerFx,
 } from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
@@ -241,6 +242,26 @@ export function collectorSeats(netWinners: number[], collectSeats?: number[]): n
   return paid.length > 0 ? paid : netWinners;
 }
 
+/** Build the ONE collection snapshot: exactly the seats whose street commitment
+ *  is positive right now, paired with their pile rects. Both the settlement
+ *  timeline's source count and the flight's origins come from this record, so
+ *  they can never disagree - a street that shrank from many piles to two leaves
+ *  no stale rects behind. A missing rect drops the seat from BOTH, so the
+ *  timeline never waits on a source the flight cannot use. */
+export function collectionSnapshot(
+  committedBySeat: Record<number, number>,
+  rectOf: (seat: number) => DOMRect | null,
+): Record<number, DOMRect> {
+  const snapshot: Record<number, DOMRect> = {};
+  for (const [seatStr, amount] of Object.entries(committedBySeat)) {
+    if (amount <= 0) continue;
+    const seat = Number(seatStr);
+    const rect = rectOf(seat);
+    if (rect) snapshot[seat] = rect;
+  }
+  return snapshot;
+}
+
 export function RoundTable({
   seats,
   mySeat,
@@ -274,6 +295,7 @@ export function RoundTable({
   peekResults,
   hudRoomId,
   children,
+  centralPotRef,
 }: {
   seats: SeatView[];
   mySeat: number | null;
@@ -343,6 +365,8 @@ export function RoundTable({
   peekResults?: Record<number, PeekResult>;
   hudRoomId?: string;
   children: React.ReactNode;
+  /** The actual visible central pot pill, not the whole center column. */
+  centralPotRef?: { current: HTMLElement | null };
 }) {
   // two-tap kick: first tap arms, second confirms, so a stray click never stands anyone up
   const [kickArmed, setKickArmed] = useState<number | null>(null);
@@ -373,7 +397,10 @@ export function RoundTable({
   // when the two disagree.
   const netWinners = winners.map((s) => s.seat);
   const collectors = collectorSeats(netWinners, collectSeats);
-  const fxLit = useWinnerFx(collectors.length > 0);
+  const winnerResultLit = collectors.length > 0;
+  // TODO(settlement-bubble): once the equity bubble has an explicit exit
+  // state, drive this delay from that exit / final board event instead of the
+  // current result-state transition.
   // when the moment carries a showdown reveal, the chips wait for the flips
   // (one lead value feeds BOTH the flight and the stack-number gate, so the
   // bump always meets the discs). Keyed on collectSeats, i.e. "a showdown
@@ -382,9 +409,34 @@ export function RoundTable({
   // always yields a non-empty collectors on a won hand, so they agree exactly
   // when it matters and disagree (lead 0) precisely on the no-showdown win.
   const collectLead = collectSeats && collectSeats.length > 0 ? COLLECT_REVEAL_LEAD_MS : 0;
+  // How many street piles collect in, from the same snapshot the flight flies
+  // from (see collectionSources). The settlement timeline needs it so the
+  // payout starts only after the last pile has finished collecting, instead of
+  // a fixed gap that a big board would outrun.
+  const [collectSourceCount, setCollectSourceCount] = useState(0);
+  const fxLit = useWinnerFx(
+    collectors.length > 0,
+    handId,
+    collectLead,
+    collectSourceCount,
+    collectors.length,
+  );
+  const badgeLit = useWinnerBadge(
+    collectors.length > 0,
+    handId,
+    collectLead,
+    collectSourceCount,
+    collectors.length,
+  );
   const potRef = useRef<HTMLDivElement | null>(null);
   const podEls = useRef<Record<number, HTMLDivElement | null>>({});
   const betEls = useRef<Record<number, HTMLDivElement | null>>({});
+  // ONE collection snapshot: the rects the flight starts from AND the count
+  // that drives the settlement timeline are measured together, from the same
+  // pile set, on every live street. Keeping a single source means a street that
+  // drops from many piles to two cannot leave stale rects behind, so the payout
+  // starts exactly when the last rendered pile has finished collecting.
+  const collectionSources = useRef<Record<number, DOMRect>>({});
   // L5 (spec row 3): when a seat's street bet GROWS, burst chips from its pod
   // to its bet spot. Seeding waits for the first NON-EMPTY snapshot: the real
   // message order is hand_start (no betting yet) -> first betting_state
@@ -402,6 +454,16 @@ export function RoundTable({
       committedSeeded.current = false;
       prevCommitted.current = {};
       setBetFlights({});
+      collectionSources.current = {};
+      setCollectSourceCount(0);
+    }
+    if (handLive) {
+      // Measure the count and the rects from the SAME pile set, in one pass.
+      const snapshot = collectionSnapshot(committedBySeat, (seat) =>
+        betEls.current[seat]?.getBoundingClientRect() ?? null,
+      );
+      collectionSources.current = snapshot;
+      setCollectSourceCount(Object.keys(snapshot).length);
     }
     if (!handLive || handId === null) return; // replay (no hand) never flies
     if (!committedSeeded.current) {
@@ -593,7 +655,7 @@ export function RoundTable({
             )}
             style={{
               left: `${CENTER_COLUMN.xPct}%`,
-               top: `${centerPreflop ? 43 : centerRaised ? CENTER_COLUMN.compactYPct : CENTER_COLUMN.yPct}%`,
+              top: `${centerPreflop ? 43 : centerRaised ? CENTER_COLUMN.compactYPct : CENTER_COLUMN.yPct}%`,
               width: `${CENTER_COLUMN.widthPct}%`,
               transform: `translate(-50%, -50%) scale(${colScale})`,
             }}
@@ -665,7 +727,7 @@ export function RoundTable({
             // alongside the folded ones - the 300ms transition lives in
             // table-motion.css, and it lifts the instant the moment ends (or
             // the next hand starts).
-            const lostNow = fxLit && p.inHand && !p.won && !p.folded;
+            const lostNow = winnerResultLit && p.inHand && !p.won && !p.folded;
             const dim = p.folded || !p.connected || p.sittingOut || lostNow;
             // the stack's display unit is a shared local preference; one tap
             // flips pts ⇄ BB for EVERY seat on this device.
@@ -1002,7 +1064,13 @@ export function RoundTable({
                           >
                             {stackUnit === 'chips' ? (
                               <>
-                                <StackValue stack={p.stack} won={p.won} flightLead={collectLead} />
+                                <StackValue
+                                  stack={p.stack}
+                                  won={p.won}
+                                  flightLead={collectLead}
+                                  sourceCount={collectSourceCount}
+                                  targetCount={collectors.length}
+                                />
                                 <span className="table-pstack-unit">{t('pts')}</span>
                               </>
                             ) : (
@@ -1087,10 +1155,14 @@ export function RoundTable({
                           </span>
                         )}
                         {p.won && !p.isToAct && (
-                          <WinBadge
-                            amount={p.wonAmount}
-                            onShare={p.seat === shareSeat ? onShareHand : undefined}
-                          />
+                          <AnimatePresence>
+                            {badgeLit && (
+                              <WinBadge
+                                amount={p.wonAmount}
+                                onShare={p.seat === shareSeat ? onShareHand : undefined}
+                              />
+                            )}
+                          </AnimatePresence>
                         )}
                         {readyCheck &&
                           !p.won &&
@@ -1180,20 +1252,24 @@ export function RoundTable({
         </div>
       </div>
 
-      {/* the payoff: chips sweep from the pot to each winner's pod, and the
-          stack number only bumps once they land (see StackValue). Measured in
-          viewport space, so the canvas scale is transparent to it. */}
-      {fxLit &&
-        collectors.map((seat) => (
-          <ChipFlight
-            key={`fly-${handId}-${seat}`}
-            run={fxLit}
-            discs={collectors.length === 1 ? 6 : 4}
-            delay={collectLead}
-            getFrom={() => potRef.current}
-            getTo={() => podEls.current[seat] ?? null}
-          />
-        ))}
+      {/* Settlement is intentionally two beats: each street pile first gathers
+          into the center pot, then the consolidated pot pays the net winner(s).
+          StackValue and the WIN badge use the same lead, so neither jumps early. */}
+      {fxLit && (
+        <SettlementFlight
+          key={`settle-${handId}`}
+          run={fxLit}
+          getSources={() =>
+            // The snapshot is the exact pile set whose count drove the timeline
+            // (see collectionSources): same street, same seats, same number.
+            Object.values(collectionSources.current)
+          }
+          getPot={() => centralPotRef?.current ?? null}
+          getTo={(seat) => podEls.current[seat] ?? null}
+          targets={collectors}
+          delay={collectLead}
+        />
+      )}
 
       {/* L5 (spec row 3): the mirror moment on every street - a call/raise
           bursts from the seat's pod to its bet spot on the felt. */}

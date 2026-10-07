@@ -12,8 +12,13 @@ import { t } from '../../shared/i18n/index.ts';
  *  fallback while no config is in effect. Both units go through parseDurMs. */
 function feltDur(cssVar: string, fallbackMs: number): number {
   if (typeof document === 'undefined') return fallbackMs;
-  return parseDurMs(getComputedStyle(document.documentElement).getPropertyValue(cssVar), fallbackMs);
+  return parseDurMs(
+    getComputedStyle(document.documentElement).getPropertyValue(cssVar),
+    fallbackMs,
+  );
 }
+
+export const SETTLEMENT_START_DELAY_MS = 3_000;
 
 /** The ClubGG-style win moment, shared by the desktop oval and the mobile
  *  table: a WIN tag lands on the winner's card, chips fly from the pot to
@@ -22,50 +27,157 @@ function feltDur(cssVar: string, fallbackMs: number): number {
  *  the last-hand strip.
  *  WIN_FX_MS / STACK_LAND_MS are the FALLBACKS: at run time the celebration
  *  reads `--win-fx-ms` / `--stack-land-ms` (see feltDur) so /api/config can
- *  tune them without a rebuild. The server's tunables defaults still mirror
- *  the OLD rhythm (3000/910) — they must be synced to the values below, or
- *  the injection will undo the retune in any deployment that serves config. */
+ *  tune them without a rebuild. The server's public defaults mirror the
+ *  fallback values below, so deployment config cannot undo the rhythm. */
 export const WIN_FX_MS = 3800;
 
 /* ── the collect beat, one source of truth for its numbers ──
  * L5 (spec sync rule): the burst leads inside the first frame (glow / collect /
- * sound within ±50ms). Disc i starts at LEAD + i*STAGGER after the flight delay
- * and travels TRAVEL, so the FIRST disc settles at LEAD+TRAVEL and the sixth
- * (single winner, discs=6) at LEAD + 5*STAGGER + TRAVEL (~2.25s). */
-const COLLECT_LEAD_MS = 50;
-const COLLECT_STAGGER_MS = 100;
+ * sound within ±50ms). Each disc travels COLLECT_TRAVEL_MS; the per-pile and
+ * per-chip staggers below are shared with settlementTimelineMs(). */
 const COLLECT_TRAVEL_MS = 1700;
-/** The stack reveal rides the first discs' landing (the old 910 was hand-synced
- *  to a 0.52s travel and had drifted a full second behind the live 1.4s arc);
- *  the trailing discs settle into the NumberFlow count-up so the number and the
- *  chips finish together. */
-const STACK_LAND_MS = COLLECT_LEAD_MS + COLLECT_TRAVEL_MS + 2 * COLLECT_STAGGER_MS; // 1950
+/** Settlement has a visible collect beat before the pot pays out. */
+export const COLLECT_TO_POT_MS = 620;
+export const COLLECT_PAUSE_MS = 120;
+/* ── settlement-flight geometry, one source of truth ──
+ * Every stagger / chip count below is consumed BOTH by the JSX that renders the
+ * discs and by settlementTimelineMs(). That is what keeps the stack reveal and
+ * the WIN badge pinned to the discs they ride: a hand with many street piles
+ * collects longer, so payout (and the number bump) starts later instead of a
+ * fixed 620+120 that outran the collection. */
+const COLLECT_SOURCE_CHIPS = 2; // discs per street pile
+const COLLECT_SOURCE_STAGGER_MS = 55; // one pile leaves 55ms after the last
+const COLLECT_CHIP_STAGGER_MS = 35; // the two discs of a single pile
+const PAYOUT_CHIPS = 4; // discs per winner fan
+const PAYOUT_TARGET_STAGGER_MS = 90; // one fan starts 90ms after the last
+const PAYOUT_CHIP_STAGGER_MS = 70; // the four discs of a single fan
+/** When the LAST collect disc reaches the pot, measured from the moment the
+ *  flight mounts (i.e. after the settlement start delay). No sources degrades
+ *  to one pile's flat travel time. */
+function collectEndMs(sourceCount: number): number {
+  return (
+    COLLECT_TO_POT_MS +
+    Math.max(0, sourceCount - 1) * COLLECT_SOURCE_STAGGER_MS +
+    (COLLECT_SOURCE_CHIPS - 1) * COLLECT_CHIP_STAGGER_MS
+  );
+}
+/** When the LAST payout disc reaches a winner, measured from flight mount:
+ *  collect end + pause + the fan's own stagger + travel. */
+function payoutEndMs(sourceCount: number, targetCount: number): number {
+  return (
+    collectEndMs(sourceCount) +
+    COLLECT_PAUSE_MS +
+    Math.max(0, targetCount - 1) * PAYOUT_TARGET_STAGGER_MS +
+    (PAYOUT_CHIPS - 1) * PAYOUT_CHIP_STAGGER_MS +
+    COLLECT_TRAVEL_MS
+  );
+}
+/** The stack reveal rides the payout flight's trailing discs. The new collect
+ *  lead is supplied by RoundTable, while this public tunable remains the
+ *  winner-flight landing gate used by the runtime config contract. */
+const STACK_LAND_MS = 1_950;
 /** Collect-flight lead when a showdown reveal plays first: the reveal flip
  *  (--table-dur-flip, 0.9s) plus the badge pop must land before chips move. */
 export const COLLECT_REVEAL_LEAD_MS = 1500;
+/** One absolute clock for every settlement consumer: the settlement start
+ *  delay, the collect lead, then whichever is LATER — the configured
+ *  `--stack-land-ms` gate or the payout discs actually landing. `sourceCount`
+ *  is how many street piles collect in, `targetCount` how many winners fan out. */
+export function settlementTimelineMs(
+  collectLead = 0,
+  sourceCount = 0,
+  targetCount = 1,
+): number {
+  return (
+    feltDur('--settlement-start-delay-ms', SETTLEMENT_START_DELAY_MS) +
+    collectLead +
+    Math.max(
+      feltDur('--stack-land-ms', STACK_LAND_MS),
+      payoutEndMs(sourceCount, targetCount),
+    )
+  );
+}
 
 /** True from the moment a settled hand shows winners until the celebration
  *  has played out; drops again the instant no seat is marked won (next deal). */
-export function useWinnerFx(anyWon: boolean, handId: string | null = null): boolean {
+export function useWinnerFx(
+  anyWon: boolean,
+  handId: string | null = null,
+  collectLead = 0,
+  sourceCount = 0,
+  targetCount = 1,
+): boolean {
+  const reduce = useReducedMotion();
   const [lit, setLit] = useState(anyWon);
   useEffect(() => {
     if (!anyWon) {
       setLit(false);
       return;
     }
-    setLit(true);
-    const timer = setTimeout(() => setLit(false), feltDur('--win-fx-ms', WIN_FX_MS));
-    return () => clearTimeout(timer);
-  }, [anyWon, handId]);
+    if (reduce) {
+      setLit(true);
+      return;
+    }
+    setLit(false);
+    const start = setTimeout(
+      () => setLit(true),
+      feltDur('--settlement-start-delay-ms', SETTLEMENT_START_DELAY_MS),
+    );
+    const timeline = settlementTimelineMs(collectLead, sourceCount, targetCount);
+    const end = setTimeout(() => setLit(false), timeline + feltDur('--win-fx-ms', WIN_FX_MS));
+    return () => {
+      clearTimeout(start);
+      clearTimeout(end);
+    };
+  }, [anyWon, handId, reduce, collectLead, sourceCount, targetCount]);
+  return lit;
+}
+
+/** The WIN badge is deliberately late: it is the punctuation after the chips
+ * have reached the winner, not a label that appears while money is moving. */
+export function useWinnerBadge(
+  anyWon: boolean,
+  handId: string | null = null,
+  flightLead = 0,
+  sourceCount = 0,
+  targetCount = 1,
+): boolean {
+  const reduce = useReducedMotion();
+  const [lit, setLit] = useState(Boolean(reduce && anyWon));
+  useEffect(() => {
+    if (!anyWon) {
+      setLit(false);
+      return;
+    }
+    if (reduce) {
+      setLit(true);
+      return;
+    }
+    setLit(false);
+    const timeline = settlementTimelineMs(flightLead, sourceCount, targetCount);
+    const showTimer = setTimeout(() => setLit(true), timeline);
+    const hideTimer = setTimeout(() => setLit(false), timeline + feltDur('--win-fx-ms', WIN_FX_MS));
+    return () => {
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+    };
+  }, [anyWon, handId, flightLead, sourceCount, targetCount, reduce]);
   return lit;
 }
 
 /** Hold a seat's pre-win stack while the chips are mid-flight, then let the
  *  real number in so NumberFlow counts it up right as they land. `flightLead`
- *  must equal the ChipFlight delay for the same moment: the showdown-collect
- *  beat starts COLLECT_REVEAL_LEAD_MS late (the reveal plays first), and the
- *  number would otherwise bump a full second before the chips even leave. */
-export function useStackReveal(stack: number, won: boolean, flightLead = 0): number {
+ *  must equal the settlement flight's delay for the same moment: the
+ *  showdown-collect beat starts COLLECT_REVEAL_LEAD_MS late (the reveal plays
+ *  first), and the number would otherwise bump a full second before the chips
+ *  even leave. */
+export function useStackReveal(
+  stack: number,
+  won: boolean,
+  flightLead = 0,
+  sourceCount = 0,
+  targetCount = 1,
+): number {
   const reduce = useReducedMotion();
   const [shown, setShown] = useState(stack);
   const lastLive = useRef(stack);
@@ -78,15 +190,27 @@ export function useStackReveal(stack: number, won: boolean, flightLead = 0): num
     if (stack === lastLive.current || shown === stack) return;
     const timer = setTimeout(
       () => setShown(stack),
-      reduce ? 0 : flightLead + feltDur('--stack-land-ms', STACK_LAND_MS),
+      reduce ? 0 : settlementTimelineMs(flightLead, sourceCount, targetCount),
     );
     return () => clearTimeout(timer);
-  }, [stack, won, shown, reduce, flightLead]);
+  }, [stack, won, shown, reduce, flightLead, sourceCount, targetCount]);
   return shown;
 }
 
-export function StackValue({ stack, won, flightLead = 0 }: { stack: number; won: boolean; flightLead?: number }) {
-  const shown = useStackReveal(stack, won, flightLead);
+export function StackValue({
+  stack,
+  won,
+  flightLead = 0,
+  sourceCount = 0,
+  targetCount = 1,
+}: {
+  stack: number;
+  won: boolean;
+  flightLead?: number;
+  sourceCount?: number;
+  targetCount?: number;
+}) {
+  const shown = useStackReveal(stack, won, flightLead, sourceCount, targetCount);
   return <NumberFlow value={shown} />;
 }
 
@@ -133,83 +257,127 @@ const DISC_TONES = [
   'bg-amber-400',
 ];
 
-/** A short cascade of chips arcing from the pot element to the winner's
- *  card, measured in viewport space so it works on the oval and on phones
- *  alike. Pure decoration - aria-hidden, and skipped under reduced motion. */
-export function ChipFlight({
+/** Settlement flight: every visible street pile first collapses into the
+ * center pot, then the consolidated pot fans out to the net winner(s). */
+export function SettlementFlight({
   run,
-  getFrom,
+  getSources,
+  getPot,
   getTo,
-  discs = 6,
+  targets,
   delay = 0,
 }: {
   run: boolean;
-  getFrom: () => HTMLElement | null;
-  getTo: () => HTMLElement | null;
-  discs?: number;
-  /** Leave room for the reveal to land before the collection beat begins. */
+  getSources: () => Array<HTMLElement | DOMRect | null>;
+  getPot: () => HTMLElement | null;
+  getTo: (seat: number) => HTMLElement | null;
+  targets: number[];
   delay?: number;
 }) {
   const reduce = useReducedMotion();
-  const [path, setPath] = useState<{
-    x: number;
-    y: number;
-    dx: number;
-    dy: number;
+  const [paths, setPaths] = useState<{
+    sources: Array<{ x: number; y: number; dx: number; dy: number }>;
+    targets: Array<{ seat: number; x: number; y: number; dx: number; dy: number }>;
   } | null>(null);
   useEffect(() => {
     if (!run || reduce) {
-      setPath(null);
+      setPaths(null);
       return;
     }
-    const from = getFrom()?.getBoundingClientRect();
-    const to = getTo()?.getBoundingClientRect();
-    if (!from || !to) return;
-    const sx = from.left + from.width / 2;
-    const sy = from.top + from.height / 2;
-    setPath({
-      x: sx,
-      y: sy,
-      dx: to.left + to.width / 2 - sx,
-      dy: to.top + to.height * 0.45 - sy,
-    });
-    // measure once when the moment lights up; the refs are stable by then
-  }, [run, reduce]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (!path) return null;
+    const pot = getPot()?.getBoundingClientRect();
+    if (!pot) return;
+    const px = pot.left + pot.width / 2;
+    const py = pot.top + pot.height / 2;
+    const sources = getSources()
+      .map((source) => (source instanceof DOMRect ? source : source?.getBoundingClientRect()))
+      .filter((rect): rect is DOMRect => !!rect)
+      .map((rect) => ({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        dx: px - (rect.left + rect.width / 2),
+        dy: py - (rect.top + rect.height / 2),
+      }));
+    const destination = targets
+      .map((seat) => {
+        const rect = getTo(seat)?.getBoundingClientRect();
+        if (!rect) return null;
+        return {
+          seat,
+          x: px,
+          y: py,
+          dx: rect.left + rect.width / 2 - px,
+          dy: rect.top + rect.height * 0.45 - py,
+        };
+      })
+      .filter((path): path is NonNullable<typeof path> => !!path);
+    setPaths({ sources, targets: destination });
+  }, [run, reduce]); // refs are stable; measure once when the settlement lights up
+  if (!paths) return null;
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 z-[70]">
-      {Array.from({ length: discs }, (_, i) => {
-        const spread = (i % 3) * 6 - 6;
-        return (
+      {paths.sources.flatMap((path, sourceIndex) =>
+        Array.from({ length: COLLECT_SOURCE_CHIPS }, (_, chip) => (
           <motion.span
-            key={i}
+            key={`collect-${sourceIndex}-${chip}`}
             className={cn(
               'absolute h-3.5 w-3.5 rounded-full ring-2 ring-white/60 shadow-[0_2px_8px_rgba(2,6,23,0.45)]',
-              DISC_TONES[i % DISC_TONES.length],
+              DISC_TONES[(sourceIndex + chip) % DISC_TONES.length],
             )}
-            style={{ left: path.x - 7 + spread, top: path.y - 7 }}
+            style={{ left: path.x - 7 + chip * 5, top: path.y - 7 }}
+            initial={{ x: 0, y: 0, opacity: 0, scale: 0.5 }}
+            animate={{
+              x: path.dx,
+              y: [0, path.dy * 0.35 - 20, path.dy],
+              opacity: [0, 1, 1, 0],
+              scale: [0.5, 1, 0.7],
+            }}
+            transition={{
+              duration: COLLECT_TO_POT_MS / 1000,
+              delay:
+                (delay + sourceIndex * COLLECT_SOURCE_STAGGER_MS + chip * COLLECT_CHIP_STAGGER_MS) /
+                1000,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+          />
+        )),
+      )}
+      {paths.targets.flatMap((path, targetIndex) =>
+        Array.from({ length: PAYOUT_CHIPS }, (_, chip) => (
+          <motion.span
+            key={`payout-${path.seat}-${chip}`}
+            className={cn(
+              'absolute h-3.5 w-3.5 rounded-full ring-2 ring-white/60 shadow-[0_2px_8px_rgba(2,6,23,0.45)]',
+              DISC_TONES[(targetIndex + chip + 2) % DISC_TONES.length],
+            )}
+            style={{ left: path.x - 7 + (chip % 2) * 6, top: path.y - 7 }}
             initial={{ x: 0, y: 0, opacity: 0, scale: 0.4 }}
             animate={{
               x: path.dx,
               y: [0, path.dy * 0.45 - 36, path.dy],
               opacity: [0, 1, 1, 0],
-              scale: [0.5, 1.05, 0.95, 0.4],
+              scale: [0.4, 1.05, 0.8],
             }}
             transition={{
               duration: COLLECT_TRAVEL_MS / 1000,
-              delay: delay / 1000 + COLLECT_LEAD_MS / 1000 + i * (COLLECT_STAGGER_MS / 1000),
+              delay:
+                (delay +
+                  collectEndMs(paths.sources.length) +
+                  COLLECT_PAUSE_MS +
+                  targetIndex * PAYOUT_TARGET_STAGGER_MS +
+                  chip * PAYOUT_CHIP_STAGGER_MS) /
+                1000,
               ease: [0.2, 0, 0, 1],
             }}
           />
-        );
-      })}
+        )),
+      )}
     </div>
   );
 }
 
 /** L5 (spec row 3): the call/raise moment - a short burst of chips arcs from
  *  the acting seat's pod to its bet spot on the felt. Same viewport-space
- *  measurement as ChipFlight, so the canvas scale is transparent to it;
+ *  measurement as SettlementFlight, so the canvas scale is transparent to it;
  *  pure decoration (aria-hidden) and skipped under reduced motion. */
 export function BetFlight({
   run,

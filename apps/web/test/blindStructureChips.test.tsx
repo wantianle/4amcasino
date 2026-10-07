@@ -87,8 +87,11 @@ describe('TablePage hands the real sb to every chip consumer', () => {
   });
 
   it('passes room.room.sb into the center-pot ChipStack', () => {
+    // `shownPot` is the live total while betting, then the frozen last total
+    // through the result window (see centralPot.test.ts); the sb plumbing is
+    // unchanged either way.
     expect(source).toMatch(
-      /<ChipStack amount=\{pot\} bb=\{room\?\.room\.bb \?\? 1\} sb=\{room\?\.room\.sb\}/,
+      /<ChipStack amount=\{shownPot\} bb=\{room\?\.room\.bb \?\? 1\} sb=\{room\?\.room\.sb\}/,
     );
   });
 

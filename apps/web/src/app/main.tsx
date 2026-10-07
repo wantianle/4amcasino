@@ -43,6 +43,7 @@ const DURATION_CSS_VARS: ReadonlyArray<readonly [key: string, cssVar: string]> =
   // contract is in place when that lane frees the file.
   ['winFxMs', '--win-fx-ms'],
   ['stackLandMs', '--stack-land-ms'],
+  ['settlementStartDelayMs', '--settlement-start-delay-ms'],
 ];
 
 /** Pure mapping: `/api/config` `tunables` -> `[cssVar, value]` pairs. Only

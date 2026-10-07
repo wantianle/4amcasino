@@ -24,6 +24,7 @@ import {
 const PUBLIC_KEYS = [
   'multiRunChoiceTimeoutMs',
   'stackLandMs',
+  'settlementStartDelayMs',
   'tableDurDealMs',
   'tableDurDimMs',
   'tableDurFlipMs',
@@ -54,6 +55,7 @@ const ENV_KEYS = [
   'TABLE_DUR_ACTION_FLASH_MS',
   'WIN_FX_MS',
   'STACK_LAND_MS',
+  'SETTLEMENT_START_DELAY_MS',
 ] as const;
 
 let ctx: ReturnType<typeof createApp>;
@@ -99,6 +101,7 @@ describe('GET /api/config', () => {
       tableDurActionFlashMs: 1000,
       winFxMs: 3800,
       stackLandMs: 1950,
+      settlementStartDelayMs: 3000,
     });
     expect(body.revision).toMatch(/^[0-9a-f]{12}$/);
   });
@@ -311,6 +314,7 @@ describe('tunables parsing', () => {
       tableDurFlopStaggerMs: 300,
       winFxMs: 3800,
       stackLandMs: 1950,
+      settlementStartDelayMs: 3000,
     });
     expect(tunablesRevision(pub)).toBe(tunablesRevision(publicTunables({})));
   });

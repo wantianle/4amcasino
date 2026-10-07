@@ -87,6 +87,7 @@ export const TUNABLE_DEFAULTS = {
   // GET /api/config (see the `public` spec below) so the window is observable
   // to clients/deployments, not just server-internal.
   multiRunChoiceTimeoutMs: 5_000,
+  settlementStartDelayMs: 3_000,
 } as const;
 
 export interface TunableSpec {
@@ -292,6 +293,16 @@ export const TUNABLES = [
     // timings. It carries no secret.
     public: true,
     describe: 'Multi-run choice/agreement window per stage (ms); timeout = one run.',
+  },
+  {
+    key: 'settlementStartDelayMs',
+    env: 'SETTLEMENT_START_DELAY_MS',
+    kind: 'int',
+    default: TUNABLE_DEFAULTS.settlementStartDelayMs,
+    min: 0,
+    max: 60_000,
+    public: true,
+    describe: 'Pause after the final reveal/equity moment before chip settlement starts.',
   },
 ] as const satisfies readonly TunableSpec[];
 

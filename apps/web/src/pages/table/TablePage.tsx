@@ -106,6 +106,51 @@ interface FloatingReaction {
   left: number;
 }
 
+/** The central pot pill's value across a hand. Live priority first: while a
+ *  live total exists it is shown. Once betting is empty, a result window falls
+ *  back to the frozen total; with no result there is nothing to show, so the
+ *  pill is hidden. (This is "live wins, fall back when missing", not "freeze the
+ *  instant a result lands".) */
+export function centralPotValue(
+  livePot: number,
+  hasResult: boolean,
+  frozenPot: number,
+): number {
+  if (livePot > 0) return livePot;
+  return hasResult ? frozenPot : 0;
+}
+
+/** The freeze cache is scoped to ONE hand. A new handId (or an abort) discards
+ *  the previous total, but a new hand records its OWN live total in the same
+ *  step - the write happens once per commit in an effect, so a reset that did
+ *  not also capture the current pot would leave the new hand with no record to
+ *  freeze. A later frame for another hand - e.g. a `hand_recovery(committed)`
+ *  that lands with `betting: null` - still can never reveal a prior total. */
+export function advancePotFreeze(
+  prev: { handId: string | null; pot: number },
+  handId: string | null,
+  livePot: number,
+  aborted: boolean,
+): { handId: string | null; pot: number } {
+  if (aborted) return { handId, pot: 0 };
+  if (handId !== prev.handId) return { handId, pot: livePot > 0 ? livePot : 0 };
+  return livePot > 0 ? { handId, pot: livePot } : prev;
+}
+
+/** Read-only view of the freeze cache for the current render. Trust it only
+ *  when it belongs to THIS hand and the hand is not aborting, so a render that
+ *  already changed hands (or is tearing the hand down) never shows another
+ *  hand's / a dead hand's total. No mutation here - the cache is only written
+ *  after commit. */
+export function readFrozenPot(
+  cache: { handId: string | null; pot: number },
+  handId: string | null,
+  aborted: boolean,
+): number {
+  if (aborted || cache.handId !== handId) return 0;
+  return cache.pot;
+}
+
 export function TablePage() {
   const { id: roomId } = useParams<{ id: string }>();
   const storedRoom = useStore((s) => s.room);
@@ -192,6 +237,8 @@ export function TablePage() {
   const [standings, setStandings] = useState<LeaderboardRow[] | null>(null);
   const [floats, setFloats] = useState<FloatingReaction[]>([]);
   const floatId = useRef(0);
+  const centralPotRef = useRef<HTMLElement | null>(null);
+  const potFreezeRef = useRef<{ handId: string | null; pot: number }>({ handId: null, pot: 0 });
   const lastChatLen = useRef(0);
   const beepedUrgent = useRef<string | null>(null);
   const desktopMenuRef = useRef<HTMLDivElement>(null);
@@ -621,6 +668,16 @@ export function TablePage() {
       });
   }, [room, hand, handLive, voiceState, botByUserId]);
 
+  const pot = hand.betting ? hand.betting.seats.reduce((s, x) => s + x.total, 0) : 0;
+  // The ONLY write to potFreezeRef happens after commit. React may start a
+  // render, interrupt or discard it, and keep showing an older committed tree;
+  // a render-time ref write would then leave that tree reading a value from the
+  // abandoned render. Deriving the visible value read-only below keeps the
+  // committed UI and the cache in lockstep.
+  useEffect(() => {
+    potFreezeRef.current = advancePotFreeze(potFreezeRef.current, hand.handId, pot, !!hand.abort);
+  }, [hand.handId, pot, hand.abort]);
+
   if (!room) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-5 p-6 text-center">
@@ -662,7 +719,15 @@ export function TablePage() {
     );
   }
 
-  const pot = hand.betting ? hand.betting.seats.reduce((s, x) => s + x.total, 0) : 0;
+  // Read-only during render. `hand_end` does NOT clear betting (its reducer
+  // patch never touches it); an empty betting snapshot with a result only comes
+  // from special paths such as a committed terminal recovery. In that state a
+  // pill left at 0 would unmount (or take `opacity-0`) and the SettlementFlight
+  // would measure an invisible box, so the freeze keeps the last live total
+  // visible for the result window. `readFrozenPot` scopes it to this hand and
+  // drops it on abort - see its doc for why the read is side-effect free.
+  const frozenPot = readFrozenPot(potFreezeRef.current, hand.handId, !!hand.abort);
+  const shownPot = centralPotValue(pot, !!hand.result && !hand.abort, frozenPot);
   const me = seatViews.find((s) => s.seat === mySeat);
   // players seated but not dealt into the live hand stay hidden until the next deal
   const opponents = seatViews.filter((s) => s.seat !== mySeat && (!handLive || s.inHand));
@@ -2133,18 +2198,29 @@ export function TablePage() {
                handTypes={strengthLabels}
                goldBySeat={goldBySeat}
                collectSeats={showdownCollectors}
+               centralPotRef={centralPotRef}
                peekTargets={peekTargets}
                peekResults={!amSpectator ? hand.peekResults : undefined}
              >
               {/* A5/L4a: desktop keeps the GG text pill; phone adds the shared
-                  ChipStack cue beside the same amount and unit output. */}
-              {pot > 0 && (
-                <div className="table-pot-pill" data-table-pot title={t('POT')}>
+                  ChipStack cue beside the same amount and unit output. The pill
+                  stays mounted and VISIBLE through the result window (on the
+                  frozen shownPot) so the settlement flight has a real target. */}
+              {shownPot > 0 && (
+                <div
+                  className="table-pot-pill"
+                  data-table-pot
+                  data-central-pot
+                  ref={(element) => {
+                    centralPotRef.current = element;
+                  }}
+                  title={t('POT')}
+                >
                   <span className="sr-only">{t('POT')}</span>
-                  <ChipStack amount={pot} bb={room?.room.bb ?? 1} sb={room?.room.sb} size="xs" className="table-pot-chips" />
+                  <ChipStack amount={shownPot} bb={room?.room.bb ?? 1} sb={room?.room.sb} size="xs" className="table-pot-chips" />
                   <span className="table-pot-label">{t('POT')}</span>
                   <motion.span
-                    key={pot}
+                    key={shownPot}
                     initial={{ scale: 1.12 }}
                     animate={{ scale: 1 }}
                     transition={{ type: 'spring', stiffness: 320, damping: 18 }}
@@ -2154,7 +2230,7 @@ export function TablePage() {
                         seat stacks and the action bar: BB when the table is in
                         BB, points otherwise - never a second, chip-only total. */}
                     <NumberFlow
-                      value={prefs.stackUnit === 'bb' ? bbValue(pot, room?.room.bb ?? 1) : pot}
+                      value={prefs.stackUnit === 'bb' ? bbValue(shownPot, room?.room.bb ?? 1) : shownPot}
                     />
                   </motion.span>
                   {prefs.stackUnit === 'bb' && <span className="table-pot-label">BB</span>}
