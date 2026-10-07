@@ -5,6 +5,7 @@ import {
   type CompiledMix,
   type RangeEntry,
 } from '../rangeParser.js';
+import { clamp01 } from '../preflopMath.js';
 import { FRLA_BB_DEFEND, FRLA_RFI, MHL_HU } from './data/index.js';
 import { MAX_SLOT, canonicalSlot } from './headcount.js';
 import type {
@@ -87,11 +88,6 @@ export function slotTargetWidth(slot: number): number {
 
 function participation(t: RawTriple): number {
   return t[0] + t[1] + t[2];
-}
-
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  return Math.min(1, Math.max(0, x));
 }
 
 /** Combo-weighted participation of a raw spot, as a fraction of all combos. */

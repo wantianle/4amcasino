@@ -1,4 +1,5 @@
 import { rankOf, suitOf, type CardId } from '@4am/shared';
+import { clamp01 } from './preflopMath.js';
 
 /**
  * Rules-v1: a tiny, dependency-free parser for the 169-class preflop range
@@ -295,9 +296,4 @@ export function mixFor(
   key: string,
 ): CompiledMix {
   return compiled.get(key) ?? EMPTY_MIX;
-}
-
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  return Math.min(1, Math.max(0, x));
 }

@@ -98,6 +98,8 @@ export {
   BET_RATIO_OPTIONS,
   BET_RATIO_SLOTS,
   DEFAULT_BET_RATIOS,
+  isBetRatio,
+  isBetRatioSlots,
   sanitizeBetRatios,
 } from './betRatios.js';
 

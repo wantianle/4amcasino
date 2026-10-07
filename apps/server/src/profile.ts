@@ -29,6 +29,8 @@ import {
   BET_RATIO_OPTIONS,
   BET_RATIO_SLOTS,
   DEFAULT_BET_RATIOS,
+  isBetRatio,
+  isBetRatioSlots,
   sanitizeBetRatios,
   parsePokerHotkeys,
   describeScore,
@@ -73,16 +75,9 @@ const CARD_FACES = ['gg-four-color', 'gg-solid', 'classic-large', 'jumbo-accessi
 const TABLE_SKINS = ['gg-green', 'sapphire', 'burgundy', 'classic-casino'] as const;
 
 /** Quick-bet ratios (A10): five slots, each either a fraction of the pot or
- *  the ALL_IN_RATIO sentinel. Constants live in `@4am/shared` (re-exported
- *  above) so the web action bar and this schema share one definition. */
-function isBetRatio(value: unknown): value is number {
-  return typeof value === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(value);
-}
-
-function isBetRatioSlots(length: number): boolean {
-  return length === BET_RATIO_SLOTS;
-}
-
+ *  the ALL_IN_RATIO sentinel. The constants, the allowed-value guard and the
+ *  five-slot guard all live in `@4am/shared` (re-exported above) so the web
+ *  action bar, this schema and the read-back sanitizer share one definition. */
 /** Reads back the stored JSON array, sanitizing a damaged or foreign value back
  *  to the defaults rather than letting it reach the action bar. A legacy
  *  four-slot list is read back untouched so an account that saved before the
@@ -101,10 +96,10 @@ const betRatiosSchema = z
   .array(
     z
       .number()
-      .refine((value) => isBetRatio(value), 'Invalid bet ratio')
+      .refine(isBetRatio, 'Invalid bet ratio')
       .describe('a pot fraction or the all-in sentinel'),
   )
-  .refine((ratios) => isBetRatioSlots(ratios.length), 'expected five bet ratios');
+  .refine(isBetRatioSlots, 'expected five bet ratios');
 
 const profileSchema = z.object({
   pokerHotkeys: z

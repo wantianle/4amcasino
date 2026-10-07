@@ -14,14 +14,25 @@ export const BET_RATIO_SLOTS = 5;
  *  settings options but is not one of the defaults. */
 export const DEFAULT_BET_RATIOS: number[] = [1 / 3, 0.5, 0.75, 1, 1.5];
 
+/** True when `value` is one of the allowed ratio values: a pot fraction or the
+ *  all-in sentinel. The single-source allowed-value guard, reused by the
+ *  sanitizer below and the server profile schema. */
+export function isBetRatio(value: unknown): value is number {
+  return typeof value === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(value);
+}
+
+/** True when `value` is an array with exactly BET_RATIO_SLOTS slots. Pairs with
+ *  `isBetRatio` for the per-element rule; the server schema wires both into Zod,
+ *  the sanitizer below applies both. */
+export function isBetRatioSlots(value: unknown): value is unknown[] {
+  return Array.isArray(value) && value.length === BET_RATIO_SLOTS;
+}
+
 /** Guards every payload (server, persisted, foreign): a value that is not the
  *  current five-slot shape - including the legacy four-slot pick - falls back
  *  to the defaults, so a stale list can never reach the action bar. */
 export function sanitizeBetRatios(raw: unknown): number[] {
-  if (!Array.isArray(raw) || raw.length !== BET_RATIO_SLOTS) return [...DEFAULT_BET_RATIOS];
-  const clean = raw.filter(
-    (r): r is number =>
-      typeof r === 'number' && (BET_RATIO_OPTIONS as readonly number[]).includes(r),
-  );
+  if (!isBetRatioSlots(raw)) return [...DEFAULT_BET_RATIOS];
+  const clean = raw.filter(isBetRatio);
   return clean.length === raw.length ? clean : [...DEFAULT_BET_RATIOS];
 }
