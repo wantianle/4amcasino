@@ -16,6 +16,28 @@ export const HAND_CATEGORY_NAMES = [
 ] as const;
 
 /**
+ * The packed score's category numbers, i.e. exactly the values
+ * {@link handCategory} returns. Prefer these named members over bare literals
+ * (`category === 2` reads as a magic number and silently rots if the layout
+ * moves); the number is a cross-package contract, and
+ * `test/handCategoryConstants.test.ts` pins `HAND_CATEGORY` to both
+ * `HAND_CATEGORY_NAMES` and the real evaluator output so the two cannot drift.
+ */
+export const HAND_CATEGORY = {
+  highCard: 0,
+  pair: 1,
+  twoPair: 2,
+  trips: 3,
+  straight: 4,
+  flush: 5,
+  fullHouse: 6,
+  quads: 7,
+  straightFlush: 8,
+} as const;
+
+export type HandCategory = (typeof HAND_CATEGORY)[keyof typeof HAND_CATEGORY];
+
+/**
  * A hand score is a packed 32-bit integer, and that bit layout is a
  * cross-package CONTRACT - not an implementation detail:
  *
@@ -69,17 +91,19 @@ export function evaluate5(cards: CardId[]): number {
   const uniq = [...new Set(ranks)];
   const sHigh = uniq.length === 5 ? straightHigh(uniq) : -1;
 
-  if (isFlush && sHigh >= 0) return pack(8, [sHigh]);
-  if (groups[0]![1] === 4) return pack(7, [groups[0]![0], groups[1]![0]]);
-  if (groups[0]![1] === 3 && groups[1]![1] === 2) return pack(6, [groups[0]![0], groups[1]![0]]);
-  if (isFlush) return pack(5, ranks);
-  if (sHigh >= 0) return pack(4, [sHigh]);
-  if (groups[0]![1] === 3) return pack(3, [groups[0]![0], groups[1]![0], groups[2]![0]]);
+  if (isFlush && sHigh >= 0) return pack(HAND_CATEGORY.straightFlush, [sHigh]);
+  if (groups[0]![1] === 4) return pack(HAND_CATEGORY.quads, [groups[0]![0], groups[1]![0]]);
+  if (groups[0]![1] === 3 && groups[1]![1] === 2)
+    return pack(HAND_CATEGORY.fullHouse, [groups[0]![0], groups[1]![0]]);
+  if (isFlush) return pack(HAND_CATEGORY.flush, ranks);
+  if (sHigh >= 0) return pack(HAND_CATEGORY.straight, [sHigh]);
+  if (groups[0]![1] === 3)
+    return pack(HAND_CATEGORY.trips, [groups[0]![0], groups[1]![0], groups[2]![0]]);
   if (groups[0]![1] === 2 && groups[1]![1] === 2)
-    return pack(2, [groups[0]![0], groups[1]![0], groups[2]![0]]);
+    return pack(HAND_CATEGORY.twoPair, [groups[0]![0], groups[1]![0], groups[2]![0]]);
   if (groups[0]![1] === 2)
-    return pack(1, [groups[0]![0], groups[1]![0], groups[2]![0], groups[3]![0]]);
-  return pack(0, ranks);
+    return pack(HAND_CATEGORY.pair, [groups[0]![0], groups[1]![0], groups[2]![0], groups[3]![0]]);
+  return pack(HAND_CATEGORY.highCard, ranks);
 }
 
 const RANK_NAMES = [
@@ -100,21 +124,21 @@ export function describeScore(score: number): string {
   const t0 = tiebreak(score, 0);
   const t1 = tiebreak(score, 1);
   switch (handCategory(score)) {
-    case 8:
+    case HAND_CATEGORY.straightFlush:
       return t0 === 12 ? 'a Royal Flush' : `a Straight Flush, ${RANK_NAMES[t0]} high`;
-    case 7:
+    case HAND_CATEGORY.quads:
       return `Four ${pluralRank(t0)}`;
-    case 6:
+    case HAND_CATEGORY.fullHouse:
       return `a Full House, ${pluralRank(t0)} full of ${pluralRank(t1)}`;
-    case 5:
+    case HAND_CATEGORY.flush:
       return `a Flush, ${RANK_NAMES[t0]} high`;
-    case 4:
+    case HAND_CATEGORY.straight:
       return `a Straight, ${RANK_NAMES[t0]} high`;
-    case 3:
+    case HAND_CATEGORY.trips:
       return `Three ${pluralRank(t0)}`;
-    case 2:
+    case HAND_CATEGORY.twoPair:
       return `Two Pair, ${pluralRank(t0)} and ${pluralRank(t1)}`;
-    case 1:
+    case HAND_CATEGORY.pair:
       return `a Pair of ${pluralRank(t0)}`;
     default:
       return `${RANK_NAMES[t0]} high`;

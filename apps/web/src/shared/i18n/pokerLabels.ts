@@ -4,7 +4,7 @@
 // and `describeScore()` (English). This module re-derives the Chinese wording
 // from the score's own fields (category + tiebreak nibbles), so it never has to
 // parse the English sentence.
-import { handCategory } from '@4am/shared';
+import { HAND_CATEGORY, handCategory } from '@4am/shared';
 import { t } from './index.ts';
 
 // Mirrors the rank ordering in `packages/shared/src/evaluate.ts`:
@@ -54,21 +54,21 @@ export function tScore(score: number): string {
   const t0 = tiebreak(score, 0);
   const t1 = tiebreak(score, 1);
   switch (handCategory(score)) {
-    case 8:
+    case HAND_CATEGORY.straightFlush:
       return t0 === 12 ? '皇家同花顺' : `同花顺，${rankZh(t0)} 高`;
-    case 7:
+    case HAND_CATEGORY.quads:
       return `四条 ${rankZh(t0)}`;
-    case 6:
+    case HAND_CATEGORY.fullHouse:
       return `葫芦，${rankZh(t0)} 带 ${rankZh(t1)}`;
-    case 5:
+    case HAND_CATEGORY.flush:
       return `同花，${rankZh(t0)} 高`;
-    case 4:
+    case HAND_CATEGORY.straight:
       return `顺子，${rankZh(t0)} 高`;
-    case 3:
+    case HAND_CATEGORY.trips:
       return `三条 ${rankZh(t0)}`;
-    case 2:
+    case HAND_CATEGORY.twoPair:
       return `两对，${rankZh(t0)} 和 ${rankZh(t1)}`;
-    case 1:
+    case HAND_CATEGORY.pair:
       return `一对 ${rankZh(t0)}`;
     default:
       return `高牌 ${rankZh(t0)}`;

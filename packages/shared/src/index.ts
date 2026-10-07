@@ -30,12 +30,14 @@ export {
   type CardId,
 } from './cards.js';
 export {
+  HAND_CATEGORY,
   HAND_CATEGORY_NAMES,
   bestFive,
   describeScore,
   evaluate5,
   evaluate7,
   handCategory,
+  type HandCategory,
 } from './evaluate.js';
 export {
   activeNonAllIn,

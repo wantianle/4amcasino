@@ -1,5 +1,6 @@
 import {
   ALL_CARDS,
+  HAND_CATEGORY,
   evaluate5,
   evaluate7,
   handCategory,
@@ -218,7 +219,7 @@ export function evaluateHand(hole: readonly CardId[], board: readonly CardId[]):
   // cards already form a straight or better (category >= 4) there is nothing
   // left to draw to, so it is 0 by definition - consistent with `flushDraw`,
   // which is likewise only true for a four-card (unmade) suit.
-  const straightDraw = category >= 4 ? 0 : outs >= 2 ? 2 : outs === 1 ? 1 : 0;
+  const straightDraw = category >= HAND_CATEGORY.straight ? 0 : outs >= 2 ? 2 : outs === 1 ? 1 : 0;
 
   return {
     category,
@@ -281,9 +282,9 @@ export interface HandBucket {
 }
 
 function madeBucketOf(ev: HandEval, hole: readonly CardId[], board: readonly CardId[]): MadeBucket {
-  if (ev.category >= 3) return 'strong-made'; // set/trips, straight, flush, boat, quads, SF
-  if (ev.category === 2) return 'two-pair-plus';
-  if (ev.category !== 1) return 'air';
+  if (ev.category >= HAND_CATEGORY.trips) return 'strong-made'; // set/trips, straight, flush, boat, quads, SF
+  if (ev.category === HAND_CATEGORY.twoPair) return 'two-pair-plus';
+  if (ev.category !== HAND_CATEGORY.pair) return 'air';
   const boardRanks = [...new Set(board.map(rankOf))].sort((a, b) => b - a);
   const maxBoard = boardRanks[0] ?? -1;
   const secondBoard = boardRanks[1] ?? -1;
@@ -612,7 +613,7 @@ export function isOverpair(
   ev: HandEval,
 ): boolean {
   if (hole.length !== 2 || board.length < 3) return false;
-  if (ev.category !== 1) return false;
+  if (ev.category !== HAND_CATEGORY.pair) return false;
   const pairRank = rankOf(hole[0]!);
   if (pairRank !== rankOf(hole[1]!)) return false;
   let maxBoard = -1;
@@ -716,14 +717,19 @@ export function madeHandSuppressedByBoard(
   // boat / quads / straight flush whose best five are the board's own best
   // five, shared by every player, not hero's value. This is exactly the set the
   // value leg treats as value, so it is the set that must be nullified.
-  if (ev.category >= 3 && boardOnlyMadeHand(board, ev)) return true;
+  if (ev.category >= HAND_CATEGORY.trips && boardOnlyMadeHand(board, ev)) return true;
   // Four-flush board, no suit card, hand worse than a full house: any flush
   // beats it. `category === 5` here is a board-only flush (the whole board is
   // one suit and hero holds none of it); a hero-contributed flush has a suit
   // card and so is not `heroFlushExposed`.
-  if (texture.maxSuit >= 4 && heroFlushExposed(hole, board) && ev.category < 6) return true;
+  if (
+    texture.maxSuit >= 4 &&
+    heroFlushExposed(hole, board) &&
+    ev.category < HAND_CATEGORY.fullHouse
+  )
+    return true;
   // Four-to-a-straight board, hero does not already have the straight.
-  if (ev.category < 4 && boardOffersStraight(board)) return true;
+  if (ev.category < HAND_CATEGORY.straight && boardOffersStraight(board)) return true;
   return false;
 }
 
@@ -1300,8 +1306,8 @@ function strengthTierFromEval(
   hole: readonly CardId[],
   board: readonly CardId[],
 ): number {
-  if (ev.category >= 6) return 1; // full house / quads / straight flush
-  if (ev.category === 5) {
+  if (ev.category >= HAND_CATEGORY.fullHouse) return 1; // full house / quads / straight flush
+  if (ev.category === HAND_CATEGORY.flush) {
     // P1 flush stratification: nut 1.0, second .97, middle .93, low .88.
     return FLUSH_TIER[flushLayerOf(hole, board) ?? 'low'];
   }
@@ -1310,10 +1316,10 @@ function strengthTierFromEval(
   const boardSuits = [0, 0, 0, 0];
   for (const card of board) boardSuits[suitOf(card)] = boardSuits[suitOf(card)]! + 1;
   if (Math.max(0, ...boardSuits) >= 4) return 0.35;
-  if (ev.category === 4) return 0.95; // straight
-  if (ev.category === 3) return 0.9; // three of a kind / set
-  if (ev.category === 2) return 0.8; // two pair
-  if (ev.category === 1) {
+  if (ev.category === HAND_CATEGORY.straight) return 0.95; // straight
+  if (ev.category === HAND_CATEGORY.trips) return 0.9; // three of a kind / set
+  if (ev.category === HAND_CATEGORY.twoPair) return 0.8; // two pair
+  if (ev.category === HAND_CATEGORY.pair) {
     const boardRanks = board.map(rankOf);
     const maxBoard = boardRanks.length ? Math.max(...boardRanks) : -1;
     const pairedWithBoard = hole.find((card) => boardRanks.includes(rankOf(card)));
@@ -1382,7 +1388,7 @@ function villainBaseCombos(board: readonly CardId[]): VillainBaseCombo[] {
         a,
         b,
         tier: strengthTierFromEval(ev, [a, b], board),
-        isFlush: ev.category === 5,
+        isFlush: ev.category === HAND_CATEGORY.flush,
       });
     }
   }
@@ -1782,7 +1788,7 @@ export class PostflopPolicy {
     // category - trips / straight / flush / boat / quads) is not an automatic
     // value bet - only a live hand is. See `madeHandSuppressedByBoard`.
     const boardSuppressed = madeHandSuppressedByBoard(hole, board, ev, texture);
-    const value = !boardSuppressed && (ev.category >= 3 || percentile >= 0.8);
+    const value = !boardSuppressed && (ev.category >= HAND_CATEGORY.trips || percentile >= 0.8);
     const bluffCandidate = !value && percentile < 0.6 && (draw || blocker >= 0.4);
     // P1: an **overpair** with no card of the board's flush suit is a
     // bluff-catcher against a flush-heavy continuing range, so it bets less
@@ -1915,7 +1921,7 @@ export class PostflopPolicy {
     const exposedOverpair = isExposedOverpair(hole, board, ev);
     const boardSuppressed = madeHandSuppressedByBoard(hole, board, ev, texture);
     const strong =
-      (!boardSuppressed && (ev.category >= 3 || percentile >= 0.85)) ||
+      (!boardSuppressed && (ev.category >= HAND_CATEGORY.trips || percentile >= 0.85)) ||
       equity >= (exposedOverpair ? 0.86 : 0.8);
     if (strong && la.canRaise && rng() < (exposedOverpair ? 0.2 : 0.6)) {
       return this.raise(view, la, texture, sizingCtx, `rules-v1 postflop value raise (pct ${percentile.toFixed(2)}, eq ${equity.toFixed(2)}${exposedOverpair ? ', no-suit overpair' : ''})`);

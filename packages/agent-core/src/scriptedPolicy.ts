@@ -1,4 +1,4 @@
-import { evaluate5, handCategory, rankOf, suitOf, type CardId } from '@4am/shared';
+import { HAND_CATEGORY, evaluate5, handCategory, rankOf, suitOf, type CardId } from '@4am/shared';
 import type { DecisionView } from './decisionView.js';
 import type { Policy, PolicyDecision } from './policy.js';
 
@@ -48,8 +48,8 @@ function strength(view: DecisionView): number {
   if (cards.length < 2) return 0;
   if (board.length >= 3) {
     const category = handCategory(bestScore([...cards, ...board]));
-    if (category >= 2) return 3; // two pair or better
-    if (category === 1) return 2; // one pair
+    if (category >= HAND_CATEGORY.twoPair) return 3; // two pair or better
+    if (category === HAND_CATEGORY.pair) return 2; // one pair
     return 0;
   }
   return preflopStrength(cards[0]!, cards[1]!);
