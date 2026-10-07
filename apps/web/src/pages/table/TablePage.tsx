@@ -2127,6 +2127,7 @@ export function TablePage() {
               hostId={room.room.hostId}
               coBankerId={room.room.coBankerId}
               bb={room.room.bb}
+              sb={room.room.sb}
               readyCheck={!handLive ? hand.readyCheck : null}
                onShareHand={shareData ? () => setShareOpen(true) : undefined}
                handTypes={strengthLabels}
@@ -2140,7 +2141,7 @@ export function TablePage() {
               {pot > 0 && (
                 <div className="table-pot-pill" data-table-pot title={t('POT')}>
                   <span className="sr-only">{t('POT')}</span>
-                  <ChipStack amount={pot} bb={room?.room.bb ?? 1} size="xs" className="table-pot-chips" />
+                  <ChipStack amount={pot} bb={room?.room.bb ?? 1} sb={room?.room.sb} size="xs" className="table-pot-chips" />
                   <span className="table-pot-label">{t('POT')}</span>
                   <motion.span
                     key={pot}
