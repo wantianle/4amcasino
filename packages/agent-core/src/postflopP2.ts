@@ -4,9 +4,9 @@
  * Moved verbatim out of `postflopPolicy.ts`: the signal/villain layer needs
  * `DEFAULT_P2` for its default arguments, and the policy orchestrator needs the
  * same constant, so the shared type + default live here and both import them
- * without a cycle. `P2_ALL_OFF` (policy-only control) stays in
- * `postflopPolicy.ts`. Everything is re-exported from `postflopPolicy.ts`, so
- * the public surface is unchanged.
+ * without a cycle. `P2_ALL_OFF` (the explicit all-off control) lives here too
+ * (moved next to `DEFAULT_P2` in phase 6) so the two cannot drift. Everything is
+ * re-exported from `postflopPolicy.ts`, so the public surface is unchanged.
  */
 
 // ---------------------------------------------------------------------------
@@ -69,4 +69,18 @@ export interface P2Options {
 export const DEFAULT_P2: Readonly<P2Options> = Object.freeze({
   sizeGrid: true,
   buckets: true,
+});
+
+/**
+ * Frozen explicit all-off configuration: the pre-P2 decision path
+ * (`sizeGrid` / `buckets` both `false`). With {@link DEFAULT_P2} now defaulting
+ * both on this is the named **kill-switch / A/B control**, and it is no longer
+ * identical to the default. It is kept as a named constant because callers
+ * (server env `FOURAM_P2_ALL_OFF`, the eval harness) and tests reference it
+ * explicitly, so the one-import rollback cannot drift from the `DEFAULT_P2`
+ * shape. Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })`.
+ */
+export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
+  sizeGrid: false,
+  buckets: false,
 });

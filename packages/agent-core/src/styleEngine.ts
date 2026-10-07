@@ -1,0 +1,225 @@
+import type { PlayerAction } from '@4am/shared';
+import type { DecisionLegalActions, DecisionView } from './decisionView.js';
+import { estimateEquity, mulberry32, type EquityInput } from './equity.js';
+import type { Policy, PolicyDecision } from './policy.js';
+import { POLICY_STYLES, type PolicyKind, type StyleParams } from './policyStyles.js';
+import { guaranteedLegalAction, raiseToAmount } from './actionAdapter.js';
+import { normalizeLegalActions } from './legalActions.js';
+
+/**
+ * Phase 2 style engine (implementation).
+ *
+ * It estimates its own equity with a seeded Monte-Carlo (random opponents only -
+ * no peeking), compares it with the pot odds, and applies one of the four
+ * stylised decision profiles from `policyStyles.ts`. Every returned action is
+ * checked against `DecisionLegalActions`, including short all-in boundaries
+ * (`minRaiseTo`/`maxRaiseTo`), so it can never send an illegal action.
+ *
+ * Moved verbatim out of `stylePolicy.ts` (phase 6 housekeeping): `stylePolicy.ts`
+ * now holds only the `policy_kind`/`policy_json` resolver and re-exports this
+ * class, so the historical public surface is unchanged.
+ */
+
+export interface StylePolicyOptions {
+  /** Monte-Carlo samples per decision. Default `DEFAULT_EQUITY_SAMPLES`. */
+  samples?: number;
+  /** Base randomness seed; per-hand decisions derive a stable sub-seed. */
+  seed?: number;
+  /** Explicit params (already validated). Defaults to the kind's style table. */
+  params?: StyleParams;
+  /** Injection seam for tests; defaults to the seeded Monte-Carlo estimate. */
+  equity?: (input: EquityInput) => number;
+}
+
+export class StylePolicy implements Policy {
+  readonly name: string;
+  private readonly kind: PolicyKind;
+  private readonly params: StyleParams;
+  private readonly samples: number;
+  private readonly seed: number;
+  private readonly equityOf: (input: EquityInput) => number;
+
+  constructor(kind: PolicyKind, opts: StylePolicyOptions = {}) {
+    this.kind = kind;
+    this.name = `style-${kind}`;
+    this.params = opts.params ?? POLICY_STYLES[kind];
+    this.samples = opts.samples ?? 160;
+    this.seed = opts.seed ?? 0x9e3779b9;
+    this.equityOf = opts.equity ?? ((input) => estimateEquity(input).equity);
+  }
+
+  decide(view: DecisionView): PolicyDecision {
+    const rawLa = view.legalActions;
+    if (!rawLa) throw new Error(`${this.name} asked to act out of turn`);
+    const la = normalizeLegalActions(rawLa);
+
+    const hole = view.hand?.myCards ?? [];
+    if (hole.length < 2) return this.onlyLegal(la, 'no hole cards yet');
+
+    const board = view.hand?.board ?? [];
+    // Every opponent still in the hand contests the pot, including all-in ones:
+    // an all-in player holds unknown hole cards that reach showdown, so excluding
+    // them would systematically overstate our equity in a multi-way pot.
+    const opponents = Math.max(1, view.opponents.filter((o) => !o.folded).length);
+    const raw = this.equityOf({
+      hole,
+      board,
+      opponents,
+      samples: this.samples,
+      seed: this.decisionSeed(view),
+    });
+    // Fail closed on a bad estimate: a non-finite equity is treated as 0 (the
+    // worst case), never as a neutral 0.5 that would invite a call.
+    const equity = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
+
+    return this.kind === 'constrained-random'
+      ? this.mixedDecision(view, la, equity)
+      : this.heuristicDecision(view, la, equity);
+  }
+
+  /** Deterministic per-decision RNG, derived from the base seed and the view. */
+  private rngFor(view: DecisionView): () => number {
+    let h = this.seed >>> 0;
+    const id = view.hand?.handId ?? '';
+    for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
+    h = (h + (view.hand?.toAct ?? 0) * 2654435761) >>> 0;
+    h = (h + (view.hand?.board.length ?? 0) * 40503) >>> 0;
+    return mulberry32(h);
+  }
+
+  private decisionSeed(view: DecisionView): number {
+    let h = this.seed >>> 0;
+    for (const c of view.hand?.myCards ?? []) h = Math.imul(h ^ (c + 1), 0x01000193) >>> 0;
+    return h >>> 0;
+  }
+
+  /**
+   * True when a bet/raise is available with a legal size. `normalizeLegal`
+   * already folds the range checks into `canRaise`/`canBet`, so this only has
+   * to read the normalised flags (no duplicated range logic).
+   */
+  private canRaise(la: DecisionLegalActions): boolean {
+    return la.canBet || la.canRaise;
+  }
+
+  /**
+   * Nothing can be decided (e.g. no cards). Return a legal fallback rather than
+   * throwing, so a caller never sees an illegal action.
+   */
+  private onlyLegal(la: DecisionLegalActions, reason: string): PolicyDecision {
+    // `normalizeLegalActions` guarantees `canCheck || canCall`, so the fold
+    // branch is unreachable: when we cannot check, calling is always legal.
+    return { action: guaranteedLegalAction(la), reason };
+  }
+
+  /** Size a bet/raise within the legal range, as `currentBet + fraction * pot`. */
+  private raiseAction(
+    view: DecisionView,
+    la: DecisionLegalActions,
+    fraction: number,
+    reason: string,
+  ): PolicyDecision {
+    const pot = view.hand?.pot ?? 0;
+    const currentBet = view.hand?.currentBet ?? 0;
+    // `la.minRaiseTo` is an absolute raise-to target; `raiseToAmount` uses its
+    // delta over the current bet as the floor so it never double-counts it.
+    const amount = raiseToAmount({
+      pot,
+      currentBet,
+      fraction,
+      minRaiseTo: la.minRaiseTo,
+      maxRaiseTo: la.maxRaiseTo,
+    });
+    const type: PlayerAction['type'] = la.canBet ? 'bet' : 'raise';
+    return { action: { type, amount }, reason };
+  }
+
+  private heuristicDecision(
+    view: DecisionView,
+    la: DecisionLegalActions,
+    equity: number,
+  ): PolicyDecision {
+    const rng = this.rngFor(view);
+    const potOdds = view.potOdds?.potOdds ?? 0;
+    const preflop = (view.hand?.board.length ?? 0) === 0;
+    const bluffing = rng() < this.params.bluffFrequency;
+
+    if (la.canCheck) {
+      if (this.canRaise(la) && equity >= this.params.valueRaiseEquity)
+        return this.raiseAction(view, la, this.params.valueRaiseFraction, 'value bet');
+      // Preflop limping guard: do not voluntarily build a pot below the entry bar.
+      if (preflop && equity < this.params.preflopEntryEquity && !bluffing)
+        return { action: { type: 'check' }, reason: 'check below the preflop entry bar' };
+      if (this.canRaise(la) && bluffing)
+        return this.raiseAction(view, la, this.params.bluffRaiseFraction, 'bluff bet');
+      return { action: { type: 'check' }, reason: 'check' };
+    }
+
+    // `normalizeLegal` guarantees `canCheck || canCall`, so reaching here means we
+    // can call: there is no "neither" branch left to fold.
+    if (this.canRaise(la) && equity >= this.params.valueRaiseEquity)
+      return this.raiseAction(view, la, this.params.valueRaiseFraction, 'value raise');
+    if (equity >= this.params.callEquity || equity >= potOdds + this.params.callMargin)
+      return { action: { type: 'call' }, reason: 'call: equity covers the price' };
+    if (this.canRaise(la) && bluffing)
+      return this.raiseAction(view, la, this.params.bluffRaiseFraction, 'bluff raise');
+    return { action: { type: 'fold' }, reason: 'fold: equity below the price' };
+  }
+
+  /**
+   * Constrained random: pick among the *legal* actions, blending the
+   * equity-driven heuristic weights with a uniform random choice by the
+   * `randomness` parameter:
+   *
+   *   weight = (1 - randomness) * heuristicWeight + randomness * 1
+   *
+   * So `randomness: 0` is exactly the heuristic decision and `randomness: 1` is
+   * a uniform draw over the legal candidates. Seeded, so reproducible. Folding
+   * when checking is free is never offered.
+   */
+  private mixedDecision(
+    view: DecisionView,
+    la: DecisionLegalActions,
+    equity: number,
+  ): PolicyDecision {
+    const randomness = Number.isFinite(this.params.randomness)
+      ? Math.min(1, Math.max(0, this.params.randomness))
+      : 0;
+    if (randomness <= 0) return this.heuristicDecision(view, la, equity);
+
+    const rng = this.rngFor(view);
+    const potOdds = view.potOdds?.potOdds ?? 0;
+    const value = equity >= this.params.valueRaiseEquity;
+    const callish = equity >= Math.max(this.params.callEquity, potOdds + this.params.callMargin);
+
+    const candidates: { action: PlayerAction; heuristic: number }[] = [];
+    if (la.canCheck) candidates.push({ action: { type: 'check' }, heuristic: value ? 0.4 : 0.7 });
+    if (la.canCall) candidates.push({ action: { type: 'call' }, heuristic: callish ? 0.7 : 0.25 });
+    // `canRaise` already folds in the legal range (`minRaiseTo <= maxRaiseTo`).
+    if (this.canRaise(la)) {
+      const lo = la.minRaiseTo;
+      const hi = la.maxRaiseTo;
+      const amount = Math.max(lo, Math.min(hi, lo + Math.floor(rng() * (hi - lo + 1))));
+      const type: PlayerAction['type'] = la.canBet ? 'bet' : 'raise';
+      candidates.push({ action: { type, amount }, heuristic: value ? 0.6 : 0.25 });
+    }
+    if (!la.canCheck) candidates.push({ action: { type: 'fold' }, heuristic: callish ? 0.2 : 0.8 });
+    // `normalizeLegal` guarantees at least one of check/call/raise/fold, so the
+    // candidate list is never empty.
+
+    const weights = candidates.map((c) => (1 - randomness) * c.heuristic + randomness);
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    let roll = rng() * total;
+    for (let i = 0; i < candidates.length; i++) {
+      roll -= weights[i]!;
+      if (roll <= 0)
+        return {
+          action: candidates[i]!.action,
+          reason: `constrained-random ${candidates[i]!.action.type}`,
+        };
+    }
+    const last = candidates[candidates.length - 1]!;
+    return { action: last.action, reason: 'constrained-random fallback' };
+  }
+}
+

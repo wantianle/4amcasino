@@ -1,12 +1,5 @@
 import { HAND_CATEGORY, type CardId } from '@4am/shared';
-import {
-  DEFAULT_SIZE_STREET,
-  POSTFLOP_SIZE_GRIDS,
-  nearestStreetSize,
-  postflopStreetOf,
-  streetSupportsOverbet,
-  type PostflopStreet,
-} from './betSizing.js';
+import { postflopStreetOf } from './betSizing.js';
 import type { DecisionLegalActions, DecisionView } from './decisionView.js';
 import { estimateEquity, mulberry32 } from './equity.js';
 import type { PolicyDecision } from './policy.js';
@@ -14,13 +7,16 @@ import { deriveRulesSeed } from './rulesSeed.js';
 import type { RuleParams } from './ruleStyles.js';
 import { normalizeLegalActions } from './legalActions.js';
 import { betAmount, guaranteedLegalAction, raiseToAmount } from './actionAdapter.js';
-import { bluffToValueRatio, defendProbability, resolveFacingBetPrice } from './potPrice.js';
+import { defendProbability, resolveFacingBetPrice } from './potPrice.js';
 import {
-  deriveTableContext,
-  heroInPosition,
-  heroWasAggressor,
-  postflopActionOrder,
-} from './tableContext.js';
+  blockerFactor,
+  bluffBetProbability,
+  chooseBetFraction,
+  rangeAdvantage,
+  valueBetProbability,
+  type SizingContext,
+} from './postflopSizing.js';
+import { deriveTableContext, heroInPosition, heroWasAggressor } from './tableContext.js';
 import { clamp, clamp01 } from './postflopMath.js';
 import { evaluateHand, type HandEval } from './postflopStrength.js';
 import { classifyTexture, type BoardTexture } from './postflopTexture.js';
@@ -119,100 +115,21 @@ export {
  */
 
 // ---------------------------------------------------------------------------
-// value-bet / bluff / blocker probabilities (sizing)
+// value-bet / bluff / blocker probabilities + bet-size chooser (sizing)
 // ---------------------------------------------------------------------------
-
-// `mdf` and `bluffToValueRatio` moved to `potPrice.ts` (re-exported above).
-
-/** Probability a value hand fires, from the style's value-bet scale. */
-export function valueBetProbability(params: RuleParams, advantage: number): number {
-  return clamp01(0.55 + 0.4 * params.valueBetScale + 0.15 * advantage);
-}
-
-/** Blocker multiplier in [0.2, 2.2], centred near 1 for a neutral blocker. */
-export function blockerFactor(blocker: number): number {
-  return clamp(0.4 + 1.6 * clamp01(blocker), 0.2, 2.2);
-}
-
-// `defendProbability` moved to `potPrice.ts` (re-exported above).
-
-/**
- * Heuristic bluff bet probability for a bet of `fraction` pot: approximates the
- * MDF-consistent bluff:value ratio `f/(1+f)` times the value-bet probability,
- * scaled by style bluff, blocker, multiway and (bounded) exploit multipliers.
- * Not an equilibrium computation.
- */
-export function bluffBetProbability(
-  params: RuleParams,
-  fraction: number,
-  advantage: number,
-  blocker: number,
-  multiwayMultiplier = 1,
-  exploit = 1,
-): number {
-  return clamp01(
-    bluffToValueRatio(fraction) *
-      valueBetProbability(params, advantage) *
-      params.bluffScale *
-      blockerFactor(blocker) *
-      multiwayMultiplier *
-      exploit,
-  );
-}
-
-
-export interface SizingContext {
-  spr: number;
-  inPosition: boolean;
-  rangeAdvantage: number;
-  /** Seeded roll used only for the overbet gate. */
-  overbetRoll?: number;
-  maxOverbetFrequency?: number;
-}
-
-/**
- * Pick the bot's own bet size from the **street's** grid.
- *
- *  - wet boards: 75% (50% at low SPR, to avoid bloating with marginal equity);
- *  - dry ace-high / range-advantage boards: 33% range bet;
- *  - dry disadvantaged spots: 50%;
- *  - overbet only on dry, high-SPR, clear-advantage boards and within the
- *    style's `maxOverbetFrequency` — mapped to the top of the street's grid
- *    (150% on turn/river).
- *
- * The flop standard has **no overbet tier**, so `maxOverbetFrequency` is
- * ignored on `street === 'flop'` (see {@link streetSupportsOverbet}); the flop
- * top legal size is 75%.
- *
- * The heuristic picks a raw fraction and snaps it to the nearest point the
- * street actually allows (e.g. a 0.5-pot pick on the flop becomes 0.33), so the
- * returned value is always a legal size for `street`. Turn and river differ by
- * design: turn has no 33% tier.
- */
-export function chooseBetFraction(
-  texture: BoardTexture,
-  ctx: SizingContext,
-  street: PostflopStreet = DEFAULT_SIZE_STREET,
-): number {
-  const grid = POSTFLOP_SIZE_GRIDS[street];
-  const overbetFreq = ctx.maxOverbetFrequency ?? 0;
-  if (
-    streetSupportsOverbet(street) &&
-    !texture.wet &&
-    ctx.rangeAdvantage >= 0.4 &&
-    ctx.spr >= 4 &&
-    overbetFreq > 0 &&
-    (ctx.overbetRoll ?? 1) < overbetFreq
-  ) {
-    return grid[grid.length - 1]!;
-  }
-  let raw: number;
-  if (texture.wet) raw = ctx.spr < 2.5 ? 0.5 : 0.75;
-  else if (ctx.rangeAdvantage >= 0.3) raw = 0.33;
-  else if (ctx.rangeAdvantage <= -0.3) raw = 0.5;
-  else raw = texture.aceHigh ? 0.33 : 0.5;
-  return nearestStreetSize(raw, grid);
-}
+//
+// The sizing layer moved verbatim into `./postflopSizing.ts` (value-bet / bluff
+// / blocker probabilities, `SizingContext`, `chooseBetFraction` and the
+// `rangeAdvantage` score they consume). Re-exported here so the historical
+// public surface of `postflopPolicy.js` is unchanged.
+export {
+  valueBetProbability,
+  blockerFactor,
+  bluffBetProbability,
+  chooseBetFraction,
+  rangeAdvantage,
+  type SizingContext,
+} from './postflopSizing.js';
 
 // ---------------------------------------------------------------------------
 // P2: per-street bet-size grid (single source: ./betSizing.ts)
@@ -234,21 +151,6 @@ export {
   postflopStreetOf,
 } from './betSizing.js';
 export type { PostflopSize, PostflopStreet } from './betSizing.js';
-
-/** Heuristic range/nut-advantage score in [-1, 1] (positive = hero favours). */
-export function rangeAdvantage(input: {
-  heroWasAggressor: boolean;
-  inPosition: boolean;
-  texture: BoardTexture;
-}): number {
-  let a = 0;
-  if (input.heroWasAggressor) a += 0.4;
-  if (input.inPosition) a += 0.2;
-  if (input.texture.aceHigh) a += 0.25;
-  if (input.texture.lowConnected) a -= 0.3;
-  if (!input.heroWasAggressor && !input.inPosition) a -= 0.2;
-  return clamp(a, -1, 1);
-}
 
 // Postflop signal layer: hand percentile (uniform prior) and the P0
 // villain/range model moved into dedicated pure modules; re-exported so the
@@ -272,23 +174,10 @@ export {
   type VillainModelInput,
 } from './postflopVillain.js';
 
-// P2 toggle type + frozen default moved into a neutral leaf module (the signal
-// layer reads `DEFAULT_P2`, the policy reads both); `P2_ALL_OFF` stays here.
-export { DEFAULT_P2, type P2Options } from './postflopP2.js';
-
-/**
- * Frozen explicit all-off configuration: the pre-P2 decision path
- * (`sizeGrid` / `buckets` both `false`). With {@link DEFAULT_P2} now defaulting
- * both on this is the named **kill-switch / A/B control**, and it is no longer
- * identical to the default. It is kept as a named constant because callers
- * (server env `FOURAM_P2_ALL_OFF`, the eval harness) and tests reference it
- * explicitly, so the one-import rollback cannot drift from the `DEFAULT_P2`
- * shape. Pass it as `new PostflopPolicy({ ..., p2: P2_ALL_OFF })`.
- */
-export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
-  sizeGrid: false,
-  buckets: false,
-});
+// P2 toggle type + frozen defaults moved into a neutral leaf module (the signal
+// layer reads `DEFAULT_P2`, the policy reads both). `P2_ALL_OFF` moved there too
+// in phase 6, next to `DEFAULT_P2` so the two controls cannot drift.
+export { DEFAULT_P2, P2_ALL_OFF, type P2Options } from './postflopP2.js';
 
 // ---------------------------------------------------------------------------
 // positional / aggression helpers
@@ -299,47 +188,10 @@ export const P2_ALL_OFF: Readonly<P2Options> = Object.freeze({
 // than the preflop dealing order, so heads-up IP/OOP stays correct. Both are
 // re-exported above for existing importers.
 
-/**
- * Seat of the aggressor hero is responding to: the **last** preflop bet/raise in
- * the observed history, or `null` when none is visible. For an opening decision
- * that is the opener; for a 4-bet it is the 3-bettor — i.e. the reference
- * opponent for preflop IP/OOP sizing.
- */
-export function lastPreflopRaiserSeat(view: DecisionView): number | null {
-  const pre = view.actionHistory.filter((a) => a.street === 'preflop');
-  for (let i = pre.length - 1; i >= 0; i--) {
-    const a = pre[i]!;
-    if (a.action.type === 'bet' || a.action.type === 'raise') return a.seat;
-  }
-  return null;
-}
-
-/**
- * True when hero acts **after** the given opponent in **postflop** order, i.e.
- * hero is in position relative to that opponent. This is the position that
- * matters for the preflop 3-bet / 4-bet sizing standard (smaller in position,
- * larger out of position, to compensate for playing later streets OOP). Unlike
- * {@link heroInPosition} (which asks whether hero is last to act among *all*
- * active players), this compares hero to one specific opponent, so a third
- * active player behind hero does not flip the answer, and an all-in third party
- * is irrelevant.
- *
- * Uses {@link postflopActionOrder}, **not** the preflop dealing order: heads-up
- * they are opposites (button/SB first preflop, last postflop), so reusing the
- * dealing-order index would mark the BB as in position. Unknown hero /
- * opponent, or an opponent not present in the order, falls back to `false`
- * (treated as out of position, the larger sizing) rather than guessing — a
- * conservative, risk-averse default, not a claim that hero *is* OOP.
- */
-export function heroIsIPToOpener(view: DecisionView, opponentSeat: number | null): boolean {
-  const mySeat = view.hand?.mySeat ?? view.me?.seat ?? null;
-  if (mySeat === null || opponentSeat === null || opponentSeat === mySeat) return false;
-  const order = postflopActionOrder(view);
-  const myIdx = order.indexOf(mySeat);
-  const oppIdx = order.indexOf(opponentSeat);
-  if (myIdx < 0 || oppIdx < 0) return false;
-  return myIdx > oppIdx;
-}
+// Preflop relative-position helpers live in the preflop layer now (they read the
+// preflop history and only size a preflop raise); re-exported so the historical
+// import path from `postflopPolicy.js` keeps working.
+export { lastPreflopRaiserSeat, heroIsIPToOpener } from './preflopPosition.js';
 
 // ---------------------------------------------------------------------------
 // policy

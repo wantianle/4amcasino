@@ -7,7 +7,8 @@
 // cannot silently diverge between a policy and its differential baseline.
 //
 // This file is intentionally behaviour-free data + tiny pure helpers; the
-// heuristics that *pick* a size stay in `postflopPolicy.chooseBetFraction`.
+// heuristics that *pick* a size stay in `postflopSizing.chooseBetFraction`
+// (re-exported from `postflopPolicy`).
 
 import type { Street } from '@4am/shared';
 
