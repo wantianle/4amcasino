@@ -83,7 +83,7 @@ const table: Record<string, string> = {
   'Raise amount': '加注金额',
   Amount: '金额',
   'Enter to confirm': '回车确认',
-  'Enter a whole-chip amount from {min} to {max}.': '请输入 {min} 到 {max} 之间的整数筹码。',
+  'Enter an amount.': '请输入金额。',
 
   // ── Seat / player badges (RoundTable.tsx) ────────────────────────────────
   You: '你',

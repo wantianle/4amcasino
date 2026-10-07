@@ -4,6 +4,7 @@ import {
   type PlayerAction,
   type PokerHotkeyAction,
 } from '@4am/shared';
+import { roundUpToSb } from '../../shared/lib/chips.ts';
 
 export function mayUsePokerHotkeys(state: {
   enabled: boolean;
@@ -44,9 +45,10 @@ export function hotkeyIntent(
   if (action === 'allIn') amount = legal.maxRaiseTo;
   else if (action === 'halfPot' || action === 'pot') {
     const pot = st.seats.reduce((sum, seat) => sum + seat.total, 0);
-    const target =
-      st.currentBet + Math.round((pot + legal.callAmount) * (action === 'halfPot' ? 0.5 : 1));
-    amount = Math.round(target / st.sb) * st.sb;
+    // No pre-round: apply the fraction to the full target, then round UP to the
+    // small blind (pot 101, 30% → 30.3 → 40, not 30).
+    const target = st.currentBet + (pot + legal.callAmount) * (action === 'halfPot' ? 0.5 : 1);
+    amount = roundUpToSb(target, st.sb);
   }
   if (!Number.isFinite(amount)) amount = legal.minRaiseTo;
   return {

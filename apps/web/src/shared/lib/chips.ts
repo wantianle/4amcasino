@@ -31,6 +31,17 @@ export function sbFromBb(bb: number): number {
   return Math.max(1, Math.round(Math.max(1, bb) / 2));
 }
 
+/** Bet-input rule (user 2026-10-07): a bet/raise amount is rounded UP to the
+ *  next whole multiple of the small blind — the table's smallest wager unit.
+ *  sb 10 + an input of 123 → 130. Callers still clamp into the legal
+ *  [minRaiseTo, maxRaiseTo] window afterwards, which is what keeps an all-in
+ *  exact: the shove is `maxRaiseTo` (e.g. 123), the ceil would be 130, and the
+ *  max clamp brings it back to 123. Never rounds down. */
+export function roundUpToSb(chips: number, sb: number): number {
+  const unit = Math.max(1, Math.round(sb));
+  return Math.ceil(Math.max(0, chips) / unit) * unit;
+}
+
 /**
  * Greedy break-down of `amount` into chip stacks, largest denomination first.
  * The leftover below one small blind is folded into white chips (never shows

@@ -47,11 +47,6 @@
   --table-felt-edge: #16391a;
   --table-felt-inset-shadow: inset 0 8px 24px rgba(0, 0, 0, 0.38);
   --table-felt-noise-opacity: 0.04; /* fabric micro-noise overlay */
-  --table-felt-watermark-opacity: 0.028; /* rev 3: 4.5% → 2.8% */
-  /* watermark geometry/ink — added in L1 when the surface styles landed */
-  --table-felt-watermark-ink: #eafce0;
-  --table-watermark-top: 27%;
-  --table-watermark-size: 62px;
 
   /* rail — charcoal leather, one thin gold hairline (rev 3: 55%→35%) */
   --table-rail-hi: #453f34;

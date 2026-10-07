@@ -589,7 +589,7 @@ export function RoundTable({
         >
           {/* The GG-modeled table, bottom-up: ground shadow, the table's dark
               underside, the charcoal rail top with its single gold hairline,
-              and the deep-green felt (vignette + noise + watermark) — layer
+              and the deep-green felt (vignette + noise) — layer
               sizes/offsets from FELT in ./geometry.ts (TS is the coordinate
               authority); paint + colors from table-surface.css (L0 tokens).
               The old racetrack stitch line was dropped in rev 3. */}
@@ -627,9 +627,7 @@ export function RoundTable({
               width: `${(narrow ? PHONE_FELT : FELT).inset.wPct}%`,
               height: `${(narrow ? PHONE_FELT : FELT).inset.hPct}%`,
             }}
-          >
-            <span className="table-felt-watermark">4AM · CASINO</span>
-          </div>
+          />
 
           <div
             className="table-deck"

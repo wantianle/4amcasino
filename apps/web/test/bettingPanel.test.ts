@@ -56,7 +56,9 @@ describe('betting panel raise input guard', () => {
       resolve(import.meta.dirname, '../src/widgets/table/BettingPanel.tsx'),
       'utf8',
     );
-    expect(source).toMatch(/const legalRaiseTo = la && Number\.isFinite\(raiseTo\) \? raiseTo/);
+    // The CTA/label now reads the SNAPPED amount, so a typed BB max (6.5 BB →
+    // 130 chips) resolves to the exact clamped all-in (123) everywhere.
+    expect(source).toMatch(/const legalRaiseTo = la && Number\.isFinite\(raiseTo\) \? snapRaiseTo\(raiseTo\)/);
     expect(source).not.toMatch(/fmt\(raiseTo\)/);
     expect(source).not.toMatch(/bbOf\(raiseTo, bb\)/);
   });

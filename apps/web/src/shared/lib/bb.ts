@@ -1,18 +1,20 @@
 /** chips ⇄ BB conversion for DISPLAY and BB-denominated input.
  *
- *  The one rule this file exists to enforce: a BB amount is NEVER rounded to
- *  a whole BB on the way out. In a 10/20 room the small blind is 0.5 BB —
- *  Math.round(chips / bb) used to render SB and BB both as "1 BB" (user
- *  report), pot 30 as "2 BB", and every half-BB amount as the wrong integer.
- *  Values are exact to two decimals (chip/bb ratios need no more), and the
- *  string form trims trailing zeros: 0.5, 1, 1.5, 2.25.
+ *  Display rule (user 2026-10-07): a visible BB amount is ALWAYS rounded UP to
+ *  the next 0.5 BB — the small blind is the table's smallest unit (0.5 BB in a
+ *  standard room), so a half-BB grid is the finest honest display. 123 chips at
+ *  a 20 BB used to show 6.15 BB (two decimals); it now shows 6.5 BB. The
+ *  direction is UP on purpose, matching the bet-input rule: never show less
+ *  than the player actually holds/owes.
  *
- *  The INPUT direction (BB → chips, `fromUnit` in the betting panel) stays
- *  integer-chip rounding on purpose: a bet is a whole number of chips. */
+ *  The LEDGER stays in raw chips everywhere — nothing here is ever persisted or
+ *  settled. This conversion is display/input only; `fromUnit` in the betting
+ *  panel converts a BB edit back to whole chips. */
 
-/** chips → BB as a NUMBER (input values, slider bounds, NumberFlow). */
+/** chips → BB as a NUMBER, rounded UP to the next 0.5 BB (display). */
 export function bbValue(chips: number, bb: number): number {
-  return Math.round((chips / Math.max(1, bb)) * 100) / 100;
+  const halves = (Math.max(0, chips) / Math.max(1, bb)) * 2;
+  return Math.ceil(halves) / 2;
 }
 
 /** chips → BB as a DISPLAY string, trailing zeros trimmed. */

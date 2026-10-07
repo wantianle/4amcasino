@@ -5,7 +5,7 @@
    mockup). Tokens + fonts only — no component consumes them until L1+. */
 @import './table-tokens.css';
 @import './table-skins.css';
-/* L1: table skeleton paint (room/rail/felt/watermark/sit-spot), tokens only */
+/* L1: table skeleton paint (room/rail/felt/sit-spot), tokens only */
 @import './table-surface.css';
 /* L2: seat-unit paint (pod card, gold avatar ring, hole-card fan, pills, D disc) */
 @import './table-pod.css';

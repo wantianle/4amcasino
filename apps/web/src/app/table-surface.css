@@ -2,7 +2,7 @@
  * table-surface.css — table skeleton paint
  *
  * Room background, rail (thick charcoal edge + gold hairline), felt (deep
- * forest + radial vignette + micro-noise + 4AM watermark), and the empty-seat
+ * forest + radial vignette + micro-noise), and the empty-seat
  * sit spot. Layer sizes/offsets stay in widgets/table/geometry.ts (FELT.*) —
  * this file only paints them. Colors reference table-tokens.css; the only
  * literals are neutral white/black alpha overlays.
@@ -37,7 +37,7 @@
 
 /* felt: deep forest green, radial vignette, noise.
    NOTE: no `position` here — the element carries Tailwind's `absolute`
-   (a positioned element already anchors the watermark + ::before), and
+   (a positioned element already anchors its ::before), and
    unlayered rules would override utilities. */
 .table-felt {
   border-radius: 50%;
@@ -58,23 +58,6 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
   opacity: var(--table-felt-noise-opacity);
   mix-blend-mode: overlay;
-}
-
-/* faint large wordmark across the upper felt (GG tablestand motif) */
-.table-felt-watermark {
-  position: absolute;
-  left: 50%;
-  top: var(--table-watermark-top);
-  transform: translate(-50%, -50%);
-  font-family: var(--font-table-num);
-  font-size: var(--table-watermark-size);
-  font-weight: 900;
-  letter-spacing: 0.44em;
-  white-space: nowrap;
-  color: var(--table-felt-watermark-ink);
-  opacity: var(--table-felt-watermark-opacity);
-  pointer-events: none;
-  user-select: none;
 }
 
 /* empty seat — dashed gold ring on the seat ring (was dashed indigo) */

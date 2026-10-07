@@ -3,7 +3,7 @@ import NumberFlow from '@number-flow/react';
 import { legalActions, type PokerHotkeyAction, type PlayerAction } from '@4am/shared';
 import { act, imReady, showMyCards, startHand } from '../../shared/gameClient.ts';
 import { useStore } from '../../shared/store.ts';
-import { presetLabel, presetRaiseTo } from '../../features/table/betPresets.ts';
+import { presetLabel, presetRaiseTo, snapRaiseTo as snapRaise } from '../../features/table/betPresets.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { bbValue } from '../../shared/lib/bb.ts';
 import { ACTION_TIMEOUT_MS } from '../../shared/lib/tableTimers.ts';
@@ -211,9 +211,15 @@ export function BettingPanel({
   // Chips are the settlement currency, so the legal window and the slider stay
   // chip-denominated; `showBB` only changes how every amount is DISPLAYED. The
   // editable amount converts in and out so the panel shows exactly one unit.
+  //
+  // BB → chips keeps the FULL product: an early `Math.round` would drop the
+  // fraction before the small-blind ceil can recover it (review round 2: a typed
+  // 6.01 BB at bb 20 is 120.2, which must ceil to 130, not collapse to 120).
+  // The unified snapRaiseTo downstream owns rounding, and the final submitted
+  // amount is always a whole chip, so no pre-round is needed for the ledger.
   const showBB = stackUnit === 'bb';
   const toUnit = (chips: number) => (showBB ? bbValue(chips, bb) : chips);
-  const fromUnit = (value: number) => (showBB ? Math.round(value * Math.max(1, bb)) : value);
+  const fromUnit = (value: number) => (showBB ? value * Math.max(1, bb) : value);
   const unitText = (chips: number) => (showBB ? `${toUnit(chips)} BB` : fmt(chips));
   // L4: the merged deal post shows 「Invite a friend to deal.」 vs 「Deal
   // when ready.」 on the opponent count - same rule the old top-right box used.
@@ -290,8 +296,21 @@ export function BettingPanel({
     `${hand.handId}:${hand.actionSeq}:${myTurn}:${la?.canCheck ?? '-'}:${la?.callAmount ?? '-'}:${st?.currentBet ?? '-'}`,
   );
 
-  const amountValid = !!la && isRaiseAmountValid(raiseTo, la.minRaiseTo, la.maxRaiseTo);
-  const legalRaiseTo = la && Number.isFinite(raiseTo) ? raiseTo : (la?.minRaiseTo ?? 0);
+  // Bet-input rule (user 2026-10-07): every editable amount — typed number,
+  // slider drag, wheel/arrow step — rounds UP to the next small blind, then
+  // clamps into the legal window. Clamping to maxRaiseTo AFTER the ceil is what
+  // keeps an all-in exact: a 123-chip shove ceils to 130, which the max clamp
+  // brings straight back to 123. An empty/NaN edit falls back to the minimum.
+  const snapRaiseTo = (value: number) =>
+    la ? snapRaise(value, sb, la.minRaiseTo, la.maxRaiseTo) : value;
+  // The amount every control agrees on: the snapped+clamped value, not the raw
+  // edit. The BB input labels the legal max as 6.5 BB; typing 6.5 converts to
+  // 130 chips, and this snapping resolves it back to the exact 123-chip all-in
+  // instead of rejecting it. So the typed max, the All-in pill, Enter and the
+  // submit click all send the SAME number.
+  const legalRaiseTo = la && Number.isFinite(raiseTo) ? snapRaiseTo(raiseTo) : (la?.minRaiseTo ?? 0);
+  const amountValid =
+    !!la && Number.isFinite(raiseTo) && isRaiseAmountValid(legalRaiseTo, la.minRaiseTo, la.maxRaiseTo);
   // Keep keyboard and wheel adjustments on the same small-blind increment. The
   // range is anchored at the legal minimum; the All-in pill remains the exact
   // escape hatch for a max value that is not an even step from that minimum.
@@ -299,7 +318,7 @@ export function BettingPanel({
   const raiseRangeCollapsed = !!la && la.maxRaiseTo - la.minRaiseTo < raiseRangeStep;
   const submitRaise = () => {
     if (!myTurn || !la?.canRaise || !st) return;
-    const amount = clampRaiseAmount(raiseTo, la.minRaiseTo, la.maxRaiseTo);
+    const amount = legalRaiseTo;
     setRaiseTo(amount);
     // An invalid edit is repaired on the first click, but is deliberately not
     // submitted until the user confirms the now-legal whole-chip value.
@@ -308,7 +327,7 @@ export function BettingPanel({
   };
   const setRaiseClamped = (value: number) => {
     if (!la) return;
-    setRaiseTo(clampRaiseAmount(value, la.minRaiseTo, la.maxRaiseTo, raiseTo));
+    setRaiseTo(snapRaiseTo(value));
   };
   const { binding, amountInput } = usePokerHotkeys({
     mySeat,
@@ -575,12 +594,14 @@ export function BettingPanel({
               </button>
             ))}
           </div>
+          {/* Fires only for an empty / unparseable edit (`raiseTo` NaN): every
+              finite input is auto-normalized (ceil to the small blind, then
+              clamp into the legal window), so the panel no longer rejects an
+              out-of-range number. The copy therefore no longer promises a
+              range check it does not perform. */}
           {!amountValid && (
             <p role="status" className="text-[0.68rem] leading-snug text-[var(--table-allin)]">
-              {t('Enter a whole-chip amount from {min} to {max}.', {
-                min: fmt(la.minRaiseTo),
-                max: fmt(la.maxRaiseTo),
-              })}
+              {t('Enter an amount.')}
             </p>
           )}
           {/* the big three (mockup .abtn): Fold dark, Call dark + gold amount,
