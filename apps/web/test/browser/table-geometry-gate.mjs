@@ -56,7 +56,10 @@ for (const result of report.results) {
     controlsUsable:
       result.initialControls.visible &&
       result.initialControls.clickableCount > 0 &&
-      (result.initialControls.allVisible || result.initialControls.scrollable) &&
+      (result.initialControls.initialVisibleCount === result.initialControls.clickableCount ||
+        (result.initialControls.scrollable &&
+          result.initialControls.consoleScrollHeight >
+            result.initialControls.consoleClientHeight)) &&
       result.postScrollControlTrials.length === result.initialControls.clickableCount &&
       result.postScrollControlTrials.every((trial) => trial.pass),
     boardCoverage: result.scene.faces === 0 || (result.boardCov !== null && result.boardCov >= 0.9),
@@ -74,7 +77,7 @@ for (const result of report.results) {
           .every((run) => run.coverage !== null && run.coverage >= 0.9 && run.otherRunsPx2 === 0)),
     statusLayer:
       result.scene.faces < 15 ||
-      (result.semantic.statusHits.length > 0 && result.semantic.statusCollisionPx2 === 0),
+      (result.semantic.statusHits.length > 0 && result.semantic.statusCollisionUnionPx2 === 0),
     heroBoard: result.heroBoardOverlapPx2 === 0,
     viewport: result.clusterVisible !== null && result.clusterVisible >= 0.99,
     hiddenShowdownHero: m.modes.hidden + m.modes.showdown + m.modes.hero === result.pods,

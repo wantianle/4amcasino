@@ -949,7 +949,7 @@ try {
             '.table-run-chip, .table-outcome, .table-squid-summary, .table-ribbon, .table-prompt',
           ) ?? []),
         ];
-        const runCoverage = runRows.map((row, run) => {
+        const runCoverage = runRows.map((row) => {
           const faces = [...row.querySelectorAll('[data-card-size][role="img"]')].map(R);
           const foreign = [
             ...content.map((c) => c.r),
@@ -965,7 +965,7 @@ try {
             0,
           );
           return {
-            run,
+            runId: Number(row.getAttribute('data-table-board-run')),
             faceCount: faces.length,
             coverage: total ? (total - covered) / total : null,
             otherRunsPx2,
@@ -980,6 +980,12 @@ try {
             0,
           ),
         }));
+        const statusCollisionUnionPx2 = unionArea(
+          statusHits.flatMap((hit) => [
+            ...content.map((c) => inter(hit.r, c.r)).filter(Boolean),
+            ...boardFaces.map((face) => inter(hit.r, R(face))).filter(Boolean),
+          ]),
+        );
         const primaryRow = document.querySelector('[data-table-board-run="0"]');
         const primaryCardRects = primaryRow
           ? [...primaryRow.querySelectorAll('[data-card-size][role="img"]')].map(R)
@@ -997,7 +1003,8 @@ try {
             : null,
           runCoverage,
           statusHits,
-          statusCollisionPx2: statusHits.reduce((sum, h) => sum + h.px2, 0),
+          statusCollisionUnionPx2,
+          statusCollisionHits: statusHits,
           contentPairPx2: content.reduce(
             (sum, a, i) =>
               sum +
@@ -1026,6 +1033,9 @@ try {
               const r = R(el);
               return r.w > 0 && r.h > 0;
             }),
+          consoleScrollHeight: consoleEl?.scrollHeight ?? null,
+          consoleClientHeight: consoleEl?.clientHeight ?? null,
+          consoleClip: consoleEl ? R(consoleEl) : null,
         };
         const gate = {
           seatCount: pods.length,
@@ -1109,6 +1119,13 @@ try {
       const controls = page.locator(
         '.table-console .table-cluster button:not([disabled]), .table-console .table-cluster input:not([disabled])',
       );
+      const initialControlState = results[results.length - 1].semantic.controls;
+      const initialRects = await controls.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height };
+        }),
+      );
       const controlTrials = [];
       for (let index = 0; index < (await controls.count()); index++) {
         try {
@@ -1121,7 +1138,18 @@ try {
         }
       }
       results[results.length - 1].controlTrials = controlTrials;
-      results[results.length - 1].initialControls = results[results.length - 1].semantic.controls;
+      results[results.length - 1].initialControls = {
+        ...initialControlState,
+        rects: initialRects,
+        initialVisibleCount: initialRects.filter((r) => {
+          const c = initialControlState.consoleClip;
+          return (
+            c &&
+            Math.min(r.x + r.w, c.x + c.w) > Math.max(r.x, c.x) &&
+            Math.min(r.y + r.h, c.y + c.h) > Math.max(r.y, c.y)
+          );
+        }).length,
+      };
       results[results.length - 1].postScrollControlTrials = controlTrials;
       await ctx.close();
     }
