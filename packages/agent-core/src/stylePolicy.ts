@@ -10,7 +10,7 @@ import {
   type PolicyKind,
   type StyleParams,
 } from './policyStyles.js';
-import { RulePolicy } from './rulePolicy.js';
+import { RulePolicy, type PreflopDecisionTelemetry } from './rulePolicy.js';
 import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE, detectRulesEngine, parseRuleConfig } from './ruleStyles.js';
 import { ScriptedPolicy } from './scriptedPolicy.js';
@@ -262,7 +262,11 @@ export interface PolicyResolution {
 export function resolvePolicy(
   kindRaw: string | null | undefined,
   policyJson?: string | null,
-  opts?: { seed?: number; p2?: Partial<P2Options> },
+  opts?: {
+    seed?: number;
+    p2?: Partial<P2Options>;
+    onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
+  },
 ): PolicyResolution {
   const warnings: string[] = [];
   const normalized = normalizePolicyKind(kindRaw);
@@ -282,6 +286,8 @@ export function resolvePolicy(
       seed: opts?.seed,
       // P2 rollback switches from the caller (server env); omitted = DEFAULT_P2.
       p2: opts?.p2,
+      // Optional read-only preflop telemetry sink (server-side diagnostics only).
+      onPreflopDecision: opts?.onPreflopDecision,
       // Exception fallback: `RulePolicy` runs its own rules-v1 postflop engine
       // and only uses this (legal, seeded) StylePolicy if that engine throws.
       fallback: new StylePolicy(kind, { seed: opts?.seed }),

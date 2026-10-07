@@ -11,6 +11,7 @@ import {
   type LlmPolicyOptions,
   type P2Options,
   type Policy,
+  type PreflopDecisionTelemetry,
 } from '@4am/agent-core';
 
 /**
@@ -154,6 +155,44 @@ function isTruthyFlag(raw: string | undefined): boolean {
 }
 
 /**
+ * Optional preflop decision telemetry, read from server env only. Off by default;
+ * `BOT_PREFLOP_TELEMETRY=1` (truthy-flag semantics) turns it on.
+ *
+ * Landing decision: a **structured console log** (`[preflop-telemetry] {...}`),
+ * mirroring the existing `[llm-metric]` sink in `index.ts` — the repo has no
+ * per-decision `agent_events` table, and the only existing structured-metric
+ * mechanism is that console sink. Writing one DB row per preflop decision would
+ * add latency to every real hand for a diagnostic only needed on facing-a-raise
+ * nodes, so this sink:
+ *   - fires only on the facing-3-bet family (`facing3Bet`/`facing3BetCold`/
+ *     `facing4BetPlus`) — exactly the nodes the "no 4-bet" report is about;
+ *   - is off unless the env flag is set;
+ *   - is invoked by `RulePolicy` **after** the action is resolved, in a
+ *     `try/catch`, so it can never change or crash a live decision.
+ *
+ * `--json`-parseable, so `decision-stats`-style analysis can consume it offline.
+ */
+export function preflopTelemetryFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ((event: PreflopDecisionTelemetry) => void) | undefined {
+  if (!isTruthyFlag(env.BOT_PREFLOP_TELEMETRY)) return undefined;
+  return (event) => {
+    if (
+      event.spot !== 'facing3Bet' &&
+      event.spot !== 'facing3BetCold' &&
+      event.spot !== 'facing4BetPlus'
+    ) {
+      return;
+    }
+    try {
+      console.log(`[preflop-telemetry] ${JSON.stringify(event)}`);
+    } catch {
+      // Diagnostics must never affect the game.
+    }
+  };
+}
+
+/**
  * Resolve a persisted bot config, including the `llm` kind and the difficulty
  * tier.
  *
@@ -178,6 +217,7 @@ export function resolveBotPolicyDetailed(
   seed?: number,
   difficulty?: string | null,
   p2?: Partial<P2Options>,
+  onPreflopDecision?: (event: PreflopDecisionTelemetry) => void,
 ): BotPolicyResolution {
   const difficultyResolution = resolveDifficulty(difficulty);
   if (isLlmPolicyKind(kind)) {
@@ -198,7 +238,9 @@ export function resolveBotPolicyDetailed(
     kind,
     policyJson,
     difficulty,
-    seed === undefined && p2 === undefined ? undefined : { seed, p2 },
+    seed === undefined && p2 === undefined && onPreflopDecision === undefined
+      ? undefined
+      : { seed, p2, onPreflopDecision },
   );
   return {
     kind: resolved.kind,

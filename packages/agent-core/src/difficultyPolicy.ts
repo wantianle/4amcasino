@@ -9,6 +9,7 @@ import type { Policy } from './policy.js';
 import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE } from './ruleStyles.js';
 import { resolvePolicy, type PolicyResolution } from './stylePolicy.js';
+import type { PreflopDecisionTelemetry } from './rulePolicy.js';
 
 /**
  * Bot difficulty: an orthogonal strength tier on top of `policy_kind` (play
@@ -163,7 +164,11 @@ export function resolvePolicyForDifficulty(
   kindRaw: string | null | undefined,
   policyJson: string | null | undefined,
   difficultyRaw?: string | null,
-  opts?: { seed?: number; p2?: Partial<P2Options> },
+  opts?: {
+    seed?: number;
+    p2?: Partial<P2Options>;
+    onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
+  },
 ): DifficultyPolicyResolution {
   const d = resolveDifficulty(difficultyRaw);
 
@@ -200,7 +205,11 @@ export function policyForDifficulty(
   kindRaw: string | null | undefined,
   policyJson: string | null | undefined,
   difficultyRaw: string | null | undefined,
-  opts?: { seed?: number; p2?: Partial<P2Options> },
+  opts?: {
+    seed?: number;
+    p2?: Partial<P2Options>;
+    onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
+  },
 ): Policy {
   return resolvePolicyForDifficulty(kindRaw, policyJson, difficultyRaw, opts).policy;
 }

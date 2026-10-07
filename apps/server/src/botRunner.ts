@@ -12,6 +12,7 @@ import { markBotError, type ClaimedBot } from './botRoutes.js';
 import {
   isLlmPolicyKind,
   p2OptionsFromEnv,
+  preflopTelemetryFromEnv,
   resolveBotPolicyDetailed,
   type BotLlmOptions,
 } from './botPolicy.js';
@@ -386,6 +387,9 @@ export class BotRunner {
         undefined,
         claim.difficulty,
         opts.p2 ?? p2OptionsFromEnv(),
+        // Read-only preflop telemetry sink; `undefined` (off) unless
+        // `BOT_PREFLOP_TELEMETRY` is set. Never changes the decision.
+        preflopTelemetryFromEnv(),
       );
       this.policy = resolved.policy;
       this.policyIsLlm = opts.policyIsLlm ?? resolved.kind === 'llm';

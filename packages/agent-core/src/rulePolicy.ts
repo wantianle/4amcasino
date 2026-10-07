@@ -18,7 +18,14 @@ import {
   PREFLOP_SB_OPEN_BB,
   PREFLOP_SHORT_STACK_BB,
 } from './betSizing.js';
-import { choosePreflopIntent, type PreflopChoice } from './preflopPolicy.js';
+import {
+  adaptivePreflopAvailable,
+  choosePreflopIntent,
+  type PreflopChoice,
+  type PreflopIntent,
+  type PreflopSituation,
+  type PreflopSpot,
+} from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import { RULE_PRESETS, type RuleParams } from './ruleStyles.js';
 import { isLegalAction, normalizeLegalActions } from './legalActions.js';
@@ -70,6 +77,55 @@ export interface RulePolicyOptions {
    * that engine's config).
    */
   p2?: Partial<P2Options>;
+  /**
+   * Optional, read-only telemetry sink for preflop decisions. Called once per
+   * preflop decision with the exact diagnostic fields that answer "why did this
+   * hand not 4-bet?" (spot / adaptive route / frequencies / intent / legal raise
+   * bounds / returned action / relative position). NEVER affects the decision:
+   * it is invoked after the action is resolved and any exception it throws is
+   * swallowed, so a broken sink cannot change or crash a live hand. Omitted by
+   * default, so there is no cost on the real-game path.
+   */
+  onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
+}
+
+/**
+ * One preflop decision's diagnostic record (see
+ * {@link RulePolicyOptions.onPreflopDecision}). Pure, public-only data: no hole
+ * cards, no opponent stacks, just the class + the decision context + the
+ * frequency vector the seeded roll sampled from + the action the adapter
+ * returned. `adaptivePreflopAvailable` is `adaptivePreflopAvailable(ctx, params)`
+ * for the resolved route, so a record distinguishes "not in the 4-bet range"
+ * (frequencyRaise == 0) from "in range but the roll missed" (frequencyRaise > 0,
+ * intent == fold/call) from "intent == raise but the raise was legally
+ * unavailable" (canRaise == false, returnedAction != raise/bet).
+ */
+export interface PreflopDecisionTelemetry {
+  /** Resolved rule preset name (the `kind` the `RulePolicy` was built with). */
+  policyKind: string;
+  /** Canonical hand-class key, e.g. `AA`, `AKs`. */
+  handClass: string;
+  spot: PreflopSpot;
+  situation: PreflopSituation;
+  raises: number;
+  callers: number;
+  heroRaised: boolean;
+  historyComplete: boolean;
+  /** Whether the headcount-adaptive route served this decision. */
+  adaptivePreflopAvailable: boolean;
+  behindUnacted: number;
+  /** Effective raise probability the seeded roll sampled from. */
+  frequencyRaise: number;
+  /** Effective call probability the seeded roll sampled from. */
+  frequencyCall: number;
+  intent: PreflopIntent;
+  canRaise: boolean;
+  minRaiseTo: number;
+  maxRaiseTo: number;
+  /** The action the adapter actually returned after the legality re-check. */
+  returnedAction: PlayerAction['type'];
+  lastPreflopRaiserSeat: number | null;
+  heroIsIPToOpener: boolean;
 }
 
 /** The guaranteed-legal action: check if free, else call, else fold. */
@@ -104,6 +160,7 @@ export class RulePolicy implements Policy {
   private readonly seed: number;
   private readonly postflop: RuleFallbackPolicy;
   private readonly fallback: RuleFallbackPolicy;
+  private readonly onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
 
   constructor(kindOrOptions: PolicyKind | RulePolicyOptions = 'tight-aggressive') {
     const opts: RulePolicyOptions =
@@ -114,6 +171,7 @@ export class RulePolicy implements Policy {
     this.postflop =
       opts.postflop ?? new PostflopPolicy({ params: this.params, seed: this.seed, p2: opts.p2 });
     this.fallback = opts.fallback ?? new ConservativePostflopPolicy();
+    this.onPreflopDecision = opts.onPreflopDecision;
   }
 
   decide(view: DecisionView): PolicyDecision {
@@ -124,13 +182,56 @@ export class RulePolicy implements Policy {
 
     if (view.hand && view.hand.street === 'preflop' && hole.length >= 2) {
       const choice = choosePreflopIntent(view, this.params, mulberry32(this.seedFor(view)));
-      return this.preflopAction(view, la, choice);
+      const decision = this.preflopAction(view, la, choice);
+      this.emitPreflopTelemetry(view, la, choice, decision);
+      return decision;
     }
     // Postflop: the rules-v1 engine, failing closed to a verified legal action.
     try {
       return this.postflop.decide(view);
     } catch {
       return this.safeFallback(view, la);
+    }
+  }
+
+  /**
+   * Emit the diagnostic record for one preflop decision. Strictly read-only and
+   * fail-open: the decision has already been made, and a throwing sink must
+   * never affect the game, so the call is wrapped.
+   */
+  private emitPreflopTelemetry(
+    view: DecisionView,
+    la: DecisionLegalActions,
+    choice: PreflopChoice,
+    decision: PolicyDecision,
+  ): void {
+    if (!this.onPreflopDecision) return;
+    try {
+      const ctx = choice.context;
+      const raiser = lastPreflopRaiserSeat(view);
+      this.onPreflopDecision({
+        policyKind: this.kind,
+        handClass: choice.handClass.key,
+        spot: ctx.spot,
+        situation: ctx.situation,
+        raises: ctx.raises,
+        callers: ctx.callers,
+        heroRaised: ctx.heroRaised,
+        historyComplete: ctx.historyComplete,
+        adaptivePreflopAvailable: adaptivePreflopAvailable(ctx, this.params),
+        behindUnacted: ctx.behindUnacted,
+        frequencyRaise: choice.frequencies.raise,
+        frequencyCall: choice.frequencies.call,
+        intent: choice.intent,
+        canRaise: la.canRaise,
+        minRaiseTo: la.minRaiseTo,
+        maxRaiseTo: la.maxRaiseTo,
+        returnedAction: decision.action.type,
+        lastPreflopRaiserSeat: raiser,
+        heroIsIPToOpener: heroIsIPToOpener(view, raiser),
+      });
+    } catch {
+      // Telemetry must never affect a live decision.
     }
   }
 
