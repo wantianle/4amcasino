@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { hudNetWinLine, hudStreakScoreLine } from '../src/features/stats/hudStreak.ts';
+import * as hudStreak from '../src/features/stats/hudStreak.ts';
 import statsDict from '../src/shared/i18n/dict/stats.ts';
 
-describe('room HUD shows the real net win, never the winsorized score', () => {
-  // The production case the user reported: the hand netted +1057.3bb over the
-  // window, but the hot/cold score was capped down to +32.3.
-  const streak = { tier: 'hot1' as const, netBB: 32.3, realNetBB: 1057.3, sample: 50 };
+const { hudNetWinLine } = hudStreak;
 
-  it('uses realNetBB (1057.3) as the primary number and not netBB (32.3)', () => {
+describe('room HUD shows the true net win', () => {
+  // The production case the user reported: the hand netted +1057.3bb over the
+  // window, but the retired winsorized score capped it to +32.3. The line must
+  // show the true figure, and the winsorized tooltip is gone entirely.
+  const streak = { tier: 'hot2' as const, realNetBB: 1057.3, sample: 50 };
+
+  it('uses realNetBB (1057.3) as the primary number', () => {
     const line = hudNetWinLine(streak);
     expect(line).toContain('1057.3');
-    expect(line).not.toContain('32.3');
     expect(line).toContain('50');
   });
 
@@ -21,16 +23,21 @@ describe('room HUD shows the real net win, never the winsorized score', () => {
     expect(statsDict['Last 50 hands net: {net} bb · {sample} hands']).toContain('净赢');
   });
 
-  it('keeps the hot/cold score visible and labelled as winsorized', () => {
-    const score = hudStreakScoreLine(streak);
-    expect(score).toContain('32.3');
-    expect(statsDict['Hot/cold score (winsorized): {net} bb']).toContain('冷热分');
+  it('drops the winsorized hot/cold tooltip line and key', () => {
+    expect('hudStreakScoreLine' in hudStreak).toBe(false);
+    expect(statsDict['Hot/cold score (winsorized): {net} bb']).toBeUndefined();
+  });
+
+  it('keeps the hot/cold badge i18n keys', () => {
+    expect(statsDict['Hot streak']).toBeDefined();
+    expect(statsDict['Cold streak']).toBeDefined();
+    expect(statsDict['Big hot streak']).toBeDefined();
+    expect(statsDict['Big cold streak']).toBeDefined();
   });
 
   it('renders signs and the unavailable fallback', () => {
     expect(hudNetWinLine({ realNetBB: -12.5, sample: 30 })).toContain('-12.5');
     expect(hudNetWinLine({ realNetBB: 12.5, sample: 30 })).toContain('+12.5');
     expect(hudNetWinLine(null)).toBe(statsDict['Last 50 hands: unavailable']);
-    expect(hudStreakScoreLine(null)).toBeNull();
   });
 });

@@ -88,10 +88,9 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 ### 口径
 - **窗口**：该玩家在当前 scope（roomId / gameKind / position / opponentId 等过滤，scope 复用 `scopeHandsSql()`）下**最新 50 手**（`settled_at DESC`），与职业统计同一套 scope 约束；排除 void 手（复用 `VOIDED_HAND_EXCLUSION_SQL`）、未结算手、非 live 房间。
 - **归一化**：每手用**该手自身**的 nominal bb，取 `poker_delta / bb`（bb>0 才计入，bb=0 无法归一化 → 跳过，不计样本）。
-- **winsorize**：单手结果截断到 `[-15bb, +15bb]`，防止单个 cooler 主导 50 手之和。
-- **净 bb**：窗口内 winsorize 后的 bb 之和，`netBB`（round 到 2 位小数）。
+- **真实净赢 `realNetBB`**：窗口内每手 `poker_delta / bb` 的**未截断**之和（round 到 2 位小数）。大底池全量计入，不再对单手封顶——徽标分档直接看这个真实净赢。
 - **有效样本**：窗口内 bb>0 的手数 `sample`。
-- **中性带**：`|netBB| < 30` 不显示徽标（`tier=null`）。
+- **中性带**：`|realNetBB| < 50` 不显示徽标（`tier=null`）。
 - **样本下限**：`eligible sample < 20`，或 HUD 条目本身样本不足（隐藏 / private_mode）时整个 `streak` 为 `null`。注意 `eligible sample` 指 `bb>0` 的手数，不是 `stats.sample`（所有事实手数）；20 手里有 1 手 `bb=0` → `stats.sample=20` 但 `streak.sample=19` → 不显示。
 
 ### SQL 层 50 手窗口
@@ -107,27 +106,27 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 
 > **性能备注（复审观察，当前非错误、本轮不优化）**：`UNION ALL` 的两个 target set 各自执行一次 `scopeHandsSql()`，因此 scope predicate 实际会被求值两次；per-user 查询的 `ORDER BY settled_at DESC, hand_id DESC` 在 `EXPLAIN QUERY PLAN` 中会显示 `USE TEMP B-TREE FOR LAST TERM OF ORDER BY`。单玩家 / HUD roster 规模下开销可接受，先记录为此处已知代价；若后续成为热点，再考虑合并 target set 或补 `(user_id, settled_at DESC, hand_id DESC)` 覆盖索引，而不是改变 50 手上的语义。
 
-### 阈值（真实数据 + bootstrap 校准）
-单手 winsorize 后 σ≈8.2bb → 50 手累计 σ₅₀≈54bb。四档固定为 σ₅₀ 的倍数：
+### 阈值（真实数据校准）
+生产库 4228 手、4179 个滚动 50 手窗口：真实 50 手净赢 **sd ≈ 93bb**（大底池主导：真实单手净赢 p50=0 / p90=+3 / max=+902bb，正因如此不再用截断分档）。四档取噪声地板的固定倍数：
 
 | 档位 | 条件 | 含义 |
 | --- | --- | --- |
-| `hot2`（大火） | `netBB >= +85`（≈1.55σ₅₀） | 大档热 |
-| `hot1`（小火） | `+30 <= netBB < +85`（≈0.55σ₅₀） | 小档热 |
-| `cold1`（小冰） | `-85 < netBB <= -30` | 小档冷 |
-| `cold2`（大冰） | `netBB <= -85` | 大档冷 |
-| `null`（中性 / 样本不足） | `|netBB| < 30` 或 `sample < 20` | 不显示 |
+| `hot2`（大火） | `realNetBB >= +100` | 大档热 |
+| `hot1`（小火） | `+50 <= realNetBB < +100` | 小档热 |
+| `cold1`（小冰） | `-100 < realNetBB <= -50` | 小档冷 |
+| `cold2`（大冰） | `realNetBB <= -100` | 大档冷 |
+| `null`（中性 / 样本不足） | `|realNetBB| < 50` 或 `sample < 20` | 不显示 |
 
-边界包含端点：恰好 +30bb 是小火、恰好 +85bb 是大火。中性带 ≈40% 分布。
+边界包含端点：恰好 +50bb 是小火、恰好 +100bb 是大火。实测展示比例：±50 约 **13.2%** 的窗口有徽章（热 6.2% / 冷 7.0%），±100 约 **9.0%**（热 4.2% / 冷 4.8%）；对照已退役的 ±30 为 18.3%、±85 为 10.0%。
 
 ### 先验与再校准
-上述 σ 由真实投影数据 + bootstrap 得到，属当前窗口（50 手）与单手模型的先验。若窗口长度或归一化模型变化（例如样本增大使 σ₅₀ 变小），应**重新拟合 0.55 / 1.55 两个乘数**，而不是继续微调 30/85 这两个绝对值。
+上述 sd 由真实投影数据得到，属当前窗口（50 手）与单手模型的先验。若窗口长度或归一化模型变化（例如样本增大使 sd 变小），应**重新拟合 50 / 100 这两个绝对值**（以及相应的展示比例目标），而不是继续沿用旧档。
 
 ### API 形状
 ```
-streak: { tier: 'hot2'|'hot1'|'cold1'|'cold2'|null, netBB: number, sample: number } | null
+streak: { tier: 'hot2'|'hot1'|'cold1'|'cold2'|null, realNetBB: number, sample: number } | null
 ```
-- 可见样本（`eligible sample >= 20` 且未被隐藏）：`streak` 恒为对象，`tier` 在中性带为 `null`，`netBB`/`sample` 始终给出。
+- 可见样本（`eligible sample >= 20` 且未被隐藏）：`streak` 恒为对象，`tier` 在中性带为 `null`，`realNetBB`/`sample` 始终给出。
 - 样本不足（`stats.sample < 20` 或 `eligible sample < 20`）：`streak: null`。
 
 ### 三路径可见性（已拍板）
@@ -139,8 +138,8 @@ streak: { tier: 'hot2'|'hot1'|'cold1'|'cold2'|null, netBB: number, sample: numbe
 
 ### METRIC_VERSION 与 web 侧同步（数据已接入）
 本改动把 `METRIC_VERSION` 1 → 2。web 侧状态：
-- `features/stats/types.ts`：`StreakTier`（`'hot2'|'hot1'|'cold1'|'cold2'`）、`StreakResult`（`{tier, netBB, sample}`）、`HandStats.streak`、`HiddenStats.streak: null`、`HudPlayer.streak`。
-- **数据已接入**：`widgets/table/PlayerHud.tsx` 已消费 `p.streak`（渲染 `Last 50 hands: {net} bb · {sample} hands`）。
+- `features/stats/types.ts`：`StreakTier`（`'hot2'|'hot1'|'cold1'|'cold2'`）、`StreakResult`（`{tier, realNetBB, sample}`）、`HandStats.streak`、`HiddenStats.streak: null`、`HudPlayer.streak`。
+- **数据已接入**：`widgets/table/PlayerHud.tsx` 已消费 `p.streak`（渲染 `Last 50 hands net: {net} bb · {sample} hands`）；旧 winsorized 冷热分 tooltip 已移除。
 - **视觉徽标仍待验收**：四档热/冷徽标（配色 + 图标，且 `streak !== null && streak.tier !== null` 才显示）尚未在座位头像/名字旁完全落地；`tier=null`（中性）或 `streak=null`（隐藏/低样本）不渲染的设计不变。
 - mock/fixture 里的 `metricVersion` 更新为 2，补齐 `streak` 字段。
 

@@ -42,7 +42,6 @@ const stats: Record<string, string> = {
   'Statistics hidden': '统计已隐藏',
   'No players yet.': '暂无玩家。',
   'Last 50 hands net: {net} bb · {sample} hands': '近 50 手净赢 {net} bb · {sample} 手',
-  'Hot/cold score (winsorized): {net} bb': '冷热分（单手封顶后）：{net} bb',
   'Last 50 hands: unavailable': '近 50 手：暂无数据',
   // Net winnings card
   'Net winnings': '净胜筹码',

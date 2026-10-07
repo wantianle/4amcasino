@@ -9,7 +9,7 @@ const hudPlayer = (tier: 'hot2' | 'hot1' | 'cold1' | 'cold2' | null, vpipPct: nu
   userId: 1, username: 'probe', displayName: 'Probe', hidden: false, sample: 30,
   minHands: 20, sufficient: true, confidence: 'ok' as const, dataConfidence: 'exact' as const,
   stats: { vpip: { hits: 6, opportunities: vpipPct === null ? 0 : 30, pct: vpipPct, unit: 'pct' as const } },
-  streak: tier === null ? null : { tier, netBB: tier.startsWith('hot') ? 42 : -42, realNetBB: tier.startsWith('hot') ? 400 : -400, sample: 30 },
+  streak: tier === null ? null : { tier, realNetBB: tier.startsWith('hot') ? 400 : -400, sample: 30 },
 });
 
 describe('RoomHud player validation', () => {
@@ -55,7 +55,7 @@ describe('RoomHud player validation', () => {
     ['player minimum with nonempty streak', { minHands: 31 }],
     ['insufficient confidence with nonempty streak', { confidence: 'insufficient' }],
     ['invalid player with nonempty streak', { userId: 0 }],
-    ['neutral tier', { streak: { tier: null, netBB: 12, realNetBB: 9, sample: 30 } }],
+    ['neutral tier', { streak: { tier: null, realNetBB: 9, sample: 30 } }],
     ['null streak', { streak: null }],
     ['undefined legacy streak', { streak: undefined }],
   ])('does not render a badge: %s', (_name, overrides) => {

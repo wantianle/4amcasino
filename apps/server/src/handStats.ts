@@ -44,43 +44,43 @@ export const HUD_LOW_CONFIDENCE = 50;
 // ---------------------------------------------------------------------------
 // Hot/cold "streak" badge (热/冷徽标)
 //
-// Calibration (real projected data + bootstrap): a single hand's poker
-// result expressed in big blinds is winsorized to +/-{@link STREAK_WINSOR_BB}bb,
-// which leaves a per-hand sigma of ~8.2bb. A {STREAK_WINDOW}-hand sum therefore
-// has sigma_50 ~= 54bb, so the two symmetric bands below are fixed multiples of
-// that noise floor:
-//   small  = 0.55 * sigma_50 ~= 30bb
-//   large  = 1.55 * sigma_50 ~= 85bb
-// The neutral band (|net| < small) is ~40% of the distribution and shows no
-// badge. These are fixed constants, not query parameters. If the window or the
-// per-hand model changes (more hands -> smaller sigma_50), refit the two
-// multipliers rather than re-tuning the raw bb values.
+// The tier is read straight off the TRUE net win over the window (`realNetBB`):
+// the sum of per-hand `poker_delta / that hand's bb`, uncapped. An earlier
+// design winsorized each hand to +/-15bb before scoring, but that cut wins
+// asymmetrically against losses and once labelled a genuinely +350bb window as
+// 冰块. Real net is what the badge must reflect - big pots included.
+//
+// Calibration on the real projection (4228 hands, 4179 rolling 50-hand windows):
+// the rolling 50-hand real net has sd ~= 93bb. The two bands below are fixed
+// multiples of that noise floor:
+//   small = +/-50bb  -> ~13.2% of windows show a badge (6.2% hot / 7.0% cold)
+//   large = +/-100bb -> ~9.0% of windows (4.2% hot / 4.8% cold)
+// (The retired +/-30 / +/-85 bands would light up 18.3% / 10.0% of windows.)
+// A single hand's real net is p50=0 / p90=+3 / max=+902bb: big pots dominate,
+// which is exactly why the tier no longer truncates them.
+// These are fixed constants, not query parameters. If the window changes, refit
+// the two raw bb values.
 // ---------------------------------------------------------------------------
 
 /** Number of newest target hands the streak looks at. */
 export const STREAK_WINDOW = 50;
-/** Per-hand winsorization of `poker_delta / bb`, in bb. */
-export const STREAK_WINSOR_BB = 15;
 /** Minimum eligible hands before a badge is shown at all. */
 export const STREAK_MIN_SAMPLE = 20;
-/** Small band edge, ~0.55 * sigma_50. Inside it the badge is neutral (null). */
-export const STREAK_SMALL_BB = 30;
-/** Large band edge, ~1.55 * sigma_50. */
-export const STREAK_LARGE_BB = 85;
+/** Small band edge on |realNetBB|, ~0.54 * sigma_50 (sd ~= 93bb). Inside it the
+ *  badge is neutral (null). */
+export const STREAK_SMALL_BB = 50;
+/** Large band edge on |realNetBB|. */
+export const STREAK_LARGE_BB = 100;
 
 /** 小冰 / 大冰 / 小火 / 大火. `null` is the neutral band (or too small a sample). */
 export type StreakTier = 'cold1' | 'cold2' | 'hot1' | 'hot2';
 
 export interface StreakResult {
   tier: StreakTier | null;
-  /** Winsorized sum of the window's `poker_delta / bb`, in big blinds. This is
-   *  the HOT/COLD score only (each hand is capped to +/-{@link STREAK_WINSOR_BB}bb
-   *  so one cooler cannot dominate); it is NOT the true net win and must never be
-   *  presented to a user as one. */
-  netBB: number;
-  /** TRUE (unwinsorized) sum of the window's `poker_delta / bb`, in big blinds.
-   *  Each hand is divided by its OWN big blind, so a mix of stakes aggregates
-   *  correctly. Eligible hands only (same `bb > 0` set as `netBB`/`sample`). */
+  /** TRUE net win of the window, in big blinds: the sum of each hand's
+   *  `poker_delta / that hand's OWN bb`. Never truncated, so a big pot counts
+   *  in full; this drives both the shown number and the `tier`. Eligible hands
+   *  only (same `bb > 0` set as `sample`). */
   realNetBB: number;
   /** Eligible hands (known positive nominal bb) actually inside the window. */
   sample: number;
@@ -616,33 +616,26 @@ function trendFor(rows: BaseRow[], factsByHand: Map<string, HandFacts>): StatsRe
   return out;
 }
 
-/** Map a winsorized net to one of the four badge tiers; neutral or a sample
- *  below {@link STREAK_MIN_SAMPLE} is `null`. Edges are inclusive, so exactly
- *  +30bb is 小火 and exactly +85bb is 大火. */
-export function streakTier(netBB: number, sample: number): StreakTier | null {
+/** Map a window's true net win, in bb, to one of the four badge tiers; a
+ *  neutral net or a sample below {@link STREAK_MIN_SAMPLE} is `null`. Edges are
+ *  inclusive, so exactly +50bb is 小火 and exactly +100bb is 大火. */
+export function streakTier(realNetBB: number, sample: number): StreakTier | null {
   if (sample < STREAK_MIN_SAMPLE) return null;
-  if (netBB >= STREAK_LARGE_BB) return 'hot2';
-  if (netBB >= STREAK_SMALL_BB) return 'hot1';
-  if (netBB <= -STREAK_LARGE_BB) return 'cold2';
-  if (netBB <= -STREAK_SMALL_BB) return 'cold1';
+  if (realNetBB >= STREAK_LARGE_BB) return 'hot2';
+  if (realNetBB >= STREAK_SMALL_BB) return 'hot1';
+  if (realNetBB <= -STREAK_LARGE_BB) return 'cold2';
+  if (realNetBB <= -STREAK_SMALL_BB) return 'cold1';
   return null;
 }
 
 /**
  * Hot/cold streak over the newest {@link STREAK_WINDOW} facts. Each hand is
- * normalised by ITS OWN big blind (`poker_delta / bb`) and winsorized to
- * +/-{@link STREAK_WINSOR_BB}bb so a single cooler cannot dominate a 50-hand
- * sum. Hands without a known positive nominal bb cannot be normalised and are
- * skipped from both the sum and the sample.
- *
- * Two outputs share the SAME eligible-hand window and the SAME per-hand
- * `poker_delta / bb` normalisation:
- *   - `netBB`: the winsorized HOT/COLD score (drives `tier`), and
- *   - `realNetBB`: the true, uncapped net win in big blinds for display.
- * Never swap them: a +900bb hand contributes only +15 to `netBB` but its full
- * +900 to `realNetBB` (see STREAK_WINSOR_BB). Dividing by a single shared bb
- * would misprice a window whose hands have different blinds, so the per-hand
- * divisor is load-bearing.
+ * normalised by ITS OWN big blind (`poker_delta / bb`) and summed UNCAPPED:
+ * `realNetBB` is the true net win and drives both the displayed number and the
+ * `tier`. Big pots count in full - no winsorisation. Dividing by a single
+ * shared bb would misprice a window whose hands have different blinds, so the
+ * per-hand divisor is load-bearing. Hands without a known positive nominal bb
+ * cannot be normalised and are skipped from both the sum and the sample.
  *
  * The caller hands over the ALREADY-WINDOWED streak facts: the SQL target set
  * applies `ORDER BY settled_at DESC, hand_id DESC LIMIT 50` (binary collation,
@@ -651,18 +644,15 @@ export function streakTier(netBB: number, sample: number): StreakTier | null {
  * boundary and makes the 50-hand bound verifiable in the query itself.
  */
 export function streakFor(facts: HandFacts[]): StreakResult {
-  let net = 0;
   let real = 0;
   let sample = 0;
   for (const f of facts) {
     if (f.bb <= 0) continue;
     sample++;
-    const raw = f.pokerDelta / f.bb;
-    real += raw;
-    net += Math.max(-STREAK_WINSOR_BB, Math.min(STREAK_WINSOR_BB, raw));
+    real += f.pokerDelta / f.bb;
   }
-  const netBB = round2(net);
-  return { tier: streakTier(netBB, sample), netBB, realNetBB: round2(real), sample };
+  const realNetBB = round2(real);
+  return { tier: streakTier(realNetBB, sample), realNetBB, sample };
 }
 
 function dataQualityFor(rows: BaseRow[]): DataQuality {
@@ -1060,8 +1050,8 @@ function hudHiddenEntry(base: HudBase, minHands: number): HudEntry {
  *    hands with a known positive nominal bb that can be normalised.
  *
  * So 20 settled hands containing one `bb=0` hand (stats.sample=20, eligible
- * streak.sample=19) exposes `null`, never a fake `netBB`/tier. Shared verbatim
- * by the HUD entry and both stats routes.
+ * streak.sample=19) exposes `null`, never a fake `realNetBB`/tier. Shared
+ * verbatim by the HUD entry and both stats routes.
  */
 function displayStreak(stats: StatsResult): StreakResult | null {
   return stats.sufficient && stats.streak.sample >= STREAK_MIN_SAMPLE ? stats.streak : null;

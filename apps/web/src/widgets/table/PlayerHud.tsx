@@ -3,7 +3,7 @@ import { api } from '../../shared/api.ts';
 import { t } from '../../shared/i18n/index.ts';
 import { Button, Spinner } from '../../shared/ui/index.tsx';
 import { metricValue, type RoomHud } from '../../features/stats/types.ts';
-import { hudNetWinLine, hudStreakScoreLine } from '../../features/stats/hudStreak.ts';
+import { hudNetWinLine } from '../../features/stats/hudStreak.ts';
 import { isValidHudPlayer } from './SeatBadges.tsx';
 
 /** Off by default. Closing unmounts the request consumer and clears all numbers. */
@@ -52,7 +52,7 @@ function HudContent({ roomId, userId, onData }: { roomId: string; userId: number
       <h3 className="truncate text-sm font-semibold">{p.displayName || p.username}</h3>
       {p.hidden ? <p className="mt-2 text-xs text-slate-400">{t('Statistics hidden')}</p>
         : !p.sufficient || p.sample < Math.max(data.minHands, p.minHands) || !p.stats ? <p className="mt-2 text-xs text-amber-400">{t('Low sample: {n} / {min} hands', { n: p.sample, min: Math.max(data.minHands, p.minHands) })}</p>
-         : <><p className="mt-1 text-xs text-slate-400">{t('{n} hands', { n: p.sample })} · {p.dataConfidence}{p.confidence === 'low' && <span className="ml-2 text-amber-400">{t('Low confidence')}</span>}</p><p className="mt-2 rounded-md border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-xs text-slate-300" title={hudStreakScoreLine(p.streak) ?? undefined} data-hud-net-win={p.streak?.realNetBB ?? ''}>{hudNetWinLine(p.streak)}</p><dl className="mt-3 grid grid-cols-3 gap-2 text-xs">{[['vpip', 'VPIP'], ['pfr', 'PFR'], ['threeBet', '3bet']].map(([key, label]) => <div key={key}><dt className="text-slate-400">{label}</dt><dd className="mt-1 font-semibold tabular-nums">{metricValue(p.stats![key!])}</dd><dd className="mt-1 text-[10px] text-slate-500">{p.stats![key!] ? `${p.stats![key!]!.hits} / ${p.stats![key!]!.opportunities}` : '—'}</dd></div>)}</dl></>}
+         : <><p className="mt-1 text-xs text-slate-400">{t('{n} hands', { n: p.sample })} · {p.dataConfidence}{p.confidence === 'low' && <span className="ml-2 text-amber-400">{t('Low confidence')}</span>}</p><p className="mt-2 rounded-md border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-xs text-slate-300" data-hud-net-win={p.streak?.realNetBB ?? ''}>{hudNetWinLine(p.streak)}</p><dl className="mt-3 grid grid-cols-3 gap-2 text-xs">{[['vpip', 'VPIP'], ['pfr', 'PFR'], ['threeBet', '3bet']].map(([key, label]) => <div key={key}><dt className="text-slate-400">{label}</dt><dd className="mt-1 font-semibold tabular-nums">{metricValue(p.stats![key!])}</dd><dd className="mt-1 text-[10px] text-slate-500">{p.stats![key!] ? `${p.stats![key!]!.hits} / ${p.stats![key!]!.opportunities}` : '—'}</dd></div>)}</dl></>}
     </article>)}
   </div><div className="mt-3"><Button variant="secondary" onClick={() => refresh((n) => n + 1)}>{t('Refresh')}</Button></div></>;
 }
