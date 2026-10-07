@@ -387,8 +387,9 @@ export class BotRunner {
         undefined,
         claim.difficulty,
         opts.p2 ?? p2OptionsFromEnv(),
-        // Read-only preflop telemetry sink; `undefined` (off) unless
-        // `BOT_PREFLOP_TELEMETRY` is set. Never changes the decision.
+        // Read-only preflop telemetry sink; ON by default, `undefined` (off)
+        // only when `BOT_PREFLOP_TELEMETRY` is an explicit off-token
+        // (`0`/`false`/`off`/`no`). Never changes the decision.
         preflopTelemetryFromEnv(),
       );
       this.policy = resolved.policy;

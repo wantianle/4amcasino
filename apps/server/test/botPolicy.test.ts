@@ -9,6 +9,7 @@ import {
   type DecisionSeat,
   type DecisionView,
   type P2Options,
+  type PreflopDecisionTelemetry,
 } from '@4am/agent-core';
 import { cardFromName, type CardId } from '@4am/shared';
 import {
@@ -21,6 +22,7 @@ import {
   isLlmPolicyKind,
   llmOptionsFromEnv,
   p2OptionsFromEnv,
+  preflopTelemetryFromEnv,
   resolveBotPolicyDetailed,
 } from '../src/botPolicy.js';
 
@@ -174,6 +176,81 @@ describe('p2OptionsFromEnv', () => {
         FOURAM_P2_ALL_OFF: '1',
       } as NodeJS.ProcessEnv),
     ).toEqual({ ...P2_ALL_OFF });
+  });
+});
+
+describe('preflopTelemetryFromEnv (default ON, explicit off)', () => {
+  /** Minimal full event; the sink only inspects `spot`, the rest is payload. */
+  function event(spot: PreflopDecisionTelemetry['spot']): PreflopDecisionTelemetry {
+    return {
+      policyKind: 'constrained-random',
+      handClass: 'AKs',
+      spot,
+      situation: 'facing3Bet',
+      raises: 2,
+      callers: 0,
+      heroRaised: true,
+      historyComplete: true,
+      adaptivePreflopAvailable: true,
+      behindUnacted: 1,
+      frequencyRaise: 0.5,
+      frequencyCall: 0.25,
+      intent: 'call',
+      canRaise: true,
+      minRaiseTo: 1500,
+      maxRaiseTo: 10_000,
+      returnedAction: 'call',
+      lastPreflopRaiserSeat: 5,
+      heroIsIPToOpener: false,
+    };
+  }
+
+  it('is ON when the env var is unset (default-on)', () => {
+    expect(preflopTelemetryFromEnv({} as NodeJS.ProcessEnv)).toBeTypeOf('function');
+  });
+
+  it('is ON for empty / whitespace-only / unrecognised values', () => {
+    // Empty is deliberately NOT an off signal (indistinguishable from an
+    // accidental `VAR=`); only a recognised off-token disables the sink.
+    for (const raw of ['', '   ', '1', 'true', 'on', 'yes', 'TRUE', 'maybe', '2']) {
+      expect(preflopTelemetryFromEnv({ BOT_PREFLOP_TELEMETRY: raw } as NodeJS.ProcessEnv)).toBeTypeOf(
+        'function',
+      );
+    }
+  });
+
+  it('is OFF for the four recognised off-tokens (case/whitespace-insensitive)', () => {
+    for (const raw of ['0', 'false', 'off', 'no', 'OFF', 'False', '  no  ']) {
+      expect(
+        preflopTelemetryFromEnv({ BOT_PREFLOP_TELEMETRY: raw } as NodeJS.ProcessEnv),
+      ).toBeUndefined();
+    }
+  });
+
+  it('the returned sink logs the three facing-raise spots and ignores others', () => {
+    const calls: unknown[][] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      calls.push(args);
+    };
+    try {
+      const sink = preflopTelemetryFromEnv({} as NodeJS.ProcessEnv)!;
+      for (const spot of ['facing3Bet', 'facing3BetCold', 'facing4BetPlus'] as const) {
+        sink(event(spot));
+      }
+      // Non-facing-raise spots must be silent (that is the whole point of the sink).
+      sink(event('facingOpen'));
+      sink(event('unopened'));
+    } finally {
+      console.log = original;
+    }
+    expect(calls).toHaveLength(3);
+    for (const [line] of calls) {
+      expect(String(line).startsWith('[preflop-telemetry] {')).toBe(true);
+      expect(JSON.parse(String(line).slice('[preflop-telemetry] '.length))).toMatchObject({
+        spot: expect.any(String),
+      });
+    }
   });
 });
 

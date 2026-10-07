@@ -155,8 +155,31 @@ function isTruthyFlag(raw: string | undefined): boolean {
 }
 
 /**
- * Optional preflop decision telemetry, read from server env only. Off by default;
- * `BOT_PREFLOP_TELEMETRY=1` (truthy-flag semantics) turns it on.
+ * Falsy env flag for a default-ON switch: `0`/`false`/`off`/`no`
+ * (case-insensitive, whitespace-trimmed) disable it; everything else leaves the
+ * default (on) in place. Deliberately narrower than `!isTruthyFlag`: an unset,
+ * empty, or unrecognised value is NOT an off signal, so the only way to disable
+ * a default-on diagnostic is to say so with a recognised token.
+ */
+function isFalsyFlag(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  return ['0', 'false', 'off', 'no'].includes(raw.trim().toLowerCase());
+}
+
+/**
+ * Preflop decision telemetry, read from server env only. **On by default** (the
+ * product decision: the diagnostic should survive a plain restart without the
+ * operator having to remember a flag); an explicit
+ * `BOT_PREFLOP_TELEMETRY=0|false|off|no` (case-insensitive) turns it off.
+ *
+ * Off-threshold semantics — exactly four recognised tokens disable it, trimmed
+ * and case-insensitive: `0`, `false`, `off`, `no`. Anything else leaves it ON,
+ * including unset, empty string, `1`/`true`/`on`/`yes`, and unrecognised junk.
+ * Rationale: for a default-ON switch the safe, predictable rule is "only an
+ * explicit recognised off-token disables"; treating empty/unset/garbage as off
+ * would give an invisible way to silence a default-on diagnostic, which is
+ * exactly the failure this change is fixing. Empty is also indistinguishable
+ * from a shell forwarding `VAR=` by accident, so it must not change the default.
  *
  * Landing decision: a **structured console log** (`[preflop-telemetry] {...}`),
  * mirroring the existing `[llm-metric]` sink in `index.ts` — the repo has no
@@ -166,7 +189,7 @@ function isTruthyFlag(raw: string | undefined): boolean {
  * nodes, so this sink:
  *   - fires only on the facing-3-bet family (`facing3Bet`/`facing3BetCold`/
  *     `facing4BetPlus`) — exactly the nodes the "no 4-bet" report is about;
- *   - is off unless the env flag is set;
+ *   - is ON by default, disabled only by an explicit off-token (above);
  *   - is invoked by `RulePolicy` **after** the action is resolved, in a
  *     `try/catch`, so it can never change or crash a live decision.
  *
@@ -175,7 +198,7 @@ function isTruthyFlag(raw: string | undefined): boolean {
 export function preflopTelemetryFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): ((event: PreflopDecisionTelemetry) => void) | undefined {
-  if (!isTruthyFlag(env.BOT_PREFLOP_TELEMETRY)) return undefined;
+  if (isFalsyFlag(env.BOT_PREFLOP_TELEMETRY)) return undefined;
   return (event) => {
     if (
       event.spot !== 'facing3Bet' &&
