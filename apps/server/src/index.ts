@@ -4,6 +4,7 @@ import { SnapshotPersistence } from './persist.js';
 import { ensurePlatformAccount } from './platform.js';
 import { derivePlatformCredentials } from './platform-crypto.js';
 import { BotSupervisor } from './botSupervisor.js';
+import { setBotEvictionRunner } from './botRoutes.js';
 import { llmOptionsFromEnv } from './botPolicy.js';
 
 const port = Number(process.env.PORT ?? 8787);
@@ -64,6 +65,9 @@ async function main(): Promise<void> {
     runner: { llm },
   });
   botControl.hooks = supervisor;
+  // Let the sit-path table cap wind a live runner down through the supervisor
+  // (fold, then finalize) instead of deleting its rows mid-run.
+  setBotEvictionRunner(supervisor);
   // A retired room (archived via /close or an admin archive, or deleted) must
   // not keep occupying its runner pool: release its runners as soon as the
   // room change lands.

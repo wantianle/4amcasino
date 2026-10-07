@@ -88,6 +88,11 @@ export interface BotPublic {
   /** The seat the bot actually occupies (room_players wins over the
    *  configured seat), or null while it never sat down. */
   seat: number | null;
+  /** True only while the bot really holds a `room_players` seat. A ghost bot
+   *  row (no seat) reports `seat` from its configured value for diagnostics but
+   *  is `seated: false`, and must NOT count toward the table cap - the server
+   *  counts only seated bots (see `botCapacity`). */
+  seated: boolean;
   configuredSeat: number | null;
   status: BotStatus;
   policyKind: string;

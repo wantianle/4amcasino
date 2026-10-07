@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Coins, Play, Robot, SpinnerGap, Stop, Trash, X } from '@phosphor-icons/react';
 import { ApiError, type BotPublic } from '../../shared/api.ts';
 import { api } from '../../shared/api.ts';
+import { MAX_TABLE_PLAYERS_WITH_BOTS } from '@4am/shared';
 import { t } from '../../shared/i18n/index.ts';
 import { fmt } from '../../shared/lib/cn.ts';
 import { fmtBB } from '../../shared/lib/bb.ts';
@@ -53,6 +54,7 @@ export function BotsDialog({
   open,
   onClose,
   takenSeats,
+  seatedHumans,
   bb,
   bots,
   loading,
@@ -64,6 +66,10 @@ export function BotsDialog({
   onClose: () => void;
   /** Seats already occupied by players (bots included) - offered as disabled. */
   takenSeats: number[];
+  /** Seated humans (bots excluded) - the server's table-with-bots cap counts
+   *  these plus every SEATED bot, so the dialog hides its create form once that
+   *  sum reaches MAX_TABLE_PLAYERS_WITH_BOTS rather than letting the add fail. */
+  seatedHumans: number;
   /** The room's big blind, so presets read in BB and the default is honest. */
   bb: number;
   bots: BotPublic[];
@@ -86,6 +92,17 @@ export function BotsDialog({
   const [buyChips, setBuyChips] = useState('');
   const [name, setName] = useState('');
 
+  // Table cap (server-authoritative; this only mirrors it). The server counts
+  // seated humans + SEATED bots, so this must too: a bot with no real seat
+  // (ghost/legacy row) is not capacity and is excluded here, keeping the mirror
+  // in step with `botCapacity`. The form is hidden the moment the table is full.
+  const seatedBots = bots.filter((b) => b.seated).length;
+  const remainingBots = Math.max(
+    0,
+    MAX_TABLE_PLAYERS_WITH_BOTS - seatedHumans - seatedBots,
+  );
+  const atCapacity = remainingBots === 0;
+
   // keep a sensible seat picked while the dialog is open and seats move
   useEffect(() => {
     if (!open) return;
@@ -93,7 +110,8 @@ export function BotsDialog({
   }, [open, freeSeats]);
 
   const initialBuyIn = buyChips.trim() === '' ? buyBb * bb : Number(buyChips.trim());
-  const formValid = seat !== null && Number.isInteger(initialBuyIn) && initialBuyIn > 0 && !busy;
+  const formValid =
+    seat !== null && Number.isInteger(initialBuyIn) && initialBuyIn > 0 && !busy && !atCapacity;
 
   // ── per-bot inline add-chips row ─────────────────────────────────────────
   const [buyFor, setBuyFor] = useState<string | null>(null);
@@ -439,7 +457,13 @@ export function BotsDialog({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
           {t('Seat a new bot')}
         </h3>
-        {freeSeats.length === 0 ? (
+        {atCapacity ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {t(
+              'This table is full (6 players, bots included) - remove a bot or have a player stand up first.',
+            )}
+          </p>
+        ) : freeSeats.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {t('All nine seats are taken - stop and remove a bot to free one up.')}
           </p>
@@ -451,6 +475,11 @@ export function BotsDialog({
               if (formValid) void addBot();
             }}
           >
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {t('Up to 6 players including bots - {left} more can join.', {
+                left: remainingBots,
+              })}
+            </p>
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
                 {t('Seat')}

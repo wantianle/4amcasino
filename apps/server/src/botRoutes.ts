@@ -5,6 +5,7 @@ import {
   BOT_DIFFICULTIES,
   BOT_STATUSES,
   DEFAULT_BOT_DIFFICULTY,
+  MAX_TABLE_PLAYERS_WITH_BOTS,
   type BotDifficulty,
   type BotStatus,
 } from '@4am/shared';
@@ -138,6 +139,180 @@ export function listBots(db: DB, roomId: string): BotRow[] {
 }
 
 /**
+ * The 409 body when adding a bot would push a bot-present table over
+ * `MAX_TABLE_PLAYERS_WITH_BOTS`. Single-sourced so the route and its tests
+ * cannot drift, and stable (no interpolation) so the web dictionary can key on
+ * it exactly.
+ *
+ * Worded as a BOT limit, not a global 6-max: an all-human table may still hold
+ * 7+ players, so "at most 6 may be seated" would be wrong (see
+ * `MAX_TABLE_PLAYERS_WITH_BOTS`).
+ */
+export const TABLE_FULL_MESSAGE =
+  'table is full: adding a bot would exceed the 6-player limit for tables with bots';
+
+/**
+ * Current occupancy of a table, measured by the seats that ACTUALLY exist.
+ *
+ * The authority is `room_players` (`seat IS NOT NULL`), joined to the bot rows
+ * by user, so this can never count a bot that has no seat - a `bot_accounts`
+ * row with `seat IS NULL`, a bot whose `room_players` row is gone, or a legacy
+ * row whose configured seat drifted out of sync with the room. Counting bot
+ * ROWS instead (the earlier implementation) let such a ghost consume a slot:
+ * the server would refuse a new bot while the table was not really full, and
+ * `evictOverCapBots` would delete a bot that held no seat and free nothing.
+ *
+ *   - `seatedHumans`: seated `room_players` whose owner has no *effective* bot
+ *     row in this room (an effective row is one with `status != 'removed'`); a
+ *     room member who never sat, a spectator, and bots are all excluded.
+ *   - `bots`: seated `room_players` whose owner HAS an effective bot row. A bot
+ *     parked `stopping` with a pending delete still physically holds its seat,
+ *     so it stays counted until `finalizeBotRemoved` drops the seat row - which
+ *     is exactly what makes a completed delete free the slot.
+ *
+ * `full` is the add gate: at `total >= MAX_TABLE_PLAYERS_WITH_BOTS` no further
+ * bot may be created, so `total` never exceeds the cap through normal adds.
+ */
+export interface BotCapacity {
+  seatedHumans: number;
+  bots: number;
+  total: number;
+  full: boolean;
+}
+
+export function botCapacity(db: DB, roomId: string): BotCapacity {
+  // Effective bot = a bot_accounts row for this room+user that is not a legacy
+  // `removed` soft-delete. The same predicate drives both counts, so a seated
+  // user is classified as a bot or a human and never as both.
+  const seatedBots = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n
+           FROM room_players rp
+          WHERE rp.room_id = ? AND rp.seat IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM bot_accounts ba
+               WHERE ba.room_id = rp.room_id AND ba.user_id = rp.user_id
+                 AND ba.status != 'removed')`,
+      )
+      .get(roomId) as { n: number }
+  ).n;
+  const seatedHumans = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n
+           FROM room_players rp
+          WHERE rp.room_id = ? AND rp.seat IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM bot_accounts ba
+               WHERE ba.room_id = rp.room_id AND ba.user_id = rp.user_id
+                 AND ba.status != 'removed')`,
+      )
+      .get(roomId) as { n: number }
+  ).n;
+  const total = seatedHumans + seatedBots;
+  return { seatedHumans, bots: seatedBots, total, full: total >= MAX_TABLE_PLAYERS_WITH_BOTS };
+}
+
+/**
+ * Process-wide hook that lets eviction wind a LIVE bot runner down through the
+ * ordinary supervisor path (`removeBot`) instead of yanking its rows out from
+ * under it. `index.ts` registers the supervisor after `listen()`; tests and
+ * embedders leave it null, and eviction then hard-deletes directly (there is no
+ * runner to fold). Deliberately a module singleton matching the supervisor
+ * itself (one per process), so `GameRoom` - which sits BELOW the route layer -
+ * can reach it without taking a new constructor dependency.
+ */
+export interface BotEvictionRunner {
+  hasRunner(botId: string): boolean;
+  removeBot(botId: string): void | Promise<void>;
+}
+
+let evictionRunner: BotEvictionRunner | null = null;
+
+export function setBotEvictionRunner(runner: BotEvictionRunner | null): void {
+  evictionRunner = runner;
+}
+
+/**
+ * A random still-present bot that ACTUALLY HOLDS A SEAT, or null.
+ *
+ * The seat join is the whole point: eviction exists to free a seat, and a bot
+ * with no `room_players` seat (a ghost/legacy row) frees nothing when deleted.
+ * Restricting the pick to seated bots also guarantees each eviction drops
+ * `botCapacity().total` by one, so `evictOverCapBots` converges instead of
+ * spinning on undeletable ghosts (the 64-iteration guard).
+ */
+function pickRandomBotForEviction(db: DB, roomId: string): string | null {
+  const rows = db
+    .prepare(
+      `SELECT ba.id AS id
+         FROM bot_accounts ba
+        WHERE ba.room_id = ? AND ba.status != 'removed' AND ba.delete_requested_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM room_players rp
+             WHERE rp.room_id = ba.room_id AND rp.user_id = ba.user_id AND rp.seat IS NOT NULL)`,
+    )
+    .all(roomId) as { id: string }[];
+  if (rows.length === 0) return null;
+  return rows[Math.floor(Math.random() * rows.length)]!.id;
+}
+
+/**
+ * Persist a delete intent on a live bot before the supervisor winds it down -
+ * the same intent the DELETE route writes - so an interrupted eviction is
+ * finished by the supervisor's `recover()` rather than resurrecting the bot.
+ */
+function parkBotForEviction(db: DB, botId: string): void {
+  const now = Date.now();
+  db.prepare(
+    `UPDATE bot_accounts
+        SET status = 'stopping',
+            stop_requested_at = COALESCE(stop_requested_at, ?),
+            delete_requested_at = COALESCE(delete_requested_at, ?),
+            updated_at = ?
+      WHERE id = ? AND delete_requested_at IS NULL`,
+  ).run(now, now, now, botId);
+}
+
+/**
+ * Bring a table back to `MAX_TABLE_PLAYERS_WITH_BOTS` by removing random
+ * SEATED bots through the ordinary removal path: `finalizeBotRemoved` for a bot
+ * with no live runner, or the supervisor's `removeBot` (which folds, then
+ * finalizes) when one is running. Used by the sit path when a human sits over
+ * the cap, and runnable standalone for one-off cleanup of a pre-existing
+ * over-cap room.
+ *
+ * Stops when the table is back within the cap, when no seated bot is left (an
+ * all-human table is over the SEAT count, not the bot count - the CALLER
+ * decides whether that is allowed, and eviction never blocks a human), or after
+ * handing a live runner off (its row drops asynchronously, so continuing now
+ * would over-remove for one overflow).
+ *
+ * Returns the ids it processed (finalized immediately or handed off).
+ */
+export function evictOverCapBots(db: DB, roomId: string): string[] {
+  const processed: string[] = [];
+  for (let guard = 0; guard < 64; guard++) {
+    if (botCapacity(db, roomId).total <= MAX_TABLE_PLAYERS_WITH_BOTS) break;
+    const botId = pickRandomBotForEviction(db, roomId);
+    if (!botId) break;
+    const live = evictionRunner?.hasRunner(botId) ?? false;
+    if (live) {
+      parkBotForEviction(db, botId);
+      runHook(() => evictionRunner!.removeBot(botId));
+    } else if (!finalizeBotRemoved(db, botId)) {
+      break;
+    }
+    processed.push(botId);
+    // A live runner still occupies its seat until it winds down; stop here so
+    // one human's arrival removes exactly the one bot it overflowed by.
+    if (live) break;
+  }
+  return processed;
+}
+
+/**
  * Mint a fresh internal play grant for a bot. The plaintext token is returned
  * once and only its hash is stored, exactly like a user-facing agent grant; any
  * earlier active bot-runner grant for the same bot is revoked so old tokens stop
@@ -183,15 +358,22 @@ export function revokeBotGrants(db: DB, botId: string): number {
 }
 
 /**
- * Actually-seated seat. `bot_accounts.seat` is the *configured* seat; the
- * authoritative runtime seat is the bot's `room_players` row (a supervisor may
- * move a bot), so GET reports the room_players value when one exists.
+ * The bot's seat as the room sees it, plus whether that seat is REAL.
+ *
+ * `bot_accounts.seat` is the *configured* seat; the authoritative runtime seat
+ * is the bot's `room_players` row (a supervisor may move a bot), so GET reports
+ * the room_players value when one exists. `seated` is true only when such a row
+ * exists AND carries a non-null seat: a configured seat with no `room_players`
+ * row (or a null-seat ghost) is reported as `seat` for diagnostics but is NOT
+ * `seated`, and the client must not count it toward table capacity. This is the
+ * per-bot counterpart of `botCapacity`'s `room_players.seat IS NOT NULL` rule.
  */
-function actualSeat(db: DB, bot: BotRow): number | null {
+function botSeatState(db: DB, bot: BotRow): { seat: number | null; seated: boolean } {
   const rp = db
     .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
     .get(bot.room_id, bot.user_id) as { seat: number | null } | undefined;
-  return rp ? rp.seat : bot.seat;
+  if (!rp) return { seat: bot.seat, seated: false };
+  return { seat: rp.seat, seated: rp.seat !== null };
 }
 
 function botPublicJson(db: DB, bot: BotRow) {
@@ -201,12 +383,16 @@ function botPublicJson(db: DB, bot: BotRow) {
   const player = db
     .prepare('SELECT stack FROM room_players WHERE room_id = ? AND user_id = ?')
     .get(bot.room_id, bot.user_id) as { stack: number } | undefined;
+  const seatState = botSeatState(db, bot);
   return {
     id: bot.id,
     userId: bot.user_id,
     username: user?.username ?? null,
     displayName: user?.displayName ?? null,
-    seat: actualSeat(db, bot),
+    seat: seatState.seat,
+    /** True only when the bot really holds a `room_players` seat, so the client
+     *  counts a ghost row as free capacity exactly like the server does. */
+    seated: seatState.seated,
     configuredSeat: bot.seat,
     status: bot.status,
     policyKind: bot.policy_kind,
@@ -642,6 +828,15 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
       .prepare('SELECT user_id FROM room_players WHERE room_id = ? AND seat = ?')
       .get(id, b.seat) as { user_id: number } | undefined;
     if (occupant) return reply.code(409).send({ error: 'that seat is taken' });
+
+    // Keep a bot-present table at 6 (see MAX_TABLE_PLAYERS_WITH_BOTS): seated
+    // humans + seated bots may not exceed the cap. This is the authoritative
+    // gate - the host dialog hides its create form at capacity, but a DS/Mem
+    // client must not be able to bypass it. The whole route body after
+    // `await hostRoom()` is synchronous, so two racing creates cannot both read
+    // the same stale count and slip a 7th seat in (see botTableCap.test.ts).
+    if (botCapacity(db, id).full)
+      return reply.code(409).send({ error: TABLE_FULL_MESSAGE });
 
     const username = uniqueBotUsername(db);
     const seed = randomBytes(32);

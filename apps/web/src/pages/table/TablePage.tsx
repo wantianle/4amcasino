@@ -743,6 +743,14 @@ export function TablePage() {
   // players seated but not dealt into the live hand stay hidden until the next deal
   const opponents = seatViews.filter((s) => s.seat !== mySeat && (!handLive || s.inHand));
   const takenSeats = new Set(seatViews.map((s) => s.seat));
+  // People who are actually seated and are not bots - the server's table cap
+  // counts seated humans this way (seat set, and not an effective bot). The
+  // dialog pairs this with the seated bots in its bot list; the SUM is the same
+  // `room_players` seat count the server sees, so the mirror stays in step.
+  // Membership without a seat and spectators do not count.
+  const seatedHumans = room.players.filter(
+    (p) => p.seat !== null && !botByUserId.has(p.userId),
+  ).length;
   const notInHand = handLive && mySeat !== null && !hand.seats.some((s) => s.seat === mySeat);
   const meSittingOut = !!room.players.find((p) => p.userId === auth.userId)?.sittingOut;
   // feedback #4: the 牌型 line for every pod - yours from the hole cards, a
@@ -1586,6 +1594,7 @@ export function TablePage() {
           open={botsOpen}
           onClose={() => setBotsOpen(false)}
           takenSeats={[...takenSeats]}
+          seatedHumans={seatedHumans}
           bb={room?.room.bb ?? 20}
           bots={bots}
           loading={botsState.loading}

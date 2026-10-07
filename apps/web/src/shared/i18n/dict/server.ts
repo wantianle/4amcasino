@@ -311,6 +311,8 @@ const server: Record<string, string> = {
   // ── HTTP: table bots (apps/server/src/botRoutes.ts) ──────────────────────
   'no such bot': '没有这个机器人。',
   'that seat is taken': '那个座位已经有人了。',
+  'table is full: adding a bot would exceed the 6-player limit for tables with bots':
+    '这张桌已经达到「含机器人最多 6 人」的上限，加不了新机器人了。',
   'bot username collision - try again': '机器人账号名撞车了，再试一次。',
   'room is not active': '这张桌已经不在开局状态。',
   'bot has been removed': '这个机器人已被移除。',

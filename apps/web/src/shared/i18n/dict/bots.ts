@@ -82,6 +82,10 @@ const bots: Record<string, string> = {
   'Seating…': '正在入座…',
   'Buys in for {n} chips ({bb} BB).': '买入 {n} 筹码（{bb} 倍大盲）。',
   'Enter a whole number of chips.': '请输入整数筹码数。',
+  'Up to 6 players including bots - {left} more can join.':
+    '每桌最多 6 人（含机器人）· 还能加入 {left} 个。',
+  'This table is full (6 players, bots included) - remove a bot or have a player stand up first.':
+    '这张桌已坐满 6 人（含机器人）· 先删掉一个机器人，或让真人先离座。',
   'All nine seats are taken - stop and remove a bot to free one up.':
     '九个座位都坐满了——先停止并移除一个机器人腾个位。',
 

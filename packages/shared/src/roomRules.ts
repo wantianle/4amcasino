@@ -140,6 +140,29 @@ export const MULTI_RUN_MAX_RUNS = 3;
 export const MULTI_RUN_HEADS_UP_SEATS = 2;
 
 /**
+ * Occupancy cap for a table that HAS bots: while at least one bot is seated,
+ * total seated players (seated humans + seated bots) may not exceed this.
+ *
+ * Product decision (2026-10-07): "at most 6 robots + people". The invariant is
+ * conditional, NOT a global 6-max: a table with bots is held at <= 6 total,
+ * while a table with NO bots is not bounded by this constant at all - it is
+ * governed only by the existing 9 physical seats. Concretely:
+ *
+ *   - the bot-creation route refuses an add that would push a bot-present table
+ *     over 6 (`botCapacity().full` in apps/server/src/botRoutes.ts);
+ *   - the sit path evicts random bots to bring a bot-present table back to 6
+ *     when a human's arrival pushes it over, but never refuses the human;
+ *   - the host dialog hides its create form once seated humans + seated bots
+ *     reaches this value, so a form the server would reject is not offered.
+ *
+ * Keeping bot tables <= 6 also keeps them inside the 6-max coverage of the
+ * preflop data the strategy layer uses. The 9 physical seat indices remain (a
+ * room's layout is unchanged); this is a cap on occupancy, not a change to the
+ * seat ring.
+ */
+export const MAX_TABLE_PLAYERS_WITH_BOTS = 6;
+
+/**
  * Recursively `Object.freeze` a plain-data object. Used once at module load to
  * make {@link DEFAULT_GAMEPLAY_SETTINGS} immutable in depth: a stray write
  * (directly or through the server's `ROOM_FEATURE_DEFAULTS` alias, which is the

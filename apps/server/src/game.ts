@@ -45,6 +45,7 @@ import {
 } from './handProjection.js';
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
+import { evictOverCapBots } from './botRoutes.js';
 import { readRoomFeatures } from './gameplaySettings.js';
 import { computeHeadsUpEquity, computeMultiwayEquity, EquityError } from './equity.js';
 import type { MultiwayEquityResult } from './equity.js';
@@ -1019,6 +1020,13 @@ export class GameRoom {
           .run(msg.seat, this.roomId, userId);
         // a fresh seat starts with a clean streak
         this.clearTimeoutStreak(userId);
+        // Table-with-bots cap: a human sitting can push seated humans + bots
+        // past MAX_TABLE_PLAYERS_WITH_BOTS, so evict random seated bot(s) to
+        // bring the table back to 6. This is the sit-path counterpart of the
+        // bot-CREATION cap. A table with no bots left is deliberately NOT
+        // refused here: the cap limits bots, and with nothing to evict the seat
+        // count is the game's own 9-max concern (see evictOverCapBots).
+        evictOverCapBots(this.db, this.roomId);
         this.broadcastRoomState();
         return;
       }
