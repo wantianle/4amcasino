@@ -5,9 +5,9 @@
 **Raw data:** `/tmp/bot-ab/` (per-replica JSON + `.replicas.jsonl`, combined JSONs)
 **Scope:** harness/experiment only. **No product code touched**; no commit/add/push.
 
-This is the execution of stage 2–4 of
-`docs/plans/2026-10-06-bot-eval-experiment-design.md` (pilot → sample-size →
-verdict). It uses the already-landed rig (`evalDesign.mjs`, `evalCompare.mjs`,
+This is the execution of stage 2–4 of the experiment design methodology (pilot →
+sample-size → verdict), now inlined as the appendix of
+`docs/plans/2026-10-06-bot-ab-eval-v2-fair.md`（原独立设计文档已删并入该附录）。It uses the already-landed rig (`evalDesign.mjs`, `evalCompare.mjs`,
 `evalMatch.mjs`, `evalStrategies.mjs`) via two new harness-only CLIs in
 `apps/server/test/helpers/`:
 
