@@ -59,7 +59,8 @@ describe('bet input rounds UP to the next small blind', () => {
 
 describe('quick-size pills round UP too', () => {
   it('ceils a pot-fraction target that lands off the grid', () => {
-    // target = round(100 * 1/3) = 33 → ceil to 40 (the old Math.round gave 30)
+    // Exact target = 100 * 1/3 = 33.33… → ceil to 40 (no pre-round; the old
+    // code rounded the target to 33 first, which snapped to 30)
     expect(
       presetRaiseTo({
         frac: 1 / 3,

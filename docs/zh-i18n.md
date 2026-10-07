@@ -355,7 +355,7 @@
 | Your bet / Your bet this street | 你的下注 / 本轮已投入 |
 | Your balance. Bought {n} total. | 余额。累计买入 {n}。 |
 | Bet amount / Raise to / Enter to confirm | 下注金额 / 加注至 / 回车确认 |
-| Enter a whole-chip amount from {min} to {max}. | 请输入 {min} 到 {max} 之间的整数筹码。 |
+| Enter an amount. | 请输入金额。 |
 | 🔁 Run it how many times?（MultiRunPrompt） | 🔁 发几次牌？ |
 | Could not send your action. | 操作没发出去，再试一次。 |
 | Seat {n} chooses to run it {count} times（replay 旁白） | {n} 号位选择跑 {count} 次 |

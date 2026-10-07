@@ -9,7 +9,8 @@
  *
  *  The LEDGER stays in raw chips everywhere — nothing here is ever persisted or
  *  settled. This conversion is display/input only; `fromUnit` in the betting
- *  panel converts a BB edit back to whole chips. */
+ *  panel converts a BB edit back to raw chips (the full product), and the
+ *  downstream `snapRaiseTo` rounds that UP to the small-blind grid. */
 
 /** chips → BB as a NUMBER, rounded UP to the next 0.5 BB (display). */
 export function bbValue(chips: number, bb: number): number {
