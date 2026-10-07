@@ -148,7 +148,7 @@ function selftest(baseFile) {
     { name: 'clean default run (all html, exemptions applied)', runDefault: true, wantPass: true },
     { name: 'inject 分池面板专名 literal', html: inject(C('Deal', ' ', 'Choice')), wantPass: false },
     { name: 'inject letter-spaced brand deco (rev4 bypass class)', html: inject(SPACED(C('R', 'U', 'S', 'H'))), wantPass: false },
-    { name: 'inject spaced registered handle (NeviR)', html: inject(SPACED(C('Ne', 'viR'))), wantPass: false },
+    { name: 'inject spaced registered handle (registered #24, split-token form)', html: inject(SPACED(C('Ne', 'viR'))), wantPass: false },
     { name: 'inject RUN-n label', html: inject(C('RUN', ' ', '2')), wantPass: false },
     { name: 'inject brand token inside data: URI (favicon class, NOT masked)', html: inject(`<link href="data:image/svg+xml,%3E${C('G', 'G')}%3C">`), wantPass: false },
     { name: 'edge: asset path ../media/gg-reference/gg-desktop-*.png stays green (mask proof)', html: inject(`<img src="../media/gg-reference/${C('gg', '-')}${'desktop'}-${'现金桌'}.png">`), wantPass: true },
