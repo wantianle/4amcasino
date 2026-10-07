@@ -255,21 +255,64 @@ describe('ConstrainedRandomPolicy — missing/empty handId fallback', () => {
   it('restores a real handId style after id-less decisions (keys stay separate)', () => {
     // Same real hand ⇒ same style, even with id-less decisions in between. This
     // holds only because the fallback uses its own `seq:` namespace and cannot
-    // clobber the `id:h-1` key. (Absolute frequency equality is used, so no
-    // saturation assumption is needed.)
-    const events: PreflopDecisionTelemetry[] = [];
+    // clobber the `id:h-1` key.
+    //
+    // The proof deliberately observes the SAMPLED PARAMS (`onHandParams`), not
+    // `frequencyRaise`: a frequency probe can saturate at 0 or 1, where two
+    // different styles are indistinguishable, so `rates[3] === rates[0]` alone
+    // could pass even if the two namespaces were merged. Params never saturate.
+    const draws: { key: string; params: RuleParams }[] = [];
     const policy = new ConstrainedRandomPolicy({
       kind: 'constrained-random',
       params: BASE,
       seed: 4242,
-      onPreflopDecision: (e) => events.push(e),
+      onHandParams: (e) => draws.push({ key: e.key, params: e.params }),
     });
-    policy.decide(openView('h-1'));
-    policy.decide(openView(null));
-    policy.decide(openView(null));
-    policy.decide(openView('h-1'));
-    const rates = events.map((e) => e.frequencyRaise);
-    expect(rates[3]).toBe(rates[0]);
+    policy.decide(openView('h-1')); // draw 0
+    policy.decide(openView(null)); // draw 1
+    policy.decide(openView(null)); // draw 2
+    policy.decide(openView('h-1')); // draw 3
+
+    // One draw per distinct key: id:h-1, seq:0, seq:1, id:h-1.
+    expect(draws.map((d) => d.key)).toEqual(['id:h-1', 'seq:0', 'seq:1', 'id:h-1']);
+
+    // (1) h-1's first and fourth draws are identical: the fallback draws in
+    // between did not clobber the `id:h-1` entry.
+    expect(draws[3]!.params).toEqual(draws[0]!.params);
+
+    // (2) the fallback is NOT a frozen copy of h-1: at least one of the two
+    // ordinals draws different params. (If both equalled h-1's params the two
+    // composite objects below would be deep-equal and this fails.)
+    expect({ a: draws[1]!.params, b: draws[2]!.params }).not.toEqual({
+      a: draws[0]!.params,
+      b: draws[0]!.params,
+    });
+
+    // (3) consecutive fallback ordinals each draw their own params.
+    expect(draws[1]!.params).not.toEqual(draws[2]!.params);
+  });
+
+  it('keeps the seq: fallback namespace separate from a numeric real handId', () => {
+    // A real hand literally named "0" must not collide with the fallback's
+    // ordinal namespace. This is the probe a `id:`-prefix on the fallback, or a
+    // shared seed domain between `deriveMissingHandParamsSeed` and
+    // `deriveHandParamsSeed`, turns red.
+    const draws: { key: string; params: RuleParams }[] = [];
+    const policy = new ConstrainedRandomPolicy({
+      kind: 'constrained-random',
+      params: BASE,
+      seed: 4242,
+      onHandParams: (e) => draws.push({ key: e.key, params: e.params }),
+    });
+    policy.decide(openView(null)); // seq:0
+    policy.decide(openView('0')); // id:0
+    policy.decide(openView(null)); // seq:1
+
+    expect(draws.map((d) => d.key)).toEqual(['seq:0', 'id:0', 'seq:1']);
+    // The ordinal fallback and the real "0" draw from different domains, and
+    // neither reuses another's params.
+    expect(draws[1]!.params).not.toEqual(draws[0]!.params);
+    expect(draws[2]!.params).not.toEqual(draws[0]!.params);
   });
 });
 

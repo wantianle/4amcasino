@@ -787,26 +787,34 @@ try {
             const count = await page.locator(`[data-testid="mobile-utility-${action}"]`).count();
             if (count !== 0) throw new Error(`${sc.name}: duplicate mobile ${action} utility count=${count}`);
           }
-          for (const action of ['video', 'timer', 'preferences', 'fullscreen', 'voice']) {
+          // `video` was removed from the product code (commit 3a8bbb2, "移除房间
+          // 视频通话链接"); the surviving phone entry is `watch`, which is
+          // inline-surfaced on the top bar as `mobile-watch` (already asserted
+          // in `required` above) and is therefore deliberately NOT in this ⋮
+          // menu. The ⋮ menu now holds only timer / preferences / fullscreen /
+          // voice on a phone.
+          // `timer` is a fixed product setting (30s, host-untunable since commit
+          // 8063236) and now renders a read-only readout, not a select/button,
+          // so it is asserted for presence + a non-empty value only. The
+          // enabled contract below applies to the interactive entries.
+          for (const action of ['timer', 'preferences', 'fullscreen', 'voice']) {
             const entry = page.locator(`[data-testid="mobile-utility-${action}"]`);
             if (!(await entry.count())) {
               throw new Error(`${sc.name}: mobile ${action} utility entry missing`);
             }
-            const target = action === 'timer'
-              ? entry.locator('select')
-              : action === 'fullscreen' || action === 'voice'
-                ? entry.locator('button').or(entry.and(page.locator('button')))
-                : entry.locator('a,button');
+            if (action === 'timer') {
+              const readout = ((await entry.textContent()) ?? '').trim();
+              if (!(await entry.isVisible()) || readout === '')
+                throw new Error(`${sc.name}: mobile timer utility must show a visible readout`);
+              continue;
+            }
+            const target = action === 'fullscreen' || action === 'voice'
+              ? entry.locator('button').or(entry.and(page.locator('button')))
+              : entry.locator('a,button');
             if (!(await target.count()) || !(await target.isVisible()))
               throw new Error(`${sc.name}: mobile ${action} utility must be visible`);
-            // Timer belongs to the utility group, but is deliberately disabled
-            // during a live hand. Idle fixtures assert the complete enabled
-            // contract; live fixtures assert timer presence plus disabled state.
-            const timerIsLive = action === 'timer' && ['myturn', 'waiting'].includes(sc.kind);
-            if (timerIsLive ? !(await target.isDisabled()) : !(await target.isEnabled()))
-              throw new Error(
-                `${sc.name}: mobile ${action} utility must be ${timerIsLive ? 'disabled' : 'enabled'}`,
-              );
+            if (!(await target.isEnabled()))
+              throw new Error(`${sc.name}: mobile ${action} utility must be enabled`);
           }
          await page.keyboard.press('Escape');
         await page.locator('[data-testid="chips-trigger"]').click();

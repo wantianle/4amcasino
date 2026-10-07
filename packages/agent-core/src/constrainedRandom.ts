@@ -48,6 +48,15 @@ import { sampleConstrainedRandomParams, type RuleParams } from './ruleStyles.js'
 export interface ConstrainedRandomPolicyOptions extends Omit<RulePolicyOptions, 'params'> {
   /** Base `constrained-random` preset, jittered per hand. */
   params: RuleParams;
+  /**
+   * Optional read-only sink, invoked each time the per-hand style is (re)drawn
+   * with the hand key and the sampled params. Purely observational: it runs
+   * after the delegate is built, cannot change a decision, and omitting it has
+   * no cost. It exists so tests can prove the `id:` / `seq:` namespace
+   * separation on the SAMPLED PARAMS instead of a frequency probe that can
+   * saturate at 0 or 1 (where two different styles become indistinguishable).
+   */
+  onHandParams?: (event: { key: string; seed: number; params: RuleParams }) => void;
 }
 
 export class ConstrainedRandomPolicy implements Policy {
@@ -55,6 +64,11 @@ export class ConstrainedRandomPolicy implements Policy {
   private readonly baseParams: RuleParams;
   private readonly baseSeed: number;
   private readonly ruleOptions: Omit<RulePolicyOptions, 'params'>;
+  private readonly onHandParams?: (event: {
+    key: string;
+    seed: number;
+    params: RuleParams;
+  }) => void;
   /**
    * Identity of the hand whose params are currently loaded; `null` = none seen
    * yet. Real handIds are namespaced (`id:`) and the no-handId fallback uses a
@@ -69,10 +83,11 @@ export class ConstrainedRandomPolicy implements Policy {
   private delegate: RulePolicy;
 
   constructor(opts: ConstrainedRandomPolicyOptions) {
-    const { params, ...rest } = opts;
+    const { params, onHandParams, ...rest } = opts;
     this.baseParams = params;
     this.baseSeed = rest.seed ?? 0x9e3779b9;
     this.ruleOptions = rest;
+    this.onHandParams = onHandParams;
     this.delegate = new RulePolicy({ ...rest, params });
     this.name = this.delegate.name;
   }
@@ -84,6 +99,12 @@ export class ConstrainedRandomPolicy implements Policy {
       const rng = mulberry32(seed);
       const params = sampleConstrainedRandomParams(this.baseParams, rng);
       this.delegate = new RulePolicy({ ...this.ruleOptions, params });
+      try {
+        this.onHandParams?.({ key, seed, params });
+      } catch {
+        // Observability must never affect a live decision (same fail-open
+        // contract as RulePolicy's `onPreflopDecision`).
+      }
     }
     return this.delegate.decide(view);
   }
