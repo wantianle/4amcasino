@@ -188,7 +188,14 @@ export function resolvePolicyForDifficulty(
   // the persisted `policy_kind` still selects the rule preset (the rules branch
   // inside `resolvePolicy` handles that).
   const forced = forceRulesEngine(policyJson);
-  const resolved = resolvePolicy(kindRaw, forced.json, opts);
+  // Medium is the production tier: make `constrained-random` genuinely random in
+  // style by re-sampling its knobs per hand (see `ConstrainedRandomPolicy`). The
+  // flag is ignored for every other preset and is deliberately NOT set on the
+  // `low` branch above, so the legacy style semantics stay byte-for-byte.
+  const resolved = resolvePolicy(kindRaw, forced.json, {
+    ...opts,
+    randomizeConstrainedRandom: true,
+  });
   return {
     kind: resolved.kind,
     policy: resolved.policy,

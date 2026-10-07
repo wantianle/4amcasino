@@ -10,6 +10,7 @@ import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE, detectRulesEngine, parseRuleConfig } from './ruleStyles.js';
 import { ScriptedPolicy } from './scriptedPolicy.js';
 import { StylePolicy } from './styleEngine.js';
+import { ConstrainedRandomPolicy } from './constrainedRandom.js';
 
 /**
  * Style policy resolver (phase 2).
@@ -27,6 +28,16 @@ export { StylePolicy, type StylePolicyOptions } from './styleEngine.js';
 
 export interface PolicyResolution {
   kind: PolicyKind;
+  /**
+   * The resolved policy is typed as the `Policy` interface on purpose:
+   * `resolvePolicy` / `resolvePolicyForDifficulty` do NOT guarantee a concrete
+   * implementation class. At `medium`, `constrained-random` resolves to a
+   * `ConstrainedRandomPolicy` rather than a bare `RulePolicy`, and future
+   * wrappers may do the same for other kinds. Callers must therefore branch only
+   * on the `Policy` contract (`decide`, `name`) — never on `instanceof
+   * RulePolicy` (or any other implementation class), which is an accidental
+   * detail, not part of the resolver contract.
+   */
   policy: Policy;
   /** Human-readable notes: unknown kind, invalid/ignored `policy_json` fields. */
   warnings: string[];
@@ -61,6 +72,14 @@ export function resolvePolicy(
     seed?: number;
     p2?: Partial<P2Options>;
     onPreflopDecision?: (event: PreflopDecisionTelemetry) => void;
+    /**
+     * When true, the `constrained-random` preset is built as a
+     * {@link ConstrainedRandomPolicy}: same rules engine, but its numeric knobs
+     * are re-sampled once per hand. `difficultyPolicy.ts` sets this on the
+     * `medium` tier only, so `low` (and direct `resolvePolicy` callers) keep the
+     * fixed-preset behaviour byte-for-byte. No other preset is affected.
+     */
+    randomizeConstrainedRandom?: boolean;
   },
 ): PolicyResolution {
   const warnings: string[] = [];
@@ -75,7 +94,7 @@ export function resolvePolicy(
     const cfg = parseRuleConfig(kind, policyJson);
     warnings.push(...cfg.errors);
     const presetKind = cfg.presetKind ?? kind;
-    const policy: Policy = new RulePolicy({
+    const ruleOptions = {
       kind: presetKind,
       params: cfg.params,
       seed: opts?.seed,
@@ -86,7 +105,14 @@ export function resolvePolicy(
       // Exception fallback: `RulePolicy` runs its own rules-v1 postflop engine
       // and only uses this (legal, seeded) StylePolicy if that engine throws.
       fallback: new StylePolicy(kind, { seed: opts?.seed }),
-    });
+    };
+    // `medium` opts into per-hand randomisation of the constrained-random preset
+    // only; every other preset and every `low` resolution builds a plain
+    // `RulePolicy` (unchanged).
+    const policy: Policy =
+      opts?.randomizeConstrainedRandom === true && presetKind === 'constrained-random'
+        ? new ConstrainedRandomPolicy(ruleOptions)
+        : new RulePolicy(ruleOptions);
     return { kind, policy, warnings };
   }
 

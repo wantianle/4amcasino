@@ -117,6 +117,54 @@ const PARAM_RANGES: Record<NumericRuleParam, [number, number]> = {
 
 const PARAM_KEYS = Object.keys(PARAM_RANGES) as NumericRuleParam[];
 
+/**
+ * Per-hand randomisation of the `constrained-random` preset.
+ *
+ * Background: `constrained-random` is only a *fixed* parameter set, so at the
+ * default `medium` difficulty every bot with that kind behaves identically (up
+ * to its RNG seed). It is named "random" but, unlike the legacy `StylePolicy`
+ * path (`mixedDecision`, unreachable at medium because `forceRulesEngine`
+ * injects `engine: 'rules-v1'`), the rules engine never varies the style itself.
+ *
+ * This sampler does exactly that, and only that: it jitters every *numeric*
+ * `RuleParams` knob around the preset value, once per hand, and leaves
+ * `adaptivePreflop` untouched. The jitter is **symmetric and multiplicative**
+ * (`v * (1 +/- SPREAD)`). It is a bounded stylistic perturbation around the
+ * existing parameters: it is not expected to produce an obvious systematic
+ * directional shift, but the strength mean has **not** been verified (the
+ * parameter mean is not the decision-strength mean — clamping and the engines'
+ * non-linear use of the knobs can both bias the result either way).
+ *
+ * `CONSTRAINED_RANDOM_SPREAD = 0.25` is deliberately wide because the product
+ * goal is a *visibly* different style across hands; if the goal were instead to
+ * hold strength as constant as possible, 10–15% would be the safer band. Draws
+ * are clamped to each knob's legal `PARAM_RANGES` range, so a sampled config can
+ * never escape what `parseRuleConfig` accepts.
+ *
+ * Seeded and deterministic: given the same hand identity the same params are
+ * produced (see `ConstrainedRandomPolicy`), so a replay of a hand reproduces it.
+ */
+export const CONSTRAINED_RANDOM_SPREAD = 0.25;
+
+/**
+ * Sample one hand's `RuleParams` from `base`, using `rng` (expected in `[0,1)`).
+ * Pure: no state, no `Math.random`. A non-finite draw is treated as 0 (the low
+ * edge of the band) rather than allowed to poison a parameter.
+ */
+export function sampleConstrainedRandomParams(base: RuleParams, rng: () => number): RuleParams {
+  const out: RuleParams = { ...base };
+  for (const name of PARAM_KEYS) {
+    const [lo, hi] = PARAM_RANGES[name];
+    const v = base[name];
+    const bandLo = Math.max(lo, v * (1 - CONSTRAINED_RANDOM_SPREAD));
+    const bandHi = Math.min(hi, v * (1 + CONSTRAINED_RANDOM_SPREAD));
+    const draw = rng();
+    const unit = Number.isFinite(draw) ? Math.min(1, Math.max(0, draw)) : 0;
+    out[name] = bandLo + unit * (bandHi - bandLo);
+  }
+  return out;
+}
+
 /** Read the `engine` field without throwing, for the resolver's dispatch. */
 export function detectRulesEngine(json: string | null | undefined): string | null {
   if (json === null || json === undefined || json.trim() === '') return null;

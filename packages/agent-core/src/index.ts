@@ -15,6 +15,7 @@ export * from './ruleStyles.js';
 export * from './rulesSeed.js';
 export * from './postflopPolicy.js';
 export * from './rulePolicy.js';
+export * from './constrainedRandom.js';
 export * from './llmPolicy.js';
 
 // Phase-1 pure strategy layers. Exported by name (not `export *`) so they cannot
