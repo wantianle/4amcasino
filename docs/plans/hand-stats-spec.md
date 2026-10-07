@@ -85,6 +85,13 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 
 后端在 `/api/rooms/:id/hud` 每个可见玩家条目上暴露 `streak` 字段。
 
+### 修订说明（2026-10-07）
+本节 2026-10-07 的裁决**替代**了原设计的以下两点：
+1. 每手 winsorize 到 `[-15bb, +15bb]` 后求和的「净 bb」（`netBB`）**已废弃**；
+2. 由该截断分驱动的 **±30 / ±85 分档已废弃**。
+
+现行口径：冷热徽章直接由**真实净赢 `realNetBB`**（逐手 `poker_delta / 该手 bb` 的未截断之和）驱动，阈值改为 **±50 / ±100**。`netBB` 字段与该截断累加已从后端与前端删除（旧 winsorized 冷热分 tooltip 一并移除）。
+
 ### 口径
 - **窗口**：该玩家在当前 scope（roomId / gameKind / position / opponentId 等过滤，scope 复用 `scopeHandsSql()`）下**最新 50 手**（`settled_at DESC`），与职业统计同一套 scope 约束；排除 void 手（复用 `VOIDED_HAND_EXCLUSION_SQL`）、未结算手、非 live 房间。
 - **归一化**：每手用**该手自身**的 nominal bb，取 `poker_delta / bb`（bb>0 才计入，bb=0 无法归一化 → 跳过，不计样本）。
@@ -107,7 +114,14 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 > **性能备注（复审观察，当前非错误、本轮不优化）**：`UNION ALL` 的两个 target set 各自执行一次 `scopeHandsSql()`，因此 scope predicate 实际会被求值两次；per-user 查询的 `ORDER BY settled_at DESC, hand_id DESC` 在 `EXPLAIN QUERY PLAN` 中会显示 `USE TEMP B-TREE FOR LAST TERM OF ORDER BY`。单玩家 / HUD roster 规模下开销可接受，先记录为此处已知代价；若后续成为热点，再考虑合并 target set 或补 `(user_id, settled_at DESC, hand_id DESC)` 覆盖索引，而不是改变 50 手上的语义。
 
 ### 阈值（真实数据校准）
-生产库 4228 手、4179 个滚动 50 手窗口：真实 50 手净赢 **sd ≈ 93bb**（大底池主导：真实单手净赢 p50=0 / p90=+3 / max=+902bb，正因如此不再用截断分档）。四档取噪声地板的固定倍数：
+口径：**每个玩家自己按时间排序的滚动 50 手窗口**（窗口按玩家分组，绝不跨玩家串手），生产库只读复算，n=3603。
+
+| 阈值 | 有徽章 | 其中大徽章 | sd |
+| --- | --- | --- | --- |
+| ±50 / ±100（本次上线，作用于 `realNetBB`） | 77.6% | 66.4% | 367 bb |
+| ±30 / ±85（已退役，作用于单手 ±15 截断分） | 41.5% | 2.5% | 37 bb |
+
+四档阈值**远低于噪声地板**（±50 ≈ 0.14σ、±100 ≈ 0.27σ，σ 为该口径下 50 手真实净赢的标准差）：约 **78%** 的窗口都会亮徽章，其中约 **2/3** 是大徽章。这是**刻意放松**、而不是保守的门槛。
 
 | 档位 | 条件 | 含义 |
 | --- | --- | --- |
@@ -117,10 +131,10 @@ BEGIN → 1 insert hand_settlements(ON CONFLICT DO NOTHING) → 2 duplicate 直�
 | `cold2`（大冰） | `realNetBB <= -100` | 大档冷 |
 | `null`（中性 / 样本不足） | `|realNetBB| < 50` 或 `sample < 20` | 不显示 |
 
-边界包含端点：恰好 +50bb 是小火、恰好 +100bb 是大火。实测展示比例：±50 约 **13.2%** 的窗口有徽章（热 6.2% / 冷 7.0%），±100 约 **9.0%**（热 4.2% / 冷 4.8%）；对照已退役的 ±30 为 18.3%、±85 为 10.0%。
+边界包含端点：恰好 +50bb 是小火、恰好 +100bb 是大火。
 
 ### 先验与再校准
-上述 sd 由真实投影数据得到，属当前窗口（50 手）与单手模型的先验。若窗口长度或归一化模型变化（例如样本增大使 sd 变小），应**重新拟合 50 / 100 这两个绝对值**（以及相应的展示比例目标），而不是继续沿用旧档。
+上表 sd 由生产库只读复算得到，口径为「每个玩家自己的 50 手窗口」。四档阈值是手工拍定的绝对值（≈0.14σ / 0.27σ）；若窗口长度或归一化模型变化，应重新评估 50 / 100 这两个绝对值与展示比例目标，而不是沿用旧档。
 
 ### API 形状
 ```
@@ -140,8 +154,8 @@ streak: { tier: 'hot2'|'hot1'|'cold1'|'cold2'|null, realNetBB: number, sample: n
 本改动把 `METRIC_VERSION` 1 → 2。web 侧状态：
 - `features/stats/types.ts`：`StreakTier`（`'hot2'|'hot1'|'cold1'|'cold2'`）、`StreakResult`（`{tier, realNetBB, sample}`）、`HandStats.streak`、`HiddenStats.streak: null`、`HudPlayer.streak`。
 - **数据已接入**：`widgets/table/PlayerHud.tsx` 已消费 `p.streak`（渲染 `Last 50 hands net: {net} bb · {sample} hands`）；旧 winsorized 冷热分 tooltip 已移除。
-- **视觉徽标仍待验收**：四档热/冷徽标（配色 + 图标，且 `streak !== null && streak.tier !== null` 才显示）尚未在座位头像/名字旁完全落地；`tier=null`（中性）或 `streak=null`（隐藏/低样本）不渲染的设计不变。
+- **视觉徽标已落地**：`widgets/table/SeatBadges.tsx` 已渲染四档热/冷徽标（`streakBadgeFor()` 按 `tier` 出 glyph 并打 `data-streak-tier`，`streak !== null && streak.tier !== null` 才显示）；`tier=null`（中性）或 `streak=null`（隐藏/低样本）不渲染的设计不变。
 - mock/fixture 里的 `metricVersion` 更新为 2，补齐 `streak` 字段。
 
-### 前端（数据已接入；视觉徽标待验收）
-徽标放座位头像/名字旁。四档配色：红/黄/绿/蓝/紫需与既有 VPIP 色阶协商后再定；数据管道（`streak`）已接入 `PlayerHud.tsx`，**视觉徽标渲染本身仍待验收**。
+### 前端（已落地）
+徽标放座位头像/名字旁，四档 glyph/配色见 `widgets/table/SeatBadges.tsx`；数据管道（`streak`）与徽标渲染均已落地。

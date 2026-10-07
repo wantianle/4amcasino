@@ -46,18 +46,25 @@ export const HUD_LOW_CONFIDENCE = 50;
 //
 // The tier is read straight off the TRUE net win over the window (`realNetBB`):
 // the sum of per-hand `poker_delta / that hand's bb`, uncapped. An earlier
-// design winsorized each hand to +/-15bb before scoring, but that cut wins
-// asymmetrically against losses and once labelled a genuinely +350bb window as
-// 冰块. Real net is what the badge must reflect - big pots included.
+// design winsorized each hand to +/-15bb before scoring; that cap was SYMMETRIC
+// (+/-15bb, not "wins only"), but it still meant the truncated cumulative score
+// no longer represented the window's true cumulative net win - the two could
+// even carry opposite signs (a genuinely winning window scored 冰块). Real net
+// is what the badge must reflect - big pots included.
 //
-// Calibration on the real projection (4228 hands, 4179 rolling 50-hand windows):
-// the rolling 50-hand real net has sd ~= 93bb. The two bands below are fixed
-// multiples of that noise floor:
-//   small = +/-50bb  -> ~13.2% of windows show a badge (6.2% hot / 7.0% cold)
-//   large = +/-100bb -> ~9.0% of windows (4.2% hot / 4.8% cold)
-// (The retired +/-30 / +/-85 bands would light up 18.3% / 10.0% of windows.)
-// A single hand's real net is p50=0 / p90=+3 / max=+902bb: big pots dominate,
-// which is exactly why the tier no longer truncates them.
+// Calibration, computed read-only on the production DB with windowing done PER
+// PLAYER (each player's OWN settled hands ordered by time, rolled in 50-hand
+// windows; players are never concatenated into one series, which would inflate
+// the denominator with cross-player cancellations and understate sigma; n=3603
+// windows): the per-player rolling 50-hand real net has sd ~= 367bb. The bands
+// are deliberately set far below that noise floor:
+//   small = +/-50bb  (~0.14 sigma) -> ~77.6% of windows show a badge
+//   large = +/-100bb (~0.27 sigma) -> ~66.4% of windows are LARGE
+// i.e. the badge lights up often and skews to the large tier; this is a
+// deliberately loose, not a conservative, threshold set.
+// (The retired +/-30 / +/-85 bands acted on the truncated score, whose
+// per-player 50-hand sd was ~= 37bb: ~41.5% of windows showed a badge and only
+// ~2.5% were large.)
 // These are fixed constants, not query parameters. If the window changes, refit
 // the two raw bb values.
 // ---------------------------------------------------------------------------
@@ -66,10 +73,11 @@ export const HUD_LOW_CONFIDENCE = 50;
 export const STREAK_WINDOW = 50;
 /** Minimum eligible hands before a badge is shown at all. */
 export const STREAK_MIN_SAMPLE = 20;
-/** Small band edge on |realNetBB|, ~0.54 * sigma_50 (sd ~= 93bb). Inside it the
- *  badge is neutral (null). */
+/** Small band edge on |realNetBB| (~0.14 sigma of the per-player 50-hand
+ *  distribution, i.e. a deliberately low bar). Inside it the badge is neutral
+ *  (null). */
 export const STREAK_SMALL_BB = 50;
-/** Large band edge on |realNetBB|. */
+/** Large band edge on |realNetBB| (~0.27 sigma). */
 export const STREAK_LARGE_BB = 100;
 
 /** 小冰 / 大冰 / 小火 / 大火. `null` is the neutral band (or too small a sample). */
