@@ -38,11 +38,10 @@
 | B13 | 防御性编程收尾（agent-core 2 处 fallback） | 清理 | 审查 | fallback 处数（2→0） | 2 处删除或标注为有意；A 级审计维持 0 项 | 无 |
 | B14 | 短筹码路径无场景 | 改进 | 审查 | 覆盖短筹码/破产线的端到端场景数（0→≥1） | 至少 1 个短筹码路径场景落地 | 无 |
 | B15 | `docs/qa` 证据时效性（体积 8.5M 不是问题） | 清理 | 技术债 | **被引用的图片路径缺失数 = 0**（可自动检查）+ 非当前批次的旧 before/after 已清 | 加一个 `check`（扫描 `docs/qa/**/*.json` 与 README 中的路径，验证文件存在）；删除已被新结论取代的旧批次目录；**不 gitignore**（被引用）；**不再做有损压缩**（用户已否决） | 无 |
-| B16 | `positiveInt` 重复定义 | 清理 | 技术债 | 定义处数（2→1） | `botPolicy.ts` / `botSupervisor.ts` 收敛到单一实现；server 测试绿 | 无 |
-| B17 | agent-core 生产侧 `clamp01` 三副本 | 清理 | 技术债 | 生产侧定义处数（3→1） | 收敛到单一来源；core 测试绿；fixture 副本保留（刻意 oracle） | 无 |
+| B17 | agent-core 生产侧 `clamp01` 三副本 | 清理 | 技术债 | 生产侧定义处数（3→1） | ✅ 已收敛到 `postflopMath.ts`（`ef54357`）；快照 sha 不变；fixture 副本保留 | 无 |
 | B18 | `TODO(rules-v2)`：`seatOrder` 迁移 | 清理 | 技术债 | 该 TODO 处数（2→0） | 所有 caller 填充 `DecisionView.seatOrder`；删 TODO + baseline fallback | rules-v2 |
 | B19 | `RoundTable` settlement-bubble TODO | 清理 | 技术债 | 该 TODO 处数（1→0） | equity bubble 有显式退场时机；删 TODO | 无 |
-| B20 | `.slim/worktrees.json` 陈旧 + 空 worktree | 清理 | 技术债 | 活动 worktree 数与 json 一致（2 树 vs json 1 条） | json 更新为 `ev-baseline`/`small-cleanups`；已并入 main 的空树删除（⚠️ 破坏性，先报用户） | 无 |
+| B20 | `.slim/worktrees.json` 陈旧 + 空 worktree | 清理 | 技术债 | 活动 worktree 数与 json 一致 | ✅ json 已对齐实际（仅 `ev-baseline`）；已合并的空树全部删除（`c2dc6fa`） | 无 |
 
 ## 已关闭
 
@@ -62,6 +61,7 @@
 | `rustVsOpen.ts` 拆分 | 纯数据文件，拆了不降复杂度 |
 | `postflopPolicyBaseline.ts` 拆分 | 有意冻结的回归基线 |
 | agent-core fixture `clamp01` 合并 | 刻意 oracle，独立副本是测试意图 |
+| `positiveInt` 两台合并（B16） | 两份**输入域不同**：`botPolicy` 收 env **字符串**（`Number(raw)` 解析），`botSupervisor` 收**数字**。合并需放宽签名并让后者开始解析字符串 = 为去重而削弱契约，不值（本轮 `fix-14` 逐分支核实后判不等价、未合并） |
 | `escapeRegExp` 跨 node/browser 合并 | 运行时不同（node 脚本 vs 浏览器 bundle），收益不足抵风险 |
 | `docs/qa` 二次有损压缩 | 用户已否决；已有默认 JPEG q85 + `shots:shrink` |
 | 一次性有损压图 | 有损不可逆；现行脚本已默认小图，无需一次性重压 |
