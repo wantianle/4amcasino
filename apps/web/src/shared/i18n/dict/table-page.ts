@@ -72,7 +72,6 @@ const tablePage: Record<string, string> = {
   '1 BB, paid only if they agree to show you': '1 BB，对方同意亮牌才支付',
   'Your peek offer expired.': '你的买看已过期。',
   'Your peek offer failed.': '你的买看没成功。',
-  'Rake received': '收到抽水',
 
   // ── Result headlines（牌力措辞由 pokerLabels.tScore 产出）─────────────
   '{name} takes the pot. Everyone else folded, so no cards had to be shown.':

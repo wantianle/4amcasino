@@ -8,6 +8,17 @@ import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
 import { ShowdownCards } from './ShowdownCards.tsx';
 
+/** The rake a hand took out of the pot, from the players' side. The protocol
+ *  guarantees `sum(hand_end.deltas) === -commission` (wsProtocol), so the
+ *  negated seat leg is the total every seat's net already reflects - even when
+ *  the recipient is not seated (`commissionDeltas`, the recipient projection,
+ *  is empty then). This is the "how much was raked" figure, not "who received
+ *  it". */
+export function rakeTakenOf(deltas: readonly { delta: number }[]): number {
+  // Subtract (not negate the sum): keeps zero at +0 instead of -0.
+  return deltas.reduce((rake, d) => rake - d.delta, 0);
+}
+
 /** The previous hand, one click away at the bottom of the table: who won,
  *  with what, and everyone's revealed cards - open it when you want the
  *  recap, collapse it when you don't. The choice is remembered.
@@ -25,7 +36,7 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
   };
   const nameOf = (seat: number) => last.names[seat] ?? t('Seat {n}', { n: seat + 1 });
   const winners = last.deltas.filter((d) => d.delta > 0);
-  const commissionDeltas = last.commissionDeltas ?? [];
+  const rakeTaken = rakeTakenOf(last.deltas);
   const top = [...last.reveals].sort((a, b) => b.score - a.score)[0];
   // Every run the snapshot froze. New snapshots carry the canonical `boards`
   // (1-3 runs); older persisted recaps only have the legacy board/board2 pair.
@@ -124,9 +135,9 @@ export function LastHandStrip({ roomId, light = false }: { roomId: string; light
             nameOf={nameOf}
             light={light}
           />
-          {commissionDeltas.length > 0 && (
+          {rakeTaken > 0 && (
             <p className={cn('text-xs', light ? 'text-white/60' : 'text-slate-500')}>
-              {t('Rake received')}: {commissionDeltas.map((d) => `${nameOf(d.seat)} +${fmt(d.delta)}`).join(' · ')}
+              {t('Rake')} {fmt(rakeTaken)}
             </p>
           )}
           {last.reveals.length === 0 && Object.keys(last.shown).length === 0 && (
