@@ -21,6 +21,8 @@ import {
 import { choosePreflopIntent, type PreflopChoice } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import { RULE_PRESETS, type RuleParams } from './ruleStyles.js';
+import { isLegalAction, normalizeLegalActions } from './legalActions.js';
+import { guaranteedLegalAction } from './actionAdapter.js';
 
 /**
  * Rules-v1: a chart-and-frequency policy with no CFR, solver or network in the
@@ -70,56 +72,10 @@ export interface RulePolicyOptions {
   p2?: Partial<P2Options>;
 }
 
-/** Defensive normalisation shared with `StylePolicy`: malformed legal actions
- * can never make us emit something the table would reject. */
-function normalizeLegal(la: DecisionLegalActions): DecisionLegalActions {
-  const canCall = la.canCall && la.callAmount > 0;
-  const canCheck = la.canCheck || !canCall;
-  const canRaise =
-    (la.canBet || la.canRaise) &&
-    la.minRaiseTo >= 1 &&
-    la.maxRaiseTo >= la.minRaiseTo &&
-    la.maxRaiseTo > 0;
-  return {
-    ...la,
-    canCheck,
-    canCall,
-    canRaise,
-    canBet: canRaise && la.canBet,
-  };
-}
-
-/** Is `action` legal against the already-normalised legal actions? */
-function isLegalAction(action: PlayerAction, la: DecisionLegalActions): boolean {
-  switch (action.type) {
-    case 'check':
-      return la.canCheck;
-    case 'call':
-      return la.canCall;
-    case 'bet':
-      return (
-        la.canBet &&
-        typeof action.amount === 'number' &&
-        action.amount >= la.minRaiseTo &&
-        action.amount <= la.maxRaiseTo
-      );
-    case 'raise':
-      return (
-        la.canRaise &&
-        typeof action.amount === 'number' &&
-        action.amount >= la.minRaiseTo &&
-        action.amount <= la.maxRaiseTo
-      );
-    case 'fold':
-      return true;
-  }
-}
-
 /** The guaranteed-legal action: check if free, else call, else fold. */
 function onlyLegalAction(la: DecisionLegalActions): PolicyDecision {
-  if (la.canCheck) return { action: { type: 'check' }, reason: 'rules-v1 fail-closed: check' };
-  if (la.canCall) return { action: { type: 'call' }, reason: 'rules-v1 fail-closed: call' };
-  return { action: { type: 'fold' }, reason: 'rules-v1 fail-closed: fold' };
+  const action = guaranteedLegalAction(la);
+  return { action, reason: `rules-v1 fail-closed: ${action.type}` };
 }
 
 /** A minimal, always-legal postflop placeholder (see the module TODO). */
@@ -129,7 +85,7 @@ class ConservativePostflopPolicy implements RuleFallbackPolicy {
   decide(view: DecisionView): PolicyDecision {
     const raw = view.legalActions;
     if (!raw) throw new Error(`${this.name} asked to act out of turn`);
-    const la = normalizeLegal(raw);
+    const la = normalizeLegalActions(raw);
     if (la.canCheck) {
       return { action: { type: 'check' }, reason: 'rules-v1 postflop placeholder: check' };
     }
@@ -163,7 +119,7 @@ export class RulePolicy implements Policy {
   decide(view: DecisionView): PolicyDecision {
     const raw = view.legalActions;
     if (!raw) throw new Error(`${this.name} asked to act out of turn`);
-    const la = normalizeLegal(raw);
+    const la = normalizeLegalActions(raw);
     const hole = view.hand?.myCards ?? [];
 
     if (view.hand && view.hand.street === 'preflop' && hole.length >= 2) {
@@ -291,7 +247,7 @@ export class RulePolicy implements Policy {
     target = Math.round(target);
     target = Math.max(target, la.minRaiseTo);
     target = Math.min(target, la.maxRaiseTo);
-    // `normalizeLegal` guarantees maxRaiseTo >= minRaiseTo when canRaise is set.
+    // `normalizeLegalActions` guarantees maxRaiseTo >= minRaiseTo when canRaise is set.
     target = Math.max(target, la.minRaiseTo);
     return { amount: target, allIn: target >= la.maxRaiseTo };
   }

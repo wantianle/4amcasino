@@ -14,6 +14,8 @@ import { RulePolicy } from './rulePolicy.js';
 import type { P2Options } from './postflopPolicy.js';
 import { RULES_ENGINE, detectRulesEngine, parseRuleConfig } from './ruleStyles.js';
 import { ScriptedPolicy } from './scriptedPolicy.js';
+import { guaranteedLegalAction, raiseToAmount } from './actionAdapter.js';
+import { normalizeLegalActions } from './legalActions.js';
 
 /**
  * Phase 2 style policy.
@@ -56,7 +58,7 @@ export class StylePolicy implements Policy {
   decide(view: DecisionView): PolicyDecision {
     const rawLa = view.legalActions;
     if (!rawLa) throw new Error(`${this.name} asked to act out of turn`);
-    const la = this.normalizeLegal(rawLa);
+    const la = normalizeLegalActions(rawLa);
 
     const hole = view.hand?.myCards ?? [];
     if (hole.length < 2) return this.onlyLegal(la, 'no hole cards yet');
@@ -80,26 +82,6 @@ export class StylePolicy implements Policy {
     return this.kind === 'constrained-random'
       ? this.mixedDecision(view, la, equity)
       : this.heuristicDecision(view, la, equity);
-  }
-
-  /**
-   * Defensive normalisation of the supplied legal actions, so a malformed view
-   * (e.g. `canCall` with `callAmount: 0`, or an inverted raise range) can never
-   * make the policy return an action the real table would reject. The governing
-   * rule is the shared `legalActions()`: nothing to call means checking is free.
-   */
-  private normalizeLegal(la: DecisionLegalActions): DecisionLegalActions {
-    const canCall = la.canCall && la.callAmount > 0;
-    const canCheck = la.canCheck || !canCall;
-    const canRaise =
-      (la.canBet || la.canRaise) && la.minRaiseTo >= 1 && la.maxRaiseTo >= la.minRaiseTo && la.maxRaiseTo > 0;
-    return {
-      ...la,
-      canCheck,
-      canCall,
-      canRaise,
-      canBet: canRaise && la.canBet,
-    };
   }
 
   /** Deterministic per-decision RNG, derived from the base seed and the view. */
@@ -132,10 +114,9 @@ export class StylePolicy implements Policy {
    * throwing, so a caller never sees an illegal action.
    */
   private onlyLegal(la: DecisionLegalActions, reason: string): PolicyDecision {
-    // `normalizeLegal` guarantees `canCheck || canCall`, so the trailing fold is
-    // unreachable: when we cannot check, calling is always legal.
-    if (la.canCheck) return { action: { type: 'check' }, reason };
-    return { action: { type: 'call' }, reason };
+    // `normalizeLegalActions` guarantees `canCheck || canCall`, so the fold
+    // branch is unreachable: when we cannot check, calling is always legal.
+    return { action: guaranteedLegalAction(la), reason };
   }
 
   /** Size a bet/raise within the legal range, as `currentBet + fraction * pot`. */
@@ -147,11 +128,15 @@ export class StylePolicy implements Policy {
   ): PolicyDecision {
     const pot = view.hand?.pot ?? 0;
     const currentBet = view.hand?.currentBet ?? 0;
-    // `la.minRaiseTo` is an absolute raise-to target; use its delta over the
-    // current bet as the floor so we never double-count `currentBet`.
-    const minDelta = Math.max(1, la.minRaiseTo - currentBet);
-    const raw = currentBet + Math.max(minDelta, Math.round(pot * fraction));
-    const amount = Math.max(la.minRaiseTo, Math.min(la.maxRaiseTo, raw));
+    // `la.minRaiseTo` is an absolute raise-to target; `raiseToAmount` uses its
+    // delta over the current bet as the floor so it never double-counts it.
+    const amount = raiseToAmount({
+      pot,
+      currentBet,
+      fraction,
+      minRaiseTo: la.minRaiseTo,
+      maxRaiseTo: la.maxRaiseTo,
+    });
     const type: PlayerAction['type'] = la.canBet ? 'bet' : 'raise';
     return { action: { type, amount }, reason };
   }

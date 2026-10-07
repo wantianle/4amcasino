@@ -18,7 +18,7 @@ import {
   streetSupportsOverbet,
   type PostflopStreet,
 } from './betSizing.js';
-import type { DecisionLegalActions, DecisionPotOdds, DecisionView } from './decisionView.js';
+import type { DecisionLegalActions, DecisionView } from './decisionView.js';
 import {
   estimateEquity,
   mulberry32,
@@ -26,9 +26,31 @@ import {
   type VillainRange,
 } from './equity.js';
 import type { PolicyDecision } from './policy.js';
-import { postflopActionOrder } from './preflopPolicy.js';
 import { deriveRulesSeed } from './rulesSeed.js';
 import type { RuleParams } from './ruleStyles.js';
+import { normalizeLegalActions } from './legalActions.js';
+import { betAmount, guaranteedLegalAction, raiseToAmount } from './actionAdapter.js';
+import { bluffToValueRatio, defendProbability, resolveFacingBetPrice } from './potPrice.js';
+import {
+  deriveTableContext,
+  heroInPosition,
+  heroWasAggressor,
+  postflopActionOrder,
+} from './tableContext.js';
+
+// Price helpers moved to `potPrice.ts`; re-exported so existing importers keep
+// their `postflopPolicy` import path.
+export {
+  mdf,
+  bluffToValueRatio,
+  defendProbability,
+  resolveFacingBetPrice,
+} from './potPrice.js';
+export type { FacingBetPrice } from './potPrice.js';
+
+// Table-context helpers moved to `tableContext.ts`; re-exported for existing
+// importers (the postflop signal snapshot imports both).
+export { heroInPosition, heroWasAggressor } from './tableContext.js';
 
 /**
  * Rules-v1 postflop engine.
@@ -765,21 +787,10 @@ function heroFlushBlockFactor(hole: readonly CardId[], info: BoardFlushInfo): nu
 }
 
 // ---------------------------------------------------------------------------
-// MDF / sizing / bluff ratio / blockers
+// value-bet / bluff / blocker probabilities (sizing)
 // ---------------------------------------------------------------------------
 
-/** Minimum defence frequency `P/(P+B)`, in [0, 1]. */
-export function mdf(potBeforeBet: number, bet: number): number {
-  if (!Number.isFinite(bet) || bet <= 0) return 1;
-  const p = Math.max(0, Number.isFinite(potBeforeBet) ? potBeforeBet : 0);
-  return p / (p + bet);
-}
-
-/** Equilibrium bluffs per value hand for a bet of `fraction` pot: `f/(1+f)`. */
-export function bluffToValueRatio(fraction: number): number {
-  const f = Math.max(0, Number.isFinite(fraction) ? fraction : 0);
-  return f / (1 + f);
-}
+// `mdf` and `bluffToValueRatio` moved to `potPrice.ts` (re-exported above).
 
 /** Probability a value hand fires, from the style's value-bet scale. */
 export function valueBetProbability(params: RuleParams, advantage: number): number {
@@ -791,24 +802,7 @@ export function blockerFactor(blocker: number): number {
   return clamp(0.4 + 1.6 * clamp01(blocker), 0.2, 2.2);
 }
 
-/**
- * Approximate MDF defence probability for a bet requiring `requiredMdf`.
- *
- * A linear ramp of half-width `band` centred on `1 - requiredMdf`. The band is
- * clamped to the distance to either edge (`min(band, threshold, 1-threshold)`),
- * so integrating over a uniform percentile yields exactly `requiredMdf` even at
- * the boundaries (`requiredMdf = 0` defends nothing, `= 1` defends everything)
- * while remaining a seeded mix rather than a hard cutoff. This models *our*
- * range under a uniform unknown-combo prior, not the opponent's actual betting
- * range — it is an approximation, not an equilibrium solution.
- */
-export function defendProbability(percentile: number, requiredMdf: number, band = 0.06): number {
-  const required = clamp01(requiredMdf);
-  const threshold = 1 - required;
-  const effectiveBand = Math.min(band, threshold, 1 - threshold);
-  if (effectiveBand <= 0) return percentile >= threshold ? 1 : 0;
-  return clamp01((percentile - (threshold - effectiveBand)) / (2 * effectiveBand));
-}
+// `defendProbability` moved to `potPrice.ts` (re-exported above).
 
 /**
  * Heuristic bluff bet probability for a bet of `fraction` pot: approximates the
@@ -1129,86 +1123,8 @@ export function facingBetMargin(equity: number, samples = P0_EQUITY_SAMPLES): nu
   return Math.max(P0_FACING_BET_MARGIN, P0_BET_CONFIDENCE * se);
 }
 
-/** Tolerance for mirrored pot-odds fields (chips are integers; allows FP round-off). */
-const PRICE_EPSILON = 1e-6;
-
-export interface FacingBetPrice {
-  /** True only when the snapshot is internally consistent and matches the legal call. */
-  trusted: boolean;
-  /** Pot before the bet (`pot - call`), or 0 when the pot is unusable. */
-  potBefore: number;
-  /** Authoritative `call / (pot + call)` recomputed from pot/call (0 when unusable). */
-  derivedOdds: number;
-  /** Price compared against equity: the mirrored odds when trusted, else derived. */
-  requiredEquity: number;
-  /** MDF `P/(P+B)` for the real price; a neutral 0.5 when the pot is unusable. */
-  requiredMdf: number;
-}
-
-/**
- * Validate a facing-bet price snapshot against the legal call amount and the
- * authoritative `call / (pot + call)`, returning everything the decision needs.
- *
- * `trusted` requires ALL of:
- *  - a finite legal `call >= 0`;
- *  - `potOdds.pot` finite, `>= 0`, and `>= call` (a pot smaller than the call is
- *    malformed; it is NOT silently corrected with `max(0, pot - call)`);
- *  - `potOdds.callAmount` finite, `>= 0`, and exactly the legal call amount;
- *  - `potOdds.potOdds` finite in `[0, 1]` and within `1e-6` of the derived odds;
- *  - `potOdds.breakEvenEquity` finite in `[0, 1]` and within `1e-6` of the
- *    derived odds (the `DecisionPotOdds` contract makes it equal to `potOdds`).
- *
- * Any violation marks the snapshot untrusted; the caller then takes a
- * conservative neutral path rather than trusting (or clamping) the bad price.
- */
-export function resolveFacingBetPrice(
-  potOdds: DecisionPotOdds | null | undefined,
-  legalCallAmount: number,
-): FacingBetPrice {
-  const call = legalCallAmount;
-  const callValid = Number.isFinite(call) && call >= 0;
-  const potValue = potOdds?.pot;
-  const mirrorCall = potOdds?.callAmount;
-  const potUsable =
-    callValid &&
-    typeof potValue === 'number' &&
-    Number.isFinite(potValue) &&
-    potValue >= 0 &&
-    potValue >= call;
-  const mirrorCallValid =
-    typeof mirrorCall === 'number' &&
-    Number.isFinite(mirrorCall) &&
-    mirrorCall >= 0 &&
-    mirrorCall === call;
-  const potBefore = potUsable ? (potValue as number) - call : 0;
-  const denominator = potBefore + 2 * call;
-  const derivedOdds = potUsable && denominator > 0 ? call / denominator : 0;
-  const oddsField = potOdds?.potOdds;
-  const breakEvenField = potOdds?.breakEvenEquity;
-  const oddsValid =
-    typeof oddsField === 'number' &&
-    Number.isFinite(oddsField) &&
-    oddsField >= 0 &&
-    oddsField <= 1 &&
-    Math.abs(oddsField - derivedOdds) <= PRICE_EPSILON;
-  const breakEvenValid =
-    typeof breakEvenField === 'number' &&
-    Number.isFinite(breakEvenField) &&
-    breakEvenField >= 0 &&
-    breakEvenField <= 1 &&
-    Math.abs(breakEvenField - derivedOdds) <= PRICE_EPSILON &&
-    // `DecisionPotOdds` contract: breakEvenEquity === potOdds (exact).
-    typeof oddsField === 'number' &&
-    breakEvenField === oddsField;
-  const trusted = potUsable && mirrorCallValid && oddsValid && breakEvenValid;
-  return {
-    trusted,
-    potBefore,
-    derivedOdds,
-    requiredEquity: trusted ? (oddsField as number) : derivedOdds,
-    requiredMdf: potUsable ? mdf(potBefore, call) : 0.5,
-  };
-}
+// `FacingBetPrice` / `resolveFacingBetPrice` moved to `potPrice.ts` and
+// re-exported above.
 
 export interface VillainModelInput {
   /** The bettor's bet as a fraction of the pot *before* the bet (1 = pot). */
@@ -1601,34 +1517,10 @@ export function facingVillainRange(
 // positional / aggression helpers
 // ---------------------------------------------------------------------------
 
-export function heroWasAggressor(view: DecisionView): boolean {
-  const mySeat = view.hand?.mySeat ?? view.me?.seat ?? null;
-  if (mySeat === null) return false;
-  const pre = view.actionHistory.filter((a) => a.street === 'preflop');
-  for (let i = pre.length - 1; i >= 0; i--) {
-    const a = pre[i]!;
-    if (a.action.type === 'bet' || a.action.type === 'raise') return a.seat === mySeat;
-  }
-  return false;
-}
-
-/**
- * True when hero is the last active seat to act postflop (i.e. on the button).
- *
- * Uses {@link postflopActionOrder}, not the preflop dealing order: heads-up the
- * button/SB acts **last** postflop (the BB acts first), while the dealing order
- * lists the button/SB first.
- */
-export function heroInPosition(view: DecisionView): boolean {
-  const mySeat = view.hand?.mySeat ?? view.me?.seat ?? null;
-  if (mySeat === null) return false;
-  const order = postflopActionOrder(view);
-  if (order.length === 0) return false;
-  const active = order.filter(
-    (seat) => seat === mySeat || view.opponents.some((o) => o.seat === seat && !o.folded),
-  );
-  return active.length > 0 && active[active.length - 1] === mySeat;
-}
+// `heroWasAggressor` / `heroInPosition` moved to `tableContext.ts`, where
+// `heroInPosition` uses the postflop action order (`postflopActionOrder`) rather
+// than the preflop dealing order, so heads-up IP/OOP stays correct. Both are
+// re-exported above for existing importers.
 
 /**
  * Seat of the aggressor hero is responding to: the **last** preflop bet/raise in
@@ -1676,16 +1568,8 @@ export function heroIsIPToOpener(view: DecisionView, opponentSeat: number | null
 // policy
 // ---------------------------------------------------------------------------
 
-function normalizeLegal(la: DecisionLegalActions): DecisionLegalActions {
-  const canCall = la.canCall && la.callAmount > 0;
-  const canCheck = la.canCheck || !canCall;
-  const canRaise =
-    (la.canBet || la.canRaise) &&
-    la.minRaiseTo >= 1 &&
-    la.maxRaiseTo >= la.minRaiseTo &&
-    la.maxRaiseTo > 0;
-  return { ...la, canCheck, canCall, canRaise, canBet: canRaise && la.canBet };
-}
+// `heroWasAggressor` / `heroInPosition` moved to `tableContext.ts` and
+// re-exported above.
 
 export interface PostflopOptions {
   params: RuleParams;
@@ -1697,9 +1581,7 @@ export interface PostflopOptions {
 
 /** A legitimate, always-legal fallback action. */
 function onlyLegal(la: DecisionLegalActions, reason: string): PolicyDecision {
-  if (la.canCheck) return { action: { type: 'check' }, reason };
-  if (la.canCall) return { action: { type: 'call' }, reason };
-  return { action: { type: 'fold' }, reason };
+  return { action: guaranteedLegalAction(la), reason };
 }
 
 export class PostflopPolicy {
@@ -1717,7 +1599,7 @@ export class PostflopPolicy {
   decide(view: DecisionView): PolicyDecision {
     const raw = view.legalActions;
     if (!raw) throw new Error(`${this.name} asked to act out of turn`);
-    const la = normalizeLegal(raw);
+    const la = normalizeLegalActions(raw);
     const hole = view.hand?.myCards ?? [];
     const board = view.hand?.board ?? [];
     if (!view.hand || view.hand.street === 'preflop' || hole.length < 2 || board.length < 3) {
@@ -1758,25 +1640,11 @@ export class PostflopPolicy {
   }
 
   private spr(view: DecisionView): number {
-    const pot = view.potOdds?.pot ?? 0;
-    if (pot <= 0) return 10;
-    const myStack = view.me?.stack ?? 0;
-    const activeStacks = view.opponents
-      .filter((o) => !o.folded && !o.allIn)
-      .map((o) => o.stack);
-    const oppMax = activeStacks.length ? Math.max(...activeStacks) : 0;
-    const effective = oppMax > 0 ? Math.min(myStack, oppMax) : myStack;
-    return effective / pot;
+    return deriveTableContext(view).spr;
   }
 
   private effectiveStackBB(view: DecisionView): number {
-    const bb = view.room?.bb && view.room.bb > 0 ? view.room.bb : 1;
-    const myStack = view.me?.stack ?? 0;
-    const activeStacks = view.opponents
-      .filter((o) => !o.folded && !o.allIn)
-      .map((o) => o.stack);
-    const oppMax = activeStacks.length ? Math.max(...activeStacks) : 0;
-    return (oppMax > 0 ? Math.min(myStack, oppMax) : myStack) / bb;
+    return deriveTableContext(view).effectiveStackBB;
   }
 
   private exploitMultiplier(view: DecisionView): number {
@@ -2009,9 +1877,13 @@ export class PostflopPolicy {
     }
     const pot = view.potOdds?.pot ?? 0;
     const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
-    const raw = Math.round(pot * fraction);
-    const amount = clamp(raw, la.minRaiseTo, la.maxRaiseTo);
-    return { action: { type: 'bet', amount: Math.max(1, amount) }, reason };
+    const amount = betAmount({
+      pot,
+      fraction,
+      minRaiseTo: la.minRaiseTo,
+      maxRaiseTo: la.maxRaiseTo,
+    });
+    return { action: { type: 'bet', amount }, reason };
   }
 
   private raise(
@@ -2028,9 +1900,13 @@ export class PostflopPolicy {
     const pot = view.potOdds?.pot ?? 0;
     const currentBet = view.hand?.currentBet ?? 0;
     const fraction = chooseBetFraction(texture, ctx, postflopStreetOf(view.hand?.street));
-    const minDelta = Math.max(1, la.minRaiseTo - currentBet);
-    const target = currentBet + Math.max(minDelta, Math.round(pot * fraction));
-    const amount = clamp(target, la.minRaiseTo, la.maxRaiseTo);
+    const amount = raiseToAmount({
+      pot,
+      currentBet,
+      fraction,
+      minRaiseTo: la.minRaiseTo,
+      maxRaiseTo: la.maxRaiseTo,
+    });
     return { action: { type: 'raise', amount }, reason };
   }
 }

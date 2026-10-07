@@ -16,3 +16,16 @@ export * from './rulesSeed.js';
 export * from './postflopPolicy.js';
 export * from './rulePolicy.js';
 export * from './llmPolicy.js';
+
+// Phase-1 pure strategy layers. Exported by name (not `export *`) so they cannot
+// create ambiguous star-export conflicts with the modules that re-export them.
+export { deriveTableContext, positionForSeat, type TableContext } from './tableContext.js';
+export { normalizeLegalActions, isLegalAction } from './legalActions.js';
+export {
+  bluffToValueRatio,
+  defendProbability,
+  mdf,
+  resolveFacingBetPrice,
+  type FacingBetPrice,
+} from './potPrice.js';
+export { betAmount, guaranteedLegalAction, raiseToAmount } from './actionAdapter.js';

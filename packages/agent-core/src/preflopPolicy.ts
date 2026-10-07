@@ -46,6 +46,11 @@ import {
   type HandClassInfo,
   type RangeEntry,
 } from './rangeParser.js';
+import { POSITIONS_BY_COUNT, positionForSeat, seatsInDealingOrder } from './tableContext.js';
+
+// Re-exported so existing importers (e.g. the frozen baseline fixtures) keep
+// working after the helpers moved to `tableContext.ts`.
+export { postflopActionOrder, seatsInDealingOrder } from './tableContext.js';
 
 /**
  * Rules-v1 preflop policy: turn a `DecisionView` into a preflop spot, look the
@@ -152,87 +157,10 @@ export interface PreflopContext {
   heroToAct: boolean;
 }
 
-/**
- * Dealing-order seat table (index 0 = small blind) and the **short-handed
- * anchor mapping**. Each short seat reuses the chart of the full-ring position
- * named in the table; positions not named are simply absent. So a 6-max game
- * plays the UTG/HJ/CO/BTN charts, and heads-up plays the SB (button) and BB
- * charts.
- */
-const POSITIONS_BY_COUNT: Record<number, Position[]> = {
-  2: ['SB', 'BB'],
-  3: ['SB', 'BB', 'BTN'],
-  4: ['SB', 'BB', 'CO', 'BTN'],
-  5: ['SB', 'BB', 'UTG', 'CO', 'BTN'],
-  6: ['SB', 'BB', 'UTG', 'HJ', 'CO', 'BTN'],
-  7: ['SB', 'BB', 'UTG', 'UTG1', 'HJ', 'CO', 'BTN'],
-  8: ['SB', 'BB', 'UTG', 'UTG1', 'MP', 'HJ', 'CO', 'BTN'],
-  9: ['SB', 'BB', 'UTG', 'UTG1', 'MP', 'LJ', 'HJ', 'CO', 'BTN'],
-};
-
-/**
- * Approximate the dealing order when the view does not carry `seatOrder`:
- * sort the known seats ascending and rotate so the first seat after the button
- * comes first. Heads-up is special-cased: the button **is** the small blind and
- * acts first preflop, so the order is `[button, other]`, not `[other, button]`.
- * TODO(rules-v2): drop this once every caller populates `DecisionView.seatOrder`.
- */
-function fallbackSeatOrder(view: DecisionView): number[] {
-  const seats: number[] = [];
-  if (view.me) seats.push(view.me.seat);
-  for (const o of view.opponents) seats.push(o.seat);
-  seats.sort((a, b) => a - b);
-  const button = view.hand?.buttonSeat;
-  if (button === undefined) return seats;
-  const btnIdx = seats.indexOf(button);
-  if (btnIdx < 0) return seats;
-  if (seats.length === 2) {
-    const other = seats[1 - btnIdx]!;
-    return [seats[btnIdx]!, other];
-  }
-  return [...seats.slice(btnIdx + 1), ...seats.slice(0, btnIdx + 1)];
-}
-
-export function seatsInDealingOrder(view: DecisionView): number[] {
-  const supplied = view.seatOrder;
-  if (supplied && supplied.length >= 2) return [...supplied];
-  return fallbackSeatOrder(view);
-}
-
-/**
- * Seats in **postflop** action order (first to act first, button last).
- *
- * The dealing order and the postflop order coincide for 3+ players (SB first,
- * button last), but **heads-up they are opposites**: preflop the button/SB acts
- * first and the BB last, so `seatsInDealingOrder` returns the *preflop* order
- * `[button/SB, BB]`; postflop the BB acts first and the button/SB last. Never
- * reuse the dealing-order index as a postflop position for heads-up — that
- * silently reverses IP/OOP and mis-sizes the preflop 3-bet/4-bet.
- *
- * Uses `buttonSeat` to place the button last when it is known, and falls back
- * to reversing the two-seat order otherwise: when `buttonSeat` is unknown we
- * rely on the contract that a supplied / short-handed two-seat dealing order is
- * `[SB, BB]`, so reversing it yields the postflop `[BB, SB]`.
- *
- * LIMITATION: `fallbackSeatOrder()` with no supplied order *and* no button
- * returns the seats in ascending order rather than a dealing order, so
- * reversing that ascending pair cannot actually determine position — it is a
- * best-effort assumption, not a determination. Such a view must not be trusted
- * for heads-up IP/OOP until every caller populates `buttonSeat`/`seatOrder`.
- */
-export function postflopActionOrder(view: DecisionView): number[] {
-  const order = seatsInDealingOrder(view);
-  if (order.length !== 2) return order;
-  return view.hand?.buttonSeat === order[1] ? order : [order[1]!, order[0]!];
-}
-
-function positionForSeat(seat: number, seatOrder: number[]): Position {
-  const table = POSITIONS_BY_COUNT[seatOrder.length];
-  const idx = seatOrder.indexOf(seat);
-  if (table && idx >= 0 && idx < table.length) return table[idx]!;
-  // Fallback for an unknown table size: approximate by dealing slot.
-  return idx === 0 ? 'SB' : idx === 1 ? 'BB' : 'BTN';
-}
+// Dealing order / position helpers moved to the neutral `tableContext` layer so
+// `postflopPolicy` no longer depends on this module for `seatsInDealingOrder`.
+// `seatsInDealingOrder` is re-exported above for existing importers (including
+// the frozen postflop baseline fixture).
 
 /**
  * 6-max reference slot for an opener's position, used to pick the
