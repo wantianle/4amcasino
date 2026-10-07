@@ -67,6 +67,7 @@ import { BettingPanel } from '../../widgets/table/BettingPanel.tsx';
 import { ChatPanel } from '../../widgets/table/ChatPanel.tsx';
 import { RoundTable } from '../../widgets/table/RoundTable.tsx';
 import { DealCard, FLOP_STAGGER_MS } from '../../widgets/table/DealCard.tsx';
+import { ChipStack } from '../../widgets/table/ChipStack.tsx';
 import { goldFive } from '../../widgets/table/goldFive.ts';
 import { bbValue } from '../../shared/lib/bb.ts';
 import { BombPotIntro } from '../../widgets/table/BombPotIntro.tsx';
@@ -2107,6 +2108,7 @@ export function TablePage() {
               narrow={narrowCanvas}
               centerCompact={centerCompact}
               centerRaised={multiRunBoard}
+              centerPreflop={boardRuns[0]?.length === 0}
               centerBudget
               ribbon={featureRibbon}
               seats={seatViews}
@@ -2145,13 +2147,12 @@ export function TablePage() {
                peekTargets={peekTargets}
                peekResults={!amSpectator ? hand.peekResults : undefined}
              >
-              {/* A5/L3: the pot is ONE GG "Total Pot" gold pill centered above
-                the board row. (rev-3 dropped the pot chip pile + the 0-state
-                Coins icon — the number carries the value; the pulse motion
-                stays as-is, the motion pass is L5.) */}
+              {/* A5/L4a: desktop keeps the GG text pill; phone adds the shared
+                  ChipStack cue beside the same amount and unit output. */}
               {pot > 0 && (
-                <div className="table-pot-pill" title={t('POT')}>
+                <div className="table-pot-pill" data-table-pot title={t('POT')}>
                   <span className="sr-only">{t('POT')}</span>
+                  <ChipStack amount={pot} bb={room?.room.bb ?? 1} size="xs" className="table-pot-chips" />
                   <span className="table-pot-label">{t('POT')}</span>
                   <motion.span
                     key={pot}
@@ -2239,7 +2240,7 @@ export function TablePage() {
                     );
                     return (
                       <>
-                        <div className={cn('flex items-center justify-center', runGap)}>
+                        {first && first.length > 0 && <div className={cn('flex items-center justify-center', runGap)} data-table-board-run="0">
                           {multiRunBoard && runLabel(1)}
                            {/* the flop is PUSHED out (平移, one card behind the
                                next like a live dealer); the turn and river
@@ -2256,7 +2257,7 @@ export function TablePage() {
                               emptySlot(`r0-slot-${index}`, index)
                             ),
                           )}
-                        </div>
+                        </div>}
                         {/* a run that has not opened a single card renders NO row
                           (legacy rit_result leaves a `[]` placeholder behind when
                           the ahead player declined - never show it as a ghost
@@ -2267,6 +2268,7 @@ export function TablePage() {
                             <div
                               key={`run-${runIdx}`}
                               className={cn('flex items-center justify-center', runGap)}
+                              data-table-board-run={runIdx + 1}
                             >
                               {runLabel(runIdx + 2)}
                                {[0, 1, 2, 3, 4].map((index) =>

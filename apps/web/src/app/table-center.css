@@ -20,6 +20,9 @@
   border: 1px solid color-mix(in srgb, var(--table-gold) 45%, transparent);
   box-shadow: var(--shadow-table-disc);
 }
+.table-pot-chips {
+  display: none;
+}
 .table-pot-label {
   font-size: 10.5px;
   font-weight: 700;
@@ -33,6 +36,17 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: var(--table-gold-hi);
+}
+
+@media (max-width: 767px) {
+  .table-pot-pill {
+    align-items: center;
+    gap: 6px;
+  }
+
+  .table-pot-chips {
+    display: inline-flex;
+  }
 }
 
 /* ── feature banners (replaces the in-column pill row) ──

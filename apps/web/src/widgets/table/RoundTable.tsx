@@ -264,6 +264,7 @@ export function RoundTable({
   narrow = false,
   centerCompact = false,
   centerRaised = false,
+  centerPreflop = false,
   centerBudget = false,
   ribbon,
   handTypes,
@@ -313,6 +314,9 @@ export function RoundTable({
    *  piled on, keeps the canvas-centered yPct so its rendering stays
    *  baseline-identical. */
   centerRaised?: boolean;
+  /** Empty preflop has no card row to provide vertical lift; keep its pot
+   * above the table midpoint without rendering invisible placeholder cards. */
+  centerPreflop?: boolean;
   /** Clamp the center column to the geometry budget: measured content taller
    *  than centerColumnBudgetPx() scales down (never below minScale). Off for
    *  consumers that size their own children to fit (replays). */
@@ -589,7 +593,7 @@ export function RoundTable({
             )}
             style={{
               left: `${CENTER_COLUMN.xPct}%`,
-              top: `${centerRaised ? CENTER_COLUMN.compactYPct : CENTER_COLUMN.yPct}%`,
+               top: `${centerPreflop ? 43 : centerRaised ? CENTER_COLUMN.compactYPct : CENTER_COLUMN.yPct}%`,
               width: `${CENTER_COLUMN.widthPct}%`,
               transform: `translate(-50%, -50%) scale(${colScale})`,
             }}
