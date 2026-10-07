@@ -34,7 +34,11 @@ import {
   type CompiledMix,
   type RangeEntry,
 } from './rangeParser.js';
-import { positionBehindCount, type PreflopContext } from './preflopContext.js';
+import {
+  positionBehindCount,
+  type PreflopContext,
+  type PreflopSpot,
+} from './preflopContext.js';
 import { clamp01 } from './preflopMath.js';
 
 /**
@@ -45,6 +49,43 @@ import { clamp01 } from './preflopMath.js';
  * This is the single home of preflop range building, so a canonical range
  * provider can be extracted from here without touching the frequency layer.
  */
+
+/**
+ * Canonical preflop range provider surface.
+ *
+ * A `PreflopRangeSource` is one way of turning a node (`PreflopContext`) into a
+ * compiled mix. `resolve` returns `null` when the source cannot serve the node
+ * (its data does not cover it); the dispatcher then falls back to the node's
+ * legacy source. Each source still calls the exact data it called before — this
+ * layer names and routes the paths, it does not merge or re-value any range.
+ *
+ * `PREFLOP_SPOT_ROUTES` is the **single registration point**: every preflop spot
+ * maps to the source that serves it on the adaptive route and the terminal
+ * legacy source. Adding a new spot/source is one registry edit, not a new `if`
+ * in the dispatch.
+ */
+export interface PreflopRangeSource {
+  /** Stable id, e.g. `legacy-rfi`, `adaptive-bb-defend` (tests / telemetry). */
+  readonly id: string;
+  /** Resolve the compiled mix, or `null` when this source cannot serve `ctx`. */
+  resolve(ctx: PreflopContext): Map<string, CompiledMix> | null;
+}
+
+/** The sources a spot can route to. */
+export interface PreflopSpotRoute {
+  /** Served when `adaptivePreflopAvailable` is true; `null` = no adaptive source. */
+  readonly adaptive: PreflopRangeSource | null;
+  /** Terminal fallback: served when adaptive is off/unavailable or returns null. */
+  readonly legacy: PreflopRangeSource;
+}
+
+/** Wrap a plain resolver as a named source. */
+function rangeSource(
+  id: string,
+  resolve: (ctx: PreflopContext) => Map<string, CompiledMix> | null,
+): PreflopRangeSource {
+  return { id, resolve };
+}
 
 /**
  * Compiled mixes are pure functions of the charts, so memoise them per
@@ -58,56 +99,63 @@ const mixCache = new Map<string, Map<string, CompiledMix>>();
  * headcount-adaptive path is the default engine (see `ADAPTIVE_PREFLOP_DEFAULT`)
  * and this is the explicit fallback when adaptive is switched off
  * (`params.adaptivePreflop === false`) or the spot/headcount cannot be trusted.
+ *
+ * One function per spot, so each is a named registry entry; the bodies are the
+ * exact former `buildLegacyMix` switch arms.
  */
-function buildLegacyMix(ctx: PreflopContext): Map<string, CompiledMix> {
-  let mix: Map<string, CompiledMix>;
-  switch (ctx.spot) {
-    case 'unopened': {
-      const base = RFI_RANGES[ctx.position];
-      const marginal = RFI_MARGINAL[ctx.position];
-      const entries: RangeEntry[] = [];
-      if (base) entries.push({ range: base, action: 'raise', weight: 1, role: 'value' });
-      if (marginal) entries.push({ range: marginal, action: 'raise', weight: 1, role: 'marginal' });
-      mix = compileRangeMix(entries);
-      break;
-    }
-    case 'limped':
-      mix = compileRangeMix([
-        { range: ISO_RANGES[ctx.positionGroup], action: 'raise', weight: 1, role: 'value' },
-      ]);
-      break;
-    case 'facing4BetPlus':
-      mix = compileRangeMix(FACING_4BET_PLUS);
-      break;
-    case 'facing3Bet':
-      mix = compileRangeMix([...FACING_3BET_4BET, ...FACING_3BET_CALL]);
-      break;
-    case 'facing3BetCold':
-      mix = compileRangeMix(COLD_3BET_COLD);
-      break;
-    default: {
-      // facingOpen / facingOpenMultiway: 3-bet/call versus a single open.
-      const openerGroup: PositionGroup = ctx.openerGroup ?? 'EP'; // conservative when unknown
-      const entries: RangeEntry[] = [
-        { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
-        {
-          range: COLD_3BET_BLUFF[openerGroup],
-          action: 'raise',
-          weight: COLD_3BET_BLUFF_WEIGHT,
-          role: 'bluff',
-        },
-      ];
-      if (ctx.positionGroup === 'BB') {
-        entries.push(...BB_DEFEND[openerGroup]);
-      } else {
-        entries.push({ range: CALL_VS_OPEN[ctx.positionGroup], action: 'call', weight: 1 });
-      }
-      mix = compileRangeMix(entries);
-      break;
-    }
-  }
-  return mix;
+function legacyUnopenedMix(ctx: PreflopContext): Map<string, CompiledMix> {
+  const base = RFI_RANGES[ctx.position];
+  const marginal = RFI_MARGINAL[ctx.position];
+  const entries: RangeEntry[] = [];
+  if (base) entries.push({ range: base, action: 'raise', weight: 1, role: 'value' });
+  if (marginal) entries.push({ range: marginal, action: 'raise', weight: 1, role: 'marginal' });
+  return compileRangeMix(entries);
 }
+
+function legacyLimpedMix(ctx: PreflopContext): Map<string, CompiledMix> {
+  return compileRangeMix([
+    { range: ISO_RANGES[ctx.positionGroup], action: 'raise', weight: 1, role: 'value' },
+  ]);
+}
+
+function legacyFacing4BetPlusMix(): Map<string, CompiledMix> {
+  return compileRangeMix(FACING_4BET_PLUS);
+}
+
+function legacyFacing3BetMix(): Map<string, CompiledMix> {
+  return compileRangeMix([...FACING_3BET_4BET, ...FACING_3BET_CALL]);
+}
+
+function legacyFacing3BetColdMix(): Map<string, CompiledMix> {
+  return compileRangeMix(COLD_3BET_COLD);
+}
+
+/** `facingOpen` / `facingOpenMultiway`: 3-bet/call versus a single open. */
+function legacyFacingOpenMix(ctx: PreflopContext): Map<string, CompiledMix> {
+  const openerGroup: PositionGroup = ctx.openerGroup ?? 'EP'; // conservative when unknown
+  const entries: RangeEntry[] = [
+    { range: COLD_3BET_VALUE[openerGroup], action: 'raise', weight: 1, role: 'value' },
+    {
+      range: COLD_3BET_BLUFF[openerGroup],
+      action: 'raise',
+      weight: COLD_3BET_BLUFF_WEIGHT,
+      role: 'bluff',
+    },
+  ];
+  if (ctx.positionGroup === 'BB') {
+    entries.push(...BB_DEFEND[openerGroup]);
+  } else {
+    entries.push({ range: CALL_VS_OPEN[ctx.positionGroup], action: 'call', weight: 1 });
+  }
+  return compileRangeMix(entries);
+}
+
+const legacyUnopenedSource = rangeSource('legacy-rfi', legacyUnopenedMix);
+const legacyLimpedSource = rangeSource('legacy-iso', legacyLimpedMix);
+const legacyFacingOpenSource = rangeSource('legacy-facing-open', legacyFacingOpenMix);
+const legacyFacing3BetSource = rangeSource('legacy-facing-3bet', legacyFacing3BetMix);
+const legacyFacing3BetColdSource = rangeSource('legacy-facing-3bet-cold', legacyFacing3BetColdMix);
+const legacyFacing4BetPlusSource = rangeSource('legacy-facing-4bet-plus', legacyFacing4BetPlusMix);
 
 /**
  * True when the adaptive headcount charts may serve this decision: the flag is
@@ -472,24 +520,69 @@ function adaptiveRfiEntries(chart: PreflopChart, ctx: PreflopContext): RangeEntr
   return entries;
 }
 
-function buildAdaptiveMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
-  if (ctx.spot === 'facingOpen') {
-    if (ctx.positionGroup === 'BB') {
-      const chart = bbDefendChartFor(ctx.openerSlot ?? 0, ctx.behindUnacted);
-      return compileRangeMix(chartToRangeEntries(chart));
-    }
-    return buildColdAdaptiveMix(ctx);
+/** Adaptive `facingOpen`: the FRLA BB-defence chart for the BB, else cold 3-bet. */
+function adaptiveFacingOpenMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
+  if (ctx.positionGroup === 'BB') {
+    const chart = bbDefendChartFor(ctx.openerSlot ?? 0, ctx.behindUnacted);
+    return compileRangeMix(chartToRangeEntries(chart));
   }
-  if (ctx.spot === 'unopened') {
-    const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
-    if (!chart) return null;
-    // HU stays on the literal chart split: it is a single MHL-anchored spot
-    // (`HU.SB_OPEN`, ~87% open with a large limp share) that must not drift from
-    // its source. The multiway RFI path carries the explicit marginal layer.
-    if (ctx.headsUp) return compileRangeMix(chartToRangeEntries(chart));
-    return compileRangeMix(adaptiveRfiEntries(chart, ctx));
-  }
+  return buildColdAdaptiveMix(ctx);
+}
+
+/** Adaptive `unopened`: the FRLA RFI slot / MHL heads-up first-in chart. */
+function adaptiveUnopenedMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
+  const chart = adaptiveChartFor({ actorSlot: ctx.actorSlot, headsUp: ctx.headsUp });
+  if (!chart) return null;
+  // HU stays on the literal chart split: it is a single MHL-anchored spot
+  // (`HU.SB_OPEN`, ~87% open with a large limp share) that must not drift from
+  // its source. The multiway RFI path carries the explicit marginal layer.
+  if (ctx.headsUp) return compileRangeMix(chartToRangeEntries(chart));
+  return compileRangeMix(adaptiveRfiEntries(chart, ctx));
+}
+
+/** Adaptive spots with no solver subset: derived chart over the legacy anchor. */
+function adaptiveDerivedMix(ctx: PreflopContext): Map<string, CompiledMix> | null {
   return buildDerivedAdaptiveMix(ctx);
+}
+
+const adaptiveUnopenedSource = rangeSource('adaptive-rfi', adaptiveUnopenedMix);
+const adaptiveFacingOpenSource = rangeSource('adaptive-facing-open', adaptiveFacingOpenMix);
+const adaptiveDerivedSource = rangeSource('adaptive-derived', adaptiveDerivedMix);
+
+/**
+ * The single spot -> source registration point. `adaptivePreflopAvailable`
+ * selects the route; within a route this table is the only dispatch. An
+ * adaptive source may still return `null` (e.g. an out-of-range RFI slot), in
+ * which case the legacy source is served — exactly as the former nested
+ * `buildAdaptiveMix` -> `buildLegacyMix` fallback did.
+ */
+export const PREFLOP_SPOT_ROUTES: Record<PreflopSpot, PreflopSpotRoute> = {
+  unopened: { adaptive: adaptiveUnopenedSource, legacy: legacyUnopenedSource },
+  limped: { adaptive: adaptiveDerivedSource, legacy: legacyLimpedSource },
+  facingOpen: { adaptive: adaptiveFacingOpenSource, legacy: legacyFacingOpenSource },
+  facingOpenMultiway: { adaptive: adaptiveDerivedSource, legacy: legacyFacingOpenSource },
+  facing3Bet: { adaptive: adaptiveDerivedSource, legacy: legacyFacing3BetSource },
+  facing3BetCold: { adaptive: adaptiveDerivedSource, legacy: legacyFacing3BetColdSource },
+  facing4BetPlus: { adaptive: adaptiveDerivedSource, legacy: legacyFacing4BetPlusSource },
+};
+
+/**
+ * Resolve the compiled mix for `ctx` through the registry. When the adaptive
+ * route is available its source is tried first; a `null` result (or an
+ * unavailable route) falls back to the spot's legacy source, which always
+ * resolves.
+ */
+export function resolvePreflopRange(
+  ctx: PreflopContext,
+  params: RuleParams,
+): Map<string, CompiledMix> {
+  const route = PREFLOP_SPOT_ROUTES[ctx.spot];
+  if (route.adaptive && adaptivePreflopAvailable(ctx, params)) {
+    const adaptive = route.adaptive.resolve(ctx);
+    if (adaptive) return adaptive;
+  }
+  // The legacy source is the terminal fallback and always returns a map.
+  return route.legacy.resolve(ctx)!;
 }
 
 /**
@@ -541,9 +634,7 @@ export function buildMix(ctx: PreflopContext, params: RuleParams): Map<string, C
   const cached = mixCache.get(cacheKey);
   if (cached) return cached;
 
-  let mix: Map<string, CompiledMix> | null = null;
-  if (adaptivePreflopAvailable(ctx, params)) mix = buildAdaptiveMix(ctx);
-  if (!mix) mix = buildLegacyMix(ctx);
+  const mix = resolvePreflopRange(ctx, params);
   mixCache.set(cacheKey, mix);
   return mix;
 }

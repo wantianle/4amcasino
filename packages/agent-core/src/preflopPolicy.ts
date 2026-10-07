@@ -42,6 +42,10 @@ export {
   adaptivePreflopAvailable,
   mergeRustVsOpenRaise,
   preflopMixCacheKey,
+  resolvePreflopRange,
+  PREFLOP_SPOT_ROUTES,
+  type PreflopRangeSource,
+  type PreflopSpotRoute,
 } from './preflopRange.js';
 
 export interface PreflopChoice {
