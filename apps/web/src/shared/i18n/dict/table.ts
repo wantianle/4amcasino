@@ -190,6 +190,16 @@ const table: Record<string, string> = {
     '15 秒休息后，大家最多有 20 秒点「我准备好了」。你的「自动就绪」设置照常生效。至少需要两人就绪才会发牌。',
   'Only the host can change this room setting.': '只有房主能改这个房间设置。',
   'Try ready check again': '再发起一次就绪确认',
+
+  // ── Transfer host dialog (features/table/TransferHostDialog.tsx) ─────────
+  'Transfer host': '转让房主',
+  'Give the host role to another seated player. The host controls room settings, auto-deal and bots - the role never moves on its own.':
+    '把房主转给另一位已入座的玩家。房主掌管房间设置、自动发牌和机器人——房主身份不会自己变动。',
+  'No other seated player can take the host role right now.': '现在没有其他已入座的玩家可以接任房主。',
+  'New host': '新房主',
+  'Could not transfer host. Try again.': '房主转让失败，再试一次。',
+  'Transferring…': '转让中…',
+  'Only the host can transfer the host role.': '只有房主能转让房主身份。',
 };
 
 export default table;

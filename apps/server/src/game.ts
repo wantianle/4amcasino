@@ -144,7 +144,6 @@ import {
   type SnapshotSeat,
 } from './handShow.js';
 import {
-  HOST_HANDOVER_MS,
   STREET_INDEX,
   testHandId,
   type MultiRunResultReason,
@@ -240,7 +239,6 @@ export class GameRoom {
     eligible: Set<number>;
     ready: Set<number>;
   } | null = null;
-  private hostHandover: NodeJS.Timeout | null = null;
   /** Set when an unexpected (non-business) handler error escaped. A room in
    *  this state fails closed: `startHand` refuses. A `recoverable` mark (a
    *  settlement failure whose retry can prove the room is consistent) can be
@@ -347,7 +345,6 @@ export class GameRoom {
       this.broadcastRoomState();
       // a folded player walking away must never strand the hand
       this.hand?.onPlayerGone(userId);
-      this.scheduleHostHandover(userId);
     }
   }
 
@@ -400,45 +397,6 @@ export class GameRoom {
     this.send(userId, { t: 'hand_recovery', handId: resumeHandId, status: 'unresolved' });
   }
 
-  /** The host is the only person who can deal, so a host who shuts their laptop
-   *  freezes the table for everyone still sitting at it. After a grace window the
-   *  role passes to someone who is actually here.
-   *
-   *  Host only, deliberately. The BANKER approves buy-ins and moves chips, and a
-   *  money authority must never change hands on a timer - if the banker is gone,
-   *  the table waits for them or names a backup by hand. */
-  private scheduleHostHandover(goneUserId: number): void {
-    if (this.draining) return;
-    const room = getRoom(this.db, this.roomId);
-    if (!room || room.host_id !== goneUserId || this.hostHandover) return;
-    this.hostHandover = setTimeout(() => {
-      this.hostHandover = null;
-      // The process may have begun shutting down (db closed) after this timer
-      // was armed; touching the DB then would be an unhandled crash.
-      if (!this.db.open || this.draining) return;
-      const current = getRoom(this.db, this.roomId);
-      // they came back, or someone already took it: nothing to do
-      if (!current || current.host_id !== goneUserId || this.isConnected(goneUserId)) return;
-      // presentablePlayers so the house can never be handed host duties
-      const here = presentablePlayers(this.db, this.roomId).filter((p) =>
-        this.sockets.has(p.userId),
-      );
-      // the banker if they are here - they already hold the room's trust
-      const next = here.find((p) => p.userId === current.banker_id) ?? here[0];
-      if (!next) return;
-      this.db.prepare('UPDATE rooms SET host_id = ? WHERE id = ?').run(next.userId, this.roomId);
-      this.broadcastRoomState();
-      this.broadcast({
-        t: 'chat',
-        from: '4AM',
-        userId: 0,
-        text: `${next.displayName} is the host now - the previous host went offline.`,
-        kind: 'text',
-        ts: Date.now(),
-      });
-    }, HOST_HANDOVER_MS);
-  }
-
   /** Nobody is connected and nothing is in flight, so the hub can drop this room
    *  instead of holding it (and its per-hand maps) for the life of the process. */
   isIdle(): boolean {
@@ -456,8 +414,6 @@ export class GameRoom {
    */
   async shutdown(): Promise<void> {
     this.draining = true;
-    if (this.hostHandover) clearTimeout(this.hostHandover);
-    this.hostHandover = null;
     // Safe to tell a still-connected party the offer is over (the process is
     // draining, or the hub reclaims an idle room). A socket that is already
     // gone drops the frame, and its reconnect gets an empty

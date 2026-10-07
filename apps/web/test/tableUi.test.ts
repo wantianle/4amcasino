@@ -57,7 +57,7 @@ describe('table utility menu', () => {
     ).toEqual([
       { id: 'people', actions: ['invite', 'watch'] },
       { id: 'records', actions: ['ledger', 'hands'] },
-      { id: 'table', actions: ['auto-deal', 'sit-out', 'timer', 'bots'] },
+      { id: 'table', actions: ['auto-deal', 'sit-out', 'timer', 'bots', 'transfer-host'] },
       { id: 'preferences', actions: ['preferences'] },
     ]);
   });

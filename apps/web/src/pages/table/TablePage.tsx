@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AutoDealDialog } from '../../features/table/AutoDealDialog.tsx';
+import { TransferHostDialog } from '../../features/table/TransferHostDialog.tsx';
 import { HandRecoveryBanner, SettlementFailureBanner } from '../../features/table/settlementFailure.tsx';
 import { pokerOverlayOpen } from '../../features/table/pokerHotkeys.ts';
 import { motion } from 'motion/react';
@@ -9,6 +10,7 @@ import {
   Bomb,
   CornersIn,
   CornersOut,
+  Crown,
   UsersThree,
   CardsThree,
   DotsThreeVertical,
@@ -201,6 +203,7 @@ export function TablePage() {
   // hand's controls and crypto connection) and navigate once it finishes.
   const [leavePending, setLeavePending] = useState(false);
   const [autoDealOpen, setAutoDealOpen] = useState(false);
+  const [transferHostOpen, setTransferHostOpen] = useState(false);
   // ── P2 gameplay (Lane F) ──────────────────────────────────────────────────
   // The room's stored feature rules, fetched once on join and refreshed by the
   // host's saves. room_state does not carry them; GET /api/rooms/:id does.
@@ -1170,6 +1173,20 @@ export function TablePage() {
             )}
           </button>
         );
+      case 'transfer-host':
+        return (
+          <button
+            type="button"
+            role="menuitem"
+            className={utilityItemClass}
+            onClick={() => {
+              closeUtilityMenu();
+              setTransferHostOpen(true);
+            }}
+          >
+            <Crown size={18} /> {t('Transfer host')}
+          </button>
+        );
       case 'preferences':
         return (
           <Link
@@ -1487,6 +1504,11 @@ export function TablePage() {
         </div>
       )}
       <AutoDealDialog open={autoDealOpen} onClose={() => setAutoDealOpen(false)} />
+      <TransferHostDialog
+        open={transferHostOpen}
+        onClose={() => setTransferHostOpen(false)}
+        botUserIds={bots.map((b) => b.userId)}
+      />
       {/* Host close confirmation. The label and the body both say "archive,
           nothing deleted" so it can never be mistaken for a data wipe. */}
       <Dialog

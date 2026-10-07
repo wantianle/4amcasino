@@ -16,6 +16,7 @@ export type TableUtilityAction =
   | 'sit-out'
   | 'timer'
   | 'bots'
+  | 'transfer-host'
   | 'auto-deal'
   | 'preferences';
 
@@ -59,6 +60,8 @@ export function tableUtilityGroups({
   // host-only bot management; on desktop the same action rides the top-bar
   // chip (inlineSurfaced drops it from the menu), on phones this is the entry
   if (isHost) table.push('bots');
+  // host-only: hand the role to another seated player (the only way it moves)
+  if (isHost) table.push('transfer-host');
 
   return [
     ...(people.length > 0 ? [{ id: 'people' as const, actions: people }] : []),

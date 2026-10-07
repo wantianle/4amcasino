@@ -1,10 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { MultiRunReason } from '@4am/shared';
 
-/** How long a host may be offline before the table hands the role to someone
- *  still sitting at it. */
-export const HOST_HANDOVER_MS = 60_000;
-
 /** Street order used by the stats projection's `street` events. */
 export const STREET_INDEX: Record<string, number> = { preflop: 0, flop: 1, turn: 2, river: 3 };
 

@@ -342,6 +342,9 @@ export const api = {
   standUp: (roomId: string, userId: number) => req(`/api/rooms/${roomId}/stand-up`, { userId }),
   transfer: (roomId: string, toUserId: number, amount: number, note?: string) =>
     req(`/api/rooms/${roomId}/transfer`, { toUserId, amount, ...(note ? { note } : {}) }),
+  /** Hand the host role to another seated member. Only the current host may. */
+  transferHost: (roomId: string, toUserId: number) =>
+    req(`/api/rooms/${roomId}/transfer-host`, { toUserId }),
   roomExtras: (roomId: string, extras: Record<string, unknown>) =>
     req(`/api/rooms/${roomId}/settings`, extras, 'PUT'),
   voidHand: (roomId: string, handId: string) => req(`/api/rooms/${roomId}/void-hand`, { handId }),

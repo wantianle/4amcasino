@@ -10,7 +10,7 @@ import { appendLedger, verifyLedger } from './ledger.js';
 import { BuyServiceError, approveRoomBuy, requestRoomBuy } from './buyService.js';
 import { LIMITS } from './limits.js';
 import { activeHands } from './liveHands.js';
-import { notPlatformAccountSql, platformUserId } from './platform.js';
+import { isPlatform, notPlatformAccountSql, platformUserId } from './platform.js';
 import {
   perHandNetSelect,
   settlementNotVoidedSql,
@@ -656,6 +656,68 @@ export function registerRoomRoutes(app: FastifyInstance, db: DB): void {
     // Hand back the normalized gameplay settings so the client can render the
     // canonical values (e.g. merged defaults) instead of echoing its own patch.
     return { ok: true, features: readRoomFeatures(getRoom(db, id)!) };
+  });
+
+  /**
+   * Hand the host role to another seated member. The ONLY way host ever moves
+   * is this deliberate act by the current host - there is no timer (an offline
+   * host used to lose the role after a minute, which could hand it to a bot and
+   * lock the real owner out of their own room's settings).
+   *
+   * Host only, never the banker: the role is a settings/approval authority, and
+   * the host is the one person entitled to give it away. The target must be a
+   * seated member of THIS room; the house/platform account and bots are refused
+   * because neither can hold the decisions the host owns, and a bot that is
+   * later deleted would strand the room again.
+   */
+  app.post('/api/rooms/:id/transfer-host', authed, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({ toUserId: z.number().int().positive() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input' });
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'no such room' });
+    if (room.host_id !== req.userId)
+      return reply.code(403).send({ error: 'only the host can transfer host' });
+    if (room.archived || room.deleted)
+      return reply.code(409).send({ error: 'this table is closed' });
+    const toUserId = parsed.data.toUserId;
+    if (toUserId === room.host_id)
+      return reply.code(400).send({ error: 'they are already the host' });
+    const target = db
+      .prepare('SELECT seat FROM room_players WHERE room_id = ? AND user_id = ?')
+      .get(id, toUserId) as { seat: number | null } | undefined;
+    if (!target) return reply.code(400).send({ error: 'that account is not in this room' });
+    if (target.seat === null)
+      return reply.code(400).send({ error: 'they are not seated at the table' });
+    if (isPlatform(db, toUserId))
+      return reply.code(400).send({ error: 'the house account cannot be the host' });
+    const bot = db
+      .prepare('SELECT 1 FROM bot_accounts WHERE user_id = ? AND room_id = ?')
+      .get(toUserId, id);
+    if (bot) return reply.code(400).send({ error: 'a bot cannot be the host' });
+    // Re-assert every precondition inside the write itself, so a role change that
+    // raced the checks above (the model is single-process, but the guard is free)
+    // moves nothing. The room must still be open, the caller must still be the
+    // host, and the target must still be a seated, non-house, non-bot member.
+    const moved = db
+      .prepare(
+        `UPDATE rooms SET host_id = ?
+         WHERE id = ? AND host_id = ?
+           AND archived = 0 AND deleted = 0
+           AND EXISTS (
+             SELECT 1 FROM room_players rp
+             WHERE rp.room_id = rooms.id AND rp.user_id = ? AND rp.seat IS NOT NULL
+               AND ${notPlatformAccountSql('rp.user_id')}
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM bot_accounts b WHERE b.room_id = rooms.id AND b.user_id = ?
+           )`,
+      )
+      .run(toUserId, id, req.userId, toUserId, toUserId);
+    if (moved.changes !== 1)
+      return reply.code(409).send({ error: 'the table changed; try again' });
+    roomEvents.emit('changed', id);
+    return { ok: true };
   });
 
   // The sidebar/lobby "your tables" list. Archived (closed) rooms are hidden
