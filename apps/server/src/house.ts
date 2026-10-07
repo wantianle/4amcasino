@@ -5,32 +5,73 @@ import {
   gameNetLedgerDeltaSql,
   gameNetLedgerKindSql,
   ledgerHandIdSql,
+  ledgerHeadSql,
   perHandNetSelect,
-  settlementNotVoidedSql,
 } from './handProjection.js';
 
-/** One source for personal dues and the platform's receivables. Allocation keeps
- * the established rule (net winners share each hand's commission), but assigns
- * each odd chip once, instead of rounding each person's share independently.
- * Retired rooms and voided hands follow the existing settle-up exclusions. */
-export function platformDues(db: DB, onlyUserId: number | null = null): PlatformDuesReport {
-  const platformId = platformUserId(db);
-  const rows = db
-    .prepare(
-      `
-    WITH commissions AS (
-      SELECT l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref, SUM(l.delta) AS rake,
-             r.name AS roomName, COALESCE(h.commission_bps, r.commission_bps) AS commissionBps
+/**
+ * SQL behind {@link platformDues}. AVAILABILITY-CRITICAL (same family as commit
+ * 787ee1c): `ledgerHandIdSql` (two correlated subqueries over
+ * `hand_settlements` / `transcripts`) must be resolved ONCE per source row in a
+ * MATERIALIZED CTE, never inline on a join/candidate path, because
+ * better-sqlite3 is synchronous and a per-candidate re-evaluation wedges the
+ * whole server's event loop.
+ *
+ * Three costs are removed vs. the pre-fix text:
+ *   1. commission rows carry their canonical id (and head) computed per row in
+ *      `commission_legs AS MATERIALIZED`, instead of re-deriving it while the
+ *      outer join and the per-room EXISTS ran;
+ *   2. `void_rows AS MATERIALIZED` is the set of void keys, so void exclusion
+ *      no longer scans every ledger row of the room for each commission row;
+ *   3. `participant_legs AS MATERIALIZED` holds the target user's game-net legs
+ *      with their canonical id, so the personal EXISTS compares two plain
+ *      columns `(roomId, ref)` instead of re-resolving `ledgerHandIdSql` on both
+ *      sides for every candidate pair.
+ *
+ * Semantics are preserved verbatim: the personal filter stays an EXISTS (never a
+ * JOIN, so duplicate game legs cannot amplify `SUM(delta)`); commission keeps its
+ * RAW `l.ref` for the rate lookup (`hand_commission_rates` is keyed by raw ref);
+ * void exclusion still matches all THREE keys (raw ref, canonical id, head); and
+ * the winners aggregate keeps its own no-void-exclusion shape.
+ */
+export function platformDuesSql(): string {
+  return `
+    WITH commission_legs AS MATERIALIZED (
+      SELECT l.room_id AS roomId,
+             l.ref AS rawRef,
+             ${ledgerHandIdSql('l')} AS ref,
+             ${ledgerHeadSql('l')} AS head,
+             l.delta AS delta,
+             r.name AS roomName,
+             COALESCE(h.commission_bps, r.commission_bps) AS commissionBps
       FROM ledger l JOIN rooms r ON r.id = l.room_id
       LEFT JOIN hand_commission_rates h ON h.room_id = l.room_id AND h.ref = l.ref
       WHERE l.kind = 'commission' AND r.voided = 0 AND r.archived = 0 AND r.deleted = 0
-        AND ${settlementNotVoidedSql('l')}
+    ), void_rows AS MATERIALIZED (
+      SELECT DISTINCT room_id AS roomId, ref AS ref
+      FROM ledger WHERE kind = 'void-hand'
+    ), participant_legs AS MATERIALIZED (
+      SELECT DISTINCT l.room_id AS roomId, ${ledgerHandIdSql('l')} AS ref
+      FROM ledger l
+      WHERE ${gameNetLedgerKindSql('l')} AND l.user_id = @userId
+    ), commissions AS (
+      SELECT c.roomId AS roomId, c.ref AS ref, SUM(c.delta) AS rake,
+             c.roomName AS roomName, c.commissionBps AS commissionBps
+      FROM commission_legs c
+      WHERE NOT EXISTS (
+          SELECT 1 FROM void_rows v
+          WHERE v.roomId = c.roomId AND v.ref = c.rawRef)
+        AND NOT EXISTS (
+          SELECT 1 FROM void_rows v
+          WHERE v.roomId = c.roomId AND v.ref = c.ref)
+        AND NOT EXISTS (
+          SELECT 1 FROM void_rows v
+          WHERE v.roomId = c.roomId AND v.ref = c.head)
         AND (@userId IS NULL OR EXISTS (
-          SELECT 1 FROM ledger m WHERE m.room_id = l.room_id
-            AND ${ledgerHandIdSql('m')} = ${ledgerHandIdSql('l')}
-            AND ${gameNetLedgerKindSql('m')} AND m.user_id = @userId))
-      GROUP BY l.room_id, ${ledgerHandIdSql('l')} HAVING SUM(l.delta) > 0
-    ), winners AS (
+          SELECT 1 FROM participant_legs p
+          WHERE p.roomId = c.roomId AND p.ref = c.ref))
+      GROUP BY c.roomId, c.ref HAVING SUM(c.delta) > 0
+    ), winners AS MATERIALIZED (
       ${perHandNetSelect('l', {
         perUser: true,
         userAlias: 'userId',
@@ -45,8 +86,31 @@ export function platformDues(db: DB, onlyUserId: number | null = null): Platform
     SELECT c.*, w.userId, w.net FROM commissions c
     LEFT JOIN winners w ON w.room_id = c.roomId AND w.ref = c.ref
     ORDER BY c.roomId, c.ref, w.userId
-  `,
-    )
+  `;
+}
+
+/** One source for personal dues and the platform's receivables. Allocation keeps
+ * the established rule (net winners share each hand's commission), but assigns
+ * each odd chip once, instead of rounding each person's share independently.
+ * Retired rooms and voided hands follow the existing settle-up exclusions. */
+export function platformDues(db: DB, onlyUserId: number | null = null): PlatformDuesReport {
+  return platformDuesWithSql(db, platformDuesSql(), onlyUserId);
+}
+
+/**
+ * Runs an arbitrary dues query through the ONE shared report assembler. The
+ * equivalence test passes the pre-optimization SQL text so both versions are
+ * compared field-by-field through the exact same JS allocation logic (the
+ * allocation rule itself is not under test here).
+ */
+export function platformDuesWithSql(
+  db: DB,
+  sql: string,
+  onlyUserId: number | null = null,
+): PlatformDuesReport {
+  const platformId = platformUserId(db);
+  const rows = db
+    .prepare(sql)
     .all({ userId: onlyUserId, platformId }) as {
     roomId: string;
     roomName: string;
