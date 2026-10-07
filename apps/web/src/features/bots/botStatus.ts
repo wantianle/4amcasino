@@ -62,7 +62,21 @@ export interface BotPolicyOption {
   available: boolean;
 }
 
+/**
+ * Sentinel for "let the server pick". It is never persisted: `BotsDialog` omits
+ * `policyKind` from the create body when this is selected, so the server's
+ * balanced-by-deficit draw runs. It must stay first in `BOT_POLICIES` so a fresh
+ * dialog defaults to it.
+ */
+export const AUTO_BOT_POLICY_KIND = 'auto';
+
 export const BOT_POLICIES: BotPolicyOption[] = [
+  {
+    kind: AUTO_BOT_POLICY_KIND,
+    label: t('Auto (random)'),
+    blurb: t('A balanced mix - the server fills in the style this table is short of.'),
+    available: true,
+  },
   {
     kind: 'scripted',
     label: t('Tight-aggressive'),

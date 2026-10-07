@@ -19,8 +19,7 @@ import { decryptBotSeed, encryptBotSeed, identityKeyConfigured } from './botIden
 import { pickFunBotName } from './botNames.js';
 import { resolveAgentGrant } from './botAccess.js';
 import { botGoneMessage, isBotGone } from './botLifecycle.js';
-import { isLlmPolicyKind } from './botPolicy.js';
-import { pickBotPolicyKind, roomPolicyKinds } from './botPresetPick.js';
+import { resolveCreatePolicyKind, roomPolicyKinds } from './botPresetPick.js';
 
 /**
  * Bot lifecycle (Phase 1a: state + claim handoff).
@@ -108,10 +107,12 @@ export type { BotDifficulty };
 
 const createBotSchema = z.object({
   name: z.string().trim().min(1).max(24).optional(),
-  // Accepted for API compatibility, but a local preset sent here is IGNORED:
-  // the route draws a balanced-random local preset at create time (see the
-  // POST /bots handler). Only `llm` is honoured verbatim.
-  policyKind: z.string().trim().min(1).max(40).default('scripted'),
+  // Explicit local preset is honoured as-is; `llm` is honoured verbatim. Omit it
+  // (or send an empty/unknown value) to get the create-time balanced-random local
+  // preset - the product default. See `resolveCreatePolicyKind`. It stays
+  // `.optional()` with no default precisely so "unset" is distinguishable from a
+  // deliberate choice; an empty string is allowed through for the same reason.
+  policyKind: z.string().trim().max(40).optional(),
   policyJson: z.string().max(20_000).optional(),
   // Defaults to `medium` (the rules-v1 engine) so a create with no difficulty
   // runs the strong new bot by default; `low` is an explicit opt-out.
@@ -823,18 +824,21 @@ export function registerBotRoutes(app: FastifyInstance, db: DB, control: BotCont
 
     // Assign the bot's play style here, at create time.
     //
-    // At the default `medium` difficulty the rules-v1 engine always wins and the
-    // `policy_kind` alone selects the preset (`RULE_PRESETS`), so every bot
-    // created with the same kind plays identically up to its RNG seed. To make a
-    // table visibly varied we draw a random **local** preset, balanced by the
-    // kinds the room already has, and write THAT.
+    // A hand-picked style wins: an explicit local preset is written as-is (and
+    // `llm` verbatim). Only when the client sends nothing - or an empty/unknown
+    // value - do we draw a **balanced-by-deficit** local preset, so a table the
+    // host fills without choosing ends up visibly varied. At the default `medium`
+    // difficulty the rules-v1 engine always wins and `policy_kind` alone selects
+    // the preset (`RULE_PRESETS`), so every bot created with the same kind plays
+    // identically up to its RNG seed - the draw is what makes the default mixed.
     //
-    // An explicit `llm` request is honoured as-is: the model is a distinct
-    // capability (external call, per-call cost, multi-second latency), not a
-    // style preset, so it is deliberately not part of the random pool.
-    const policyKind = isLlmPolicyKind(b.policyKind)
-      ? 'llm'
-      : pickBotPolicyKind(Math.random, roomPolicyKinds(db, id));
+    // `llm` is deliberately not part of the random pool (external call, per-call
+    // cost, multi-second latency), but an explicit request for it is honoured.
+    const policyKind = resolveCreatePolicyKind(
+      b.policyKind,
+      Math.random,
+      roomPolicyKinds(db, id),
+    );
 
     // Fail closed: without the encryption key we cannot protect (or later
     // recover) a signing identity, and minting one we cannot store would leave a

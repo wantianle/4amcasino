@@ -14,6 +14,7 @@ import { fmtBB } from '../../shared/lib/bb.ts';
 import { Badge, Button, Dialog, Input } from '../../shared/ui/index.tsx';
 import { cn } from '../../shared/lib/cn.ts';
 import {
+  AUTO_BOT_POLICY_KIND,
   BOT_POLICIES,
   BOT_DIFFICULTIES,
   botDifficultyLabel,
@@ -168,7 +169,11 @@ export function BotsDialog({
       const created = await api.createBot(roomId, {
         seat,
         ...(name.trim() ? { name: name.trim() } : {}),
-        policyKind: policy,
+        // "Auto" is the default and means "server, balance the table": omit the
+        // field entirely rather than sending the sentinel (it is not a real
+        // policy kind the server persists). Any explicit pick is sent as-is and
+        // the server honours it.
+        ...(policy === AUTO_BOT_POLICY_KIND ? {} : { policyKind: policy }),
         difficulty,
         initialBuyIn,
       });

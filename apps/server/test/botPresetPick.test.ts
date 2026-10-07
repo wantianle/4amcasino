@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { RANDOM_BOT_PRESETS, pickBotPolicyKind } from '../src/botPresetPick.js';
+import {
+  RANDOM_BOT_PRESETS,
+  pickBotPolicyKind,
+  resolveCreatePolicyKind,
+} from '../src/botPresetPick.js';
 import type { PolicyKind } from '@4am/agent-core';
 
 const TI: PolicyKind = 'tight-aggressive';
@@ -89,5 +93,48 @@ describe('pickBotPolicyKind', () => {
     expect(room.slice(0, 4)).toContain(room[4]!);
     // And it is emphatically not the "everything the same" failure mode.
     expect(new Set(room).size).toBeGreaterThan(1);
+  });
+});
+
+describe('resolveCreatePolicyKind', () => {
+  it('honours an explicit local preset, canonicalising aliases', () => {
+    // The rng is rigged to the far end of the pool so an accidental draw would
+    // pick something else; the explicit value must win anyway.
+    expect(resolveCreatePolicyKind('scripted', () => 0.99, [])).toBe(TI);
+    expect(resolveCreatePolicyKind('lag', () => 0.99, [])).toBe(LA);
+    expect(resolveCreatePolicyKind('calling-station', () => 0.99, [])).toBe(CS);
+    expect(resolveCreatePolicyKind('constrained-random', () => 0.99, [])).toBe(CR);
+  });
+
+  it('honours llm verbatim regardless of room state', () => {
+    expect(resolveCreatePolicyKind('llm', () => 0.99, [TI])).toBe('llm');
+    expect(resolveCreatePolicyKind('LLM', () => 0.99, [])).toBe('llm');
+    expect(resolveCreatePolicyKind(' llm ', () => 0.99, [])).toBe('llm');
+  });
+
+  it('falls back to the balanced draw when unset/empty/unknown', () => {
+    // Omission, null, blank and unknown strings are all "auto". A literal `auto`
+    // sentinel is accepted too and falls through the same way.
+    expect(resolveCreatePolicyKind(undefined, () => 0, [])).toBe(TI);
+    expect(resolveCreatePolicyKind(null, () => 0, [])).toBe(TI);
+    expect(resolveCreatePolicyKind('', () => 0, [])).toBe(TI);
+    expect(resolveCreatePolicyKind('   ', () => 0, [])).toBe(TI);
+    expect(resolveCreatePolicyKind('auto', () => 0, [])).toBe(TI);
+    expect(resolveCreatePolicyKind('mystery-style', () => 0.75, [])).toBe(CR);
+  });
+
+  it('destructively: explicit picks repeat, auto spreads in the same room', () => {
+    // Explicit scripted cannot be overridden: two in a row both persist
+    // tight-aggressive even though the room would normally forbid a repeat.
+    const room: string[] = [];
+    room.push(resolveCreatePolicyKind('scripted', () => 0.9, room));
+    room.push(resolveCreatePolicyKind('scripted', () => 0.9, room));
+    expect(room).toEqual([TI, TI]);
+    // Auto then fills the deficits and never repeats tight-aggressive while it is
+    // over-represented.
+    room.push(resolveCreatePolicyKind(undefined, () => 0, room));
+    room.push(resolveCreatePolicyKind(undefined, () => 0, room));
+    expect(room.filter((k) => k === TI)).toHaveLength(2);
+    expect(new Set(room.slice(0, 4)).size).toBe(3);
   });
 });

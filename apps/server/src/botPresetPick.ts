@@ -1,4 +1,5 @@
 import { RULE_PRESETS, normalizePolicyKind, type PolicyKind } from '@4am/agent-core';
+import { isLlmPolicyKind } from './botPolicy.js';
 
 /**
  * Randomised bot-style assignment at create time.
@@ -73,6 +74,39 @@ export function pickBotPolicyKind(
     ? Math.min(pool.length - 1, Math.max(0, Math.floor(roll * pool.length)))
     : 0;
   return pool[index]!;
+}
+
+/**
+ * Resolve the `policy_kind` written for a NEW bot, honouring an explicit choice.
+ *
+ * Precedence:
+ *  1. `llm` — whenever requested, in any case/whitespace variant — is honoured
+ *     verbatim. It is a distinct capability (external model call, per-call cost,
+ *     multi-second latency), not a style preset, so it is never part of the
+ *     random pool.
+ *  2. An explicit, recognised local preset is used as-is, canonicalised so
+ *     aliases (`scripted`, `lag`, `station`, `random`, ...) persist in their
+ *     canonical form. The host's picker is therefore authoritative: a hand-picked
+ *     style is never overwritten by the lottery.
+ *  3. Anything else — omitted, empty/whitespace, or an unknown string — is
+ *     "auto": draw a balanced-by-deficit local preset from the room's current
+ *     kinds (see {@link pickBotPolicyKind}). This is the product default.
+ *
+ * The auto signal is **omission**, not a literal sentinel: an older/DS client
+ * that never sends `policyKind` lands on the default draw for free, and `'auto'`
+ * stays out of the persisted vocabulary. A literal `'auto'` string also falls
+ * through to case 3 naturally (it normalises to `null`), so either convention is
+ * accepted on the wire.
+ */
+export function resolveCreatePolicyKind(
+  requested: string | null | undefined,
+  rng: () => number = Math.random,
+  existingKinds: readonly string[] = [],
+): PolicyKind | 'llm' {
+  if (isLlmPolicyKind(requested)) return 'llm';
+  const explicit = normalizePolicyKind(requested);
+  if (explicit !== null) return explicit;
+  return pickBotPolicyKind(rng, existingKinds);
 }
 
 /**

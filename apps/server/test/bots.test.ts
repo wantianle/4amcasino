@@ -930,15 +930,41 @@ describe('bot create: randomised policy kind', () => {
     expect(botRow(res.json().bot.id).policy_kind).toBe('llm');
   });
 
-  it('ignores an explicit local preset and assigns a random one', async () => {
-    // The balanced selector cannot repeat a preset while another is absent, so
-    // four 'scripted' requests still yield the full spread - proving the client
-    // value is not what reaches the row.
+  it('honours an explicit local preset verbatim (destructive: no draw)', async () => {
+    // Four identical explicit requests must ALL persist `tight-aggressive`. Before
+    // the fix these produced the full four-way spread, which is exactly what
+    // proved the client value was being ignored. The picker is now authoritative.
     const kinds: string[] = [];
     for (let seat = 1; seat <= 4; seat++) {
       const res = await createBot({ seat, policyKind: 'scripted' });
+      expect(res.statusCode).toBe(200);
+      kinds.push(botRow(res.json().bot.id).policy_kind);
+    }
+    expect(kinds).toEqual([
+      'tight-aggressive',
+      'tight-aggressive',
+      'tight-aggressive',
+      'tight-aggressive',
+    ]);
+  });
+
+  it('canonicalises an explicit alias', async () => {
+    const res = await createBot({ seat: 1, policyKind: 'lag' });
+    expect(res.statusCode).toBe(200);
+    expect(botRow(res.json().bot.id).policy_kind).toBe('loose-aggressive');
+  });
+
+  it('treats an empty or unknown policyKind as auto (balanced draw)', async () => {
+    // Neither value names a real style, so both fall through to the draw; four
+    // such creates still spread across the four local presets.
+    const values = ['', 'mystery-style', '   ', 'auto'];
+    const kinds: string[] = [];
+    for (let seat = 1; seat <= values.length; seat++) {
+      const res = await createBot({ seat, policyKind: values[seat - 1]! });
+      expect(res.statusCode).toBe(200);
       kinds.push(botRow(res.json().bot.id).policy_kind);
     }
     expect(new Set(kinds).size).toBe(4);
+    for (const kind of kinds) expect(RANDOM_BOT_PRESETS).toContain(kind);
   });
 });

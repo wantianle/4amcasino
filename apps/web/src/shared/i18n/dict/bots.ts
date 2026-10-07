@@ -90,6 +90,9 @@ const bots: Record<string, string> = {
     '九个座位都坐满了——先停止并移除一个机器人腾个位。',
 
   // ── play styles ───────────────────────────────────────────────────────────
+  'Auto (random)': '自动（随机）',
+  'A balanced mix - the server fills in the style this table is short of.':
+    '均衡混搭——服务端补上这张桌缺的打法。',
   'Tight-aggressive': '紧凶',
   'Loose-aggressive': '松凶',
   'Calling station': '跟注站',
