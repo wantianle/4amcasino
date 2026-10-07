@@ -858,13 +858,12 @@ export function TablePage() {
   const winnersLine = resultWinners.length
     ? resultWinners.map((w) => `${seatName(w.seat)} +${fmt(w.delta)}`).join(' & ')
     : t('chips stayed put');
-  const renderFlash = (dark: boolean) => {
+  const renderFlash = () => {
     if (!showResult) return null;
     const dismiss = () => setResultDismissed(true);
     if (hand.abort) {
       return (
         <ResultFlash
-          dark={dark}
           aborted
           headline={t('Hand aborted')}
           detail={tr(hand.abort.reason)}
@@ -2034,7 +2033,7 @@ export function TablePage() {
             role="region"
             aria-label={t('Hand result')}
           >
-            {renderFlash(false)}
+            {renderFlash()}
           </div>
         )}
         {showResult && !hand.abort && hand.result && (

@@ -74,3 +74,50 @@ describe('ResultFlash overflow', () => {
     expect(markup(null)).not.toContain(DETAIL);
   });
 });
+
+/**
+ * Golden class snapshot.
+ *
+ * `ResultFlash` used to take a `dark` prop, but its only caller always passed
+ * `false` (TablePage renderFlash), so every `dark ? A : B` A-branch was dead.
+ * These are the literal class strings a `dark=false` render produced *before*
+ * the dead branches were removed. If a surviving branch is ever accidentally
+ * swapped for a deleted dark one, these turn red.
+ *
+ * (The `dark:` Tailwind variants below are NOT the removed prop - they are
+ *  Tailwind's `prefers-color-scheme` variants and must stay.)
+ */
+const CONTAINER_CLASS =
+  'pointer-events-auto flex max-w-full items-center gap-2 rounded-full py-1.5 pl-3 pr-1.5 backdrop-blur bg-white/95 text-slate-900 shadow-[0_14px_40px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80 dark:bg-slate-900/90 dark:text-white dark:shadow-[0_14px_40px_rgba(2,6,23,0.55)] dark:ring-white/10';
+const DETAIL_CLASS = 'min-w-0 shrink-[2] truncate text-xs text-slate-500 dark:text-slate-400';
+const SIDE_BUTTON_CLASS =
+  'shrink-0 rounded-full p-1.5 transition-colors text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-200';
+
+/** Class list of the first element whose class attribute contains `needle`. */
+const classContaining = (html: string, needle: string): string => {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`class="([^"]*${escaped}[^"]*)"`).exec(html);
+  if (!match) throw new Error(`no class attribute containing "${needle}"`);
+  return match[1] ?? '';
+};
+
+describe('ResultFlash runtime classes are unchanged by the dark-prop removal', () => {
+  const aborted = () =>
+    renderToStaticMarkup(
+      <ResultFlash headline="Hand aborted" detail={DETAIL} aborted onDismiss={() => undefined} />,
+    );
+
+  it('pins the aborted pill: container, icon, detail, side buttons', () => {
+    const html = aborted();
+    expect(classContaining(html, 'pointer-events-auto')).toBe(CONTAINER_CLASS);
+    expect(classContaining(html, 'text-rose-500')).toBe('shrink-0 text-rose-500');
+    expect(classContaining(html, 'shrink-[2]')).toBe(DETAIL_CLASS);
+    expect(classContaining(html, 'text-slate-400 hover:bg-slate-100')).toBe(SIDE_BUTTON_CLASS);
+  });
+
+  it('pins the non-aborted pill icon to amber (never the deleted dark amber-300)', () => {
+    const html = markup(DETAIL);
+    expect(classContaining(html, 'text-amber-500')).toBe('shrink-0 text-amber-500');
+    expect(html).not.toContain('text-amber-300');
+  });
+});
