@@ -1,11 +1,14 @@
 # Table web batch QA
 
+> ⚠️ 注记（2026-10-08）：本文记录的 paid peek（付费买看）功能**已于当日彻底移除**。
+> 下文提及 peek 的条目保留为当时的 QA 记录，不再代表当前实现。
+
 ## Scope
 
 This batch moves the player HUD to seat avatars, adds VPIP seat badges, makes
 the seat plaque two-row and makes check feedback visible. The paid peek affordance
-is now a compact TableDock item and is limited to a settled heads-up hand with
-an unrevealed opponent. No server protocol or server source was changed.
+(removed 2026-10-08) was a compact TableDock item limited to a settled heads-up
+hand with an unrevealed opponent. No server protocol or server source was changed.
 
 ## Validation
 
@@ -43,7 +46,7 @@ passed; the 1280×720 value is retained as a non-gating diagnostic.
   in `/tmp/opencode/table-repair-v2-pass` and were not copied into this lane;
   the auditable numeric JSON is committed here instead.
 - **HUD success/loading/low-sample/hidden/error, opener/Escape/backdrop/Close
-  focus restoration, VPIP, check feedback, and paid peek:** source-level
+  focus restoration, VPIP, check feedback, and paid peek (removed 2026-10-08):** source-level
   behavior is implemented and the existing browser fixture transport can
   exercise the table states, but a dedicated screenshot/semantic manifest for
   each of these states was **not captured in this lane**. Do not treat the
@@ -81,7 +84,7 @@ not part of this batch:
   dialog focus/opener restoration and spectator no-entry behavior;
 - VPIP `SeatBadges` and two-row plaque markup;
 - check feedback pill and reduced-motion styling;
-- paid-peek TableDock visibility/containment;
+- paid-peek TableDock visibility/containment (feature removed 2026-10-08);
 - phone `display: contents` restoration and hero phone positioning;
 - overlap probe community-board selector calibration;
 - HUD validation unit tests and the two overlap JSON evidence files.

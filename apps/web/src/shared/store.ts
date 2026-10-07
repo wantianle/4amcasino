@@ -163,14 +163,6 @@ export interface AuthState {
   leaderboardRank?: number | null;
 }
 
-export interface PeekResult {
-  targetSeat: number;
-  targetUserId: number;
-  /** Frozen at receipt, so leaving or reusing a seat cannot rename this result. */
-  targetName: string;
-  cards: CardId[];
-}
-
 /** View-layer voice state, reset whenever the signed-in identity changes. */
 export interface VoiceState {
   joined: boolean;
@@ -197,9 +189,6 @@ export interface HandView {
   preAction: 'check-fold' | 'check' | 'call' | 'call-any' | null;
   /** The call price a 'call' pre-action was armed at; it never pays more. */
   preActionCallAt: number | null;
-  /** Paid-peek offers waiting for my answer, and reveals only I can see. */
-  peekOffers: { offerId: string; fromUserId: number; fromName: string; amount: number }[];
-  peekResults: Record<number, PeekResult>;
   /** When the server opens the next automatic ready check. */
   autoDealAt: number | null;
   /** Pre-deal ready check: nobody is dealt in without clicking I'm ready. */
@@ -295,8 +284,6 @@ export const emptyHand: HandView = {
   abort: null,
   preAction: null,
   preActionCallAt: null,
-  peekOffers: [],
-  peekResults: {},
   autoDealAt: null,
   readyCheck: null,
   ritOffer: null,

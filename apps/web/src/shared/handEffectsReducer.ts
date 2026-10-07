@@ -10,11 +10,11 @@ import type { SoundName } from './sounds.ts';
  *
  *  Frames are deliberately kept out of this set when their sound depends on the
  *  store (e.g. `ready_check` plays `turn` only when a check just opened) or when
- *  a later side effect reads state written by the patch (e.g. `multi_run_result`,
- *  `peek_offer_closed`, `peek_result`). Those stay on the switch in `handle()`. */
+ *  a later side effect reads state written by the patch (e.g. `multi_run_result`).
+ *  Those stay on the switch in `handle()`. */
 export type HandEffectsMsg = Extract<
   ServerMsg,
-  { t: 'rit_offer' | 'rit_result' | 'multi_run_offer' | 'squid_result' | 'peek_offer' }
+  { t: 'rit_offer' | 'rit_result' | 'multi_run_offer' | 'squid_result' }
 >;
 
 /** A *description* of a side effect, never the effect itself.
@@ -38,10 +38,11 @@ export type HandEffectsResult = {
 
 /** Pure reducer for the "unconditional sound + pure patch" frames.
  *
- *  A pure function of `(state, msg)`: it reads `state` only for `peek_offer`'s
- *  duplicate-frame guard and list append, and never reads the clock. The
- *  returned effects are data, not calls. */
-export function handEffectsReducer(state: HandView, msg: HandEffectsMsg): HandEffectsResult {
+ *  A pure function of `(state, msg)`: every remaining frame is decided from the
+ *  message payload alone (the previous `peek_offer` append was the only branch
+ *  that read `state`), and it never reads the clock. The returned effects are
+ *  data, not calls. */
+export function handEffectsReducer(_state: HandView, msg: HandEffectsMsg): HandEffectsResult {
   switch (msg.t) {
     case 'rit_offer':
       return {
@@ -83,27 +84,5 @@ export function handEffectsReducer(state: HandView, msg: HandEffectsMsg): HandEf
 
     case 'squid_result':
       return { patch: { squidResult: msg }, effects: [{ kind: 'sound', name: 'chip' }] };
-
-    case 'peek_offer': {
-      // Guard is a precondition, not an effect that depends on the patch: both
-      // the sound and the append are decided from the same pre-write snapshot.
-      if (state.handId !== msg.handId || state.peekOffers.some((o) => o.offerId === msg.offerId)) {
-        return null;
-      }
-      return {
-        patch: {
-          peekOffers: [
-            ...state.peekOffers,
-            {
-              offerId: msg.offerId,
-              fromUserId: msg.fromUserId,
-              fromName: msg.fromName,
-              amount: msg.amount,
-            },
-          ],
-        },
-        effects: [{ kind: 'sound', name: 'chip' }],
-      };
-    }
   }
 }

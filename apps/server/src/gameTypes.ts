@@ -181,13 +181,6 @@ export const AUTO_DEAL_INTERVAL_MS = TUNABLE_DEFAULTS.autoDealIntervalMs;
 export const SHOWDOWN_HOLD_MS = 1_500;
 
 /**
- * Product contract: a paid peek offer stays open for five seconds. After that
- * the server expires it and tells the requester, so a target who disconnects or
- * ignores the offer can never leave the requester waiting forever.
- */
-export const PEEK_OFFER_TTL_MS = 5_000;
-
-/**
  * After a showdown hand has settled, how long the table waits before the next
  * auto-deal. Gives the client's settlement animation room to finish. Fold-outs
  * (no reveal) skip it and rely on the normal AUTO_DEAL_INTERVAL_MS cadence.

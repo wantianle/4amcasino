@@ -64,21 +64,6 @@ function recordOrder(fn: () => void): string[] {
   return order;
 }
 
-/** Counts store notifications for `fn` - a frame that early-returns produces
- *  zero, which distinguishes it from a write of an identical value. */
-function countWrites(fn: () => void): number {
-  let n = 0;
-  const unsub = useStore.subscribe(() => {
-    n++;
-  });
-  try {
-    fn();
-  } finally {
-    unsub();
-  }
-  return n;
-}
-
 beforeEach(() => {
   sounds.play.mockReset();
   socket.send.mockClear();
@@ -195,87 +180,9 @@ describe('handEffectsReducer: squid_result', () => {
   });
 });
 
-describe('handEffectsReducer: peek_offer', () => {
-  it('appends an incoming offer and plays the chip cue', () => {
-    useStore.getState().patchHand({ handId: 'h-peek' });
-    const result = recordOrder(() => {
-      handle({
-        t: 'peek_offer',
-        offerId: 'o1',
-        handId: 'h-peek',
-        fromUserId: 7,
-        fromName: 'Seven',
-        targetSeat: 0,
-        amount: 25,
-      });
-    });
-    expect(useStore.getState().hand.peekOffers).toEqual([
-      { offerId: 'o1', fromUserId: 7, fromName: 'Seven', amount: 25 },
-    ]);
-    expect(played()).toEqual(['chip']);
-    expect(result).toEqual(['write', 'play']);
-  });
-
-  it('keeps the existing order when a second offer arrives', () => {
-    useStore.getState().patchHand({
-      handId: 'h-peek',
-      peekOffers: [{ offerId: 'o1', fromUserId: 7, fromName: 'Seven', amount: 25 }],
-    });
-    handle({
-      t: 'peek_offer',
-      offerId: 'o2',
-      handId: 'h-peek',
-      fromUserId: 8,
-      fromName: 'Eight',
-      targetSeat: 0,
-      amount: 50,
-    });
-    expect(useStore.getState().hand.peekOffers.map((o) => o.offerId)).toEqual(['o1', 'o2']);
-  });
-
-  it('ignores a duplicate offer id: no write and no sound', () => {
-    useStore.getState().patchHand({
-      handId: 'h-peek',
-      peekOffers: [{ offerId: 'o1', fromUserId: 7, fromName: 'Seven', amount: 25 }],
-    });
-    const writes = countWrites(() => {
-      handle({
-        t: 'peek_offer',
-        offerId: 'o1',
-        handId: 'h-peek',
-        fromUserId: 7,
-        fromName: 'Seven',
-        targetSeat: 0,
-        amount: 25,
-      });
-    });
-    expect(writes).toBe(0);
-    expect(played()).toEqual([]);
-    expect(useStore.getState().hand.peekOffers).toHaveLength(1);
-  });
-
-  it('ignores an offer for a different hand: no write and no sound', () => {
-    useStore.getState().patchHand({ handId: 'other' });
-    const writes = countWrites(() => {
-      handle({
-        t: 'peek_offer',
-        offerId: 'o1',
-        handId: 'h-peek',
-        fromUserId: 7,
-        fromName: 'Seven',
-        targetSeat: 0,
-        amount: 25,
-      });
-    });
-    expect(writes).toBe(0);
-    expect(played()).toEqual([]);
-    expect(useStore.getState().hand.peekOffers).toEqual([]);
-  });
-});
-
 describe('handEffectsReducer purity', () => {
   it('describes effects as data and plays nothing when called directly', () => {
-    useStore.getState().patchHand({ handId: 'h-peek' });
+    useStore.getState().patchHand({ handId: 'h-rit' });
     const result = handEffectsReducer(useStore.getState().hand, {
       t: 'rit_offer',
       handId: 'h-rit',
@@ -288,22 +195,5 @@ describe('handEffectsReducer purity', () => {
     });
     // The reducer itself is the thing under test here: no sound was executed.
     expect(sounds.play).not.toHaveBeenCalled();
-  });
-
-  it('returns null (no patch, no effects) for a duplicate peek_offer', () => {
-    useStore.getState().patchHand({
-      handId: 'h-peek',
-      peekOffers: [{ offerId: 'o1', fromUserId: 7, fromName: 'Seven', amount: 25 }],
-    });
-    const result = handEffectsReducer(useStore.getState().hand, {
-      t: 'peek_offer',
-      offerId: 'o1',
-      handId: 'h-peek',
-      fromUserId: 7,
-      fromName: 'Seven',
-      targetSeat: 0,
-      amount: 25,
-    });
-    expect(result).toBeNull();
   });
 });

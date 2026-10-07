@@ -46,8 +46,7 @@ pot, per-player win/loss bars, and who owes whom.
 winnings chart in the lobby, a play-style radar mined from your actual hand transcripts
 (loose/aggressive/pressure/showdowns/wins, plus an archetype: shark, rock, maniac, calling
 station...), one-tap shareable hand-result images, an optional 7-2 offsuit bounty the banker
-can put up, paid peeks at mucked cards (if the owner agrees), and a private mode that hides
-your winnings from everyone but the bankers.
+can put up, and a private mode that hides your winnings from everyone but the bankers.
 
 ## How the cards stay secret
 

@@ -1,5 +1,5 @@
 // Table page dictionary (pages/table/TablePage.tsx) — glossary per
-// docs/zh-i18n.md §2: 牌桌 / 房间码 / 观战 / 账本 / 出牌记录 / 台费 / 买看 /
+// docs/zh-i18n.md §2: 牌桌 / 房间码 / 观战 / 账本 / 出牌记录 / 台费 /
 // 底牌 / 摊牌 / 公共牌 / 作废 / 全下 / 跑两次牌 / N 号位. host → 房主,
 // banker → 账房 (never 庄家), the house → 平台.
 // Style: 一律「你」, 按钮/徽章不加句号, 状态长句加; ellipsis 用「…」; 品牌
@@ -10,8 +10,6 @@
 // 'Turn timer' / 'No limit' (lobby), 'Try again' (landing), 'Settings'
 // (settings), 'The table' (landing), 'Copy' (account).
 const tablePage: Record<string, string> = {
-  'Peek results': '买看结果',
-  '{n} people want to peek at your cards': '{n} 人想看你的牌',
   // ── Joining the room / connection states ──────────────────────────────
   'Could not join this table: {error}': '这张桌进不去：{error}',
   'Could not load room': '房间没能加载出来。',
@@ -60,18 +58,8 @@ const tablePage: Record<string, string> = {
   'Deal hand': '发牌',
   'Next hand in {n}s': '{n} 秒后开下一手',
 
-  // ── Peek（买看）───────────────────────────────────────────────────────
-  '{name} offers {amount} to privately see the cards you just had.':
-    '{name} 出 {amount}，想私下看你刚打完的底牌。',
-  'Accept {amount}': '接受 {amount}',
+  // Used by the friends panel.
   Decline: '拒绝',
-  '{name} had': '{name} 的底牌',
-  'only you can see this': '只有你能看到',
-  'Asked {name}': '已问过 {name}',
-  'Peek at {name}': '看 {name} 的牌',
-  '1 BB, paid only if they agree to show you': '1 BB，对方同意亮牌才支付',
-  'Your peek offer expired.': '你的买看已过期。',
-  'Your peek offer failed.': '你的买看没成功。',
 
   // ── Result headlines（牌力措辞由 pokerLabels.tScore 产出）─────────────
   '{name} takes the pot. Everyone else folded, so no cards had to be shown.':

@@ -17,9 +17,8 @@ const TOKEN = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
  * `{name}` text; string/number vars are fine alongside nodes.
  *
  * @example
- *   tNode('{name} offers {amount} to peek.', {
- *     name: <b>{o.fromName}</b>,
- *     amount: <b className="font-display">{fmt(o.amount)}</b>,
+ *   tNode('{name} takes the pot.', {
+ *     name: <b>{winnerName}</b>,
  *   })
  */
 export function tNode(source: string, vars: Record<string, ReactNode>): ReactNode {

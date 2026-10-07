@@ -29,8 +29,7 @@ export interface ShowSnapshot {
   winnerSeats: number[];
   reveals: Map<number, CardId[]>;
   /** True when no one had to show: the hand was decided by a fold. Kept on the
-   *  snapshot for consumers; the peek gate no longer keys off it (a peek is
-   *  allowed out of any hand with still-private cards). */
+   *  snapshot for consumers. */
   endedByFold: boolean;
 }
 

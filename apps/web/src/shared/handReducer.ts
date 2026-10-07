@@ -10,7 +10,7 @@ import type { HandView } from './store.ts';
  *  (lifecycle reducer / effect vocabulary). */
 export type HandStateMsg = Extract<
   ServerMsg,
-  { t: 'ready_end' | 'feature_started' | 'time_bank_update' | 'peek_offers_snapshot' | 'auto_deal' }
+  { t: 'ready_end' | 'feature_started' | 'time_bank_update' | 'auto_deal' }
 >;
 
 /** Pure hand-state reducer.
@@ -19,7 +19,7 @@ export type HandStateMsg = Extract<
  *  hand unchanged (so the caller can skip the store write, exactly as the
  *  original early-return did). It touches no store, socket, DOM, storage or
  *  clock directly: the clock is injected by the caller as a thunk and is only
- *  consulted for `auto_deal`, so none of the other four frames reads it. This
+ *  consulted for `auto_deal`, so none of the other three frames reads it. This
  *  keeps the result a pure function of `(state, msg, clock)` and keeps the
  *  number of clock reads observable-identical to the pre-extraction switch
  *  (which only called `Date.now()` on the `auto_deal` branch). */
@@ -40,13 +40,6 @@ export function handReducer(
 
     case 'time_bank_update':
       return { timeBanks: { ...state.timeBanks, [msg.seat]: msg.remainingMs } };
-
-    case 'peek_offers_snapshot': {
-      // The server snapshot is the authoritative set of still-open INCOMING
-      // offers after reconnect. It says nothing about our outgoing offers.
-      const live = new Set(msg.incomingOfferIds);
-      return { peekOffers: state.peekOffers.filter((o) => live.has(o.offerId)) };
-    }
 
     case 'auto_deal':
       // the only branch that needs the clock; `now()` is called here and nowhere

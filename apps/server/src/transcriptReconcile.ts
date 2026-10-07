@@ -152,9 +152,14 @@ export function reconcileTranscript(
     )
     .get(t.room_id, t.head) as { kind: string } | undefined;
   if (badKind) return failReconcile(`unexpected ledger kind '${badKind.kind}' on the settlement head`);
+  // 'peek' is tolerated here for HISTORICAL compatibility only (the paid-peek
+  // feature was removed on 2026-10-08): old hands carry independent
+  // `kind = 'peek'` legs under the hand-id ref, and those hands must still
+  // reconcile. New peek legs can no longer be written, and the leg selection
+  // below deliberately omits 'peek', so it stays out of the game net.
   const badHandRef = db
     .prepare(
-      `SELECT kind FROM ledger WHERE room_id = ? AND ref = ? AND kind NOT IN ('seven-deuce', ?) LIMIT 1`,
+      `SELECT kind FROM ledger WHERE room_id = ? AND ref = ? AND kind NOT IN ('seven-deuce', 'peek', ?) LIMIT 1`,
     )
     .get(t.room_id, t.hand_id, SEVEN_DEUCE_SHOW_KIND) as { kind: string } | undefined;
   if (badHandRef)

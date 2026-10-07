@@ -8,7 +8,6 @@ import {
   pointHex,
   proveUnmask,
   randScalar,
-  signContent,
 } from '@4am/mental-poker';
 import type { CardId, ServerMsg } from '@4am/shared';
 import { createApp } from '../src/app.js';
@@ -610,12 +609,19 @@ describe('void guard: no money leg may be added after a hand is voided', () => {
     expect(again.statusCode).toBe(400);
   });
 
-  it('rejects a peek accepted after the hand was voided: no transfer, peek_result failed', async () => {
+  // The paid-peek feature was removed on 2026-10-08, so there is no live route
+  // that can write a peek leg any more. These two tests keep protecting the
+  // `'peek'` branch social.ts deliberately retains: historical hands still
+  // carry `kind = 'peek'` ledger legs, and a void MUST reverse them (hand-id
+  // ref) or the hand silently stops summing to zero.
+  it('reverses historical peek legs on void (peek feature removed 2026-10-08)', async () => {
     const host = await register('vg2_host'); // buyer / requester
     const bob = await register('vg2_bob'); // target
     makeRoom(ctx.db, 'vg2', host.userId);
     addPlayer(ctx.db, 'vg2', host.userId, 0, 1000);
     addPlayer(ctx.db, 'vg2', bob.userId, 1, 1000);
+    // seed the independent post-hand peek transfer exactly as the removed
+    // feature wrote it: ref = hand id, buyer -2, target +2.
     seedHand(ctx.db, {
       handId: 'h_vg2',
       head: 'head_vg2',
@@ -627,66 +633,28 @@ describe('void guard: no money leg may be added after a hand is voided', () => {
       legs: [
         { userId: host.userId, delta: -5, kind: 'hand-settlement' },
         { userId: bob.userId, delta: 5, kind: 'hand-settlement' },
+        { userId: host.userId, delta: -2, kind: 'peek' },
+        { userId: bob.userId, delta: 2, kind: 'peek' },
       ],
     });
 
     room = new GameRoom(ctx.db, 'vg2', genIdentity(), gameOpts());
-    const hostSock = fakeSocket();
-    const bobSock = fakeSocket();
-    room.join(host.userId, hostSock.ws);
-    room.join(bob.userId, bobSock.ws);
-    const bobIdentity = genIdentity();
-    const bobFixture = seatFixture(bob.userId, bobIdentity.publicKey, [0, 4], [0, 1]);
-    setSnapshot(
-      room,
-      'h_vg2',
-      [
-        { seat: 0, fixture: seatFixture(host.userId, genIdentity().publicKey, [], []) },
-        { seat: 1, fixture: bobFixture },
-      ],
-      [0],
-      true,
-    );
-
-    // the offer is made while the hand is still live (pre-void)
-    (room as unknown as { onPeekOffer(u: number, m: unknown): void }).onPeekOffer(host.userId, {
-      t: 'peek_offer',
-      handId: 'h_vg2',
-      targetSeat: 1,
-    });
-    const offer = bobSock.sent.find((m) => m.t === 'peek_offer') as
-      | { t: 'peek_offer'; offerId: string }
-      | undefined;
-    expect(offer).toBeTruthy();
-
-    // the banker voids the hand
     const res = await voidHand('vg2', host.token, 'h_vg2');
     expect(res.statusCode).toBe(200);
-    const peekBefore = ledgerKindCount('vg2', 'peek');
+    expect((res.json() as { reversed: number }).reversed).toBe(4);
 
-    // the target then accepts - with a genuinely valid signature and shares
-    const shares = bobFixture.shares;
-    const sig = signContent(bobIdentity.secretKey, 'h_vg2', 'peek_accept', {
-      offerId: offer!.offerId,
-      shares,
-    });
-    (room as unknown as { onPeekAnswer(u: number, m: unknown): void }).onPeekAnswer(bob.userId, {
-      t: 'peek_accept',
-      handId: 'h_vg2',
-      offerId: offer!.offerId,
-      shares,
-      sig,
-    });
-
-    // refused: requester told `failed`, target gets an error, no money moved
-    expect(hostSock.sent.some((m) => m.t === 'peek_result' && m.status === 'failed')).toBe(true);
-    expect(bobSock.sent.some((m) => m.t === 'error' && /void/i.test(m.message))).toBe(true);
-    expect(ledgerKindCount('vg2', 'peek')).toBe(peekBefore);
+    // each original peek leg got exactly one reversal, keyed to the hand id
+    const money = handMoney(ctx.db, 'vg2', 'h_vg2', 'head_vg2');
+    const voidPeek = money.filter((r) => r.kind === 'void-hand' && r.ref === 'h_vg2');
+    expect(voidPeek).toHaveLength(2);
+    expect(voidPeek.reduce((s, r) => s + r.delta, 0)).toBe(0);
+    // whole hand still nets to zero, and the peek transfer was undone
+    expect(money.reduce((s, r) => s + r.delta, 0)).toBe(0);
     expect(stackOf(ctx.db, 'vg2', host.userId)).toBe(1000);
     expect(stackOf(ctx.db, 'vg2', bob.userId)).toBe(1000);
   });
 
-  it('rejects a brand-new peek offer after the hand was voided: no offer, no ledger row', async () => {
+  it('refuses a second void: no duplicate peek reversal', async () => {
     const host = await register('vg3_host');
     const bob = await register('vg3_bob');
     makeRoom(ctx.db, 'vg3', host.userId);
@@ -703,34 +671,27 @@ describe('void guard: no money leg may be added after a hand is voided', () => {
       legs: [
         { userId: host.userId, delta: -5, kind: 'hand-settlement' },
         { userId: bob.userId, delta: 5, kind: 'hand-settlement' },
+        { userId: host.userId, delta: -2, kind: 'peek' },
+        { userId: bob.userId, delta: 2, kind: 'peek' },
       ],
     });
 
     room = new GameRoom(ctx.db, 'vg3', genIdentity(), gameOpts());
-    const hostSock = fakeSocket();
-    room.join(host.userId, hostSock.ws);
-    setSnapshot(
-      room,
-      'h_vg3',
-      [
-        { seat: 0, fixture: seatFixture(host.userId, genIdentity().publicKey, [], []) },
-        { seat: 1, fixture: seatFixture(bob.userId, genIdentity().publicKey, [0, 4], [0, 1]) },
-      ],
-      [0],
-      true,
-    );
+    const first = await voidHand('vg3', host.token, 'h_vg3');
+    expect(first.statusCode).toBe(200);
+    const voidsBefore = handMoney(ctx.db, 'vg3', 'h_vg3', 'head_vg3').filter(
+      (r) => r.kind === 'void-hand',
+    ).length;
 
-    const res = await voidHand('vg3', host.token, 'h_vg3');
-    expect(res.statusCode).toBe(200);
-
-    (room as unknown as { onPeekOffer(u: number, m: unknown): void }).onPeekOffer(host.userId, {
-      t: 'peek_offer',
-      handId: 'h_vg3',
-      targetSeat: 1,
-    });
-    expect(hostSock.sent.some((m) => m.t === 'error' && /void/i.test(m.message))).toBe(true);
-    // no offer was registered and nothing hit the ledger
-    expect((room as unknown as { peekOffers: Map<string, unknown> }).peekOffers.size).toBe(0);
-    expect(ledgerKindCount('vg3', 'peek')).toBe(0);
+    const again = await voidHand('vg3', host.token, 'h_vg3');
+    expect(again.statusCode).toBe(400);
+    const voidsAfter = handMoney(ctx.db, 'vg3', 'h_vg3', 'head_vg3').filter(
+      (r) => r.kind === 'void-hand',
+    ).length;
+    // no second reversal written: the peek legs stay reversed exactly once
+    expect(voidsAfter).toBe(voidsBefore);
+    expect(
+      handMoney(ctx.db, 'vg3', 'h_vg3', 'head_vg3').reduce((s, r) => s + r.delta, 0),
+    ).toBe(0);
   });
 });

@@ -222,16 +222,8 @@ const server: Record<string, string> = {
     '这张桌已存档，取消存档才能继续发牌。',
   'bad signature': '签名不对。',
   'invalid card reveal': '亮牌无效。',
-  'those are your own cards': '这是你自己的底牌。',
-  'those cards are already public': '这几张牌已经公开了。',
   'you can show your cards after folding or once the hand ends':
     '弃牌之后或这手结束之后才能亮牌。',
-  'peek offers only work between hands': '买看报价只能在一手牌结束后发出。',
-  'not enough chips for that offer': '你的筹码不够出这个价。',
-  'that offer is gone': '这条报价已经没了。',
-  'that offer is not yours to answer': '这条买看报价不是发给你的。',
-  'the buyer no longer has enough chips': '出价方的筹码已经不够了。',
-  'that player was not in the last hand': '那名玩家不在上一手牌里。',
   'bad commit point': '提交点数据无效。',
   'not in commit phase': '现在不在承诺阶段。',
   'not in shuffle phase': '现在不在洗牌阶段。',
@@ -283,6 +275,9 @@ const server: Record<string, string> = {
   commission: '台费',
   'hand-settlement': '结算',
   'void-hand': '作废',
+  // Historical only (2026-10-08): the paid-peek feature was removed, but
+  // existing ledger rows still carry `kind = 'peek'`, so this badge must stay
+  // to render them. Same for the peek note phrases below.
   peek: '买看',
   'seven-deuce': '7-2 彩头',
   // P2: one aggregated row per seat at settlement (game.ts applyHandSettlement).
@@ -343,7 +338,6 @@ const server: Record<string, string> = {
   'session expired': '登录状态已过期',
   'Refused an unmask request for a card dealt to me.': '拒绝对发给我的牌做解掩请求。',
   'Could not decode a dealt card. The hand will abort.': '有一张发出来的牌解不开，这手牌要作废。',
-  'Your peek offer was declined.': '你的买看被拒了。',
 };
 
 export default server;

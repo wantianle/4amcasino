@@ -116,8 +116,8 @@ function transcriptPayloadOf(
  * Sources: `hand_settlements` (identity + `final_stacks`), the sealed
  * transcript (head + seat map + seat-projected legs) and the ledger (the money
  * legs). It NEVER derives historical final stacks from the CURRENT
- * `room_players` balances: those may have moved on through a mid-hand buy, a
- * peek or the next hand. Any structural deviation or identity conflict throws,
+ * `room_players` balances: those may have moved on through a mid-hand buy or
+ * the next hand. Any structural deviation or identity conflict throws,
  * so a `same handId, different hand` replay can never masquerade as a harmless
  * duplicate.
  */

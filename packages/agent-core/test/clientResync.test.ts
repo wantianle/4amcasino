@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BettingState, CardId, ServerMsg } from '@4am/shared';
-import { cardPoint, identityFromSeed, pointHex } from '@4am/mental-poker';
+import { identityFromSeed } from '@4am/mental-poker';
 import { HeadlessClient } from '../src/client.js';
 
 /**
@@ -136,26 +136,6 @@ const handEnd = (handId: string): ServerMsg =>
   ({ t: 'hand_end', handId, deltas: [] }) as unknown as ServerMsg;
 const showdown = (handId: string): ServerMsg =>
   ({ t: 'showdown', handId, reveals: [], awards: [] }) as unknown as ServerMsg;
-const peekOffer = (handId: string, offerId = 'o1'): ServerMsg =>
-  ({
-    t: 'peek_offer',
-    handId,
-    offerId,
-    fromUserId: 2,
-    fromName: 'Villain',
-    targetSeat: 0,
-    amount: 50,
-  }) as unknown as ServerMsg;
-const peekResult = (handId: string, offerId = 'o1'): ServerMsg =>
-  ({
-    t: 'peek_result',
-    handId,
-    offerId,
-    targetSeat: 1,
-    status: 'accepted',
-    amount: 50,
-    cards: [],
-  }) as unknown as ServerMsg;
 const cardsShown = (handId: string): ServerMsg =>
   ({ t: 'cards_shown', handId, seat: 1, cards: [] }) as unknown as ServerMsg;
 const sevenDeuce = (handId: string): ServerMsg =>
@@ -552,87 +532,6 @@ describe('HeadlessClient reconnect resync barrier', () => {
     expect(c.isResynced).toBe(true);
   });
 
-  it('drops a stale peek_offer and never answers it', () => {
-    const { c, s } = staleTurnThenReconnect(); // holds hand h1
-    const send = vi.spyOn(c, 'send');
-    s.handle(peekOffer('h-old', 'o-old'));
-    expect(c.peekOffers).toEqual([]);
-    // A stale offer triggers no automatic answer, and answering the dropped id
-    // must not emit any frame either.
-    expect(send).not.toHaveBeenCalled();
-    c.answerPeek('o-old', true);
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it('auto-accepts a peek_offer for the recent hand with shares and a signature', () => {
-    const { c, s } = freshClient();
-    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
-    s.handle(roomState(true));
-    s.handle(handStart('h1'));
-    s.handle(bettingState('h1', 3, 0));
-    s.handle(handEnd('h1')); // recent hand is h1
-    s.handKeys.set('h1', 123456789n);
-    c.myCardPoints = [
-      { deckIndex: 0, point: pointHex(cardPoint(0)) },
-      { deckIndex: 1, point: pointHex(cardPoint(1)) },
-    ];
-    c.myCardPointsHandId = 'h1';
-
-    const send = vi.spyOn(c, 'send');
-    s.handle(peekOffer('h1', 'o1'));
-    // No manual answer: the bot agrees on its own.
-    expect(send).toHaveBeenCalledTimes(1);
-    const frame = send.mock.calls[0]![0] as Record<string, unknown>;
-    expect(frame).toMatchObject({ t: 'peek_accept', handId: 'h1', offerId: 'o1' });
-    expect((frame.shares as unknown[]).length).toBe(2);
-    expect(typeof frame.sig).toBe('string');
-    expect(c.peekOffers).toEqual([]);
-  });
-
-  it('declines a peek instead of minting a key for a hand it did not play', () => {
-    const { c, s } = freshClient();
-    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
-    s.handle(roomState(true));
-    s.handle(handStart('h1'));
-    s.handle(bettingState('h1', 3, 0));
-    s.handle(handEnd('h1'));
-    // Points from the ended hand, but the per-hand key was already cleared (a
-    // new hand_start drops every key except the current one). Answering must
-    // decline, never implicitly mint a fresh key and sign bogus shares.
-    c.myCardPoints = [
-      { deckIndex: 0, point: pointHex(cardPoint(0)) },
-      { deckIndex: 1, point: pointHex(cardPoint(1)) },
-    ];
-    c.myCardPointsHandId = 'h1';
-    s.handKeys.delete('h1');
-
-    const send = vi.spyOn(c, 'send');
-    s.handle(peekOffer('h1', 'o1'));
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]![0]).toMatchObject({
-      t: 'peek_decline',
-      handId: 'h1',
-      offerId: 'o1',
-    });
-    expect(c.peekOffers).toEqual([]);
-  });
-
-  it('auto-declines a peek_offer when it has no cards to reveal', () => {
-    const { c, s } = freshClient();
-    s.identity = identityFromSeed(new Uint8Array(32).fill(7));
-    s.handle(roomState(true));
-    s.handle(handStart('h1'));
-    s.handle(bettingState('h1', 3, 0));
-    s.handle(handEnd('h1'));
-
-    const send = vi.spyOn(c, 'send');
-    s.handle(peekOffer('h1', 'o1'));
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ t: 'peek_decline', offerId: 'o1' }),
-    );
-    expect(c.peekOffers).toEqual([]);
-  });
-
   it('does not record a transcript entry for an unrelated hand', () => {
     const { s } = staleTurnThenReconnect(); // holds hand h1
     s.handle(transcriptEntry('h-old', 'settlement'));
@@ -642,12 +541,11 @@ describe('HeadlessClient reconnect resync barrier', () => {
     expect(s.endedHands.has('h1')).toBe(true);
   });
 
-  it('ignores stale cards_shown / seven_deuce / peek_result frames', () => {
+  it('ignores stale cards_shown / seven_deuce frames', () => {
     const { c, s } = staleTurnThenReconnect(); // holds hand h1
     const eventsBefore = c.events.length;
     s.handle(cardsShown('h-old'));
     s.handle(sevenDeuce('h-old'));
-    s.handle(peekResult('h-old'));
     expect(c.events.length).toBe(eventsBefore);
   });
 

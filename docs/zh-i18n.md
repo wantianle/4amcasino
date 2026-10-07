@@ -75,7 +75,7 @@
 | the house | 平台 | "Not even the house" →「连平台也不行」。不译「赌场/庄家」 |
 | bounty（7-2 offsuit） | 7-2 彩头 | `paid the 7-2 offsuit bounty` →「付了 7-2 不同花的彩头」 |
 | offsuit / suited | 不同花 / 同花 | 牌面记号 `7-2 offsuit` →「7-2 不同花」 |
-| peek（付费看别人的牌） | 买看 | 「看牌权」太法律腔；`paid to see seat 3's cards` →「付费看了 3 号位的底牌」 |
+| peek（付费看别人的牌） | 买看 | ⚠️ 该功能已于 2026-10-08 移除；此译名仅保留给历史账本行（`kind = 'peek'`）与旧 note 展示。`paid to see seat 3's cards` →「付费看了 3 号位的底牌」 |
 | hand history | 出牌记录 | |
 | replay | 回放 | |
 | kicker / straddle | 起脚张 / 前盲（Straddle） | 当前源码里**未出现** straddle；预留译法，保留英文注 Straddle |

@@ -239,6 +239,25 @@ describe('settlement lifecycle v7', () => {
     }
   }, 40000);
 
+  it('v9/项2d: a historical peek leg on the hand-id ref is tolerated (feature removed 2026-10-08)', async () => {
+    const { host, room } = await playOneHand(['q9pk', 'r9pk']);
+    const handId = host.handEnd!.handId;
+    makePreLifecycle(handId);
+    // A retired paid-peek transfer, exactly as historical hands wrote it: a
+    // balanced pair under the hand-id ref. It must be tolerated (the feature is
+    // gone, but old rows remain) and the hand must still reconcile to committed.
+    const [u1, u2] = playerIds(room.id);
+    addLeg(room.id, u1!, 2, 'peek', handId);
+    addLeg(room.id, u2!, -2, 'peek', handId);
+    rechainRoom(srv.ctx.db, room.id);
+
+    const audit = auditMarkerlessTranscripts(srv.ctx.db);
+    expect(audit.quarantined).toEqual([]);
+    expect(audit.reconciled).toBe(1);
+    reconcileMissingSettlements(srv.ctx.db);
+    expect(lifecycleRow(handId)?.status).toBe('committed');
+  }, 25000);
+
   it('v9/项2d: a seven-deuce leg on the settlement-head ref is rejected', async () => {
     const { host, room } = await playOneHand(['q9sd', 'r9sd']);
     const handId = host.handEnd!.handId;

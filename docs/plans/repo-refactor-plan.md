@@ -98,7 +98,7 @@ HEAD 实际为 **3382 行**，比既有审计中的 3161 行更大。审计文�
 | lifecycle | 1531 起 | timer、abort、重试、disconnect recovery |
 | transcript | 1829 起 | 服务端/玩家事件链 |
 | message entry | 1874 起 | 客户端消息分派 |
-| voluntary shows | 1919 起 | 展示牌、peek |
+| voluntary shows | 1919 起 | 展示牌、peek（⚠️ peek 已于 2026-10-08 移除；本文保留为历史设计记录） |
 | commit + shuffle | 1991 起 | commit、shuffle、unmask |
 | dealing | 2055 起 | 发牌和加密链 |
 | betting | 2202 起 | 下注、回合、time bank |

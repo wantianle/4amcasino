@@ -69,10 +69,6 @@ const PLAY_MESSAGES = new Set([
   'fold_key',
   'rit_vote',
   'im_ready',
-  // A bot is just another player: it must be able to answer a paid peek on the
-  // same offer/accept path a human uses.
-  'peek_accept',
-  'peek_decline',
 ]);
 export function agentMaySend(grant: AgentGrant, msg: { t: string; roomId?: string }): boolean {
   if (grant.scope_kind !== 'room') return false;

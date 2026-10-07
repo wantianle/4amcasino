@@ -4,18 +4,6 @@ import type { MultiRunReason } from '@4am/shared';
 /** Street order used by the stats projection's `street` events. */
 export const STREET_INDEX: Record<string, number> = { preflop: 0, flop: 1, turn: 2, river: 3 };
 
-/** One outstanding paid-peek offer. `targetUserId` is captured so the target
- *  can be told when the offer resolves even after seats/lastHand change. */
-export interface PeekOffer {
-  handId: string;
-  fromUserId: number;
-  targetSeat: number;
-  targetUserId: number;
-  amount: number;
-  /** Server-side 5s expiry; cleared when the offer is answered or swept. */
-  timer: NodeJS.Timeout;
-}
-
 /**
  * `multi_run_result.reason`. The shared `MultiRunReason` union does not yet
  * carry `equity_failed`; the engine emits it as a distinct, auditable reason

@@ -589,6 +589,11 @@ export function registerSocialRoutes(app: FastifyInstance, db: DB): void {
     // transfers would survive, the hand would no longer sum to zero, and each
     // void would quietly mint or burn chips. Match each kind on its OWN key; do
     // not mechanically unify them (the keys are not interchangeable).
+    //
+    // NOTE (2026-10-08): the paid-peek feature was removed, but the `'peek'`
+    // branch below MUST stay: historical hands still carry `kind = 'peek'`
+    // ledger legs, and dropping the branch would leave those legs unreversed on
+    // a void - silently breaking zero-sum and transferring chips.
     const entries = db
       .prepare(
         `SELECT user_id, delta, kind, ref FROM ledger

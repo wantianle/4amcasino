@@ -11,7 +11,7 @@ type SeatHandMode = 'hidden' | 'showdown' | 'hero';
 `seatHandMode()` 将原本散落在 `RoundTable` 的条件收敛为单一判定：
 
 - hero 座位 → `hero`
-- 非 hero 且有 revealed / private peek → `showdown`
+- 非 hero 且有 revealed / private peek → `showdown`（⚠️ private peek 已于 2026-10-08 随买看功能移除；本文保留为历史设计记录）
 - 其余座位 → `hidden`
 
 座位 wrapper 现在输出 `data-seat-hand-mode`，但保留原有 `table-pod-holo`、`table-pod-holo--fan`、`table-pod-holo--side`、`table-hero-cards`、`table-pod-card` 等 CSS class 和 DOM 子树顺序。没有改 anchor、pod wrapper 或样式。

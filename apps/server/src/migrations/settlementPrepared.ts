@@ -9,7 +9,7 @@ import type { DB } from '../db.js';
  * committed transaction. A crash between the two therefore leaves a complete,
  * replayable input rather than a `running` row nobody can settle safely:
  * rebuilding from the current `room_players.stack` would be wrong because a
- * mid-hand buy/peek/next action may have moved it.
+ * mid-hand buy/next action may have moved it.
  *
  * `input_json` is the canonical JSON of the full `HandSettlementWrite`;
  * `input_hash` is its SHA-256, verified on every read so a tampered or

@@ -96,31 +96,6 @@ export const clientMsgSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('rit_vote'), handId: z.string(), yes: z.boolean(), sig: hex(128) }),
   z.object({ t: z.literal('fold_key'), handId, key: scalarHex, sig: hex(128) }),
   z.object({
-    t: z.literal('peek_offer'),
-    handId,
-    targetSeat: z.number().int().min(0).max(8),
-    // Legacy/ignored: peeks cost a server-fixed 1bb, so an old client's amount
-    // is accepted for wire compatibility but never trusted or used.
-    amount: z.number().int().positive().max(1_000_000).optional(),
-  }),
-  z.object({
-    t: z.literal('peek_accept'),
-    handId: z.string(),
-    offerId: z.string(),
-    shares: z
-      .array(
-        z.object({
-          deckIndex: z.number().int().min(0).max(51),
-          out: hex(64),
-          proof: dleqProofSchema,
-        }),
-      )
-      .min(1)
-      .max(2),
-    sig: hex(128),
-  }),
-  z.object({ t: z.literal('peek_decline'), handId: z.string(), offerId: z.string() }),
-  z.object({
     t: z.literal('chat'),
     text: z.string().min(1).max(400),
     kind: z.enum(['text', 'sticker', 'phrase']).optional(),
@@ -174,8 +149,6 @@ export function signedBody(msg: ClientMsg): unknown {
       return { key: msg.key };
     case 'show_cards':
       return { shares: msg.shares };
-    case 'peek_accept':
-      return { offerId: msg.offerId, shares: msg.shares };
     case 'run_count_choice':
       return { decisionId: msg.decisionId, count: msg.count };
     case 'run_count_agree':
@@ -470,65 +443,6 @@ export type ServerMsg =
       status: 'committed' | 'aborted' | 'unresolved';
     }
   | { t: 'cards_shown'; handId: string; seat: number; cards: CardId[] }
-  | {
-      t: 'peek_offer';
-      offerId: string;
-      handId: string;
-      fromUserId: number;
-      fromName: string;
-      targetSeat: number;
-      amount: number;
-    }
-  | {
-      t: 'peek_result';
-      offerId: string;
-      handId: string;
-      targetSeat: number;
-      /** `expired` = the target never answered within the 5s offer window;
-       *  `failed` = the offer lapsed first (new hand, bad signature/shares, or
-       *  the buyer's balance fell). Both are terminal and tell the requester
-       *  explicitly instead of leaving them waiting. Older clients treat any
-       *  non-`accepted` status as "not revealed". */
-      status: 'accepted' | 'declined' | 'expired' | 'failed';
-      amount: number;
-      cards?: CardId[];
-    }
-  | {
-      /**
-       * The TARGET's terminal receipt for an offer it was asked to answer. It
-       * mirrors `peek_result`'s status enum but is deliberately narrow: it
-       * carries no `cards` (the reveal is the buyer's to see) and no `amount`
-       * (the target already has that from `peek_offer`), so it cannot expose
-       * anything the target did not already know. Sent on every terminal
-       * outcome - accepted / declined / expired / failed - so the target's
-       * pending banner can close in sync with the requester's result instead of
-       * relying on a client-side timeout. A bot that auto-accepts may ignore it.
-       */
-      t: 'peek_offer_closed';
-      offerId: string;
-      handId: string;
-      targetSeat: number;
-      status: 'accepted' | 'declined' | 'expired' | 'failed';
-    }
-  | {
-      /**
-       * Reconnect-safe reconciliation of THIS user's still-open INCOMING peek
-       * offers, sent on every `join` (initial connect and reconnect). The
-       * target's terminal `peek_offer_closed` is a single unicast: if the
-       * target's socket is gone when the offer resolves (TTL, next hand, room
-       * reclaim/shutdown), the frame is dropped and never replayed. This
-       * snapshot is the authority the client reconciles against - keep the
-       * pending banners whose `offerId` is listed, drop every other one. An
-       * empty list (e.g. after a process restart, where offers are deliberately
-       * not persisted) clears them all. Offer ids only: no `cards`/`amount`/
-       * `fromUserId`/failure reason, so it can never carry more than the
-       * original `peek_offer` the target already saw. It says nothing about the
-       * user's own OUTGOING offers, which the client must not touch on this
-       * frame.
-       */
-      t: 'peek_offers_snapshot';
-      incomingOfferIds: string[];
-    }
   | { t: 'hand_abort'; handId: string; reason: string; blamedSeat: number | null }
   | { t: 'need_keys'; handId: string }
   | {

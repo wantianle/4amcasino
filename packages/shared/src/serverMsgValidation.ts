@@ -81,7 +81,6 @@ function oneOf<T extends string | number>(values: readonly T[]) {
 const isChatKind = oneOf(['text', 'sticker', 'phrase'] as const);
 const isSharePurpose = oneOf(['hole', 'board', 'showdown'] as const);
 const isRun = oneOf([1, 2, 3] as const);
-const isPeekStatus = oneOf(['accepted', 'declined', 'expired', 'failed'] as const);
 const isMultiRunStage = oneOf(['choice', 'agreement'] as const);
 const isMultiRunReason = oneOf([
   'agreed',
@@ -370,27 +369,6 @@ const guards: Record<ServerMsg['t'], (m: Rec) => boolean> = {
   hand_recovery: (m) => isStr(m.handId) && isRecoveryStatus(m.status),
 
   cards_shown: (m) => isStr(m.handId) && isNum(m.seat) && isNumArr(m.cards),
-
-  peek_offer: (m) =>
-    isStr(m.offerId) &&
-    isStr(m.handId) &&
-    isNum(m.fromUserId) &&
-    isStr(m.fromName) &&
-    isNum(m.targetSeat) &&
-    isNum(m.amount),
-
-  peek_result: (m) =>
-    isStr(m.offerId) &&
-    isStr(m.handId) &&
-    isNum(m.targetSeat) &&
-    isPeekStatus(m.status) &&
-    isNum(m.amount) &&
-    optional(m.cards, isNumArr),
-
-  peek_offer_closed: (m) =>
-    isStr(m.offerId) && isStr(m.handId) && isNum(m.targetSeat) && isPeekStatus(m.status),
-
-  peek_offers_snapshot: (m) => isStrArr(m.incomingOfferIds),
 
   hand_abort: (m) =>
     isStr(m.handId) && isStr(m.reason) && (m.blamedSeat === null || isNum(m.blamedSeat)),

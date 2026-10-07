@@ -65,7 +65,6 @@ import {
   AUTO_DEAL_READY_CHECK_MS,
   GONE_ABORT_GRACE_MS,
   MAX_TERMINAL_FRAMES,
-  PEEK_OFFER_TTL_MS,
   RIT_VOTE_MS,
   SETTLE_HOLD_MS,
   SETTLE_MAX_RETRIES,
@@ -104,7 +103,6 @@ export {
   AUTO_DEAL_INTERVAL_MS,
   AUTO_DEAL_READY_CHECK_MS,
   GONE_ABORT_GRACE_MS,
-  PEEK_OFFER_TTL_MS,
   RIT_VOTE_MS,
   SETTLE_HOLD_MS,
   SETTLE_MAX_RETRIES,
@@ -149,7 +147,6 @@ import {
   STREET_INDEX,
   testHandId,
   type MultiRunResultReason,
-  type PeekOffer,
 } from './handSupport.js';
 import { computeShowdown, computeSquidSettlement } from './showdown.js';
 
@@ -227,7 +224,6 @@ export class GameRoom {
     msg: Extract<ServerMsg, { t: 'hand_end' }>;
     participantIds: number[];
   }[] = [];
-  private peekOffers = new Map<string, PeekOffer>();
   private sevenDeucePaid = new Set<string>();
   private autoDeal: NodeJS.Timeout | null = null;
   private autoDealAt: number | null = null;
@@ -332,19 +328,6 @@ export class GameRoom {
         this.send(userId, { t: 'cards_shown', handId: this.shownHandId, seat, cards });
       }
     }
-    // Reconnect-safe peek reconciliation. A target's terminal
-    // `peek_offer_closed` is a one-shot unicast: if the target's socket is gone
-    // when the offer resolves (TTL / next hand / shutdown), it is dropped and
-    // never replayed, so a banner could stick forever. Every (re)connect
-    // re-asserts the authoritative set of still-open INCOMING offers; the client
-    // keeps those ids and drops any other pending banner. Ids only - no
-    // cards/amount/fromUserId/failure reason, so a replay can never leak more
-    // than the original `peek_offer`.
-    const incomingOfferIds: string[] = [];
-    for (const [offerId, offer] of this.peekOffers) {
-      if (offer.targetUserId === userId) incomingOfferIds.push(offerId);
-    }
-    this.send(userId, { t: 'peek_offers_snapshot', incomingOfferIds });
   }
 
   leave(userId: number, ws: WebSocket): void {
@@ -422,11 +405,6 @@ export class GameRoom {
    */
   async shutdown(): Promise<void> {
     this.draining = true;
-    // Safe to tell a still-connected party the offer is over (the process is
-    // draining, or the hub reclaims an idle room). A socket that is already
-    // gone drops the frame, and its reconnect gets an empty
-    // `peek_offers_snapshot`, so nothing is stranded either way.
-    this.clearPeekOffers('expired');
     if (this.autoDeal) clearTimeout(this.autoDeal);
     this.autoDeal = null;
     this.autoDealAt = null;
@@ -757,8 +735,8 @@ export class GameRoom {
   /**
    * Best-effort room publisher - the `GameRoom` counterpart of `Hand.publish`.
    * A broadcast failure is notification-only: it is logged and swallowed, so a
-   * money move that already committed (a voluntary 7-2 show, an accepted peek)
-   * can never unwind through the caller and bubble to the hub, where an
+   * money move that already committed (e.g. a voluntary 7-2 show) can never
+   * unwind through the caller and bubble to the hub, where an
    * escaping error would mark the whole room unhealthy. Never rethrows; returns
    * whether the frame was handed to the transport.
    */
@@ -777,8 +755,7 @@ export class GameRoom {
    * A unicast delivery failure belongs to the SAME notification-only class as a
    * broadcast failure: it is logged through the shared tiered logger and
    * swallowed, so a committed money move whose follow-up frame cannot reach one
-   * recipient (an accepted peek's `peek_result`/`peek_offer_closed`) can never
-   * unwind through the caller and bubble to the hub, where an escaping error
+   * recipient can never unwind through the caller and bubble to the hub, where an escaping error
    * would mark the whole room unhealthy. `send` is already a no-op when the
    * user has no socket (`?.`); only an existing-but-broken transport throws,
    * which is exactly the loss we swallow. Returns whether the frame was handed
@@ -1111,11 +1088,6 @@ export class GameRoom {
         this.broadcastRoomState();
         return;
       }
-      case 'peek_offer':
-        return this.onPeekOffer(userId, msg);
-      case 'peek_accept':
-      case 'peek_decline':
-        return this.onPeekAnswer(userId, msg);
       default:
         return;
     }
@@ -1363,8 +1335,6 @@ export class GameRoom {
     // `hand_start`, so the previous hand's terminal frame is the only way their
     // client can clear a stuck settlement banner; a later `hand_start` or
     // lifecycle recovery supersedes it for the player who did move on.
-    // an offer cannot outlive its hand: end it explicitly rather than silently
-    this.clearPeekOffers('expired');
     // a hand is starting: any previous showdown's settle hold no longer applies
     this.settleHoldUntil = 0;
     // The hand id is minted before feature claiming so a claimed trigger can be
@@ -1453,7 +1423,7 @@ export class GameRoom {
   /**
    * True when this hand already has a `void-hand` compensating row. The void
    * writer correlates settlement-family legs on the transcript head and
-   * seven-deuce / peek legs on the hand id, so a hand counts as voided when a
+   * seven-deuce legs on the hand id, so a hand counts as voided when a
    * `void-hand` row references EITHER key. This reuses the canonical
    * `voidHandExistsSql` (the same fragment the stats read models exclude on) so
    * the engine and the read models can never disagree about what "voided"
@@ -1594,253 +1564,6 @@ export class GameRoom {
     this.recordShow(msg.handId, seat, cards);
   }
 
-  /**
-   * Whether a hand participant's hole cards are already public for `handId`:
-   * revealed at showdown, or voluntarily shown. Shared by offer creation AND
-   * acceptance so the two gates can never drift - a target may stay private
-   * when the offer is made and then `show_cards` before answering, and only an
-   * acceptance-time re-check can stop the buyer from paying for cards that are
-   * already on screen for everyone.
-   */
-  private peekTargetIsPublic(handId: string, targetSeat: number): boolean {
-    const revealed =
-      this.lastHandShow?.handId === handId && this.lastHandShow.revealedSeats.has(targetSeat);
-    const shown = this.shownHandId === handId && this.shown.has(targetSeat);
-    return revealed || shown;
-  }
-
-  /**
-   * A paid request to privately see a player's cards from the hand that just
-   * ended.
-   *
-   * House rule (server-authoritative): a peek costs a FIXED 1bb, paid by the
-   * requester to the player being looked at. ANY seated player may be the
-   * requester - including players who folded this hand and players who did not
-   * take part in it at all - so a ring table can have several parallel offers
-   * (one per target, tracked separately in `peekOffers`). The target is any
-   * participant of the last hand whose hole cards are still private: a folder,
-   * or a winner who was never shown. Cards already public - revealed at
-   * showdown or voluntarily shown - cannot be bought. The client's `amount` is
-   * ignored.
-   */
-  private onPeekOffer(userId: number, msg: Extract<ClientMsg, { t: 'peek_offer' }>): void {
-    const snap = this.lastHandShow;
-    if (this.hand || !snap || snap.handId !== msg.handId)
-      return this.send(userId, { t: 'error', message: 'peek offers only work between hands' });
-    // A voided hand never happened: refuse new offers outright so no stale
-    // offer can later be accepted into a transfer the void cannot reverse.
-    if (this.isHandVoided(msg.handId))
-      return this.send(userId, { t: 'error', message: 'that hand was voided' });
-    const target = snap.bySeat.get(msg.targetSeat);
-    if (!target)
-      return this.send(userId, { t: 'error', message: 'that player was not in the last hand' });
-    if (target.userId === userId)
-      return this.send(userId, { t: 'error', message: 'those are your own cards' });
-    if (this.peekTargetIsPublic(msg.handId, msg.targetSeat))
-      return this.send(userId, { t: 'error', message: 'those cards are already public' });
-    const room = getRoom(this.db, this.roomId);
-    if (!room) return;
-    // fixed price, never the client's number
-    const amount = room.bb;
-    const buyer = this.db
-      .prepare(
-        `SELECT rp.stack, rp.seat, COALESCE(u.display_name, u.username) as name
-         FROM room_players rp JOIN users u ON u.id = rp.user_id
-         WHERE rp.room_id = ? AND rp.user_id = ?`,
-      )
-      .get(this.roomId, userId) as
-      | { stack: number; seat: number | null; name: string }
-      | undefined;
-    // A spectator (no `room_players` row at all) or a player who left their
-    // seat (seat null) has no stake and cannot pay the target. Reject
-    // explicitly: a silent drop would strand a client that is waiting for a
-    // result that will never arrive.
-    if (!buyer || buyer.seat === null)
-      return this.send(userId, { t: 'error', message: 'only seated players can buy a peek' });
-    if (buyer.stack < amount)
-      return this.send(userId, { t: 'error', message: 'not enough chips for that offer' });
-    const offerId = randomBytes(6).toString('hex');
-    // Server-authoritative expiry: a target who disconnects, ignores the frame,
-    // or has their grant revoked must never leave the requester waiting forever.
-    const timer = setTimeout(() => this.expirePeekOffer(offerId), PEEK_OFFER_TTL_MS);
-    timer.unref?.();
-    this.peekOffers.set(offerId, {
-      handId: msg.handId,
-      fromUserId: userId,
-      targetSeat: msg.targetSeat,
-      targetUserId: target.userId,
-      amount,
-      timer,
-    });
-    this.send(target.userId, {
-      t: 'peek_offer',
-      offerId,
-      handId: msg.handId,
-      fromUserId: userId,
-      fromName: buyer.name,
-      targetSeat: msg.targetSeat,
-      amount,
-    });
-  }
-
-  /**
-   * Terminally close an offer: the requester gets the full `peek_result` (with
-   * the reveal on acceptance); the target gets a narrow `peek_offer_closed` so
-   * its pending banner can dismiss in sync without a client-side timeout. The
-   * target frame carries no `cards`/`amount`, so it never reveals more than the
-   * `peek_offer` the target already saw.
-   */
-  private closePeekOffer(
-    offerId: string,
-    offer: PeekOffer,
-    status: 'accepted' | 'declined' | 'expired' | 'failed',
-    cards?: CardId[],
-  ): void {
-    this.sendSafe(
-      offer.fromUserId,
-      {
-        t: 'peek_result',
-        offerId,
-        handId: offer.handId,
-        targetSeat: offer.targetSeat,
-        status,
-        amount: offer.amount,
-        ...(cards ? { cards } : {}),
-      },
-      'peek_result send failed',
-    );
-    this.sendSafe(
-      offer.targetUserId,
-      {
-        t: 'peek_offer_closed',
-        offerId,
-        handId: offer.handId,
-        targetSeat: offer.targetSeat,
-        status,
-      },
-      'peek_offer_closed send failed',
-    );
-  }
-
-  /** Terminally end every outstanding offer, optionally telling each requester
-   *  why. Used at hand start (an offer cannot outlive its hand) and shutdown. */
-  private clearPeekOffers(reason?: 'expired' | 'declined'): void {
-    for (const [offerId, offer] of this.peekOffers) {
-      clearTimeout(offer.timer);
-      if (reason) this.closePeekOffer(offerId, offer, reason);
-    }
-    this.peekOffers.clear();
-  }
-
-  /** A 5s offer lapsed: drop it and tell both sides explicitly. */
-  private expirePeekOffer(offerId: string): void {
-    const offer = this.peekOffers.get(offerId);
-    if (!offer) return;
-    this.peekOffers.delete(offerId);
-    clearTimeout(offer.timer);
-    this.closePeekOffer(offerId, offer, 'expired');
-  }
-
-  private onPeekAnswer(
-    userId: number,
-    msg: Extract<ClientMsg, { t: 'peek_accept' } | { t: 'peek_decline' }>,
-  ): void {
-    const offer = this.peekOffers.get(msg.offerId);
-    if (!offer || offer.handId !== msg.handId)
-      return this.send(userId, { t: 'error', message: 'that offer is gone' });
-    const snap = this.lastHandShow;
-    const target = snap?.bySeat.get(offer.targetSeat);
-    if (!snap || !target || target.userId !== userId)
-      return this.send(userId, { t: 'error', message: 'that offer is not yours to answer' });
-    // Validate FIRST, then terminally end the offer. Every failure path reports
-    // an explicit result to the requester, so a bad signature/short balance can
-    // never strand them with no `peek_result` at all.
-    const finish = (status: 'accepted' | 'declined' | 'failed', cards?: CardId[]): void => {
-      this.peekOffers.delete(msg.offerId);
-      clearTimeout(offer.timer);
-      this.closePeekOffer(msg.offerId, offer, status, cards);
-    };
-    if (msg.t === 'peek_decline') {
-      finish('declined');
-      return;
-    }
-    if (this.hand) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'a new hand already started' });
-    }
-    // The offer may have been made before the banker voided the hand. Reject
-    // the acceptance before any money moves, and terminate the offer so the
-    // requester gets an explicit `peek_result` instead of a silent stall.
-    if (this.isHandVoided(offer.handId)) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'that hand was voided' });
-    }
-    // The target may have been private when the offer was made and then showed
-    // its cards before answering. Re-check the CURRENT public state before any
-    // money moves, or the buyer would pay for cards already visible table-wide.
-    if (this.peekTargetIsPublic(offer.handId, offer.targetSeat)) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'those cards are already public' });
-    }
-    if (!verifyContent(target.pubkey, offer.handId, 'peek_accept', signedBody(msg), msg.sig)) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'bad signature' });
-    }
-    const cards = verifySnapshotShares(target, msg.shares, this.lookup);
-    if (!cards) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'invalid card reveal' });
-    }
-    const buyerRow = this.db
-      .prepare('SELECT stack, seat FROM room_players WHERE room_id = ? AND user_id = ?')
-      .get(this.roomId, offer.fromUserId) as
-      | { stack: number; seat: number | null }
-      | undefined;
-    // Re-check the buyer's CURRENT seat, not just its balance: a requester may
-    // leave their seat while the offer is pending, and the client drops a
-    // reveal once `seat` is null - charging there would burn the 1bb for cards
-    // the buyer never sees. This is the final authorization check; the
-    // creation-time seat gate alone cannot see a later `leave_seat`.
-    if (!buyerRow || buyerRow.seat === null) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'the buyer is no longer seated' });
-    }
-    if (buyerRow.stack < offer.amount) {
-      finish('failed');
-      return this.send(userId, { t: 'error', message: 'the buyer no longer has enough chips' });
-    }
-    const apply = this.db.transaction(() => {
-      appendLedger(this.db, {
-        roomId: this.roomId,
-        userId: offer.fromUserId,
-        delta: -offer.amount,
-        kind: 'peek',
-        ref: offer.handId,
-        note: `paid to see seat ${offer.targetSeat + 1}'s cards`,
-      });
-      appendLedger(this.db, {
-        roomId: this.roomId,
-        userId,
-        delta: offer.amount,
-        kind: 'peek',
-        ref: offer.handId,
-        note: `showed cards privately`,
-      });
-      this.db
-        .prepare('UPDATE room_players SET stack = stack - ? WHERE room_id = ? AND user_id = ?')
-        .run(offer.amount, this.roomId, offer.fromUserId);
-      this.db
-        .prepare('UPDATE room_players SET stack = stack + ? WHERE room_id = ? AND user_id = ?')
-        .run(offer.amount, this.roomId, userId);
-    });
-    apply();
-    finish('accepted', cards);
-    // The peek transfer is committed: the follow-up room_state is presentation
-    // only, so it goes through the best-effort publisher. A throwing
-    // `room_state` frame must not bubble to the hub and freeze the table after
-    // an irreversible chip move (same class as `recordShow`'s `cards_shown`).
-    this.publishRoomState('peek room_state broadcast failed');
-  }
 }
 
 class Hand {

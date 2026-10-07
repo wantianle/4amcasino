@@ -1239,7 +1239,7 @@ describe('settlement receipt (S0 characterization)', () => {
     expect(first.status).toBe('applied');
     expect(stackMap(first.finalStacks)).toEqual({ 1: 1010, 2: 990 });
 
-    // A later buy / peek / the next hand moves the live balances on. A duplicate
+    // A later buy / the next hand moves the live balances on. A duplicate
     // must NEVER rebuild historical final stacks from these.
     db.prepare('UPDATE room_players SET stack = stack + 5000 WHERE room_id = ?').run('r1');
 

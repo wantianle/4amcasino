@@ -116,20 +116,6 @@ export class TestClient {
    *  tests such as the 7-2 bounty. */
   forcedShufflePerm: number[] | null = null;
   cardsShown: { seat: number; cards: CardId[] }[] = [];
-  peekOffers: { offerId: string; fromUserId: number; amount: number }[] = [];
-  peekResults: { targetSeat: number; status: string; cards?: CardId[] }[] = [];
-  /** Target-side terminal receipts (`peek_offer_closed`), with the raw frame so
-   *  tests can assert it carries no buyer-only payload. */
-  peekClosures: {
-    offerId: string;
-    handId: string;
-    targetSeat: number;
-    status: string;
-    raw: Record<string, unknown>;
-  }[] = [];
-  /** Reconnect-safe incoming-offer snapshots. The client reconciles its
-   *  pending banners against the latest one: keep listed ids, drop the rest. */
-  peekSnapshots: { incomingOfferIds: string[]; raw: Record<string, unknown> }[] = [];
   sawShowdown = false;
   /** Wall-clock when the showdown/ hand_end frame arrived, for timing tests. */
   showdownAt: number | null = null;
@@ -296,50 +282,6 @@ export class TestClient {
       shares,
       sig: this.signed('show_cards', { shares }),
     });
-  }
-
-  acceptPeek(offerId: string): void {
-    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
-      const { out, proof } = proveUnmask(this.handKey!, pointFromHex(point));
-      return { deckIndex, out: pointHex(out), proof };
-    });
-    this.send({
-      t: 'peek_accept',
-      handId: this.handId,
-      offerId,
-      shares,
-      sig: this.signed('peek_accept', { offerId, shares }),
-    });
-  }
-
-  declinePeek(offerId: string): void {
-    this.send({ t: 'peek_decline', handId: this.handId, offerId });
-  }
-
-  /** Accept with a deliberately broken DLEQ proof (should be rejected). */
-  acceptPeekBadProof(offerId: string): void {
-    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
-      const { out, proof } = proveUnmask(this.handKey!, pointFromHex(point));
-      return { deckIndex, out: pointHex(out), proof: { ...proof, z: '00' } };
-    });
-    this.send({
-      t: 'peek_accept',
-      handId: this.handId,
-      offerId,
-      shares,
-      sig: this.signed('peek_accept', { offerId, shares }),
-    });
-  }
-
-  /** Accept with a valid proof but a corrupted signature (should be rejected). */
-  acceptPeekBadSig(offerId: string): void {
-    const shares = this.myCardPoints.map(({ deckIndex, point }) => {
-      const { out, proof } = proveUnmask(this.handKey!, pointFromHex(point));
-      return { deckIndex, out: pointHex(out), proof };
-    });
-    const sig = this.signed('peek_accept', { offerId, shares });
-    const bad = (sig[0] === '0' ? '1' : '0') + sig.slice(1);
-    this.send({ t: 'peek_accept', handId: this.handId, offerId, shares, sig: bad });
   }
 
   /** Send the per-hand reveal key on demand (the audit-timeout test). */
@@ -560,39 +502,6 @@ export class TestClient {
       }
       case 'cards_shown': {
         this.cardsShown.push({ seat: msg.seat, cards: msg.cards });
-        break;
-      }
-      case 'peek_offer': {
-        this.peekOffers.push({
-          offerId: msg.offerId,
-          fromUserId: msg.fromUserId,
-          amount: msg.amount,
-        });
-        break;
-      }
-      case 'peek_result': {
-        this.peekResults.push({ targetSeat: msg.targetSeat, status: msg.status, cards: msg.cards });
-        break;
-      }
-      case 'peek_offer_closed': {
-        this.peekClosures.push({
-          offerId: msg.offerId,
-          handId: msg.handId,
-          targetSeat: msg.targetSeat,
-          status: msg.status,
-          raw: msg as unknown as Record<string, unknown>,
-        });
-        break;
-      }
-      case 'peek_offers_snapshot': {
-        this.peekSnapshots.push({
-          incomingOfferIds: msg.incomingOfferIds,
-          raw: msg as unknown as Record<string, unknown>,
-        });
-        // Mirror the real client: the snapshot is authoritative for which
-        // incoming offers are still open; drop every other pending banner.
-        const live = new Set(msg.incomingOfferIds);
-        this.peekOffers = this.peekOffers.filter((o) => live.has(o.offerId));
         break;
       }
       case 'betting_state': {

@@ -406,98 +406,51 @@ describe('P1-4: notification isolation', () => {
   }, 30000);
 
   // ---------------------------------------------------------------------------
-  // P1-4 follow-up (blocker): the UNICAST frames that follow a committed money
-  // move. `onPeekAnswer()` commits the 1bb peek transfer and only then calls
-  // `closePeekOffer()`, whose two direct `send()`s (the buyer's `peek_result`,
-  // the target's `peek_offer_closed`) plus the follow-up `room_state` are pure
-  // presentation. Before this fix those `send()`s were bare, so a TypeError in
-  // the window where a socket is closing bubbled to the hub and marked the room
-  // unhealthy - the exact availability incident the broadcast收口 fixed, only
-  // on the unicast path.
+  // P1-4 follow-up: the frames that follow a committed money move. The voluntary
+  // 7-2 show commits the bounty transfer and only then publishes its
+  // presentation frames (`seven_deuce`, then a follow-up `room_state`). Before
+  // the fix those calls were bare, so a TypeError while a socket was closing
+  // bubbled to the hub and marked the room unhealthy - the exact availability
+  // incident the notification收口 fixed. (The paid-peek unicast variant of this
+  // test was removed on 2026-10-08 with the feature; this keeps the invariant
+  // using a surviving carrier.)
   // ---------------------------------------------------------------------------
-  it('a TypeError in the post-commit peek notifications cannot unwind the transfer or mark the room unhealthy', async () => {
-    const { ctx, hub, baseUrl } = await startLive();
+  it('a TypeError in the post-commit room_state notification cannot unwind the transfer or mark the room unhealthy', async () => {
+    const { ctx, hub, room, host, players, handId } = await setupSevenDeuceFoldWin();
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const { room, host, players } = await setupRoom(
-        baseUrl,
-        ['pka', 'pkb'],
-        ['fold-first', 'passive'],
-        clients,
-      );
-      // park the table between hands so the peek can be answered
-      ctx.db.prepare('UPDATE rooms SET auto_deal = 0 WHERE id = ?').run(room.id);
-      const [target, buyer] = players as [TestClient, TestClient];
-      host.send({ t: 'start_hand' });
-      await awaitHandEnd(players, 15000);
-      // `onPeekOffer` refuses while `hand` is still set; wait for teardown.
-      await host.waitFor(() => !activeHands.has(room.id), 8000);
-      for (const p of players) p.send({ t: 'sit_out', sittingOut: true });
-
-      // buyer offers to see the (folded, still-private) target's cards
-      buyer.send({ t: 'peek_offer', handId: buyer.handId, targetSeat: target.seat! });
-      await target.waitFor(() => target.peekOffers.length > 0, 5000);
-      const offerId = target.peekOffers.at(-1)!.offerId;
-
-      const beforeTarget = stackOf(ctx, room.id, target.userId);
-      const beforeBuyer = stackOf(ctx, room.id, buyer.userId);
+      const bob = players[1]!;
+      const hostBefore = stackOf(ctx, room.id, host.userId);
+      const bobBefore = stackOf(ctx, room.id, bob.userId);
+      expect(sevenDeuceShowLegs(ctx, handId)).toBe(0);
 
       const gameRoom = hub.rooms.get(room.id)!;
-      const origSend = gameRoom.send.bind(gameRoom);
-      const injected = new Set<string>();
-      // Fail BOTH unicast frames of `closePeekOffer()` (buyer first, then
-      // target) with an unexpected programming error.
-      gameRoom.send = (userId, msg) => {
-        if (msg.t === 'peek_result' || msg.t === 'peek_offer_closed') {
-          injected.add(msg.t);
-          throw new TypeError(`injected ${msg.t} frame bug`);
-        }
-        origSend(userId, msg);
-      };
-      // Fail the follow-up room_state `onPeekAnswer` broadcasts after the
-      // commit. `broadcastRoomState` writes straight to the sockets, so the
-      // fault is injected at its entry - the wrapping under test is the
-      // best-effort catch in `publishRoomState`.
+      // Fail the follow-up room_state `recordShow` publishes after the commit.
+      // `broadcastRoomState` writes straight to the sockets, so the fault is
+      // injected at its entry - the wrapping under test is the best-effort catch
+      // in `publishRoomState`.
       let roomStateInjected = false;
       gameRoom.broadcastRoomState = () => {
         roomStateInjected = true;
         throw new TypeError('injected room_state frame bug');
       };
 
-      target.acceptPeek(offerId);
-      // The transfer is committed even though every notification frame threw.
-      await target.waitFor(
-        () =>
-          (
-            ctx.db
-              .prepare("SELECT COUNT(*) AS n FROM ledger WHERE room_id = ? AND kind = 'peek'")
-              .get(room.id) as { n: number }
-          ).n === 2,
-        5000,
-      );
+      bob.showCards();
+      // The transfer is committed even though the follow-up state frame threw.
+      await host.waitFor(() => sevenDeuceShowLegs(ctx, handId) === 2, 5000);
 
-      // Real path: all three injected frames really were the failure points.
-      expect([...injected].sort()).toEqual(['peek_offer_closed', 'peek_result']);
       expect(roomStateInjected).toBe(true);
       // The room never saw an escaping error: NOT unhealthy.
       expect(gameRoom.isUnhealthy()).toBe(false);
-      // The 1bb transfer is durable and zero-sum.
-      expect(stackOf(ctx, room.id, target.userId)).toBe(beforeTarget + room.bb);
-      expect(stackOf(ctx, room.id, buyer.userId)).toBe(beforeBuyer - room.bb);
-      const ledger = ctx.db
-        .prepare("SELECT delta FROM ledger WHERE room_id = ? AND kind = 'peek'")
-        .all(room.id) as { delta: number }[];
-      expect(ledger.reduce((s, r) => s + r.delta, 0)).toBe(0);
-      // The losses are real, not silently delivered: neither client got them.
-      expect(buyer.peekResults).toHaveLength(0);
-      expect(target.peekClosures).toHaveLength(0);
-      // All three failures routed through the SAME shared tiered logger, each
-      // classified as an unexpected programming error (Tier 1).
+      // The 7-2 transfer is durable and zero-sum.
+      expect(stackOf(ctx, room.id, host.userId)).toBe(hostBefore - 25);
+      expect(stackOf(ctx, room.id, bob.userId)).toBe(bobBefore + 25);
+      // The bounty announcement itself still reached the table.
+      await host.waitFor(() => host.cardsShown.length === 1, 5000);
+      // Routed through the SAME shared tiered logger, classified Tier 1.
       const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
-      expect(logged).toContain('peek_result send failed');
-      expect(logged).toContain('peek_offer_closed send failed');
-      expect(logged).toContain('peek room_state broadcast failed');
-      expect(logged.split('unexpected programming error, not a delivery failure').length - 1).toBe(3);
+      expect(logged).toContain('7-2 bounty room_state broadcast failed');
+      expect(logged).toContain('unexpected programming error, not a delivery failure');
     } finally {
       errSpy.mockRestore();
       await ctx.app.close();

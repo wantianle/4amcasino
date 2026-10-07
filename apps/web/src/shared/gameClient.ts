@@ -325,40 +325,6 @@ export function act(action: PlayerAction): void {
   wsClient.send({ t: 'action', handId, action, sig: signed(handId, 'action', { action }) });
 }
 
-/** Offer chips to privately see a player's cards from the hand that just ended. */
-export function offerPeek(targetSeat: number, amount: number): void {
-  const handId = useStore.getState().hand.handId;
-  if (!handId) return;
-  wsClient.send({ t: 'peek_offer', handId, targetSeat, amount });
-}
-
-/** Answer a paid-peek offer. Accepting proves the reveal with the hand key. */
-export function answerPeek(offerId: string, accept: boolean): void {
-  const { hand } = useStore.getState();
-  if (!hand.handId) return;
-  useStore
-    .getState()
-    .patchHand({ peekOffers: hand.peekOffers.filter((o) => o.offerId !== offerId) });
-  if (!accept) {
-    wsClient.send({ t: 'peek_decline', handId: hand.handId, offerId });
-    return;
-  }
-  if (hand.myCardPoints.length === 0) return;
-  const k = handKeyFor(hand.handId);
-  if (k === null) return;
-  const shares = hand.myCardPoints.map(({ deckIndex, point }) => {
-    const { out, proof } = proveUnmask(k, pointFromHex(point));
-    return { deckIndex, out: pointHex(out), proof };
-  });
-  wsClient.send({
-    t: 'peek_accept',
-    handId: hand.handId,
-    offerId,
-    shares,
-    sig: signed(hand.handId, 'peek_accept', { offerId, shares }),
-  });
-}
-
 /** Sit out upcoming hands (or come back in). Takes effect at the next deal. */
 export function setSitOut(sittingOut: boolean): void {
   wsClient.send({ t: 'sit_out', sittingOut });
@@ -902,56 +868,6 @@ const handleMultiRunResult: FrameHandler<'multi_run_result'> = (msg) => {
   }
 };
 
-const handlePeekOfferClosed: FrameHandler<'peek_offer_closed'> = (msg) => {
-  const store = useStore.getState();
-  const h = store.hand;
-  if (h.handId !== msg.handId) return;
-  // This is the target-side receipt. It only closes an incoming banner;
-  // peek_offers_snapshot likewise describes incoming offers only and must
-  // never be used to reconcile the user's own outgoing request UI.
-  if (!h.peekOffers.some((o) => o.offerId === msg.offerId)) return;
-  if (msg.status === 'accepted') {
-    play('flip');
-    window.dispatchEvent(new CustomEvent('4am-peek-accepted'));
-  }
-  store.patchHand({ peekOffers: h.peekOffers.filter((o) => o.offerId !== msg.offerId) });
-};
-
-const handlePeekResult: FrameHandler<'peek_result'> = (msg) => {
-  const store = useStore.getState();
-  const h = store.hand;
-  if (h.handId !== msg.handId) return;
-  // peek_result is buyer-only. Keep the client defensive as well: a
-  // spectator has no current room seat and must never retain/render cards.
-  // Do not consult h.seats here: it is the previous hand's participants,
-  // while the server also allows a currently seated non-participant to buy.
-  const room = useStore.getState().room;
-  const currentUserId = useStore.getState().auth.userId;
-  if (
-    currentUserId === null ||
-    !room?.players.some((player) => player.userId === currentUserId && player.seat !== null)
-  ) return;
-  if (msg.status === 'accepted' && msg.cards) {
-    // The hand snapshot, never the current seat occupant, owns these cards.
-    const target = h.seats.find((seat) => seat.seat === msg.targetSeat);
-    if (!target) return;
-    play('flip');
-    store.patchHand({ peekResults: { ...h.peekResults, [msg.targetSeat]: {
-      targetSeat: msg.targetSeat,
-      targetUserId: target.userId,
-      targetName: room?.players.find((player) => player.userId === target.userId)?.displayName ?? target.username,
-      cards: msg.cards,
-    } } });
-  } else {
-    const message = msg.status === 'expired'
-      ? t('Your peek offer expired.')
-      : msg.status === 'failed'
-        ? t('Your peek offer failed.')
-        : t('Your peek offer was declined.');
-    store.pushError(message);
-  }
-};
-
 const handleCardsShown: FrameHandler<'cards_shown'> = (msg) => {
   const state = useStore.getState();
   // a voluntary show can land after the next deal: keep the recap fresh
@@ -1017,10 +933,6 @@ const handlers: HandlerTable = {
   settlement_failed: runLifecycle,
   hand_recovery: runLifecycle,
   cards_shown: handleCardsShown,
-  peek_offer: applyHandEffects,
-  peek_result: handlePeekResult,
-  peek_offer_closed: handlePeekOfferClosed,
-  peek_offers_snapshot: applyHandState,
   hand_abort: runLifecycle,
   need_keys: runLifecycle,
   transcript_entry: runLifecycle,

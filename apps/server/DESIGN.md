@@ -171,93 +171,6 @@ Both names must be present, and the startup log must show no
 offending table was hidden behind the first — fix it the same way and restart
 again.
 
-## Peek (paid card look) house rules
-
-A peek is a paid request to privately see another player's cards from the hand
-that just ended. The rules are server-authoritative and enforced in
-`GameRoom.onPeekOffer` / `onPeekAnswer`:
-
-- **Fixed price, 1bb.** The server charges `room.bb` from the requester to the
-  player being looked at ("the target"). A client-supplied `amount` on
-  `peek_offer` is accepted for wire compatibility but is ignored — old clients
-  that send a number are not trusted. `peek_result.amount` echoes the fixed 1bb.
-- **Any seated player may ask; any hidden hand's cards may be sold.** The
-  requester must hold a seat (`room_players.seat IS NOT NULL`) and at least 1bb.
-  Folding earlier in the hand, or not taking part in it at all, does not
-  disqualify them, and several players may hold parallel offers at once (one
-  entry per target in `peekOffers`). The target must be a participant of the
-  just-ended hand (`ShowSnapshot.bySeat`) whose hole cards are still private - a
-  folder, or a winner who was never shown. There is **no** heads-up and no
-  fold-ended requirement: a ring hand can be peeked too. Cards already public -
-  revealed at showdown (`revealedSeats`) or voluntarily shown (`shown`) - are
-  rejected with an `already public` error, so a showdown's live players cannot
-  be bought.
-- **The public check runs twice.** Creation is not enough: a target can be
-  private when `peek_offer` is made and then `show_cards` before answering, so
-  `onPeekAnswer` re-checks `revealedSeats`/`shown` **before any money moves** and
-  fails the offer (`peek_result: 'failed'`, `peek_offer_closed: 'failed'`, no
-  ledger/stack change). Both gates call the shared `peekTargetIsPublic()` helper
-  so creation and acceptance can never drift apart.
-- **The buyer must still hold a seat at settlement.** Seat is re-checked on
-  `onPeekAnswer` too, not only when the offer is created: a requester may
-  `leave_seat` while the offer is pending, and the client drops a reveal once
-  `seat` is null, so `buyerRow.seat === null` fails the offer before any ledger
-  row (`peek_result: 'failed'`, `peek_offer_closed: 'failed'`). The balance check
-  still follows, but seat is the authorization.
-- **Mutual consent, ledger transfer.** The target must accept (signed
-  `peek_accept` with unmask shares verified against the finished hand's snapshot);
-  only then does the 1bb move, through two `kind: 'peek'` ledger rows that net to
-  zero. Declining sends `peek_result` with `status: 'declined'` and moves nothing.
-- **Bots are players.** A bot's agent grant may send `peek_accept`/`peek_decline`
-  (`botAccess.ts` `PLAY_MESSAGES`). `HeadlessClient` auto-accepts any offer for
-  its recent hand, signing against the offer's own `handId`.
-- **Both sides get a terminal signal.** `peek_result` (carrying the reveal on
-  acceptance) goes to the requester. The target gets a narrow
-  `peek_offer_closed` (`offerId`, `handId`, `targetSeat`, `status`) on every
-  terminal outcome — accepted / declined / expired / failed — so its pending
-  banner closes in sync with the requester's result instead of on a client-side
-  timeout. The target frame deliberately omits `cards` and `amount`: the target
-  already has the price from `peek_offer` and the reveal is the buyer's to see,
-  so it can never leak buyer-only information. A bot may ignore the frame.
-- **Reconnect-safe clearing.** `peek_offer_closed` is a one-shot unicast: if the
-  target's socket is gone when the offer resolves (TTL, next hand, or a
-  room/process shutdown), the frame is dropped and not replayed, which would
-  strand a banner. On every `join` the server therefore sends the target a
-  `peek_offers_snapshot` listing the **still-open incoming** offer ids; the
-  client keeps those and drops every other pending banner (an empty list clears
-  them all). It is ids only - no `cards`/`amount`/`fromUserId`/failure reason -
-  and it says nothing about the user's own outgoing offers. Offers are never
-  persisted, so after a process restart the snapshot is simply empty, which is
-  the correct signal (a 5s offer cannot survive a restart). No closure journal
-  and no DB writes are needed: the snapshot is the single authority.
-
-### Front-end contract (web lane)
-
-The web lane owns the client presentation. The server contract it must render:
-
-1. **Fixed price.** A peek always costs `bb` (server-fixed, `peek_result.amount`
-   echoes it). Do not offer an editable amount and do not subtract anything
-   client-side from `showdown`/`hand_end`; the server moves the chips.
-2. **Server-owned 5s window.** The offer lapses `PEEK_OFFER_TTL_MS` (5s) after
-   `peek_offer`, *server-side*, and the server sends the terminal
-   `peek_result`. Do **not** run an independent client-side timeout as the source
-   of truth; treat a local timer only as cosmetic. A target who disconnects or
-   ignores the frame can never leave the requester waiting. The same terminal
-   outcome is pushed to the **target** as `peek_offer_closed`, so the target
-   closes its banner on the server signal (all four statuses), not on a timer.
-3. **Four terminal states.** `peek_result.status` is one of:
-   - `'accepted'` — reveal the target's two cards (buyer only) for ~3s;
-   - `'declined'` — the target refused; close the request UI;
-   - `'expired'` — the 5s window (or the next hand) ended it; close the request UI
-     and, on the **target** side, withdraw the pending offer too (its
-     `peek_offer_closed` carries `'expired'`); a reconnect reconciles against
-     `peek_offers_snapshot` and drops it even if the closure was missed;
-   - `'failed'` — bad signature/shares, the buyer can no longer pay, or a new
-     hand already started. This is terminal and must never be rendered as a
-     decline.
-   A client-side `expired`/`failed` must both be explicit; do not collapse them
-   into "declined".
-
 ## Showdown / settlement timing
 
 The ordering contract is **durable write → reveal → hold → `hand_end`**:
@@ -285,7 +198,7 @@ The ordering contract is **durable write → reveal → hold → `hand_end`**:
    money move (pot, rake, squid, bounty) and returns it as `finalStacks`. On a
    `duplicate` the writer instead returns the `hand_settlements.final_stacks`
    recorded by the original commit (never a fresh `room_players` read, which may
-   have moved on through a mid-hand buy, a peek or the next hand).
+   have moved on through a mid-hand buy or the next hand).
    `persistSettlement()` adopts that receipt as `Hand.settlement.stacks`, so
    `room_players.stack === hand_settlements.final_stacks === hand_players.ending_stack === Hand.settlement.stacks === hand_end.stacks`,
    and `hand_end.deltas` are the exact poker+squid+bounty nets

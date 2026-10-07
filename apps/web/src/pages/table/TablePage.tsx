@@ -38,10 +38,8 @@ import {
   type RoomGameplaySettings,
 } from '@4am/shared';
 import {
-  answerPeek,
   bindGameClient,
   imReady,
-  offerPeek,
   resetHandSession,
   setSitOut,
   sit,
@@ -60,7 +58,6 @@ import { play } from '../../shared/sounds.ts';
 import { cn, fmt } from '../../shared/lib/cn.ts';
 import { ACTION_TIMEOUT_MS } from '../../shared/lib/tableTimers.ts';
 import { t, tr } from '../../shared/i18n/index.ts';
-import { tNode } from '../../shared/i18n/trans.tsx';
 import { tScore } from '../../shared/i18n/pokerLabels.ts';
 import { Badge, Button, Dialog, Panel, Spinner } from '../../shared/ui/index.tsx';
 import { PlayingCard } from '../../entities/card/PlayingCard.tsx';
@@ -226,7 +223,6 @@ export function TablePage() {
   // did THIS hand ever show a multi-run decision? gates the outcome line so a
   // plain one-run hand never mentions 发牌次数.
   const sawRunOfferRef = useRef<string | null>(null);
-  const [peekSent, setPeekSent] = useState<Record<number, boolean>>({});
   const [shareOpen, setShareOpen] = useState(false);
   const [standingsOpen, setStandingsOpen] = useState(false);
   const closeDockPopovers = useCallback(() => {
@@ -555,10 +551,6 @@ export function TablePage() {
   );
 
   useEffect(() => {
-    setPeekSent({});
-  }, [hand.handId]);
-
-  useEffect(() => {
     if (!watchOpen || !isBankerHere) return;
     api
       .spectateSettings(roomId!)
@@ -766,55 +758,6 @@ export function TablePage() {
   const seatName = (seat: number) =>
     seatViews.find((s) => s.seat === seat)?.displayName ?? t('Seat {n}', { n: seat + 1 });
 
-  const peekAmt = room.room.bb;
-  // Every seated player may request a look. The target is any participant in
-  // the just-ended hand whose cards are still private; the server is the final
-  // authority for the hand's terminal eligibility and fixed 1bb settlement.
-  const amSeated = room.players.some((p) => p.userId === auth.userId && p.seat !== null);
-  const peekEligible =
-    hand.result && !hand.abort && !handLive && amSeated
-        ? seatViews.filter(
-          (v) => hand.seats.some((s) => s.seat === v.seat && s.userId === v.userId) && v.seat !== mySeat && !v.revealed && !hand.peekResults[v.seat],
-        )
-      : [];
-  const peekReveals = Object.entries(hand.peekResults);
-  // The eye is deliberately part of the opponent pod, not the dock. The
-  // result drawer below is only a secondary history affordance for cards the
-  // requester already received; spectators never get either object.
-  const peekTargets = Object.fromEntries(
-    peekEligible.map((v) => [v.seat, {
-      sent: !!peekSent[v.seat] || (myRoomStack ?? 0) < peekAmt,
-      onPeek: () => {
-        if (peekSent[v.seat] || (myRoomStack ?? 0) < peekAmt) return;
-        setPeekSent((m) => ({ ...m, [v.seat]: true }));
-        offerPeek(v.seat, peekAmt);
-      },
-    }]),
-  );
-  const peekBody = (dark: boolean) => (
-    <div className="space-y-2.5">
-      {peekReveals.map(([seat, result]) => (
-        <div key={seat} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>{tNode('{name} had', { name: <b>{result.targetName}</b> })}</span>
-          {result.cards.map((c) => (
-            <PlayingCard key={c} card={c} size="xs" />
-          ))}
-          <span className={dark ? 'text-white/50' : 'text-slate-400'}>
-            {t('only you can see this')}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-
-  const peekPanel = peekReveals.length > 0 && <details className="table-peek" key={hand.handId} open>
-    <summary className="table-dock-chip" aria-label={t('Peek results')}>
-      <Eye size={15} weight="bold" />
-      <span className="sr-only">{t('Peek results')}</span>
-    </summary>
-    <div className="table-peek-body" data-poker-hotkeys-blocked>{peekBody(true)}</div>
-  </details>;
-
   // the reasoning behind the result: who won, with what, over what
   const reasoning = (() => {
     if (!hand.result) return null;
@@ -990,9 +933,9 @@ export function TablePage() {
     </Panel>
   );
 
-  // A6/A7 note: the old mobile-only seat grid and peek sheet are gone; the
-  // merged layout reuses the desktop seatPicker Panel and peek Panel as
-  // overlays inside the table area on every viewport.
+  // A6/A7 note: the old mobile-only seat grid is gone; the merged layout
+  // reuses the desktop seatPicker Panel as an overlay inside the table area on
+  // every viewport.
 
   const utilityGroupLabels: Record<TableUtilityGroupId, string> = {
     people: t('People'),
@@ -1474,7 +1417,6 @@ export function TablePage() {
   );
   const dockNode = (
     <TableDock
-      peek={peekPanel}
       flow={consoleFlow}
       phone={narrowCanvas}
       compact={isPhone || compactBar}
@@ -2235,8 +2177,6 @@ export function TablePage() {
                collectSeats={showdownCollectors}
                equityBySeat={equityBySeat}
                centralPotRef={centralPotRef}
-               peekTargets={peekTargets}
-               peekResults={!amSpectator ? hand.peekResults : undefined}
              >
               {/* A5/L4a: desktop keeps the GG text pill; phone adds the shared
                   ChipStack cue beside the same amount and unit output. The pill
@@ -2479,51 +2419,7 @@ export function TablePage() {
             </div>
           </div>
 
-          {/* Incoming peek offers are a one-line overlay, not a layout slot: a
-              slot above the felt would shrink the explicit table stage and can
-              move every pod on desktop and phone. The top inset is reserved
-              chrome, so this compact banner does not intersect table elements. */}
-          {hand.peekOffers.length > 0 && (
-            <div
-              className="pointer-events-none absolute inset-x-0 top-1 z-30 flex justify-center px-2"
-              data-testid="peek-incoming-banner"
-            >
-              <details className="peek-incoming-banner pointer-events-auto w-[min(27rem,calc(100%-1rem))] rounded-xl px-2.5 py-1 text-[0.7rem] shadow-lg">
-                <summary className="cursor-pointer list-none truncate text-center font-semibold [&::-webkit-details-marker]:hidden">
-                  {t('{n} people want to peek at your cards', { n: hand.peekOffers.length })}
-                </summary>
-                <div className="peek-incoming-list">
-                  {hand.peekOffers.map((offer) => (
-                    <div key={offer.offerId} className="flex min-w-0 items-center gap-2 border-t border-white/10 py-1.5">
-                      <span className="min-w-0 flex-1 truncate">
-                        {tNode('{name} offers {amount} to privately see the cards you just had.', {
-                          name: <b>{offer.fromName}</b>,
-                          amount: <b className="font-display">{fmt(offer.amount)}</b>,
-                        })}
-                      </span>
-                      <Button
-                        variant="success"
-                        className="shrink-0 !px-2 !py-0.5 !text-[0.68rem]"
-                        disabled={hand.myCardPoints.length === 0}
-                        onClick={() => answerPeek(offer.offerId, true)}
-                      >
-                        {t('Accept {amount}', { amount: fmt(offer.amount) })}
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 !px-2 !py-0.5 !text-[0.68rem]"
-                        onClick={() => answerPeek(offer.offerId, false)}
-                      >
-                        {t('Decline')}
-                      </Button>
-                    </div>
-                  ))}
-               </div>
-              </details>
-            </div>
-          )}
-
-          {/* seat picker / spectator notice / buy-peek, as floating cards */}
+          {/* seat picker / spectator notice, as floating cards */}
           {!me && (
             <div className="pointer-events-none absolute inset-x-0 top-1 z-20 flex flex-col items-center gap-2 px-2">
               {!me && (

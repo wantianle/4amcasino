@@ -8,15 +8,13 @@ export function seatHandMode({
   isHero,
   cardsVisible,
   revealed,
-  peekVisible,
 }: {
   isHero: boolean;
   cardsVisible: boolean;
   revealed: boolean;
-  peekVisible: boolean;
 }): SeatHandMode {
   if (isHero) return 'hero';
-  if (cardsVisible && (revealed || peekVisible)) return 'showdown';
+  if (cardsVisible && revealed) return 'showdown';
   return 'hidden';
 }
 

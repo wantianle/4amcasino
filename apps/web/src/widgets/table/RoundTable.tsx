@@ -26,7 +26,7 @@ import { seatHandMode, TableSeat } from './TableSeat.tsx';
 import { SeatEquityBubble } from './SeatEquityBubble.tsx';
 import { DealCard, DEAL_STAGGER_MS, SEAT_DEAL_STAGGER_MS } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
-import { useStore, type PeekResult } from '../../shared/store.ts';
+import { useStore } from '../../shared/store.ts';
 import {
   anchorOf,
   angleOf,
@@ -293,8 +293,6 @@ export function RoundTable({
   goldBySeat,
   collectSeats,
   equityBySeat,
-  peekTargets,
-  peekResults,
   hudRoomId,
   children,
   centralPotRef,
@@ -363,11 +361,6 @@ export function RoundTable({
   /** Live all-in equity per seat in basis points (10000 = 100%), while an
    *  all-in runout is dealing. Absent for replays and normal hands. */
   equityBySeat?: Record<number, number>;
-  /** Between-hand private peek controls. The page only supplies these to the
-   * requester; spectators and targets therefore cannot render the eye. */
-  peekTargets?: Record<number, { sent: boolean; onPeek: () => void }>;
-  /** Cards received in a buyer-only peek_result, keyed by target seat. */
-  peekResults?: Record<number, PeekResult>;
   hudRoomId?: string;
   children: React.ReactNode;
   /** The actual visible central pot pill, not the whole center column. */
@@ -706,21 +699,12 @@ export function RoundTable({
             const isMe = p.userId === myUserId;
             const bbCount = fmtBB(p.stack, bb);
             const strength = handTypes?.[seat] ?? null;
-            const peekTarget = !isMe ? peekTargets?.[seat] : undefined;
-            const peekResult = peekResults?.[seat];
-            const peekCards =
-              !isMe && peekResult?.targetSeat === seat && peekResult.targetUserId === p.userId
-                ? peekResult.cards
-                : undefined;
-            const privatePeekVisible = !isMe && !!peekCards?.length;
             const cardsVisible =
-              (p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed)) ||
-              privatePeekVisible;
+              p.inHand && (isMe ? myCards.length > 0 || !p.folded : !p.folded || !!p.revealed);
             const handMode = seatHandMode({
               isHero: isMe,
               cardsVisible,
               revealed: !!p.revealed,
-              peekVisible: privatePeekVisible,
             });
 
             const isBanker = p.userId === bankerId;
@@ -887,22 +871,6 @@ export function RoundTable({
                       (merged tooltip), dimmed folded/offline/sitting-out. */}
 
                   <div className="table-pod-visual" data-testid={`seat-pod-${seat}`}>
-                    {peekTarget && !privatePeekVisible && (
-                      <button
-                        type="button"
-                        className="table-peek-eye"
-                        aria-label={t('Peek at {name}', { name: p.displayName })}
-                        title={t('Peek at {name}', { name: p.displayName })}
-                        disabled={peekTarget.sent}
-                        onClick={peekTarget.onPeek}
-                        data-testid={`peek-eye-${seat}`}
-                      >
-                        <Eye size={17} weight="bold" aria-hidden="true" />
-                        <span className="sr-only">
-                          {t('1 BB, paid only if they agree to show you')}
-                        </span>
-                      </button>
-                    )}
                     {handMode === 'hero' && myCards.length > 0 && (
                       <div
                         className={cn(
@@ -949,17 +917,11 @@ export function RoundTable({
                             delay={i * SEAT_DEAL_STAGGER_MS}
                             size={holeSize}
                             narrow={narrow}
-                            cards={isMe ? myCards : (peekCards ?? p.revealed)}
+                            cards={isMe ? myCards : p.revealed}
                             faceDown={handMode === 'hidden'}
                             handId={handId}
-                            motionPrefix={
-                              peekCards
-                                ? `peek:${p.seat}`
-                                : p.revealed
-                                  ? `reveal:${p.seat}`
-                                  : `hole:seat:${p.seat}`
-                            }
-                            reveal={!!p.revealed || !!peekCards}
+                            motionPrefix={p.revealed ? `reveal:${p.seat}` : `hole:seat:${p.seat}`}
+                            reveal={!!p.revealed}
                             gold={goldBySeat?.[p.seat]}
                           />
                         </div>

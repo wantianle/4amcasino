@@ -360,7 +360,7 @@ export function applyHandSettlement(
 // the money transaction from that DB row. A process crash between the two
 // leaves a complete input a restarted server (or an operator) can settle
 // without rebuilding anything from mutable room state - the current
-// `room_players.stack` may have been moved by a mid-hand buy/peek/next action.
+// `room_players.stack` may have been moved by a mid-hand buy/next action.
 // ---------------------------------------------------------------------------
 
 /** Canonical (key-order-stable) JSON for a frozen settlement input, so equal

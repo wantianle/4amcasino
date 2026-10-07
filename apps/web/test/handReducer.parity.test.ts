@@ -174,40 +174,6 @@ describe('handReducer parity: time_bank_update', () => {
   });
 });
 
-describe('handReducer parity: peek_offers_snapshot', () => {
-  it('keeps only the listed incoming offers, in order', () => {
-    useStore.getState().patchHand({
-      handId: 'h-peek',
-      peekOffers: [
-        { offerId: 'a', fromUserId: 2, fromName: 'A', amount: 10 },
-        { offerId: 'b', fromUserId: 3, fromName: 'B', amount: 20 },
-      ],
-    });
-    handle({ t: 'peek_offers_snapshot', incomingOfferIds: ['a', 'c'] });
-    expect(useStore.getState().hand.peekOffers.map((o) => o.offerId)).toEqual(['a']);
-  });
-
-  it('clears all offers on an empty snapshot', () => {
-    useStore.getState().patchHand({
-      handId: 'h-peek',
-      peekOffers: [{ offerId: 'a', fromUserId: 2, fromName: 'A', amount: 10 }],
-    });
-    handle({ t: 'peek_offers_snapshot', incomingOfferIds: [] });
-    expect(useStore.getState().hand.peekOffers).toEqual([]);
-  });
-
-  it('still yields a new array when the existing list is already empty', () => {
-    useStore.getState().patchHand({ handId: 'h-peek', peekOffers: [] });
-    const before = useStore.getState().hand.peekOffers;
-    handle({ t: 'peek_offers_snapshot', incomingOfferIds: [] });
-    const after = useStore.getState().hand.peekOffers;
-    // "always a fresh array" is a locked property: even an empty->empty snapshot
-    // replaces the reference (identity changes, value stays [])
-    expect(after).toEqual([]);
-    expect(after).not.toBe(before);
-  });
-});
-
 describe('handReducer parity: auto_deal', () => {
   it('sets an absolute deadline from the relative delay', () => {
     handle({ t: 'auto_deal', inMs: 5000 });
@@ -248,12 +214,11 @@ describe('handReducer parity: auto_deal', () => {
 });
 
 describe('handReducer parity: clock reads', () => {
-  it('reads Date.now only for auto_deal, never for the other four frames', () => {
+  it('reads Date.now only for auto_deal, never for the other three frames', () => {
     vi.mocked(Date.now).mockClear();
     handle({ t: 'ready_end' });
     handle({ t: 'feature_started', handId: 'h', squid, bombPot });
     handle({ t: 'time_bank_update', handId: 'h', seat: 0, remainingMs: 1 });
-    handle({ t: 'peek_offers_snapshot', incomingOfferIds: [] });
     expect(vi.mocked(Date.now)).toHaveBeenCalledTimes(0);
 
     handle({ t: 'auto_deal', inMs: 5000 });

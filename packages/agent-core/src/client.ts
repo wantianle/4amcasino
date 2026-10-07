@@ -96,12 +96,6 @@ export class HeadlessClient {
   seats: { seat: number; userId: number; username: string }[] = [];
   myCards: CardId[] = [];
   myCardPoints: { deckIndex: number; point: string }[] = [];
-  /**
-   * The hand `myCardPoints` belong to. A peek is answered against the ended
-   * hand's key, so the points must be bound to that same hand id - a stale
-   * offer for an older hand must never be answered with a newer hand's points.
-   */
-  myCardPointsHandId: string | null = null;
   board: CardId[] = [];
   betting: BettingState | null = null;
   actionSeq = -1;
@@ -146,7 +140,6 @@ export class HeadlessClient {
   result: Extract<ServerMsg, { t: 'hand_end' }> | null = null;
   showdown: Extract<ServerMsg, { t: 'showdown' }> | null = null;
   abort: Extract<ServerMsg, { t: 'hand_abort' }> | null = null;
-  peekOffers: { offerId: string; handId: string; fromName: string; amount: number }[] = [];
   events: string[] = [];
   /**
    * Public actions observed since this hand was dealt, accumulated from
@@ -426,13 +419,11 @@ export class HeadlessClient {
     this.seats = [];
     this.myCards = [];
     this.myCardPoints = [];
-    this.myCardPointsHandId = null;
     this.board = [];
     this.betting = null;
     this.actionSeq = -1;
     this.lastActedSeq = -2;
     this.deadline = null;
-    this.peekOffers = [];
     this.actionHistory = [];
     this.localActionOrdinal = 0;
     this.resyncHandId = null;
@@ -468,10 +459,10 @@ export class HeadlessClient {
 
   /**
    * Whether a frame refers to the hand the client most recently finished (the
-   * target of `peek_offer`/`peek_result`/`cards_shown`/`seven_deuce`). Peeks are
-   * always about a just-ended hand, so this is deliberately NOT the live
-   * `resyncHandId`: it accepts the hand id the client still holds (kept after
-   * `hand_end`) or one it has already seen settle (`endedHands`).
+   * target of `cards_shown`/`seven_deuce`). These frames are always about a
+   * just-ended hand, so this is deliberately NOT the live `resyncHandId`: it
+   * accepts the hand id the client still holds (kept after `hand_end`) or one
+   * it has already seen settle (`endedHands`).
    */
   private isRecentEndedHand(handId: string): boolean {
     return handId === this.handId || this.endedHands.has(handId);
@@ -582,7 +573,6 @@ export class HeadlessClient {
           this.seats = msg.seats;
           this.myCards = [];
           this.myCardPoints = [];
-          this.myCardPointsHandId = null;
           this.board = [];
           this.betting = null;
           this.actionSeq = -1;
@@ -590,7 +580,6 @@ export class HeadlessClient {
           this.result = null;
           this.showdown = null;
           this.abort = null;
-          this.peekOffers = [];
           this.actionHistory = [];
           this.localActionOrdinal = 0;
           // A hand we see start for the first time is complete only when we did
@@ -662,7 +651,6 @@ export class HeadlessClient {
         if (card !== null) {
           this.myCards.push(card);
           this.myCardPoints.push({ deckIndex: msg.deckIndex, point: msg.point });
-          this.myCardPointsHandId = msg.handId;
         }
         break;
       }
@@ -839,33 +827,6 @@ export class HeadlessClient {
         if (!this.isRecentEndedHand(msg.handId)) break;
         this.log(`7-2 offsuit bounty: ${this.nameOf(msg.seat)} collects ${msg.amount}`);
         break;
-      case 'peek_offer':
-        // A peek is about the just-ended hand, not the live one: drop a stale
-        // offer so it can never be answered against a newer hand id.
-        if (!this.isRecentEndedHand(msg.handId)) break;
-        this.peekOffers.push({
-          offerId: msg.offerId,
-          handId: msg.handId,
-          fromName: msg.fromName,
-          amount: msg.amount,
-        });
-        this.log(
-          `${msg.fromName} offers ${msg.amount} chips to privately see your last hand (offerId ${msg.offerId})`,
-        );
-        // A robot has nothing to hide and the peek is a fixed, trivial 1bb, so
-        // it always agrees. It travels the same offer/accept path a human does.
-        this.answerPeek(msg.offerId, true);
-        break;
-      case 'peek_result':
-        if (!this.isRecentEndedHand(msg.handId)) break;
-        if (msg.status === 'accepted' && msg.cards) {
-          this.log(
-            `peek accepted: seat ${msg.targetSeat + 1} had ${msg.cards.map(cardName).join(' ')} (only you can see this)`,
-          );
-        } else {
-          this.log('your peek offer was declined');
-        }
-        break;
       case 'chat':
         this.log(`${msg.from}: ${msg.text}`);
         break;
@@ -1026,12 +987,6 @@ export class HeadlessClient {
     } else {
       lines.push('No hand in progress.');
     }
-    if (this.peekOffers.length) {
-      for (const o of this.peekOffers)
-        lines.push(
-          `PENDING PEEK OFFER: ${o.fromName} pays ${o.amount} to see your cards (answer_peek offerId=${o.offerId}).`,
-        );
-    }
     if (this.events.length) {
       lines.push('Recent events:');
       for (const e of this.events.slice(-12)) lines.push(`  - ${e}`);
@@ -1081,38 +1036,6 @@ export class HeadlessClient {
       handId: this.handId,
       shares,
       sig: this.signed(this.handId, 'show_cards', { shares }),
-    });
-  }
-
-  answerPeek(offerId: string, accept: boolean): void {
-    // Only answer an offer we actually hold: a stale/unknown id (e.g. a filtered
-    // previous-hand offer) must never trigger an outbound frame.
-    const offer = this.peekOffers.find((o) => o.offerId === offerId);
-    if (!offer) return;
-    this.peekOffers = this.peekOffers.filter((o) => o.offerId !== offerId);
-    // Answer against the offer's own hand id: the offer can outlive a newer
-    // hand's context, and the server verifies the signature against that hand.
-    const handId = offer.handId;
-    // Never mint a key for a hand we did not play: `keyFor` would implicitly
-    // create one, then the shares would unmask against the wrong key and the
-    // server would reject an "accept" while the requester got no result. A
-    // missing key (or points from a different hand) is a decline, not a gamble.
-    const k = this.handKeys.get(handId);
-    const points = this.myCardPointsHandId === handId ? this.myCardPoints : [];
-    if (!accept || !k || points.length === 0) {
-      this.send({ t: 'peek_decline', handId, offerId });
-      return;
-    }
-    const shares = points.map(({ deckIndex, point }) => {
-      const { out, proof } = proveUnmask(k, pointFromHex(point));
-      return { deckIndex, out: pointHex(out), proof };
-    });
-    this.send({
-      t: 'peek_accept',
-      handId,
-      offerId,
-      shares,
-      sig: this.signed(handId, 'peek_accept', { offerId, shares }),
     });
   }
 

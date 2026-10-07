@@ -1,6 +1,6 @@
 // LedgerPage (房间账本). `entry.kind` badges and `entry.note` prose are
 // persisted server data rendered via tr() - their keys live in dict/server.ts
-// (purchase/transfer/revert/commission/hand-settlement/void-hand/peek/seven-deuce
+// (purchase/transfer/revert/commission/hand-settlement/void-hand/seven-deuce
 // + the note templates) and are NOT redefined here.
 // Shared keys reused from other modules: '← Back to table', 'hand {id}',
 // 'voided' (dict/hands.ts), 'Requesting…' (dict/bank.ts), 'Hands played'

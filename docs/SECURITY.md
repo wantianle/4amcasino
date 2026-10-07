@@ -200,6 +200,6 @@ Listed in the order I would fix them.
 7. `scryptSync` blocks the single event loop that also runs every live hand's
    action clock. Move to the async variant.
 8. A banker can void a whole room to erase debts; the 7-2 bounty amount is read
-   at payout time rather than deal time; peek offers are unbounded; revoking
+   at payout time rather than deal time; revoking
    spectating does not evict existing spectators; `/hands`, `/ledger` and
    `/style` have no pagination and parse every transcript per request.

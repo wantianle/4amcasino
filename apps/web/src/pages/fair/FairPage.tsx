@@ -431,7 +431,7 @@ function StepBoard() {
         ))}
       </div>
       <Caption>
-        {t("Community cards work the same way, just in the open: everyone removes their lock in front of the whole table, proof attached, and the flop flips for all at once. The same machinery covers showdowns, voluntary reveals, and paid peeks: a reveal is always a proven unlock, never the server's word.")}
+        {t("Community cards work the same way, just in the open: everyone removes their lock in front of the whole table, proof attached, and the flop flips for all at once. The same machinery covers showdowns and voluntary reveals: a reveal is always a proven unlock, never the server's word.")}
       </Caption>
       <NerdNote>
         {t('under the hood: identical DLEQ-proved unmasks, broadcast to the table instead of one player')}

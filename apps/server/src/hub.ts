@@ -202,8 +202,6 @@ export function attachHub(
       'run_count_choice',
       'run_count_agree',
       'im_ready',
-      'peek_accept',
-      'peek_decline',
     ]);
     const bucket = (rate: number) => {
       let tokens = rate;

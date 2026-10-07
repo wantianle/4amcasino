@@ -71,8 +71,8 @@ const fair: Record<string, string> = {
   // ── Ch6 · board ──────────────────────────────────────────────────────────
   'all three unlocked, in public': '三把锁当众全部解开',
   'three locks on every board card': '每张公共牌都锁着三把锁',
-  "Community cards work the same way, just in the open: everyone removes their lock in front of the whole table, proof attached, and the flop flips for all at once. The same machinery covers showdowns, voluntary reveals, and paid peeks: a reveal is always a proven unlock, never the server's word.":
-    '公共牌走的是同一套，只是全在明面上：每个人当着整桌的面解锁，证明随行，翻牌一起亮开。摊牌、主动亮牌、付费买看都一样：亮牌永远是一次有证明的解锁，从不靠服务器一句话。',
+  "Community cards work the same way, just in the open: everyone removes their lock in front of the whole table, proof attached, and the flop flips for all at once. The same machinery covers showdowns and voluntary reveals: a reveal is always a proven unlock, never the server's word.":
+    '公共牌走的是同一套，只是全在明面上：每个人当着整桌的面解锁，证明随行，翻牌一起亮开。摊牌、主动亮牌都一样：亮牌永远是一次有证明的解锁，从不靠服务器一句话。',
   reveal: '亮牌',
   'under the hood: identical DLEQ-proved unmasks, broadcast to the table instead of one player':
     '底层：同样带 DLEQ 证明的解遮罩，只是广播给全桌，而不是发给某一个人',

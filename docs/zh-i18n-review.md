@@ -8,7 +8,7 @@
 ## Tier 1 — 必须修（语义 / 术语 / 界面理解）
 
 1. `dict/server.ts` `no such user`：`没有这个用户。` → `没有这个用户名。`（是用户名不存在，不是用户本人）
-2. `dict/server.ts` `the buyer no longer has enough chips`：`买入方的筹码已经不够了。` → `出价方的筹码已经不够了。`（peek 买看者，勿与 buy-in 混淆）
+2. ~~`dict/server.ts` `the buyer no longer has enough chips`：`买入方的筹码已经不够了。` → `出价方的筹码已经不够了。`（peek 买看者，勿与 buy-in 混淆）~~（该项于 2026-10-08 随买看功能移除而作废：该 key 已删除）
 3. `dict/table.ts` `Deal when ready.`：`随时可以开桌。` → `准备好就发牌。`（是发牌，不是开桌）
 4. `dict/table.ts` `Host deals soon…`：`等房主开桌…` → `等房主发牌…`
 5. `dict/table.ts` + `dict/table-page.ts` `Call any`：`随时跟注` → `有注就跟`（any=任意注额自动跟，非时间）
