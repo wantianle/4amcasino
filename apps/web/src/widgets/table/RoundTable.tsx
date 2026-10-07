@@ -23,6 +23,7 @@ import {
 } from './WinnerFx.tsx';
 import { TurnProgress } from './TurnProgress.tsx';
 import { seatHandMode, TableSeat } from './TableSeat.tsx';
+import { SeatEquityBubble } from './SeatEquityBubble.tsx';
 import { DealCard, DEAL_STAGGER_MS, SEAT_DEAL_STAGGER_MS } from './DealCard.tsx';
 import { dealMotionEpoch } from '../../shared/gameClient.ts';
 import { useStore, type PeekResult } from '../../shared/store.ts';
@@ -291,6 +292,7 @@ export function RoundTable({
   handTypes,
   goldBySeat,
   collectSeats,
+  equityBySeat,
   peekTargets,
   peekResults,
   hudRoomId,
@@ -358,6 +360,9 @@ export function RoundTable({
   goldBySeat?: Record<number, Set<CardId>>;
   /** Public pot awards can begin their flight before hand_end supplies game nets. */
   collectSeats?: number[];
+  /** Live all-in equity per seat in basis points (10000 = 100%), while an
+   *  all-in runout is dealing. Absent for replays and normal hands. */
+  equityBySeat?: Record<number, number>;
   /** Between-hand private peek controls. The page only supplies these to the
    * requester; spectators and targets therefore cannot render the eye. */
   peekTargets?: Record<number, { sent: boolean; onPeek: () => void }>;
@@ -392,6 +397,8 @@ export function RoundTable({
   // the win moment: chips arc from the pot into the winner's pod, so both
   // elements need to be reachable; only the top winner carries the share icon
   const winners = seats.filter((s) => s.won);
+  // The highest live equity is the "advantaged" side (its bubble reads green).
+  const maxEquity = equityBySeat ? Math.max(0, ...Object.values(equityBySeat)) : 0;
   // The pot flies ONCE, to the seat that actually won the hand. See
   // collectorSeats for why the per-payout set is intersected and what happens
   // when the two disagree.
@@ -1035,6 +1042,12 @@ export function RoundTable({
                           >
                             <Robot size={9} weight="fill" />
                           </span>
+                        )}
+                        {equityBySeat?.[p.seat] !== undefined && (
+                          <SeatEquityBubble
+                            bps={equityBySeat[p.seat]!}
+                            advantaged={equityBySeat[p.seat]! >= maxEquity}
+                          />
                         )}
                       </div>
                       <div className="table-pod-info">

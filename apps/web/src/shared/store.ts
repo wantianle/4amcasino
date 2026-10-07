@@ -227,6 +227,14 @@ export interface HandView {
   multiRunOffer: MultiRunOfferMsg | null;
   /** The multi-run negotiation's terminal outcome. */
   multiRunResult: MultiRunResultMsg | null;
+  /** Live all-in equity bubble state, refreshed per completed street. Null when
+   *  no all-in runout is on the table; cleared the moment the hand settles. */
+  equityBubble: {
+    run: number;
+    runs: number;
+    board: CardId[];
+    bySeat: Record<number, number>;
+  } | null;
   /** Squid-game settlement for the hand, from squid_result. */
   squidResult: SquidResultMsg | null;
   /** Set by `settlement_failed`; non-null means the hand's durable settlement
@@ -300,6 +308,7 @@ export const emptyHand: HandView = {
   featureStarted: null,
   multiRunOffer: null,
   multiRunResult: null,
+  equityBubble: null,
   squidResult: null,
   settlementFailed: null,
   handRecovery: null,

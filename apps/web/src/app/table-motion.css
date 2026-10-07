@@ -217,3 +217,65 @@
     opacity: 0.42;
   }
 }
+
+/* ── live all-in equity bubble ─────────────────────────────────────────────
+   A translucent chat bubble pinned to the avatar's top-left during an all-in
+   runout, refreshed on every completed street. The advantaged side reads
+   green, everyone else red; <3% shows "还有机会" and <1% "听死牌" instead of a
+   number (the text is chosen in SeatEquityBubble.tsx). ── */
+.table-equity-bubble {
+  position: absolute;
+  top: -6px;
+  left: -12px;
+  z-index: 30;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(6, 20, 12, 0.62);
+  border: 1px solid currentColor;
+  backdrop-filter: blur(2px);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  animation: table-equity-bubble-in 0.18s ease-out;
+}
+.table-equity-bubble--over {
+  color: #6ce38a;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.35);
+}
+.table-equity-bubble--under {
+  color: #ff7a72;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.3);
+}
+/* the chat tail, pointing down-right toward the avatar below it */
+.table-equity-bubble::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  bottom: -4px;
+  width: 7px;
+  height: 7px;
+  background: inherit;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  border-bottom-right-radius: 2px;
+}
+@keyframes table-equity-bubble-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-equity-bubble {
+    animation: none;
+  }
+}

@@ -294,6 +294,40 @@ export type ServerMsg =
     }
   | { t: 'your_card'; handId: string; deckIndex: number; point: string }
   | { t: 'board_open'; handId: string; deckIndex: number; card: CardId; run?: 1 | 2 | 3 }
+  | {
+      /**
+       * All-in showdown reveal, broadcast the instant every live player's hole
+       * cards are public and BEFORE the runout board (and its equity bubbles)
+       * start dealing. Lets the client flip the cards first and only then show
+       * a win rate, matching the requested order "reveal, then equity". Purely
+       * advisory presentation: an unknown frame is ignored, and it is not part
+       * of the durable transcript.
+       */
+      t: 'runout_reveal';
+      handId: string;
+      /** Every live all-in seat's now-public hole cards. */
+      reveals: { seat: number; cards: CardId[] }[];
+    }
+  | {
+      /**
+       * Live all-in equity for the on-table bubbles during an all-in runout.
+       * Emitted once when the reveal goes public (the preflop snapshot) and
+       * again after each completed street of each run (flop / turn / river),
+       * never for a normally-contested hand. Purely advisory presentation: a
+       * client that does not know this frame ignores it, and it is not part of
+       * the durable transcript.
+       */
+      t: 'equity_update';
+      handId: string;
+      /** 1-based run this equity belongs to (matches `board_open.run`). */
+      run: number;
+      /** How many runs this all-in is dealing (server-declared). */
+      runs: number;
+      /** The run's board the equity was computed against (0/3/4/5 cards). */
+      board: CardId[];
+      /** Pot equity per live all-in seat, basis points (10_000 = 100%). */
+      equities: MultiRunEquity[];
+    }
   | { t: 'rit_offer'; handId: string; deadlineTs: number; voters: number[] }
   | { t: 'rit_result'; handId: string; runTwice: boolean; sharedBoard: CardId[] }
   | {

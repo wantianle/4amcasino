@@ -21,8 +21,16 @@ import type { ServerMsg } from './wsProtocol.js';
  * member such as `toString`, `constructor` or `__proto__`.
  *
  * Structure and primitive types only, never business rules. A false reject
- * would silently drop a legitimate frame, so numeric bounds and cross-field
- * invariants are deliberately left to the server and the state machine.
+ * would silently drop a legitimate frame, so cross-field invariants are
+ * deliberately left to the server and the state machine. Two exceptions apply,
+ * both to frames whose payload drives rendering directly:
+ *   - a numeric field rendered verbatim (a card id, a seat index, an equity in
+ *     basis points) is bounded, so an out-of-range or fractional value is a
+ *     protocol error (`equity_update` bound its integers);
+ *   - `runout_reveal` is the frame that flips hole cards face-up, so its shape
+ *     is a protocol obligation, not a business rule: every seat entry must
+ *     carry exactly two distinct card ids, no seat may repeat, and the reveal
+ *     set is bounded to the table size.
  */
 
 type Rec = Record<string, unknown>;
@@ -34,6 +42,34 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 const isNumOrNull = (v: unknown): v is number | null => v === null || isNum(v);
 const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
 const isNumArr = (v: unknown): v is number[] => Array.isArray(v) && v.every(isNum);
+/** Integer + closed range check. Used where the wire contract is numeric and
+ *  the value goes straight into rendering (a card id, a seat index, an
+ *  equity in basis points), so a fractional/out-of-range value is a protocol
+ *  error rather than a business rule. Cross-field invariants (sums) stay with
+ *  the server/state machine; the two rendering-driven exceptions are the
+ *  `runout_reveal` shape below and the `equity_update` bounds. */
+const inRange = (v: unknown, lo: number, hi: number): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+const isCardIdArr = (v: unknown): v is number[] =>
+  Array.isArray(v) && v.every((c) => inRange(c, 0, 51));
+/**
+ * `runout_reveal.reveals`: 1..9 live seats, each with exactly two distinct
+ * card ids, and no seat twice. This frame drives "show the hole cards", so a
+ * malformed payload is a protocol error the store must not receive - a short
+ * or duplicated hand would render a wrong board, and a repeated seat would
+ * overwrite an earlier reveal.
+ */
+const isSeatReveals = (v: unknown): v is { seat: number; cards: number[] }[] => {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 9) return false;
+  const seen = new Set<number>();
+  for (const r of v) {
+    if (!isObj(r) || !inRange(r.seat, 0, 8)) return false;
+    if (!isCardIdArr(r.cards) || r.cards.length !== 2 || r.cards[0] === r.cards[1]) return false;
+    if (seen.has(r.seat)) return false;
+    seen.add(r.seat);
+  }
+  return true;
+};
 const optional = (v: unknown, guard: (x: unknown) => boolean): boolean =>
   v === undefined || guard(v);
 
@@ -134,7 +170,8 @@ const isSeatStackArr = (v: unknown): boolean =>
 const isSeatDeltaArr = (v: unknown): boolean =>
   Array.isArray(v) && v.every((d) => isObj(d) && isNum(d.seat) && isNum(d.delta));
 
-const isEquity = (v: unknown): boolean => isObj(v) && isNum(v.seat) && isNum(v.bps);
+const isEquity = (v: unknown): boolean =>
+  isObj(v) && inRange(v.seat, 0, 8) && inRange(v.bps, 0, 10000);
 const isTransfer = (v: unknown): boolean =>
   isObj(v) && isNum(v.from) && isNum(v.to) && isNum(v.amount);
 const isPayment = (v: unknown): boolean => isObj(v) && isNum(v.seat) && isNum(v.amount);
@@ -242,6 +279,14 @@ const guards: Record<ServerMsg['t'], (m: Rec) => boolean> = {
   your_card: (m) => isStr(m.handId) && isNum(m.deckIndex) && isStr(m.point),
   board_open: (m) =>
     isStr(m.handId) && isNum(m.deckIndex) && isNum(m.card) && optional(m.run, isRun),
+  equity_update: (m) =>
+    isStr(m.handId) &&
+    inRange(m.run, 1, 3) &&
+    inRange(m.runs, 1, 3) &&
+    isCardIdArr(m.board) &&
+    Array.isArray(m.equities) &&
+    m.equities.every(isEquity),
+  runout_reveal: (m) => isStr(m.handId) && isSeatReveals(m.reveals),
   rit_offer: (m) => isStr(m.handId) && isNum(m.deadlineTs) && isNumArr(m.voters),
   rit_result: (m) => isStr(m.handId) && isBool(m.runTwice) && isNumArr(m.sharedBoard),
 

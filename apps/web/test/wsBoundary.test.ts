@@ -80,6 +80,25 @@ const samples = {
   },
   your_card: { t: 'your_card', handId: 'h', deckIndex: 0, point: 'ab' },
   board_open: { t: 'board_open', handId: 'h', deckIndex: 0, card: 7 },
+  runout_reveal: {
+    t: 'runout_reveal',
+    handId: 'h',
+    reveals: [
+      { seat: 0, cards: [1, 2] },
+      { seat: 1, cards: [3, 4] },
+    ],
+  },
+  equity_update: {
+    t: 'equity_update',
+    handId: 'h',
+    run: 1,
+    runs: 2,
+    board: [7, 8, 9],
+    equities: [
+      { seat: 0, bps: 8596 },
+      { seat: 1, bps: 1404 },
+    ],
+  },
   rit_offer: { t: 'rit_offer', handId: 'h', deadlineTs: 1, voters: [0, 1] },
   rit_result: { t: 'rit_result', handId: 'h', runTwice: true, sharedBoard: [1, 2, 3] },
   betting_state: bettingStateSample,
@@ -251,6 +270,68 @@ describe('parseServerMsg', () => {
       state: { ...bettingStateSample.state, seats: [{ seat: 0 }] },
     };
     expect(parseServerMsg(bad).ok).toBe(false);
+  });
+
+  it('rejects out-of-range equity numerology and accepts the in-range sample', () => {
+    expect(parseServerMsg(samples.equity_update).ok).toBe(true);
+    const base = samples.equity_update;
+    const bad: unknown[] = [
+      { ...base, run: 1.5 },
+      { ...base, run: 0 },
+      { ...base, runs: 4 },
+      { ...base, board: [52] },
+      { ...base, board: [-1] },
+      { ...base, equities: [{ seat: 9, bps: 5000 }] },
+      { ...base, equities: [{ seat: 0, bps: 10001 }] },
+      { ...base, equities: [{ seat: 0, bps: -1 }] },
+      { ...base, equities: [{ seat: 0, bps: 12.5 }] },
+    ];
+    for (const frame of bad) expect(parseServerMsg(frame).ok, JSON.stringify(frame)).toBe(false);
+  });
+
+  it('rejects a malformed runout_reveal (shape is a protocol obligation)', () => {
+    expect(parseServerMsg(samples.runout_reveal).ok).toBe(true);
+
+    // One seat is legal; the full 9-seat set is the upper bound.
+    const one = { t: 'runout_reveal', handId: 'h', reveals: [{ seat: 0, cards: [1, 2] }] };
+    expect(parseServerMsg(one).ok).toBe(true);
+    const nine = {
+      t: 'runout_reveal',
+      handId: 'h',
+      reveals: Array.from({ length: 9 }, (_, seat) => ({ seat, cards: [seat * 2, seat * 2 + 1] })),
+    };
+    expect(parseServerMsg(nine).ok).toBe(true);
+
+    const base = samples.runout_reveal;
+    const bad: unknown[] = [
+      { ...base, reveals: 'x' },
+      { ...base, handId: 5 }, // empty reveals implied by handId, still rejected
+      { ...base, reveals: [] }, // no reveal at all
+      // every seat entry must carry exactly two DISTINCT cards
+      { ...base, reveals: [{ seat: 0, cards: [] }] },
+      { ...base, reveals: [{ seat: 0, cards: [1] }] },
+      { ...base, reveals: [{ seat: 0, cards: [1, 2, 3] }] },
+      { ...base, reveals: [{ seat: 0, cards: [1, 1] }] },
+      // bad seat / bad card id / non-array cards
+      { ...base, reveals: [{ seat: 9, cards: [1, 2] }] },
+      { ...base, reveals: [{ seat: 0.5, cards: [1, 2] }] },
+      { ...base, reveals: [{ seat: 0, cards: [52] }] },
+      { ...base, reveals: [{ seat: 0, cards: 'ab' }] },
+      // a seat may appear only once
+      {
+        ...base,
+        reveals: [
+          { seat: 0, cards: [1, 2] },
+          { seat: 0, cards: [3, 4] },
+        ],
+      },
+      // more entries than a table can hold
+      {
+        ...base,
+        reveals: Array.from({ length: 10 }, (_, i) => ({ seat: i % 9, cards: [i, i + 20] })),
+      },
+    ];
+    for (const frame of bad) expect(parseServerMsg(frame).ok, JSON.stringify(frame)).toBe(false);
   });
 
   it('does not clone the validated frame (identity is preserved)', () => {

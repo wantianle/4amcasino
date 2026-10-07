@@ -65,7 +65,22 @@ export class TestClient {
     equities: { seat: number; bps: number }[];
   }[] = [];
   multiRunResult: { runs: number; reason: string } | null = null;
+  /** Every live all-in bubble snapshot the server pushed, in arrival order. */
+  equityUpdates: {
+    run: number;
+    runs: number;
+    board: CardId[];
+    equities: { seat: number; bps: number }[];
+    /** this client's view of run-1's board when the frame arrived */
+    boardAtArrival: CardId[];
+  }[] = [];
   lastShowdown: Extract<ServerMsg, { t: 'showdown' }> | null = null;
+  /** Ordered `t` tags of every frame received since this hand's `hand_start`,
+   *  so tests can assert the wire order (e.g. reveal before equity before
+   *  board_open). */
+  frameLog: string[] = [];
+  /** Every `runout_reveal` frame, in arrival order. */
+  runoutReveals: { seat: number; cards: CardId[] }[][] = [];
   timeBankUpdates: { seat: number; remainingMs: number }[] = [];
   /** Every street a client-visible betting_state announced, in order. */
   bettingStreets: string[] = [];
@@ -339,6 +354,7 @@ export class TestClient {
   }
 
   handle(msg: ServerMsg): void {
+    this.frameLog.push(msg.t);
     switch (msg.t) {
       case 'room_state':
         this.roomState = msg;
@@ -370,6 +386,8 @@ export class TestClient {
           this.multiRunOffers = [];
           this.multiRunResult = null;
           this.lastShowdown = null;
+          this.frameLog = [];
+          this.runoutReveals = [];
           this.timeBankUpdates = [];
           this.bettingStreets = [];
           this.lastState = null;
@@ -475,6 +493,20 @@ export class TestClient {
       }
       case 'multi_run_result': {
         this.multiRunResult = { runs: msg.runs, reason: msg.reason };
+        break;
+      }
+      case 'runout_reveal': {
+        this.runoutReveals.push(msg.reveals.map((r) => ({ seat: r.seat, cards: [...r.cards] })));
+        break;
+      }
+      case 'equity_update': {
+        this.equityUpdates.push({
+          run: msg.run,
+          runs: msg.runs,
+          board: [...msg.board],
+          equities: msg.equities.map((e) => ({ seat: e.seat, bps: e.bps })),
+          boardAtArrival: [...this.board],
+        });
         break;
       }
       case 'squid_result': {

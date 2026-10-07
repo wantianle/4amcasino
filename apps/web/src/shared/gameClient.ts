@@ -762,6 +762,38 @@ const handleBoardOpen: FrameHandler<'board_open'> = (msg) => {
   if (JSON.stringify(nextBoards) !== JSON.stringify(hand.boards)) store.patchHand({ boards: nextBoards });
 };
 
+const handleEquityUpdate: FrameHandler<'equity_update'> = (msg) => {
+  const store = useStore.getState();
+  const { hand } = store;
+  if (hand.handId !== msg.handId) return;
+  // Past the result the bubble is gone: a worker frame that lands a beat after
+  // settlement (or a reconnect snapshot from the previous hand) is ignored.
+  if (hand.result || hand.showdown || hand.abort) return;
+  const bySeat: Record<number, number> = {};
+  for (const equity of msg.equities) bySeat[equity.seat] = equity.bps;
+  store.patchHand({
+    equityBubble: { run: msg.run, runs: msg.runs, board: msg.board, bySeat },
+  });
+};
+
+const handleRunoutReveal: FrameHandler<'runout_reveal'> = (msg) => {
+  const store = useStore.getState();
+  const hand = store.hand;
+  if (hand.handId !== msg.handId) return;
+  // Only meaningful while the hand is live; ignore a reveal that races the
+  // terminal frames (the showdown below carries the same cards anyway).
+  if (hand.result || hand.showdown || hand.abort) return;
+  // Flip the cards with the same motion a showdown uses, then let the equity
+  // frames that follow paint the bubbles - the requested "reveal, then equity".
+  for (const reveal of msg.reveals) {
+    reveal.cards.forEach((_, i) => noteDealMotion(msg.handId, `reveal:${reveal.seat}:${i}`));
+  }
+  play('flip');
+  const shown = { ...hand.shown };
+  for (const reveal of msg.reveals) shown[reveal.seat] = [...reveal.cards];
+  store.patchHand({ shown });
+};
+
 const handleBettingState: FrameHandler<'betting_state'> = (msg) => {
   const store = useStore.getState();
   const prev = store.hand;
@@ -945,7 +977,7 @@ const handleShowdown: FrameHandler<'showdown'> = (msg) => {
   play('thunder');
   window.dispatchEvent(new CustomEvent('4am-thunder'));
   endedHands.add(msg.handId);
-  store.patchHand({ showdown: msg, deadline: null, baseDeadline: null });
+  store.patchHand({ showdown: msg, deadline: null, baseDeadline: null, equityBubble: null });
 };
 
 // ---- the dispatch table ----------------------------------------------------
@@ -969,6 +1001,8 @@ const handlers: HandlerTable = {
   share_applied: ignoreFrame,
   your_card: handleYourCard,
   board_open: handleBoardOpen,
+  equity_update: handleEquityUpdate,
+  runout_reveal: handleRunoutReveal,
   rit_offer: applyHandEffects,
   rit_result: applyHandEffects,
   betting_state: handleBettingState,

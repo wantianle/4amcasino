@@ -97,6 +97,7 @@ import {
 import { holeStrengthLabel } from './holeStrengthLabel.ts';
 import { useUrgentAt } from './hooks/useUrgentAt.ts';
 import { useViewportSize } from './hooks/useViewportSize.ts';
+import { useEquityBubbles } from './hooks/useEquityBubbles.ts';
 import { CountdownChip } from './ui/CountdownChip.tsx';
 import { RunTwicePrompt } from './ui/RunTwicePrompt.tsx';
 import { MultiRunPrompt } from './ui/MultiRunPrompt.tsx';
@@ -159,6 +160,13 @@ export function TablePage() {
   const room = storedRoom?.room.id === roomId ? storedRoom : null;
   const hand = useStore((s) => s.hand);
   const handLive = hand.handId !== null && !hand.result && !hand.abort;
+  // Live all-in equity bubbles. Declared here (before TablePage's early returns,
+  // so the hook order is stable) and cleared once the hand has a
+  // result/showdown/abort; between runs the hook holds them hidden for ~2s.
+  const equityBubble = useEquityBubbles(
+    !hand.result && !hand.showdown && !hand.abort ? hand.equityBubble : null,
+  );
+  const equityBySeat = equityBubble?.bySeat;
   // The server's last room_state snapshot also knows whether a hand is running.
   // It covers the window where the host closes before this browser has received
   // hand_start. Once a hand is held locally its terminal frame wins: hand_end /
@@ -2220,6 +2228,7 @@ export function TablePage() {
                handTypes={strengthLabels}
                goldBySeat={goldBySeat}
                collectSeats={showdownCollectors}
+               equityBySeat={equityBySeat}
                centralPotRef={centralPotRef}
                peekTargets={peekTargets}
                peekResults={!amSpectator ? hand.peekResults : undefined}

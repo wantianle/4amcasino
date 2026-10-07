@@ -1,13 +1,17 @@
-/** Head-up equity core + worker-thread entry point.
+/** Known-hands equity core + worker-thread entry point.
  *
  *  The heavy lifting lives here so it can run inside a `node:worker_threads`
  *  worker (a preflop all-in must never block the server's event loop). The
  *  pure `runEquityJob` is exported too, so tests can exercise the math
  *  synchronously without paying worker start-up.
  *
- *  Only the two known hands and the board take part: the deck a runout is
- *  drawn from is the 52 cards minus those known cards, so folded or unknown
- *  hole cards never influence the result.
+ *  Only the known hands, the board and any explicitly dead cards take part: the
+ *  deck a runout is drawn from is the 52 cards minus those, so folded or
+ *  unknown hole cards never influence the result.
+ *
+ *  The core is N-way (`runMultiwayEquityJob`); the heads-up `runEquityJob` is a
+ *  two-hand call into it, so the all-in multi-run offer and the per-street
+ *  bubble share one implementation.
  */
 import { parentPort, isMainThread, workerData } from 'node:worker_threads';
 import { ALL_CARDS, evaluate7, type CardId } from '@4am/shared';
@@ -29,27 +33,61 @@ export interface HeadsUpEquityResult {
   samples: number;
 }
 
+/** N-way known-hands equity (the live all-in bubble, HU and multiway). */
+export interface MultiwayEquityJob {
+  /** Every live player's two hole cards, in seat order. */
+  holes: [CardId, CardId][];
+  board: CardId[];
+  seed: string;
+  samples?: number;
+  /** Publicly-known dead cards (e.g. an earlier run's board) removed from the
+   *  runout deck. */
+  dead?: CardId[];
+}
+
+export interface MultiwayEquityResult {
+  /** Pot share per hole in basis points; sums to 10000, ties split evenly. */
+  equitiesBps: number[];
+  method: 'exact' | 'monte-carlo';
+  samples: number;
+}
+
 /** Deterministic preflop sample count — reproducible from the audit seed. */
 export const PREFLOP_SAMPLES = 25_000;
 
 /** Boards we can settle exactly. Anything else (a partial street) is rejected. */
 const EXACT_BOARD_LENGTHS = new Set([3, 4, 5]);
 
-function validate(job: EquityJob): CardId[] {
-  if (job.holeA?.length !== 2 || job.holeB?.length !== 2) {
-    throw new Error('each hand needs exactly two hole cards');
+function validateMulti(job: MultiwayEquityJob): CardId[] {
+  if (!Array.isArray(job.holes) || job.holes.length < 2) {
+    throw new Error('at least two hands are required');
+  }
+  for (const h of job.holes) {
+    if (h?.length !== 2) throw new Error('each hand needs exactly two hole cards');
   }
   if (!Array.isArray(job.board)) throw new Error('board must be an array');
   if (job.board.length !== 0 && !EXACT_BOARD_LENGTHS.has(job.board.length)) {
     throw new Error(`unsupported board length: ${job.board.length}`);
   }
-  const known = [...job.holeA, ...job.holeB, ...job.board];
+  const dead = job.dead ?? [];
+  if (!Array.isArray(dead)) throw new Error('dead must be an array');
+  const known = [...job.holes.flat(), ...job.board, ...dead];
   for (const c of known) {
     if (!Number.isInteger(c) || c < 0 || c > 51) throw new Error(`bad card id: ${c}`);
   }
-  if (new Set(known).size !== known.length) throw new Error('duplicate card across hands/board');
+  if (new Set(known).size !== known.length)
+    throw new Error('duplicate card across hands/board/dead');
   const used = new Set(known);
   return ALL_CARDS.filter((c) => !used.has(c));
+}
+
+function validate(job: EquityJob): CardId[] {
+  return validateMulti({
+    holes: [job.holeA, job.holeB],
+    board: job.board,
+    seed: job.seed,
+    samples: job.samples,
+  });
 }
 
 /** FNV-1a 32-bit — turns the audit seed into RNG state, stable across runs. */
@@ -74,10 +112,16 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** A win is 2 half-units, a tie 1 — keeps the bps conversion in integers. */
-function bpsFromCounts(winsA: number, ties: number, n: number): [number, number] {
-  const a = Math.round(((winsA * 2 + ties) * 10000) / (2 * n));
-  return [a, 10000 - a];
+/** Convert fractional win shares to integer basis points that sum to 10000.
+ *  Largest-remainder rounding, which reproduces the heads-up `[a, 10000-a]`
+ *  split exactly for two players. */
+function toBps(wins: number[], n: number): number[] {
+  const raw = wins.map((w) => (w * 10000) / n);
+  const out = raw.map(Math.floor);
+  const rem = 10000 - out.reduce((a, b) => a + b, 0);
+  const order = raw.map((v, i) => ({ i, frac: v - Math.floor(v) })).sort((a, b) => b.frac - a.frac);
+  for (let k = 0; k < rem; k++) out[order[k % order.length]!.i]!++;
+  return out;
 }
 
 function best(hole: readonly [CardId, CardId], fullBoard: readonly CardId[]): number {
@@ -92,38 +136,53 @@ function best(hole: readonly [CardId, CardId], fullBoard: readonly CardId[]): nu
   ]);
 }
 
-function runExact(job: EquityJob, unseen: CardId[]): HeadsUpEquityResult {
+function tally(holes: MultiwayEquityJob['holes'], fullBoard: CardId[], wins: number[]): void {
+  let bestScore = -1;
+  let winners: number[] = [];
+  for (let i = 0; i < holes.length; i++) {
+    const score = best(holes[i]!, fullBoard);
+    if (score > bestScore) {
+      bestScore = score;
+      winners = [i];
+    } else if (score === bestScore) {
+      winners.push(i);
+    }
+  }
+  const share = 1 / winners.length;
+  for (const i of winners) wins[i]! += share;
+}
+
+function runExactMulti(job: MultiwayEquityJob, unseen: CardId[]): MultiwayEquityResult {
   const need = 5 - job.board.length;
-  let winsA = 0;
-  let ties = 0;
+  const wins = new Array<number>(job.holes.length).fill(0);
   let n = 0;
-  const tally = (fullBoard: CardId[]): void => {
-    const sa = best(job.holeA, fullBoard);
-    const sb = best(job.holeB, fullBoard);
-    if (sa > sb) winsA++;
-    else if (sa === sb) ties++;
+  const tallyBoard = (fullBoard: CardId[]): void => {
+    tally(job.holes, fullBoard, wins);
     n++;
   };
 
   if (need === 0) {
-    tally(job.board.slice());
+    tallyBoard(job.board.slice());
   } else if (need === 1) {
-    for (const c of unseen) tally([...job.board, c]);
+    for (const c of unseen) tallyBoard([...job.board, c]);
   } else {
     for (let i = 0; i < unseen.length; i++) {
       for (let j = i + 1; j < unseen.length; j++) {
-        tally([...job.board, unseen[i]!, unseen[j]!]);
+        tallyBoard([...job.board, unseen[i]!, unseen[j]!]);
       }
     }
   }
-  return { equitiesBps: bpsFromCounts(winsA, ties, n), method: 'exact', samples: n };
+  return { equitiesBps: toBps(wins, n), method: 'exact', samples: n };
 }
 
-function runMonteCarlo(job: EquityJob, unseen: CardId[], samples: number): HeadsUpEquityResult {
+function runMonteCarloMulti(
+  job: MultiwayEquityJob,
+  unseen: CardId[],
+  samples: number,
+): MultiwayEquityResult {
   const rand = mulberry32(hashSeed(job.seed));
   const deck = unseen.slice();
-  let winsA = 0;
-  let ties = 0;
+  const wins = new Array<number>(job.holes.length).fill(0);
   for (let s = 0; s < samples; s++) {
     // Partial Fisher-Yates: draw five distinct runout cards uniformly.
     for (let i = 0; i < 5; i++) {
@@ -132,38 +191,68 @@ function runMonteCarlo(job: EquityJob, unseen: CardId[], samples: number): Heads
       deck[i] = deck[j]!;
       deck[j] = tmp;
     }
-    const runout = [deck[0]!, deck[1]!, deck[2]!, deck[3]!, deck[4]!];
-    const sa = best(job.holeA, runout);
-    const sb = best(job.holeB, runout);
-    if (sa > sb) winsA++;
-    else if (sa === sb) ties++;
+    tally(job.holes, [deck[0]!, deck[1]!, deck[2]!, deck[3]!, deck[4]!], wins);
   }
-  return { equitiesBps: bpsFromCounts(winsA, ties, samples), method: 'monte-carlo', samples };
+  return { equitiesBps: toBps(wins, samples), method: 'monte-carlo', samples };
+}
+
+/** Deterministically settle N known hands against the supplied board. */
+export function runMultiwayEquityJob(job: MultiwayEquityJob): MultiwayEquityResult {
+  const unseen = validateMulti(job);
+  if (job.board.length === 0) {
+    return runMonteCarloMulti(job, unseen, job.samples ?? PREFLOP_SAMPLES);
+  }
+  return runExactMulti(job, unseen);
 }
 
 /** Deterministically settle two known hands against the supplied board. */
 export function runEquityJob(job: EquityJob): HeadsUpEquityResult {
-  const unseen = validate(job);
-  if (job.board.length === 0) {
-    return runMonteCarlo(job, unseen, job.samples ?? PREFLOP_SAMPLES);
-  }
-  return runExact(job, unseen);
+  const r = runMultiwayEquityJob({
+    holes: [job.holeA, job.holeB],
+    board: job.board,
+    seed: job.seed,
+    samples: job.samples,
+  });
+  return {
+    equitiesBps: [r.equitiesBps[0]!, r.equitiesBps[1]!],
+    method: r.method,
+    samples: r.samples,
+  };
 }
 
 // ---- worker bootstrap -----------------------------------------------------
 
 interface WorkerReply {
   ok: boolean;
-  result?: HeadsUpEquityResult;
+  result?: HeadsUpEquityResult | MultiwayEquityResult;
   error?: string;
 }
 
 const port = parentPort;
 if (!isMainThread && port) {
   const post = (reply: WorkerReply): void => port.postMessage(reply);
-  try {
-    post({ ok: true, result: runEquityJob(workerData as EquityJob) });
-  } catch (err) {
-    post({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  const data = workerData as (EquityJob | MultiwayEquityJob) & { persistent?: boolean };
+  const run = (job: EquityJob | MultiwayEquityJob): WorkerReply => {
+    try {
+      return {
+        ok: true,
+        result: 'holes' in job ? runMultiwayEquityJob(job) : runEquityJob(job as EquityJob),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  if (data?.persistent) {
+    // Long-lived worker: one job per message, reused for every bubble street so
+    // the per-street cost is the compute, not another thread start-up.
+    port.on('message', (m: { id: number; job: EquityJob | MultiwayEquityJob }) => {
+      port.postMessage({ id: m.id, ...run(m.job) });
+    });
+    // Handshake: a message posted to a port whose handler is not installed yet
+    // can be lost, which would hang a whole street until the parent timeout.
+    // Announce the listener so the parent only posts after this is on the wire.
+    port.postMessage({ ready: true });
+  } else {
+    post(run(data));
   }
 }

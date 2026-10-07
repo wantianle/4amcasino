@@ -144,6 +144,9 @@ const tablePage: Record<string, string> = {
   'Multi-run all-in decision': '全下多次发牌',
   'You are behind': '你暂时落后',
   'Equity {pct}%': '胜率 {pct}%',
+  // 实时胜率气泡：低于 3% 显示「还有机会」，低于 1% 显示「听死牌」（不再显示数字）。
+  'Still alive': '还有机会',
+  'Drawing dead': '听死牌',
   'Deal {n} times': '发 {n} 次',
   'Waiting for the ahead player to confirm…': '等领先方确认…',
   'The behind player is choosing how many times to run the board…':

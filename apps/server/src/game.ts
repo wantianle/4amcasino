@@ -46,7 +46,8 @@ import {
 import { appendLedger } from './ledger.js';
 import { getRoom, presentablePlayers, roomPlayers } from './rooms.js';
 import { readRoomFeatures } from './gameplaySettings.js';
-import { computeHeadsUpEquity, EquityError } from './equity.js';
+import { computeHeadsUpEquity, computeMultiwayEquity, EquityError } from './equity.js';
+import type { MultiwayEquityResult } from './equity.js';
 import { platformUserId } from './platform.js';
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,12 @@ const PROGRAMMING_ERROR_NAMES = new Set([
 function isProgrammingError(err: unknown): boolean {
   return err instanceof Error && PROGRAMMING_ERROR_NAMES.has(err.name);
 }
+
+/** Hard ceiling on a hand's live-equity tail. A runout deals in well under a
+ *  second; if the bubble worker is stuck (or reset repeatedly), queued jobs
+ *  past this point are dropped rather than publishing stale numbers for a hand
+ *  that has already dealt on. */
+const EQUITY_HAND_DEADLINE_MS = 30_000;
 
 /**
  * The ONE tiered logger for a swallowed best-effort broadcast failure. Shared
@@ -1885,6 +1892,16 @@ class Hand {
   // visible yet. A reconnect in this window is safe and the offer is
   // broadcast to every live socket the moment equity resolves.
   private equityPending: { decisionId: string } | null = null;
+  // Live all-in bubble: one worker job at a time, in issue order, so the
+  // per-street frames reach clients in street order even when one enumeration
+  // finishes ahead of the next board card. Jobs are appended per street; the
+  // chain is per-Hand, so a lingering job from a past hand publishes only while
+  // that hand is live (`phase !== 'done'`).
+  private equityChain: Promise<void> = Promise.resolve();
+  // Wall-clock ceiling for this hand's equity tail, set once the runout is
+  // committed (finishMultiRun). A chained job that starts past it is dropped;
+  // see EQUITY_HAND_DEADLINE_MS.
+  private equityHandDeadline = 0;
   private multiRun: {
     decisionId: string;
     stage: 'choice' | 'agreement';
@@ -2758,6 +2775,8 @@ class Hand {
           ...(run > 1 ? { run: run as 2 | 3 } : {}),
         });
         this.pendingBoard.delete(chain.deckIndex);
+        // live all-in bubble: refresh once this run's board completes a street
+        this.maybePushStreetEquity(run);
         if (this.pendingBoard.size === 0) this.afterBoardOpened();
         else this.armTimer(this.opts.cryptoTimeoutMs);
         return;
@@ -3417,6 +3436,14 @@ class Hand {
     return this.runBoardIndexes(run).map((i) => this.boardCards.get(i)!);
   }
 
+  /** Only the cards of `run` that have actually been opened so far (unlike
+   *  `boardForRun`, which pads unopened positions with `undefined`). */
+  private openedBoardForRun(run: number): CardId[] {
+    return this.runBoardIndexes(run)
+      .filter((i) => this.boardCards.has(i))
+      .map((i) => this.boardCards.get(i)!);
+  }
+
   private runForDeckIndex(idx: number): number {
     for (const [run, map] of this.runMaps) {
       for (const v of map.values()) if (v === idx) return run;
@@ -3435,6 +3462,79 @@ class Hand {
 
   private remainingRunoutCount(): number {
     return this.runoutIndexes().filter((i) => !this.boardCards.has(i)).length;
+  }
+
+  /** After an all-in runout card opens, publish the live bubble equity once the
+   *  run's board reaches a complete street (flop=3, turn=4, river=5). Partial
+   *  streets cannot be measured exactly and are skipped. */
+  private maybePushStreetEquity(run: number): void {
+    const cards = this.openedBoardForRun(run);
+    if (cards.length !== 3 && cards.length !== 4 && cards.length !== 5) return;
+    this.pushRunoutEquity(run, cards);
+  }
+
+  /** Whether this hand can still publish live bubble equity (not settled). */
+  private runoutAlive(): boolean {
+    return this.phase !== 'done';
+  }
+
+  /** Compute — on the equity worker, never the main thread — and publish the
+   *  pot equity of every live all-in player for one run's board. `dead` carries
+   *  the cards already opened in the other runs, so a later run's percentage
+   *  reflects the cards the earlier run burnt. A failed compute just skips the
+   *  update: the bubble is advisory. */
+  private pushRunoutEquity(run: number, cards: CardId[]): void {
+    // Bubbles are a multi-run-adjacent feature: rooms that never enabled it
+    // must see their all-ins exactly as before.
+    if (!this.features.multiRun.enabled) return;
+    if (!this.runout || this.phase === 'done') return;
+    // A preflop all-in shows the preflop number (Monte Carlo) the moment the
+    // reveal goes public; a completed flop/turn/river shows the exact number.
+    // A partial street (1-2 cards) has no meaningful measure and is skipped.
+    if (cards.length === 1 || cards.length === 2) return;
+    const live = this.betting?.seats.filter((s) => !s.folded) ?? [];
+    if (live.length < MULTI_RUN_HEADS_UP_SEATS) return;
+    const holes: [CardId, CardId][] = [];
+    const seats: number[] = [];
+    for (const s of live) {
+      const revealed = this.reveals.get(s.seat);
+      if (!revealed || revealed.length !== 2) return; // only once every hand is public
+      holes.push([revealed[0]!, revealed[1]!]);
+      seats.push(s.seat);
+    }
+    const mine = this.runBoardIndexes(run);
+    const dead: CardId[] = [];
+    for (const [idx, card] of this.boardCards) if (!mine.includes(idx)) dead.push(card);
+    const handId = this.id;
+    const runs = this.runs;
+    this.equityChain = this.equityChain.then(async () => {
+      if (!this.runoutAlive()) return;
+      // A stuck worker (or a burst of resets) must not let a preflop job trail
+      // into the flop/turn of a hand that has already dealt on: drop anything
+      // that starts after the hand's equity deadline.
+      if (Date.now() > this.equityHandDeadline) return;
+      let res: MultiwayEquityResult;
+      try {
+        res = await computeMultiwayEquity({
+          holes,
+          board: cards,
+          seed: `${handId}:bubble:${run}:${cards.length}`,
+          dead,
+        });
+      } catch {
+        return; // advisory only: a failed bubble update is not a hand error
+      }
+      // A worker that lands just after the runout finished still carries the
+      // last street's number; clients ignore any frame past the hand's result.
+      this.publish({
+        t: 'equity_update',
+        handId,
+        run,
+        runs,
+        board: cards,
+        equities: seats.map((seat, i) => ({ seat, bps: res.equitiesBps[i] ?? 0 })),
+      });
+    });
   }
 
   /** Wire `stage` values are `choice` (= the contract's "behind-chooses") and
@@ -3601,8 +3701,27 @@ class Hand {
       reason,
       sharedBoard: this.currentBoard(),
     } as ServerMsg);
-    if (this.remainingRunoutCount() > 0) this.openRemainingRunoutBoards();
-    else this.settle();
+    // The reveal is public now: put the first live equity bubble on the table
+    // for run 1's starting board (preflop when nothing is open yet). Arm the
+    // hand's equity deadline first so the chained jobs can bound their tail.
+    this.equityHandDeadline = Date.now() + EQUITY_HAND_DEADLINE_MS;
+    this.pushRunoutEquity(1, this.openedBoardForRun(1));
+    // Deal the runout only after that first bubble is on the wire, so the client
+    // always sees the reveal + a win rate before the first board card. When no
+    // bubble was scheduled (feature off, partial board) the chain is already
+    // resolved and dealing starts on the next microtask.
+    //
+    // Accepted UX cost, deliberately KEPT (not a bug): chaining the deal behind
+    // the first preflop equity makes the first community card wait for one
+    // 25,000-trial Monte Carlo enumeration - measured ~2040 ms cold / ~1220 ms
+    // warm on the dev box, i.e. roughly a 1-2 s gap between the reveal and the
+    // first board card on a preflop all-in. The product decision is the strict
+    // "bubble first, then deal" order; racing the board ahead of the bubble is
+    // the alternative that was rejected. See docs/qa/run-equity/README.md.
+    this.equityChain = this.equityChain.then(() => {
+      if (this.remainingRunoutCount() > 0) this.openRemainingRunoutBoards();
+      else this.settle();
+    });
   }
 
   // ---------- showdown ----------
@@ -3628,6 +3747,12 @@ class Hand {
   }
 
   private afterRevealsComplete(): void {
+    // All-in runout: the hole cards are public now. Announce the reveal on its
+    // own BEFORE the run-count decision and any equity bubble, so the client
+    // flips the cards first and only then shows a win rate — the requested
+    // order "reveal, then equity". A normal showdown needs no separate frame:
+    // `settle()` below broadcasts `showdown` (with the same reveals) at once.
+    if (this.runout) this.broadcastRunoutReveal();
     if (this.runout && !this.multiRunResolved) {
       // hole cards are now public: decide the run count before dealing on
       this.beginMultiRunDecision();
@@ -3638,6 +3763,19 @@ class Hand {
       return;
     }
     this.settle();
+  }
+
+  /** Broadcast every live all-in seat's now-public hole cards as its own
+   *  non-durable frame. Only called on the all-in runout path, where the cards
+   *  are public by rule; it never precedes the reveal crypto. */
+  private broadcastRunoutReveal(): void {
+    const reveals: { seat: number; cards: CardId[] }[] = [];
+    for (const s of this.betting?.seats.filter((x) => !x.folded) ?? []) {
+      const cards = this.reveals.get(s.seat);
+      if (cards && cards.length === 2) reveals.push({ seat: s.seat, cards: [...cards] });
+    }
+    if (reveals.length === 0) return;
+    this.publish({ t: 'runout_reveal', handId: this.id, reveals });
   }
 
   // ---------- settlement ----------

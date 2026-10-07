@@ -299,6 +299,7 @@ export function handLifecycleReducer(ctx: LifecycleCtx, msg: LifecycleMsg): Life
               deadline: null,
               baseDeadline: null,
               multiRunOffer: null,
+              equityBubble: null,
               settlementFailed: null,
               // A real abort is a terminal answer: any durable `unresolved` no
               // longer applies.
