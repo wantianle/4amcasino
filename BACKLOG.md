@@ -9,23 +9,23 @@
 > **本文件与 `docs/plans/repo-refactor-plan.md` 的关系**：后者是**结构重构的「方案」**
 > （怎么拆、按什么批次、验证什么）；本文件是**全量需求的「台账」**（有哪些事、每条用什么
 > 指标验收、排不排得上）。二者不冲突：重构类条目在此登记指标与完成定义，具体拆分设计引用
-> 方案文件；方案里的 ❌/⬜ 项已收入本文件的「待排」。基线：`main@7eab153`。
+> 方案文件；方案里的 ❌/⬜ 项已收入本文件的「待排」。基线：`main@2370bbd`。
 
 ## 进行中
 
 | # | 事项 | 类型 | 来源 | 指标 | 完成定义 | 状态 |
 |---|---|---|---|---|---|---|
 | A1 | 画像改造（ev-baseline lane）：blocker bluff 混合 + RFI 梯度 + 注释改准 | 改进 | 评测 | human-lag 画像 VPIP/PFR 落回实测区间（VPIP≈54 / PFR≈50）；同 seed 复现一致 | `ev-harness.mjs` 输出的画像 VPIP/PFR 与注释标注的实测值一致；注释与代码逐项对齐；同 seed 两跑数字一致 | 进行中：`.slim/worktrees/ev-baseline`（omos/ev-baseline），`ev-harness.mjs` 未提交 |
-| A2 | C 类拆分第一批：`SeatView` 归位 / `botRoutes` / `handStats` / `game.ts` G1+G2 | 重构 | 技术债 | 目标文件行数下降；`npm run typecheck` + 三包 vitest 绿；export surface 不变 | `SeatView` 移出 `TablePage`；`botRoutes`/`handStats` 拆出子模块；`game.ts` G1/G2 抽独立文件且根 `game.ts` 仍 re-export 原公共符号；无行为 diff | 进行中：`.slim/worktrees/small-cleanups`（当前与 main 同点、尚无改动） |
+| A2 | C 类拆分第一批：`SeatView` 归位 / `botRoutes` / `handStats` / `game.ts` G1+G2 | 重构 | 技术债 | 目标文件行数下降；`npm run typecheck` + 三包 vitest 绿；export surface 不变 | ✅ **全部完成**：`SeatView` 归位（`4fb5510`）/ `botRoutes`→3 模块（`b83fbd3`）/ `handStats`→4 模块（`1d4e828`）/ `game.ts` G1（`e00c31d`）+ G2（`2370bbd`）。`game.ts` 4624→4279→约 1410 行，`hand.ts` 新 2939 行；导出面 G2 后 30→30 不变；逐字搬移已独立核验 | 无 |
 
 ## 待排（按优先级）
 
 | # | 事项 | 类型 | 来源 | 指标 | 完成定义 | 依赖 |
 |---|---|---|---|---|---|---|
 | B1 | EV 重跑 | 改进 | 评测 | 各画像 `bb/100` 及其 95% 置信区间；seed 可复现 | 画像改造冻结后固定 seed 重跑 N 手，输出各画像 `bb/100`+CI；0 abort / 0 rejected / 0 illegal / ledger 守恒 | A1 |
-| B2 | C 类后续：`game.ts` G3–G7（crypto/betting/multirun/settlement） | 重构 | 技术债 | `game.ts` 行数；各 `hand/*` 模块行数；export surface 不变 | `game.ts` 仅 façade；领域按 dealing/betting/multirun/audit/showdown/settlement 分层；事务边界/时序/异常文本不变 | A2（G1/G2） |
+| B2 | C 类后续：`game.ts` G3–G7（crypto/betting/multirun/settlement）+ `GameRoom` 拆分 | 重构 | 技术债 | `game.ts` 行数；各 `hand/*` 模块行数；export surface 不变 | `game.ts` 仅 façade；领域按 dealing/betting/multirun/audit/showdown/settlement 分层。⚠️ **注**：G2 只搬了 `Hand`（`hand.ts`），**`GameRoom` 仍在 `game.ts`、`gameRoom.ts` 未建** —— 原方案 (a) 的 GameRoom 拆分属本条目范围。事务边界/时序/异常文本不变；⚠️ **无固定 seed 的前后差分回放证据**（当前只有 AST/字节级证据 + 集成测试），若要硬证据需先建回放快照 | A2（G1/G2 ✅） |
 | B3 | 测试 helper 收敛（30 auth / 15 waitFor / 15 register 重复） | 清理 | 审查 | 净减行数；全量测试绿 | 重叠辅助合并为单一 helper；`test:server` / `test:fast` 全绿 | 无 |
-| B4 | agent-core `export *` 改显式白名单 | 重构 | 技术债 | 公共面导出符号数（261 暴露 → 实际使用集） | `index.ts` 全部显式具名导出；typecheck + core 测试绿；无 consumer 破坏 | 无 |
+| B4 | agent-core `export *` 改显式白名单 | 重构 | 技术债 | 公共面导出符号数 | ✅ 已完成（`5dd6c5b`）：`index.ts` 19 条 `export *` → 显式 re-export，导出面 **259 → 57**；13 个 Phase-1 具名导出保留；3 个 subpath 仍有效；typecheck + core 559 passed + 快照 sha 不变 | 无 |
 | B5 | C 类其它：`client.ts` / `handProjection.ts` / `RoundTable.tsx` / `TablePage.tsx` / `rooms.ts` | 重构 | 技术债 | 各文件行数；单测绿；浏览器探针通过 | 按 `repo-refactor-plan` §3/§4 边界拆分；旧入口 re-export；协议/布局/时序不变 | 功能 lane 全部合并 |
 | B6 | 同名文件消歧：`equity` / `house` / `pokerHotkeys` | 重构 | 审查 | 同名不同职责文件数（3→0） | 按 plan §2.3 改名 + façade re-export；算法/协议不变 | 暂缓（oracle：收益不够）；功能 lane |
 | B7 | `settlement-refactor.md` S0–B9c 分批迁移 | 重构 | 审查 | reject 数；duplicate settle / 事务不变量测试通过数 | 按 §6.2 批次独立提交回滚；invariants I1–I10 全绿；M/S/B 不混提 | 功能 lane 合并 + 基线冻结 |
@@ -42,6 +42,7 @@
 | B18 | `TODO(rules-v2)`：`seatOrder` 迁移 | 清理 | 技术债 | 该 TODO 处数（2→0） | 所有 caller 填充 `DecisionView.seatOrder`；删 TODO + baseline fallback | rules-v2 |
 | B19 | `RoundTable` settlement-bubble TODO | 清理 | 技术债 | 该 TODO 处数（1→0） | equity bubble 有显式退场时机；删 TODO | 无 |
 | B20 | `.slim/worktrees.json` 陈旧 + 空 worktree | 清理 | 技术债 | 活动 worktree 数与 json 一致 | ✅ json 已对齐实际（仅 `ev-baseline`）；已合并的空树全部删除（`c2dc6fa`） | 无 |
+| B21 | `equityWorker.ts` 顶层 bootstrap 误判非主线程 | 改进 | 审查 | `test:server --pool=threads` 的 unhandled error 数（1→0） | `equityWorker.ts` 用**明确的信号**（如 `workerData.__equityJob` 标记）判断自己是否被当 equity worker 启动，而非 `!isMainThread && parentPort`；`pool=threads` 下不再误触发、`pool=forks` 行为不变。⚠️ **不影响 CI/生产**（官方 script 用 `forks`），但 `threads` 下会静默吞掉一半测试文件（32/78） | 无 |
 
 ## 已关闭
 
@@ -54,6 +55,8 @@
 | C5 | 删 `sendSafe` | `7eab153` | 2026-10-08 |
 | C6 | worktree / git 卫生清理 | 本轮清理完成 | 2026-10-08 |
 | B9 | 预览归位 `tools/visual/`（`table-skins` / `table-faces` 移出 `docs/qa`） | 本轮 | 2026-10-08 |
+| A2 | C 类拆分第一批（`SeatView` 归位 / `botRoutes` / `handStats` / `game.ts` G1+G2） | `4fb5510` `b83fbd3` `1d4e828` `e00c31d` `2370bbd` | 2026-10-08 |
+| B4 | agent-core `export *` 收起（导出面 259→57） | `5dd6c5b` | 2026-10-08 |
 
 ## 明确不做
 
