@@ -482,11 +482,12 @@ packages/agent-core/src/
 等待功能 lane 合并；从最新主线建重构分支；记录实际 commit 与基线（`npm run typecheck` +
 三包 `vitest`）。任何 baseline 失败先修功能 lane，不开始重构。
 
-### 批次 1：仓库卫生与独立工具归位 — 🟡 部分完成
+### 批次 1：仓库卫生与独立工具归位 — ✅ 已完成
 
 - ✅ 删除 tracked 的 `.codex/hooks.json`、`.cursor/hooks.json`、`.grok/hooks/impeccable.json`。
-- ❌ 把独立预览应用 `docs/qa/table-skins/`、`docs/qa/table-faces/` 移到 `tools/visual/`；
-  更新 README 与 Vite root/import。**当前 `tools/` 不存在，两个 preview 目录仍在 `docs/qa/`。**
+- ✅ 把独立预览应用 `docs/qa/table-skins/`、`docs/qa/table-faces/` 移到 `tools/visual/`；
+  更新 README 与 Vite root/import。**当前 `tools/visual/table-skins/` 与
+  `tools/visual/table-faces/` 已就位，`docs/qa` 只留证据截图 + README，`check:links` 通过。**
 
 ### 批次 2：重复命名消歧（不改算法与 API）— ❌ 未做
 

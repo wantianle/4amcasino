@@ -5,7 +5,7 @@
  * 对应 BACKLOG B15 的可自动化指标：**被引用的图片路径缺失数 = 0**。
  * （体积阈值已被否决：8.5M 不是问题；真正该测的是引用是否都在。）
  *
- * 它做什么：扫 `docs/qa/**` 里的文档/报告，抽出「看起来是仓库内相对路径」
+ * 它做什么：扫 `docs/qa/**` + `tools/visual/**` 里的文档/报告/预览源码，抽出「看起来是仓库内相对路径」
  * 的素材引用，逐一 `stat` 文件是否存在，缺什么列什么。
  *
  * 检测的引用格式（都是 docs/qa 里实际出现的形态，不是凭空假设）：
@@ -61,6 +61,9 @@ import { findRepoRoot } from './lib/repo-root.mjs';
 
 const repoRoot = findRepoRoot(import.meta.url);
 const QA_DIR = path.join(repoRoot, 'docs', 'qa');
+// 独立预览应用已从 docs/qa 归位到 tools/visual（docs/qa 只留证据截图 + README）。
+// 一并纳入扫描：搬走的 preview 源码里的素材引用不会因此脱离门禁。
+const VISUAL_DIR = path.join(repoRoot, 'tools', 'visual');
 
 // ---------- 素材白名单 ----------
 // 只把「图片 + .json」当素材引用。源码扩展名不进白名单（见头部跳过规则 9）。
@@ -79,71 +82,11 @@ const CONTAINING_KIND = {
 };
 
 // 以仓库顶层目录名开头的引用按仓库根解析。
-const REPO_TOP = new Set(['docs', 'apps', 'packages', 'scripts', '.slim']);
+const REPO_TOP = new Set(['docs', 'apps', 'packages', 'scripts', 'tools', '.slim']);
 
 // ---------- 显式文件级豁免清单 ----------
 // 每条必须有 reason（为什么不是漏检） + source（出处）。加新条目 = 需要一次明确裁决。
 const EXEMPT = [
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'gg-green-desktop.jpg',
-    reason: 'README 宣称 8 张截图、仓库仅有 sapphire-mobile.jpg 与 classic-casino-desktop.jpg；缺 6 张待补图或订正宣称（产品判断）',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'gg-green-mobile.jpg',
-    reason: '同上：README 宣称有、仓库从不存在',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'sapphire-desktop.jpg',
-    reason: '同上：README 宣称有、仓库从不存在',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'burgundy-desktop.jpg',
-    reason: '同上：README 宣称有、仓库从不存在',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'burgundy-mobile.jpg',
-    reason: '同上：README 宣称有、仓库从不存在',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-skins/README.md',
-    ref: 'classic-casino-mobile.jpg',
-    reason: '同上：README 宣称有、仓库从不存在',
-    source: 'BACKLOG B15；docs/qa/table-skins/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-hero-clear/README.md',
-    ref: 'after/probe-9p-myturn-1440x900.jpg',
-    reason: 'README「当前证据」列了 4 张 after/probe-*.jpg，但 after/ 只有 overlap.json 与 9p-myturn-390x844-more-menu.jpg；probe 输出未随仓库保留',
-    source: 'docs/qa/table-hero-clear/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-hero-clear/README.md',
-    ref: 'after/probe-9p-myturn-390x844.jpg',
-    reason: '同上：README「当前证据」列出、仓库不存在',
-    source: 'docs/qa/table-hero-clear/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-hero-clear/README.md',
-    ref: 'after/probe-9p-showdown-1440x900.jpg',
-    reason: '同上：README「当前证据」列出、仓库不存在',
-    source: 'docs/qa/table-hero-clear/README.md:17-20',
-  },
-  {
-    file: 'docs/qa/table-hero-clear/README.md',
-    ref: 'after/probe-9p-showdown-390x844.jpg',
-    reason: '同上：README「当前证据」列出、仓库不存在',
-    source: 'docs/qa/table-hero-clear/README.md:17-20',
-  },
   {
     file: 'docs/qa/table-motion/README.md',
     ref: 'motion-in-progress.jpg',
@@ -369,7 +312,8 @@ function runScan({ strict = false } = {}) {
     console.error(`REFUSE: no such directory ${QA_DIR}`);
     process.exit(2);
   }
-  const files = discoverFiles(QA_DIR);
+  const scanDirs = [QA_DIR, VISUAL_DIR].filter((d) => fs.existsSync(d));
+  const files = scanDirs.flatMap((d) => discoverFiles(d)).sort();
   let refs = 0;
   let skipped = 0;
   const missing = [];
@@ -386,7 +330,8 @@ function runScan({ strict = false } = {}) {
   }
   for (const w of warnings) console.log(`WARN ${w}`);
 
-  console.log(`check-doc-assets: scan docs/qa/**  (${files.length} files, ${refs} asset refs, ${skipped} tokens skipped)`);
+  const scanLabel = scanDirs.map((d) => `${rel(d)}/**`).join(' + ');
+  console.log(`check-doc-assets: scan ${scanLabel}  (${files.length} files, ${refs} asset refs, ${skipped} tokens skipped)`);
   if (!missing.length) {
     console.log('✓ 所有被引用的素材路径都存在');
     return { refs, missing: [], active: [] };
@@ -416,7 +361,7 @@ function runScan({ strict = false } = {}) {
 function printHelp() {
   console.log(`check-doc-assets — docs/qa 证据文档「引用完整性」门禁
 
-扫描 docs/qa/** 下 ${Object.keys(CONTAINING_KIND).join(' / ')} 里的素材引用并 stat 存在性。
+扫描 docs/qa/** 与 tools/visual/** 下 ${Object.keys(CONTAINING_KIND).join(' / ')} 里的素材引用并 stat 存在性。
 素材扩展名白名单：图片（jpg/jpeg/png/webp/gif/svg/avif/bmp/ico）+ .json。
 解析：docs/apps/packages/scripts/.slim 开头 → 仓库根；其余 → 引用所在文件目录；出仓库则跳过。
 
@@ -531,7 +476,7 @@ function selftest() {
     {
       name: '豁免生效：清单内缺失不算 active',
       run: () => {
-        const r = scanText('docs/qa/table-skins/README.md', path.join(QA_DIR, 'table-skins', 'README.md'), '`gg-green-desktop.jpg`', 'md');
+        const r = scanText('docs/qa/table-motion/README.md', path.join(QA_DIR, 'table-motion', 'README.md'), '`motion-in-progress.jpg`', 'md');
         const row = r.rows[0];
         return { ok: !!row && !row.exists && !!row.exempt, detail: `exempt=${!!row?.exempt}` };
       },

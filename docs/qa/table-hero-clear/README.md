@@ -14,11 +14,11 @@
 
 - `before/overlap.json`
 - `after/overlap.json`
-- `after/probe-9p-myturn-1440x900.jpg`
-- `after/probe-9p-myturn-390x844.jpg`
-- `after/probe-9p-showdown-1440x900.jpg`
-- `after/probe-9p-showdown-390x844.jpg`
 - `after/9p-myturn-390x844-more-menu.jpg`
+
+早期另有 4 张 `after/probe-*.jpg` 截图（myturn / showdown × 1440×900 / 390×844），
+属历史计划、未随仓库保留，故不在此列；交叠数字结论以 `before/overlap.json` 与
+`after/overlap.json` 为准。
 
 after probe 使用 `gitHash=583fcb1`、probe hash `418956eca319`、locale `zh-CN`，
 并在截图前等待字体加载。`ASSERT=1 VIEWS=both` PASS、无 page errors。

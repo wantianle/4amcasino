@@ -12,13 +12,16 @@ preview URL.
 | `burgundy` | oxblood velvet | espresso leather / antique brass | warm ivory 4AM / wine-black |
 | `classic-casino` | bottle-green baize | walnut with procedural grain / brass | parchment 4AM / walnut-black |
 
-Screenshots are captured at 1440×900 and 390×844 for every skin:
+Committed screenshots (captured at 1440×900 desktop / 390×844 mobile):
 
-- `gg-green-desktop.jpg`, `gg-green-mobile.jpg`
-- `sapphire-desktop.jpg`, `sapphire-mobile.jpg`
-- `burgundy-desktop.jpg`, `burgundy-mobile.jpg`
-- `classic-casino-desktop.jpg`, `classic-casino-mobile.jpg`
+- `sapphire-mobile.jpg`
+- `classic-casino-desktop.jpg`
 
-Run the harness from this directory with `vite --config vite.config.mjs`.
+The remaining combinations are planned coverage without committed screenshots:
+`gg-green` (desktop + mobile), `sapphire` desktop, `burgundy` (desktop + mobile),
+and `classic-casino` mobile. Capture them with the harness when needed.
+
+The harness now lives in `tools/visual/table-skins/`; run it from there with
+`vite --config vite.config.mjs` (relative imports still resolve to the repo root).
 The production root is intentionally not assigned a skin yet, so an absent
 attribute continues to resolve to the existing `:root` tokens exactly.

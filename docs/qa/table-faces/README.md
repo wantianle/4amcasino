@@ -15,6 +15,11 @@ All face presets share a restrained edge, lift shadow, inset lower edge, and
 top highlight so pod and board cards have the same physical presence. Back presets: `wine-lattice`, `black-gold`,
 `classic-red-blue`, `geometry`, `deep-blue-silver`.
 
+The harness now lives in `tools/visual/table-faces/`; run it from the repo root
+with `vite --config tools/visual/table-faces/vite.config.mjs` (the config pins
+`root` to its own directory, so the working directory does not matter; relative
+imports still resolve to the repo root).
+
 Compatibility note: the default card face is intentionally visually different
 from HEAD: it now includes court art, a restrained outline, a pale gradient,
 and layered shadow/highlight depth. This is the requested design change, not

@@ -31,13 +31,13 @@
 | B7 | `settlement-refactor.md` S0–B9c 分批迁移 | 重构 | 审查 | reject 数；duplicate settle / 事务不变量测试通过数 | 按 §6.2 批次独立提交回滚；invariants I1–I10 全绿；M/S/B 不混提 | 功能 lane 合并 + 基线冻结 |
 | B8a | **abort 埋点**（掉线恢复的基线上游） | 清理 | 编排者 | **live in-process `Hand.abort()` 率（按 reason 分类）**；埋点行数 = abort 次数；**不含**任何日志刷屏（只在 abort 打 1 行） | 在 `game.ts Hand.abort()` 单一漏斗加一行 `{event:'hand_abort', scope:'live', reason, detail, handId, roomId, phase, seatsLive, boardComplete, blamedSeat, force}`，整体 fail-open；`reason` 为显式分类 `player_disconnected` / `timeout_disconnected` / `timeout` / `shutdown` / `mis_shuffle` / `crypto_protocol` / `unknown`。**注**：**不含** operator / reconciler durable abort（`settlementWriter.abortPendingHandSettlement`、`transcriptReconcile`）—— 它们不经过 `abort()`，需另补埋点或在 `hand_lifecycle` 加 `abort_reason` 列（schema 变更，**另报批**） | 无（可与 A2 并行） |
 | B8b | DROPS 掉线恢复（deal-time escrow / 阈值恢复） | 改进 | 事故 | **live in-process `Hand.abort()` 率（按 reason 分类，见 B8a）**（**基线由 B8a 提供**；无基线不开工） | 设计落地；2+ live 且 board 未完成时不再必然 abort；fold-key 与隐秘边界不变 | **B8a 跑出基线** 后 + 设计评审 |
-| B9 | `tools/visual` 预览归位（`table-skins` / `table-faces` 移出 `docs/qa`） | 清理 | 编排者 | `docs/qa` 中 preview app 数（2→0）；`tools/` 存在 | 迁移并更新 README + Vite root/import；`check:links` 通过 | 无 |
+| B9 | `tools/visual` 预览归位（`table-skins` / `table-faces` 移出 `docs/qa`） | 清理 | 编排者 | `docs/qa` 中 preview app 数（2→0）；`tools/` 存在 | ✅ 已归位到 `tools/visual/`（本轮）：两个 preview 移出 `docs/qa`，README + Vite root/import 已更新；`check:links` 通过 | 无 |
 | B10 | gates 手机三跑 3 FAIL | 改进 | 审查 | gate 矩阵 PASS 数（当前 3 FAIL） | 3 个 FAIL 各自修复或明确豁免并注释；矩阵全 PASS 或全部有理由 | 无 |
 | B11 | 平台费率歧义 | 改进 | 审查 | 检查脚本 violations（→0） | `check-commission-rate-invariant.mjs` 在真实 DB 上 0 violation；决定是否改 SQL/加 MIN/MAX 并记录 | 无 |
 | B12 | HUD 两个补强测试（PlayerHud 结算重拉 / RoundTable closeHud） | 改进 | 审查 | 回归用例数（0→2） | 两测试落地并覆盖对应行为；非阻断 | 无 |
 | B13 | 防御性编程收尾（agent-core 2 处 fallback） | 清理 | 审查 | fallback 处数（2→0） | 2 处删除或标注为有意；A 级审计维持 0 项 | 无 |
 | B14 | 短筹码路径无场景 | 改进 | 审查 | 覆盖短筹码/破产线的端到端场景数（0→≥1） | 至少 1 个短筹码路径场景落地 | 无 |
-| B15 | `docs/qa` 素材引用完整性 | 清理 | 技术债 | **被引用的素材路径缺失数（active）= 0**；新增缺口立刻可见 | ✅ 已建 `scripts/check-doc-assets.mjs`（selftest 28 例，JSON 只认 value、剔除 md 围栏，已串入 `check:all`，`0df13f0`）。现状 **94 refs / 12 missing** 全在显式 allowlist（每条带 reason+source，`--strict` 可暴露）；**不 gitignore、不做有损压缩**。⚠️ 残留：`table-skins` 6 + `table-hero-clear` 4 需用户裁「补图 or 订正 README 宣称」 | 无 |
+| B15 | `docs/qa` 素材引用完整性 | 清理 | 技术债 | **被引用的素材路径缺失数（active）= 0**；新增缺口立刻可见 | ✅ 已建 `scripts/check-doc-assets.mjs`（selftest 28 例，JSON 只认 value、剔除 md 围栏，已串入 `check:all`，`0df13f0`）。现状 **84 refs / 2 missing**，2 条全在显式 allowlist（`table-motion` 的 2 张，每条带 reason+source，`--strict` 可暴露）；**不 gitignore、不做有损压缩**。✅ 用户已裁「订正 README 宣称、不补图」：`table-skins` 6 张 + `table-hero-clear` 4 张已从 README 去除，missing 12→2 | 无 |
 | B17 | agent-core 生产侧 `clamp01` 三副本 | 清理 | 技术债 | 生产侧定义处数（3→1） | ✅ 已收敛到 `postflopMath.ts`（`ef54357`）；快照 sha 不变；fixture 副本保留 | 无 |
 | B18 | `TODO(rules-v2)`：`seatOrder` 迁移 | 清理 | 技术债 | 该 TODO 处数（2→0） | 所有 caller 填充 `DecisionView.seatOrder`；删 TODO + baseline fallback | rules-v2 |
 | B19 | `RoundTable` settlement-bubble TODO | 清理 | 技术债 | 该 TODO 处数（1→0） | equity bubble 有显式退场时机；删 TODO | 无 |
@@ -53,6 +53,7 @@
 | C4 | 去重 `betRatios` / `clamp01` | `df00d12` | 2026-10-08 |
 | C5 | 删 `sendSafe` | `7eab153` | 2026-10-08 |
 | C6 | worktree / git 卫生清理 | 本轮清理完成 | 2026-10-08 |
+| B9 | 预览归位 `tools/visual/`（`table-skins` / `table-faces` 移出 `docs/qa`） | 本轮 | 2026-10-08 |
 
 ## 明确不做
 
